@@ -11453,3 +11453,30 @@ review: existing native generator rules and format-5 staging cover this build;
 no build-bsd.c/backend/manual interface change required. Top-level OFED aggregation
 and remaining library coverage still need completion. Make remains production/
 default and full world/kernel/pkgbase/runtime/performance gates remain open.
+
+### 2026-10-29 complete OFED program aggregates
+
+Added //usr.bin/ofed:installation_archives mirroring maintained subgroup selection:
+libibverbs, librdmacm, diagnostics, plus OpenSM when ofed_extra_enabled. Like the
+Make subdirectory target, the world parent decides whether OFED itself is enabled.
+Extended bsd_install_archive_set with a distinct BsdInstallArchiveSetInfo provider
+and typed alternatives accepting either leaf archives or nested sets. All payload,
+metadata and directory-metadata output groups propagate as transitive depsets.
+Collections do not impersonate BsdInstallArchiveInfo; bsd_pkg_create continues to
+require one leaf archive and its directory metadata.
+
+Maintained 16-job frontend runs bazel-ofed-programs-default-20261029 and
+bazel-ofed-programs-extra-20261029 match fresh recursive Make references with
+MK_OFED_EXTRA=no/yes respectively. Default: 12 ELF/debug pairs, 40 metadata records,
+12 exact manuals. Extras: 33 ELF/debug pairs, 102 records, 32 manuals (ibmirror has
+none). All checked symbols and dynamic properties match. Reports/scripts reside
+in bazel-ofed-programs-qualification-20261029/default and /extra under /usr/obj/usr/src.
+These runs exercise nested collections through the normal frontend and establish
+recursive installation coverage, not hardware runtime or whole-system coverage.
+
+OFED library audit finds libibcm still lacks a native BUILD target; library parent
+aggregation remains pending. No daemon/device operations or performance tests ran.
+Frontend review: format-5 artifacts already collects transitive output groups;
+the maintained archive backend changed in this batch, with no build-bsd.c interface
+or manual option change required. Package creation/publication was not exercised.
+Make remains production/default; full world/kernel/pkgbase/runtime gates are open.

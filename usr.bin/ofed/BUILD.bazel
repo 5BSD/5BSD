@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Like Make's directory target, this groups OFED programs. The world parent
+# decides whether OFED itself is enabled.
+bsd_install_archive_set(
+    name = "installation_archives",
+    archives = [
+        "//usr.bin/ofed/libibverbs:installation_archives",
+        "//usr.bin/ofed/librdmacm:installation_archives",
+        "//usr.bin/ofed/infiniband-diags:installation_archives",
+    ] + select({
+        "//tools/build/bazel/config:ofed_extra_enabled": ["//usr.bin/ofed/opensm:install_archive"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)

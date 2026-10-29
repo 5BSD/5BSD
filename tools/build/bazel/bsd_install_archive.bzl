@@ -3,6 +3,8 @@
 load(":bsd_install.bzl", "BsdInstallManifestInfo")
 
 BsdInstallArchiveInfo = provider(fields = ["directory_metadata"])
+# A collection preserves output groups but is not a single package archive.
+BsdInstallArchiveSetInfo = provider(fields = [])
 
 def _archive(ctx):
     records, payloads = [], []
@@ -93,6 +95,7 @@ bsd_install_archive = rule(
 
 def _archive_set(ctx):
     return [
+        BsdInstallArchiveSetInfo(),
         DefaultInfo(files = depset(transitive = [target[DefaultInfo].files for target in ctx.attr.archives])),
         OutputGroupInfo(
             metadata = depset(transitive = [target[OutputGroupInfo].metadata for target in ctx.attr.archives]),
@@ -102,6 +105,6 @@ def _archive_set(ctx):
 
 bsd_install_archive_set = rule(
     implementation = _archive_set,
-    attrs = {"archives": attr.label_list(providers = [BsdInstallArchiveInfo], mandatory = True)},
-    doc = "Group declared installation archives while preserving metadata output groups.",
+    attrs = {"archives": attr.label_list(providers = [[BsdInstallArchiveInfo], [BsdInstallArchiveSetInfo]], mandatory = True)},
+    doc = "Group declared archives or nested archive sets while preserving metadata output groups.",
 )
