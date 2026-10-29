@@ -5620,3 +5620,11 @@ bytes and the integration interpreter substitution match Make; hierarchy
 discovery uses the existing Kyuafile. No new DTrace or audit instrumentation
 was needed for this installation-only change. Kernel-module-related and other
 ATF test behavior has not been executed or qualified by these archive checks.
+
+### 2026-10-29 runtime-linker test source closure
+
+Restored common.c/common.h to native set_var_test, matching Make's source list.
+Its helper functions and ATF failure reporting are now present in the installed
+ELF as well as the other fd-loading tests. The broader recursive symbol check
+caught the omission. Test source/assertions are unchanged; no new runtime result
+or DTrace/audit instrumentation is claimed.

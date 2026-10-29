@@ -9630,3 +9630,36 @@ produced by the maintained format-5 path, not a separate build backend.
 Tests-enabled full-tree comparison, other options/architectures, semantic/runtime
 checks, complete world/kernel/pkgbase publication, reproducible bootstrap and
 controlled memory/disk/CPU performance gates remain open. Make is still default.
+
+## 2026-10-29: recursive libexec with test payloads and missing-source fix
+
+Fresh recursive Make WITH_TESTS installation and native aggregate now match
+all 428 metadata records and 284 noncompiled payloads. The installed static
+libpythagoras.a fixture was compared separately: member names, every allocated
+section's bytes/size, allocated-section relocations and global/undefined symbols
+match. Whole archive bytes differ; its compiled-object/debug contents must not
+be treated as plain data. The proof is bound to both archive SHA256 values, and
+the original byte-comparison failure is retained.
+
+The ELF audit found a real omission: native set_var_test compiled only its main
+source, but Make also links common.c. It linked without those unused helpers,
+so prior successful builds did not reveal the incomplete source closure. Added
+explicit extra sources (common.c/common.h) to its native target. No Make command
+or source workaround. After rebuilding the aggregate, all 41 executable/module
+debug pairs validate; their global/undefined symbol lists and dynamic properties
+(NEEDED/RPATH/RUNPATH/SONAME) match the fresh Make reference.
+
+Evidence under /usr/obj/usr/src/bazel-libexec-recursive-qualification-20261029:
+- tests-r2-installation-parity.json and tests-r2-elf-parity.json: passing full checks.
+- pythagoras/parity.json and member-comparison.json: static fixture proof.
+- tests-elf-parity.json: original missing-common.c mismatch, retained.
+- make-tests.py, verify-tests-r2.py, tests-r2-elf.py and pythagoras-check.py:
+  retained reproduction work. Native outputs: bazel-libexec-with-tests-20261029-r2;
+  reference: bazel-libexec-recursive-tests-reference-20261029.
+
+All builds used 16 jobs through maintained Make/build-bsd paths. Source dependency
+correction uses ordinary cc_binary inputs; frontend format-5/artifact handling
+requires no change. No host install or runtime test execution occurred. These
+results qualify installed outputs and ELF interface/debug properties, not full
+instruction equivalence, all option variants, tests actually passing at runtime,
+complete world/kernel/packages or performance. Make remains default.

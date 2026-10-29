@@ -34447,3 +34447,9 @@ installation for all 293 metadata records and 210 non-ELF payloads. All 23
 executable/module debug pairs validate, and their global/undefined symbols and
 dynamic dependency properties match Make. This is installed-output evidence,
 not complete runtime, whole-ELF reproducibility or performance qualification.
+
+The tests-enabled libexec recursive installation comparison also passes: 428
+metadata records, 284 noncompiled payloads, one separately verified static test
+archive, and 41 executable/module debug pairs with matching symbols and dynamic
+properties. This audit caught and corrected missing common.c in set_var_test.
+It does not establish runtime test success.
