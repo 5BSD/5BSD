@@ -7055,3 +7055,10 @@ artifact parity does not qualify parser behavior or audit-event delivery.
 libbsdconf runtime_static/runtime_shared now cover selected temporary-file
 rewrite, parse and CHECK semantics. No instrumentation or host configuration
 changes are involved, and audit-event delivery remains unqualified.
+
+### libbsdstat (2026-10-29)
+
+The native target preserves bsdstat.c, including stderr diagnostics for unknown
+statistics and missing derived callbacks. No provider or OS audit integration
+is declared by its Makefile. Statistics acquisition and any related probes
+belong to derived consumers and require separate qualification.

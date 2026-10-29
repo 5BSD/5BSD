@@ -15569,3 +15569,21 @@ format, malformed-input path, concurrent writer, power-loss or durability test.
 No system configuration was read or modified. Existing frontend explicit test
 inputs and runtime-path features support it without changes. Whole-system,
 bootstrap, sandbox/cache and performance gates remain open; Make stays default.
+
+### Native libbsdstat build and installation (2026-10-29)
+
+Added explicit bsdstat.c/header targets, static archive, libprivatebsdstat.so.1,
+debug split and installation. The maintained private header destination is
+/usr/include/private/bsdstat/bsdstat.h. This library provides formatting callbacks;
+it has no generated inputs or direct kernel collection dependency.
+
+Run bazel-libbsdstat-20261029 passes through build-bsd with 16 jobs. Fresh Make
+comparison matches all seven installation records, header bytes, archive order
+and symbols, installed DSO/debug symbols, dynamic metadata and debuglink CRC.
+Evidence/verifier: /usr/obj/usr/src/bazel-libbsdstat-reference-20261029. Formatting
+callback behavior and consumers' actual statistics collection remain unqualified
+by these artifact checks. No host installation occurred.
+
+Existing frontend explicit target inputs and metadata groups support the addition
+without contract changes. Full world/kernel/pkgbase/bootstrap, sandbox/cache and
+performance gates remain open; Make remains production/default.
