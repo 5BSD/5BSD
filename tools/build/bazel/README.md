@@ -36790,3 +36790,32 @@ handling suffice; no new build-bsd.c/backend interface/manual setting required.
 Ten qualified default Clang components now cover 573 sources. Remaining Clang/LLVM
 components and whole-system world/kernel/pkgbase/bootstrap/runtime/cache/performance
 gates remain open. Make stays production/default; no host installation/publication.
+
+### 2026-10-29 native Clang StaticAnalyzer
+
+Added all 190 maintained StaticAnalyzer sources with explicit source inventory,
+private headers and native generated checker/Clang/LLVM definitions. The component
+is incompatible when clang_full=false, preserving its SRCS_FUL-only selection;
+future aggregate consumers must select the dependency accordingly. Existing
+maintained configuration headers retain disabled Z3 support. No compiler sources,
+configuration headers or sandbox restrictions were changed.
+
+Maintained frontend bazel-clang-static-analyzer-20261029 (16 jobs) succeeds.
+All 190 individual PIC global/undefined symbol inventories match fresh isolated
+Make objects, mapped by recorded compile actions; archive member multiplicities
+also match. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-static-analyzer-qualification-20261029.
+Reference compilation uses existing bootstrap generators and staged SDK headers.
+The separate bazel-clang-static-analyzer-disabled-20261029 run with clang_full=false
+fails as expected at analysis: the explicitly requested component is incompatible,
+with the dependency chain identifying static_analyzer. This is a negative selection
+check, not a successful build of an empty analyzer.
+
+Results establish compilation/source-selection structure, not analyzer execution,
+checker diagnostics, Z3 support, emitted instruction identity, full compiler linkage
+or performance. Frontend review: documented clang_full and current format-5 native
+backend/artifacts cover this addition; no new build-bsd.c/manual interface required.
+Eleven qualified default Clang components now cover 763 sources. Remaining Clang/
+LLVM components, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/
+performance gates remain open. Make stays production/default. No host installation
+or publication occurred.

@@ -6226,3 +6226,10 @@ Native Analysis preserves 22 core and eight clang_full source selections without
 source/probe/audit changes. Default and reduced configurations match fresh Make
 object symbols and archive inventories. Runtime analysis diagnostics remain
 unqualified. Evidence: bazel-clang-analysis[-minimal]-qualification-20261029.
+
+### 2026-10-29 Clang StaticAnalyzer
+
+190 maintained sources compile with matching per-object symbols/archive inventory;
+clang_full=false rejects explicit component requests. No source/probe/audit changes.
+Checker diagnostics, analyzer runtime and Z3 support remain unqualified. Evidence:
+bazel-clang-static-analyzer-qualification-20261029.
