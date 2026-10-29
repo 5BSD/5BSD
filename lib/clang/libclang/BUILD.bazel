@@ -137,3 +137,165 @@ _AST_DEFINITIONS = {
 ) for output, config in _AST_DEFINITIONS.items()]
 cc_library(name = "ast_definition_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "ast_definition_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], visibility = ["//visibility:public"])
+
+_ARCH_BUILTINS = {
+    "clang/Basic/arm_cde_builtin_aliases.inc": [
+        "-gen-arm-cde-builtin-aliases",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtin_cg.inc": [
+        "-gen-arm-cde-builtin-codegen",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtin_sema.inc": [
+        "-gen-arm-cde-builtin-sema",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtins.inc": [
+        "-gen-arm-cde-builtin-def",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_fp16.inc": [
+        "-gen-arm-neon-sema",
+        "clang/Basic/arm_fp16.td",
+        "//contrib/llvm-project/clang/include:arm_fp16_inputs"
+    ],
+    "clang/Basic/arm_immcheck_types.inc": [
+        "-gen-arm-immcheck-types",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_aliases.inc": [
+        "-gen-arm-mve-builtin-aliases",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_cg.inc": [
+        "-gen-arm-mve-builtin-codegen",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_sema.inc": [
+        "-gen-arm-mve-builtin-sema",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtins.inc": [
+        "-gen-arm-mve-builtin-def",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_neon.inc": [
+        "-gen-arm-neon-sema",
+        "clang/Basic/arm_neon.td",
+        "//contrib/llvm-project/clang/include:arm_neon_inputs"
+    ],
+    "clang/Basic/arm_sme_builtin_cg.inc": [
+        "-gen-arm-sme-builtin-codegen",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_builtins.inc": [
+        "-gen-arm-sme-builtins",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_builtins_za_state.inc": [
+        "-gen-arm-sme-builtin-za-state",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_sema_rangechecks.inc": [
+        "-gen-arm-sme-sema-rangechecks",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_streaming_attrs.inc": [
+        "-gen-arm-sme-streaming-attrs",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sve_builtin_cg.inc": [
+        "-gen-arm-sve-builtin-codegen",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_builtins.inc": [
+        "-gen-arm-sve-builtins",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_sema_rangechecks.inc": [
+        "-gen-arm-sve-sema-rangechecks",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_streaming_attrs.inc": [
+        "-gen-arm-sve-streaming-attrs",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_typeflags.inc": [
+        "-gen-arm-sve-typeflags",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtin_cg.inc": [
+        "-gen-riscv-andes-vector-builtin-codegen",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtin_sema.inc": [
+        "-gen-riscv-andes-vector-builtin-sema",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtins.inc": [
+        "-gen-riscv-andes-vector-builtins",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtin_cg.inc": [
+        "-gen-riscv-sifive-vector-builtin-codegen",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtin_sema.inc": [
+        "-gen-riscv-sifive-vector-builtin-sema",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtins.inc": [
+        "-gen-riscv-sifive-vector-builtins",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtin_cg.inc": [
+        "-gen-riscv-vector-builtin-codegen",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtin_sema.inc": [
+        "-gen-riscv-vector-builtin-sema",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtins.inc": [
+        "-gen-riscv-vector-builtins",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/Basic"],
+    flags = [config[0]], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _ARCH_BUILTINS.items()]
+cc_library(name = "architecture_builtin_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "architecture_builtin_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], visibility = ["//visibility:public"])

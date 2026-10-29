@@ -6128,3 +6128,9 @@ Only generator declarations/header providers changed. Three previously omitted
 attribute generation recipes are now represented; no source probes or audit hooks
 were changed. Generated AST/attribute byte parity does not establish runtime
 instrumentation or compiler behavior.
+
+### 2026-10-29 Clang architecture builtin definitions
+
+Generation declarations and one Make prerequisite correction only; no compiler or
+TableGen source instrumentation changes. Target runtime/probe behavior is not
+established by generated-definition byte comparisons.

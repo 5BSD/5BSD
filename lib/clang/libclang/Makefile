@@ -1184,7 +1184,7 @@ clang/Basic/arm_fp16.inc: ${CLANG_SRCS}/include/clang/Basic/arm_fp16.td
 	    -o ${.TARGET} ${CLANG_SRCS}/include/clang/Basic/arm_fp16.td
 TGHDRS+=	clang/Basic/arm_fp16.inc
 
-clang/Basic/arm_immcheck_types.inc: ${CLANG_SRCS}/include/clang/Basic/arm_mve.td
+clang/Basic/arm_immcheck_types.inc: ${CLANG_SRCS}/include/clang/Basic/arm_sve.td
 	${CLANG_TBLGEN} -gen-arm-immcheck-types \
 	    -I ${CLANG_SRCS}/include/clang/Basic -d ${.TARGET:C/$/.d/} \
 	    -o ${.TARGET} ${CLANG_SRCS}/include/clang/Basic/arm_sve.td

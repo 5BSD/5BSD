@@ -11724,3 +11724,27 @@ no build-bsd.c/manual interface change. Generated definition parity does not qua
 compiled compiler behavior or installation. Remaining compiler definitions/libraries,
 world/kernel/pkgbase/bootstrap/runtime/performance gates remain open. Make stays
 production/default; no host installation or publication occurred.
+
+### 2026-10-29 ARM/RISC-V Clang builtin definitions
+
+Added 30 maintained architecture builtin generation actions covering ARM CDE/MVE,
+FP16/NEON, SVE/SME and RISC-V base/Andes/SiFive vector definitions. Each action has
+its actual command source and explicit recursive TableGen input closure. The
+architecture_builtin_headers provider exposes the generated compiler include tree.
+Corrected Make arm_immcheck_types.inc prerequisite from arm_mve.td to arm_sve.td,
+matching the input its existing command actually reads; emitted command unchanged.
+
+Maintained frontend bazel-clang-arch-20261029 (16 jobs) succeeds. All 30 output paths
+and 8,596,615 bytes match fresh invocations of the existing Make bootstrap generator
+exactly. Evidence: /usr/obj/usr/src/bazel-clang-arch-qualification-20261029, including
+recipe-derived inventory, reference tool hash/commands and per-output comparison.
+Initial reference helper incorrectly used the general include root; corrected to
+clang/Basic as maintained recipes specify, retaining its failed command receipt.
+Native build needed no source or sandbox changes. Reference tool not freshly rebuilt.
+
+Frontend review: existing format-5 inputs, native TableGen action and artifact
+collection cover this change; no build-bsd.c/manual interface change. Output parity
+does not qualify target machine-code generation, execution, ABI or CPU features.
+Remaining compiler definitions/libraries, world/kernel/pkgbase/bootstrap/runtime/
+performance gates stay open; Make remains production/default. No host installation
+or publication occurred.
