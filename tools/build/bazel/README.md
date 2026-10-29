@@ -35022,3 +35022,74 @@ pending. Future /usr/bin parent must include that recursive test installation.
 Frontend review: existing format-5 target/artifact handling suffices for this
 program target; no C/protocol change needed. Make remains production/default;
 complete world/kernel/pkgbase integration remains unfinished.
+
+### 2026-10-29 mkimg test migration in progress: execution ABI gate
+
+Added native declarations for both maintained shell test programs, Kyuafile,
+all 160 wildcard-selected .hex fixtures (same sed transformation as Make), and
+the 4 MiB partition fixture using source-built jot. Separate program and test
+installation archives preserve package directory ownership. The recursive
+installation_archives target selects tests through the existing tests setting.
+Declared 160 image matrix cases plus all 10 partition-offset regression cases;
+the baseline-mutating rebase case is deliberately not a test target. Expected
+image files and production sources have not been changed.
+
+This work is NOT qualified. Fresh rootless Make reference completed at
+/usr/obj/usr/src/bazel-mkimg-tests-reference-20261029, with orchestration and
+pending comparison scripts in bazel-mkimg-tests-qualification-20261029.
+Frontend run bazel-mkimg-tests-20261029 failed because execution jot required
+cap_rights_intersect from newer libc. Added explicit source-built libc/libsys
+runtime inputs. Run bazel-mkimg-tests-20261029-r2 then reached the documented
+host/source Capsicum ABI incompatibility: cap_rights_is_valid(src) assertion
+in cap_rights_intersect. bazel-mkimg-runtime-20261029 reproduces that failure
+before tests execute. No tests passed, no completed test archive exists, and
+installation parity is still pending. All three failure records are retained.
+
+Next: qualify a host-compatible execution-toolchain input for generators
+rather than treating a target-sysroot executable as universally host-runnable;
+then finish archive parity and run the native suite with a matching kernel.
+Do not disable Capsicum, suppress the assertion, substitute generated expected
+images, or count an analysis/build attempt as runtime proof. The earlier
+2026-10-28 Capsicum probe documents the semantic rights reassignment.
+
+Frontend review: existing format-5 explicit targets/tests/settings and SDK
+receipt handling support these declarations; no build-bsd C/protocol changes
+are needed for this batch. Any execution SDK changes must go through the
+maintained preparation path and receipts. Make stays production/default.
+
+### 2026-10-29 mkimg test installation parity; runtime still open
+
+Resolved the generator execution ABI problem through the existing explicit
+SDK additional_execution_tools input. The fixture action now requires
+@bsd_sdk//toolchain:extra_jot and its inspected runtime closure; it does not
+search PATH or switch automatically to a host command. The fresh SDK at
+/usr/obj/usr/src/bazel-mkimg-exec-sdk-20261029 selects /usr/bin/jot in tools.json
+and fingerprints it and its host dependencies. This is a bootstrap execution
+input, not a Bazel-built jot runtime qualification. Native tests still select
+the source-built jot and other source-built programs. The general native exec
+C++ toolchain still uses the target SDK; separating compatible bootstrap tools
+from target-program execution remains necessary beyond this specific generator.
+
+Frontend archive run bazel-mkimg-tests-20261029-r3 found exact fixture/script
+bytes but a Kyuafile ordering mismatch. Corrected ordering without relaxing
+comparison. Final bazel-mkimg-tests-20261029-r4 passes 170 distinct metadata
+records, 165 non-ELF payloads and one program/debug ELF pair against fresh
+rootless Make. Reports: bazel-mkimg-tests-qualification-20261029/
+r4-installation-parity.json and r4-elf-parity.json. fixture-inventory.json
+confirms the maintained matrix corresponds to all 160 source fixtures and
+records the 10 offset cases. Prior failed reports remain intact.
+
+Native runtime attempt bazel-mkimg-runtime-20261029-r2 builds the complete
+native_size_absolute_offset target but fails in ATF startup before its body:
+cap_rights_is_valid(src) assertion, followed by failure to determine the test
+source directory. The failure-test-reports directory retains the test result.
+This is the previously diagnosed source/host Capsicum rights ABI mismatch;
+none of the 170 runtime cases is qualified by this batch. Do not repeat all
+cases on this incompatible host or count archive parity as image correctness.
+A matching-kernel VM remains the runtime gate. No host installation occurred.
+
+Frontend review: the maintained SDK staging helper and format-5 input flow
+already support the extra execution tool. Updated bsd-build(8) to document the
+explicit jot selection and bootstrap/runtime distinction. No C protocol
+change is needed. Resource logs are retained, but this is not a controlled
+CPU/memory/disk-I/O comparison. Make remains production/default.

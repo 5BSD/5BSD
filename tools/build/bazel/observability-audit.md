@@ -5772,3 +5772,17 @@ No explicit DTRACE/SDT/audit references found in local mkimg C/header sources.
 No sources/instrumentation changed. Installation and ELF parity do not qualify
 image layout, sparse I/O, format compatibility, or kernel/device audit behavior.
 Existing image/offset tests remain to be migrated and executed.
+
+### 2026-10-29 mkimg test declarations (not runtime-qualified)
+
+The 160 image-format/scheme/geometry/sector cases and 10 partition-offset
+regressions are declared with original shell bodies and expected fixtures.
+Execution is blocked at source-built jot fixture generation by the already
+recorded host/source Capsicum rights ABI mismatch. No DTrace probes or audit
+hooks were introduced or removed. No runtime, image bootability, disk I/O,
+memory, or performance claim follows from this batch. See checkpoint evidence.
+
+Mkimg follow-up: declared bootstrap jot resolves fixture generation; exact
+installation parity passes in bazel-mkimg-tests-20261029-r4. Native ATF startup
+still hits the documented host Capsicum ABI failure; no image/runtime or
+performance qualification is claimed. Original probes/audit behavior is unchanged.

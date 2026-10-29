@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+# The generator uses an explicitly staged execution tool; tests use native jot.
+# Match Make's jot -b P 2097152 fixture: 4 MiB including newlines.
+write_file(name = "partition_repetitions", out = "partition-repetitions.txt", content = ["2097152", ""])
+bsd_script_output(name = "partition_data", script = "partition-data.sh", src = ":partition_repetitions", output = "partition_data_4M.bin", path_tools = {"@bsd_sdk//toolchain:extra_jot": "jot"}, shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:extra_jot_runtime"])
+# Source wildcard matches Make's .hex fixture inventory; no hand-picked subset.
+_HEX = glob(["*.hex"])
+[bsd_filter_fixture(name = "fixture_" + source[:-4], src = source, output = source[:-4], tool = "@bsd_sdk//toolchain:sed", arguments = ["-e", "/^#.*/D"], runtime = ["@bsd_sdk//toolchain:sed_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for source in _HEX]
+_PROGRAMS = ["mkimg_offset_test", "mkimg_test"]
+[bsd_script_wrapper(name = program, body = program + ".sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect") for program in _PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _PROGRAMS, interfaces = {program: "atf" for program in _PROGRAMS})
+_FILES = [(program, ":" + program, "0555") for program in _PROGRAMS] + [("Kyuafile", ":kyuafile", "0444"), ("partition_data_4M.bin", ":partition_data", "0444")] + [(source[:-4], ":fixture_" + source[:-4], "0444") for source in _HEX]
+[bsd_install_file(name = "install_" + filename, src = source, destination = "/usr/tests/usr.bin/mkimg/" + filename, owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for filename, source, mode in _FILES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + filename for filename, source, mode in _FILES], visibility = ["//usr.bin/mkimg:__pkg__"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin/mkimg": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Match the maintained matrix. Do not register the baseline-mutating rebase case.
+_IMAGE_CASES = [scheme + "_" + geometry + "_" + block + "_" + fmt
+    for geometry in ["1x1", "63x255"]
+    for block in ["512", "4096"]
+    for scheme in ["apm", "bsd", "ebr", "gpt", "mbr"]
+    for fmt in ["qcow", "qcow2", "raw", "vhd", "vhdf", "vhdx", "vmdk", "vmdks"]]
+_OFFSET_CASES = ["size_absolute_offset", "size_relative_offset", "file_absolute_offset",
+    "file_relative_offset", "size_no_offset", "file_colon_in_name",
+    "size_absolute_offset_4k", "size_relative_offset_4k", "file_absolute_offset_4k", "size_no_offset_4k"]
+_TOOLS = ["//bin/sh:sh", "//bin/cat:cat", "//bin/cp:cp", "//bin/rm:rm", "//bin/test:test",
+    "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check",
+    "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep",
+    "//usr.bin/sed:sed", "//usr.bin/diff:diff", "//usr.bin/jot:jot",
+    "//usr.bin/hexdump:hexdump", "//usr.bin/hexdump:od", "//usr.bin/mkimg:mkimg"]
+_LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared",
+    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+    "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared",
+    "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared",
+    "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared",
+    "//lib/libutil:util_shared", "//lib/libz:z_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"]
+[bsd_atf_test(name = "native_" + case, case_name = case, body = source,
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    runtime_bin = _TOOLS, runtime_lib = _LIBS,
+    data = [":partition_data"] + [":fixture_" + fixture[:-4] for fixture in _HEX],
+    size = "medium")
+ for source, cases in [("mkimg_test.sh", _IMAGE_CASES), ("mkimg_offset_test.sh", _OFFSET_CASES)]
+ for case in cases]
+test_suite(name = "tests", tests = [":native_" + case for case in _IMAGE_CASES + _OFFSET_CASES], visibility = ["//visibility:public"])

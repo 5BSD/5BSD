@@ -2222,6 +2222,14 @@ and
 is a nonempty array of directory paths.
 The execution-tools file names the generator executables and SDK inspection
 tools; tool receipts and runtime configuration use their maintained schemas.
+Build-time generators must use tools compatible with the execution host.
+For example, the mkimg test fixture generator requires an explicitly selected
+.Dq jot
+entry in
+.Dq additional_execution_tools .
+The staging helper fingerprints that executable and records its runtime
+closure; it does not search the host PATH as a fallback.
+This bootstrap tool does not replace the Bazel-built programs under test.
 The reference directory contains the verified Make installation and METALOG.
 The selected module lock is copied explicitly; repository downloads remain
 disabled during qualification.
