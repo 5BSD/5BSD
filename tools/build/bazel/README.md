@@ -39962,3 +39962,25 @@ configuration. Earlier component symbol/content checks remain separate evidence.
 Installed-header consumer linking and full-system qualification remain open.
 Existing build-bsd explicit inputs and backend output groups remain sufficient;
 no frontend contract change. Make remains production/default. No host install.
+
+### Installed Kerberos API consumer (2026-10-29)
+
+Direct host qualification bazel-krb-consumer-20261029 stages authenticated saved
+r3 aggregate headers/libraries into a private directory, compiles and links a C
+consumer, and executes principal parsing plus GSS name import/release. Compiler
+-M output confirms eight selected public header paths resolve to this native
+stage: krb5.h, krb5/krb5.h, gssapi/gssapi.h, kadm5/admin.h, kdb.h, krad.h,
+profile.h, verto.h. No source-tree include paths are supplied. Loader output
+confirms native staged krb5, gssapi_krb5, k5crypto, com_err and krb5support DSOs.
+The SDK supplies libc, libsys, libthr and libcrypto; the host supplies the kernel
+and runtime loader. This is a direct consumer check, not a Bazel test, independent
+bootstrap, all-public-API coverage, or cryptographic protocol qualification.
+
+Commands, compiler diagnostics, dependency list, link map, loader output and
+runtime result are saved under /usr/obj/usr/src/bazel-krb-consumer-20261029;
+script under bazel-krb-aggregate-reference-20261029/consumer.py requires a fresh
+output directory. Header declarations for administration/database/RADIUS/event
+APIs compile, but those APIs are not exercised by this consumer. Existing native
+runtime tests remain separate. No host installation occurred. This evidence-only
+check changes no build-bsd inputs or maintained backend contracts. Complete
+world/kernel/pkgbase, bootstrap, cache/sandbox and performance gates remain open.
