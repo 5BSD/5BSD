@@ -14538,3 +14538,33 @@ directories with LIB/PROG/PROG_CXX/PROGS/PROGS_CXX metadata lack a local BUILD f
 parent targets may cover them and multi-program values require expansion.
 Next Kerberos work includes administration/database support libraries, plugins,
 programs and daemons. Whole-world/kernel/pkgbase qualification remains open.
+
+### Native RADIUS and replication support libraries (2026-10-29)
+
+Added libkrad with six explicit sources, declared RADIUS/internal/event-loop
+headers, native Kerberos dependencies, static/shared outputs and maintained
+installation/debug rules. The shared graph consumes the profile API exported by
+native libkrb5, consistent with the existing profile export contract.
+
+Run bazel-krad-20261029 passes the three selected upstream tests t_attr, t_attrset
+and t_code against the native archive. These cover known attribute encoding,
+decoding, validation and code lookup. Packet, remote and client tests require a
+separate daemon fixture and remain outstanding; no live RADIUS authentication,
+transport, shared-library runtime or performance claim is made.
+
+Fresh Make reference bazel-krad-make-20261029 matches six installation records,
+all six ordered archive members, 119 static and 73 shared/debug global/weak
+symbols, dynamic dependencies/SONAME/flags, symlink, modes/ownership/tags and
+debuglink CRC. Evidence: /usr/obj/usr/src/bazel-krad-reference-20261029.
+
+Also added //krb5/lib/kprop_util:static_archive with declared kprop.h and internal
+Kerberos headers. Run bazel-kprop-util-20261029 matches fresh Make reference
+bazel-kprop-util-make-20261029: one ordered member, nine global/weak symbol records
+and zero independent installed records (INTERNALLIB). Evidence:
+/usr/obj/usr/src/bazel-kprop-util-reference-20261029. Replication protocol and
+server runtime remain unqualified; this comparison alone does not prove them.
+
+Reviewed build-bsd.c and format-5 source_graph.py; existing explicit labels/test
+selections cover both components without frontend/schema changes. Prepared SDK
+and host dependencies remain. No host installation, publication or reboot.
+Make remains production/default; whole-world/kernel/pkgbase gates remain open.

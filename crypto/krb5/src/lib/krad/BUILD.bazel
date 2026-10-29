@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["attr.c", "attrset.c", "client.c", "code.c", "packet.c", "remote.c", "t_attr.c", "t_attrset.c", "t_code.c", "t_test.c"])
+cc_library(name = "headers", hdrs = ["internal.h"], includes = ["."],
+    deps = ["//crypto/krb5/src/include:internal_headers", "//crypto/krb5/src/include:radius_headers"],
+    visibility = ["//krb5:__subpackages__"])
+cc_library(name = "test_headers", hdrs = ["t_test.h"], includes = ["."], deps = [":headers"],
+    visibility = ["//krb5:__subpackages__"])

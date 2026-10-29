@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Make declares INTERNALLIB: no independently installed payload.
+cc_library(
+    name = "kprop_util",
+    srcs = ["//crypto/krb5/src/kprop:kprop_util.c"],
+    deps = ["//crypto/krb5/src/kprop:headers", "//crypto/krb5/src/include:internal_headers"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//krb5:__subpackages__"],
+)
+bsd_component_archive(name = "static_archive", groups = [":kprop_util"], visibility = ["//visibility:public"])

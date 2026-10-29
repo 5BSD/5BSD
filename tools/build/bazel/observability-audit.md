@@ -6792,3 +6792,11 @@ The migrated RPC C sources contain no explicit DTrace provider or audit calls.
 Review authentication rejection and RPC transport/dispatch failures with KDC
 consumer observability. The XDR wire-format test does not establish authentication
 or audit coverage; no probes or audit submissions were added during conversion.
+
+### MIT RADIUS and kprop support (2026-10-29)
+
+The six migrated krad C sources and kprop_util.c have no explicit DTrace provider
+or audit calls. Review RADIUS retry/timeouts and replication connection/transfer
+failures at their consumer boundaries; avoid duplicating authentication audit
+records owned by KDC/OTP callers. Three upstream RADIUS unit executables pass;
+daemon-backed packet/client tests and replication runtime remain outstanding.
