@@ -11180,3 +11180,30 @@ change is required. No host installation occurred. Database transactions, lockin
 WAL/recovery, Kyua consumption, cross-target builds and performance remain
 unqualified. Structural parity does not assert instruction or runtime equivalence.
 Make remains production/default; full world/kernel/pkgbase qualification is open.
+
+### 2026-10-29 Kyua default native build and installation
+
+Added native Kyua with 115 common C++ sources plus selectable jail implementation
+(two sources) or the maintained no-jail stub. Dependencies are native lutok/Lua,
+SQLite, libutil, optional libjail, libm, libc++ and libcxxrt. Source libc++ headers
+are declared explicitly with -nostdinc++; lutok now uses that same header set.
+Initial runs retained in bazel-kyua-20261029 and subsequent install run directories
+exposed static libm/PIE linking, missing explicit C++ runtimes, and duplicate SDK/
+source C++ header search paths. Corrected dependencies/header selection without
+changing program sources or suppressing compiler/runtime checks.
+
+Maintained frontend /usr/obj/usr/src/bazel-kyua-install-20261029-r3 (16 jobs)
+matches fresh isolated Make reference bazel-kyua-reference-20261029 on 36 metadata
+records, 27 exact nonbinary payloads and one valid ELF/debug pair with matching
+global/undefined symbols and dynamic fields. Reports/scripts are in
+bazel-kyua-qualification-20261029. Payload includes maintained default config,
+manuals, report templates, SQL schema/migrations, documentation and selectable
+examples. This is default jail-enabled installation parity, not runtime proof.
+
+No-jail/no-examples configuration comparisons, runtime test execution/database
+operations, isolated jail execution, and rechecking standalone lutok archive
+parity after source-header selection remain open. No host installation, jail
+creation, module loading or test execution occurred. Native compilation uses
+existing format-5 frontend target/settings and installation helpers; no
+build-bsd.c/backend/manual interface change is required. Make remains the
+production/default system builder; full world/kernel/pkgbase is incomplete.
