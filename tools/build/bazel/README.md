@@ -41193,3 +41193,61 @@ The existing build-bsd/source_graph explicit-target interface supports these
 archives without frontend changes. Complete world/kernel, independent bootstrap,
 pkgbase publication, sandbox/cache and performance gates remain open; Make stays
 production/default.
+
+### libdl native filter candidate in progress (2026-10-29)
+
+Added native ordinary archive and shared-library candidates using the maintained
+libc dlfcn.c source, IN_LIBDL, scoped private headers, generated symbol versions,
+and the Make-defined ELF FILTER libc.so.7. The current rtld header dependency is
+amd64-specific, so targets explicitly constrain that platform. Ordinary and PIC
+objects intentionally differ: IN_LIBDL suppresses the ordinary object's symbols.
+Fresh Make build/install completed under bazel-libdl-make-20261029. Native run
+bazel-libdl-20261029 is pending; no native parity or runtime success is claimed.
+Installation targets and FILTER/version/runtime checks remain to be added.
+Existing build-bsd/source_graph explicit target inputs support this candidate
+without frontend changes. Make remains production/default and all full-system
+completion gates remain open.
+
+Libdl follow-up: the first native run stopped during analysis because the shared
+version-map generator had not exported visibility to libdl. Added that explicit
+consumer and installation/debug/archive targets matching the Make manifest.
+Run bazel-libdl-install-20261029 is pending. Verification explicitly compares
+ELF FILTER/AUXILIARY metadata as well as the usual dynamic tags; no passing
+artifact or runtime claim is made yet.
+
+### libdl installation and filter metadata qualified (2026-10-29)
+
+Run bazel-libdl-install-20261029 passes. Fresh Make comparison matches all six
+installation destinations, including owner/group/mode and non-directory package
+tags. Three regular payloads match archive member order, global/weak symbols and
+ordered dynamic metadata including FILTER/AUXILIARY, NEEDED and SONAME. The
+installed debug-link CRC matches the separately installed debug file. Static
+archive symbols remain empty as prescribed by IN_LIBDL without PIC. Evidence:
+/usr/obj/usr/src/bazel-libdl-reference-20261029/{install,payload}-audit.json and
+retained scripts; the native run retains hash-verified artifacts and its receipt.
+
+A native filter_test now explicitly dlopens the produced libdl shared object,
+resolves loader entry points through that handle, opens the main program,
+resolves printf, checks a nonexistent-symbol error and closes both handles.
+Run bazel-libdl-runtime-20261029 is pending. This test uses the host loader and
+SDK libc and will not qualify a complete native loader/libc system. Existing
+build-bsd/source_graph target/test inputs handle it without frontend changes.
+No full-system or performance gate is closed by this component comparison.
+
+Libdl runtime correction: initial filter_test failed at dlopen(NULL) after
+resolving dlopen directly with dlsym(filter_handle, "dlopen"). The identical
+probe compiled with host cc also fails against the fresh Make-built libdl.
+That lookup exposes libc's weak stub on this host; it is not the normal linked
+consumer resolution through rtld. The revised native test links via CcInfo and
+dynamic_deps to dl_shared, uses normal loader entry points, and separately opens
+the explicit artifact and checks its symbol exports. Run
+bazel-libdl-runtime-20261029-r2 remains pending. The initial failure is preserved
+in the first run's failure-test-reports; it is not reported as a production fix.
+
+Libdl runtime result: bazel-libdl-runtime-20261029-r2 passes its one native
+consumer test and rebuilds the installation archive. Saved test ELF inspection
+confirms NEEDED libdl.so.1 and the Bazel native solib RUNPATH, alongside libc.so.7.
+The successful case covers linked loader entry points, explicit filter loading,
+symbol lookup, missing-symbol errors and handle closure on the current host.
+It does not qualify a wholly native libc/rtld or other architectures. Full-system,
+bootstrap, packaging, cache and performance gates remain open.

@@ -7224,3 +7224,19 @@ comparisons pass; this does not establish runtime observability coverage. liby
 contains yacc main/error defaults and libcompat contains legacy regex, rexec and
 cuserid interfaces; any audit requirement for remote authentication in rexec
 needs a separate semantic review, not an inferred probe added during migration.
+
+### libdl (2026-10-29)
+
+libdl retains libc's existing weak dlfcn stubs and ELF filtering to libc.so.7;
+the migration adds no runtime instrumentation. Shared symbol versions and FILTER
+metadata match Make. Dynamic-loader instrumentation belongs to the actual rtld
+implementation; filter artifact parity does not qualify its DTrace probes or
+audit lifecycle. Native explicit-filter runtime testing is pending.
+
+Libdl runtime result: bazel-libdl-runtime-20261029-r2 passes its one native
+consumer test and rebuilds the installation archive. Saved test ELF inspection
+confirms NEEDED libdl.so.1 and the Bazel native solib RUNPATH, alongside libc.so.7.
+The successful case covers linked loader entry points, explicit filter loading,
+symbol lookup, missing-symbol errors and handle closure on the current host.
+It does not qualify a wholly native libc/rtld or other architectures. Full-system,
+bootstrap, packaging, cache and performance gates remain open.

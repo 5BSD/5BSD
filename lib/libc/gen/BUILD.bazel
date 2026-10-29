@@ -504,3 +504,5 @@ rtld_libc_source_exports('lib/libc/gen')
 # These local directory headers must not import normal libc namespace headers.
 cc_library(name = "rtld_directory_headers", hdrs = ["gen-private.h", "telldir.h"],
     strip_include_prefix = ".", visibility = ["//libexec/rtld-elf:__pkg__"])
+
+exports_files(["dlfcn.c"], visibility = ["//lib/libdl:__pkg__"])
