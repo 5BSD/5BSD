@@ -16453,3 +16453,35 @@ bootstrap network/runtime tests remain open. Reviewed build-bsd/source_graph exp
 target inputs: no interface change is required for this executable. Whole-system,
 kernel/pkgbase/bootstrap and sandbox/cache/performance gates remain incomplete;
 Make remains production/default.
+
+### Native pkg bootstrap installation and repository inputs (2026-10-29)
+
+Added executable/manual/debug installation and all four maintained repository
+configuration files. Repository selection is native Starlark: version_branch and
+target CPU determine Make's CURRENT/release/other defaults; pkg_config_branch can
+select a maintained channel, and pkg_repository_config is a label flag for an
+explicit declared file. Missing release input without an override fails analysis.
+Custom file installation follows Make's .conf suffix normalization. 5BSD.conf.in
+is installed unchanged as 5BSD.conf, matching Make's copy-only rule. Configuration
+payloads retain config tags and 0644 modes. No source-tree-generated file is read.
+
+Run bazel-pkg-bootstrap-install-20261029-r3 passes through build-bsd with 16 jobs.
+The CURRENT value is supplied in install-inputs.json from the reference release
+metadata, not hardcoded in the rule. Fresh Make build/install/installconfig matches
+all ten changed installation destinations, seven regular payloads and one debug
+link. All repository configuration bytes match; no missing/extra paths or ownership/
+mode/non-directory tag mismatches remain. Comparison first caught a missing /etc/pkg
+directory record and incorrect manual section; both were corrected. Initial branch
+parsing also required correcting Starlark split syntax. Failure evidence is retained.
+Evidence: /usr/obj/usr/src/bazel-pkg-bootstrap-reference-20261029/ contains
+install-inputs.json, make-install.py, install-audit.py, payload-audit.py and
+payload-audit.json; independent reference is bazel-pkg-bootstrap-install-make-20261029.
+
+Only the current amd64/CURRENT installation combination has been qualified here.
+Release/other-CPU/channel/file overrides and missing-input rejection require explicit
+variant tests next. This does not qualify repository access, signatures, bootstrap
+installation or pkgbase publication. build-bsd/source_graph's existing format-5 typed
+build-settings interface accepts the new string/label settings without a frontend
+API change; these setting names and their requirements are now documented here.
+Complete world/kernel/bootstrap/sandbox/cache/performance gates remain open and
+Make stays production/default. No host installation or network operation occurred.

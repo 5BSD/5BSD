@@ -455,3 +455,7 @@ config_setting(name = "suid_k5su_enabled", flag_values = {":enable_suid_k5su": "
 # libcuse Makefile's optional HAVE_DEBUG diagnostics.
 bool_flag(name = "cuse_debug", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "cuse_debug_enabled", flag_values = {":cuse_debug": "true"}, visibility = ["//visibility:public"])
+
+# pkg(7) repository selection: release/platform defaults or explicit file override.
+string_flag(name = "pkg_config_branch", build_setting_default = "", visibility = ["//visibility:public"])
+label_flag(name = "pkg_repository_config", build_setting_default = "//usr.sbin/pkg:default_repository", visibility = ["//visibility:public"])
