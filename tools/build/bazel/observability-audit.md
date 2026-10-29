@@ -5732,3 +5732,10 @@ No explicit SDT/DTRACE/audit references found in local w C/header sources.
 Production sources and shared ps formatter unchanged. Kernel/libkvm process-query
 and login-session behavior remain runtime qualification items; source scanning
 and ELF parity do not establish live tracing/audit coverage.
+
+### 2026-10-29 sockstat
+
+Preserved socketsnapshot provider and tracing wrapper. Native/Make schemas and
+two ordinary/two enabled patched sites match; disabled variant omits DOF. No
+explicit audit references found in command C/header sources; kernel auditing may
+still apply. Live snapshot tracing, Casper IPC and output tests remain pending.

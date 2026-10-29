@@ -10191,3 +10191,29 @@ Frontend review: existing format-5 target/artifact path covers this change;
 no C/protocol update needed. /usr/bin parent assembly, remaining components,
 world/kernel/pkgbase, runtime and performance qualification remain incomplete.
 Make remains production/default.
+
+### 2026-10-29 sockstat executable, Casper and DTrace
+
+Added native sockstat compilation and program installation with jail/libxo,
+explicit Casper service headers, conditional Casper/service linkage and
+WITH_CASPER, and socketsnapshot provider transformation with
+WITH_COVERAGE_DTRACE. Header-only requirements remain declared when Casper is
+disabled, matching the command's unconditional service-header includes. No
+production source modifications. Existing compiled test suite still needs native
+migration and installation before the complete component is qualified.
+
+Maintained frontend builds (16 jobs) under /usr/obj/usr/src:
+bazel-sockstat-20261029 and bazel-sockstat-disabled-20261029. Fresh Make roots:
+bazel-sockstat-native-reference-20261029 and bazel-sockstat-disabled-reference-20261029.
+Scripts: bazel-sockstat-qualification-20261029. Each variant matches five metadata
+records, exact manual bytes, valid debug linkage, global/undefined symbols and
+dynamic dependencies/search paths. Enabled provider schemas/attributes match
+Make; two ordinary and two enabled sites validate against function bounds and
+patched instructions in both builds. Disabled output has no DOF or direct
+Casper/service shared-library dependencies. Reports in qualification/sockstat.
+
+DTrace qualification uses the existing experimental section archive setting.
+No live sockets, Casper IPC, tracing or audit behavior tested. Full instruction
+parity, compiled tests, /usr/bin parent integration and broader runtime/performance
+gates remain. Frontend review: existing format-5 settings/artifact capture cover
+this target; no C/protocol change required. Make remains production/default.
