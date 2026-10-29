@@ -6402,3 +6402,12 @@ need linked-tool tests. Evidence:
 15 native outputs match Make bytes. No probe/audit changes; generated-code tracing,
 backend diagnostics and execution remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-x86-tables-qualification-20261029`.
+
+### X86 backend (2026-10-29)
+
+87 extras-enabled objects preserve upstream sources, including speculative-execution
+and load-value-injection mitigation passes and unwind/debug machinery. No DTrace
+probe/audit changes. ELF type/binding/visibility parity is checked; initial missing
+hidden-visibility build is rejected. Runtime mitigation correctness, unwind behavior
+and generated-code tracing remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-llvm-x86-backend-qualification-20261029`.

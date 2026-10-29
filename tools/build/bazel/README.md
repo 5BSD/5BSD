@@ -37447,3 +37447,31 @@ invalidation, independent bootstrap and comparative performance remain open.
 Frontend review: build-bsd.c/format-5 backend accepts these targets; no input/staging/
 security/manual contract change. Full world/kernel/pkgbase gates remain open.
 Make remains production/default. No installation/publication occurred.
+
+### X86 backend corrected build qualified (2026-10-29)
+
+Continuation of the preceding pending entry: corrected frontend run
+`/usr/obj/usr/src/bazel-llvm-x86-backend-20261029-r2` completed. All 87
+extras-enabled PIC objects match fresh Make ELF symbol type, binding, visibility,
+defined/undefined state and name. Archive member multiplicities and resolved
+source inventories match. Stronger ELF verifier rejects all 87 objects from the
+initial run lacking -fvisibility=hidden, demonstrating the check detects this
+actual regression. Initial run is retained and remains unqualified.
+
+Evidence/scripts: `/usr/obj/usr/src/bazel-llvm-x86-backend-qualification-20261029`.
+The installed-world target includes 85 core sources, the disassembler and optional
+MCA extension, generated-table dependencies and private .h/.def files. Native AMD64
+llvm_target_x86 defaults true; final aggregate compiler target registration and
+cross-platform/default target-all semantics remain unfinished. Bootstrap TOOLS_PREFIX
+selection is separate and unqualified. No compiler source/sandbox workaround.
+
+ELF parity is not instruction identity or runtime code-generation qualification.
+Other backends, whole-compiler linkage/bootstrap, world/kernel/pkgbase/runtime and
+comparative CPU/memory/disk gates remain open. Concurrent reference/native builds
+are not performance comparisons. Frontend review: existing build-bsd.c/format-5
+backend accepts the new boolean; manual updated. Make remains production/default;
+no installation/publication occurred.
+
+The separate `bazel-llvm-x86-default-20261029` inventory-only run resolves 86
+sources matching expanded Make with clang_extras disabled. It is not a separate
+default compiled/runtime qualification.

@@ -3878,3 +3878,13 @@ The native LLVM XRay, DWARFCFIChecker, DWP and MCA components require
 Shared target-machine support and Debuginfod sources are installed-world components.
 Debuginfod uses the maintained LLVM configuration, which disables curl and httplib;
 component compilation does not establish HTTP functionality.
+
+.Pp
+The native AMD64 LLVM X86 component uses the boolean
+.Cm //tools/build/bazel/config:llvm_target_x86
+setting, which defaults to true. Setting it to false makes the explicit X86
+component incompatible; final compiler target registration remains a separate
+integration requirement. Its installed-world source selection includes the
+disassembler and adds the MCA extension when
+.Cm clang_extras
+is enabled. Cross-platform defaults and bootstrap selection remain unqualified.
