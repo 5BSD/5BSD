@@ -6777,3 +6777,11 @@ or audit submission calls. Consider event registration/dispatch/failure probes
 when reviewing KDC/kadmind observability; absence here does not establish missing
 security auditing in their consumers. One native pipe-read lifecycle test passes;
 signal, child, timeout callback and concurrency behavior are not qualified.
+
+### MIT Kerberos apputils (2026-10-29)
+
+The migrated net-server.c and udppktinfo.c contain no explicit DTrace provider
+or audit submission calls. Review connection acceptance, dispatch failure and
+UDP ancillary-data errors for useful probes when qualifying KDC/kadmind. Preserve
+consumer-owned authentication auditing; this archive comparison does not prove
+those daemon paths or justify adding duplicate security events.

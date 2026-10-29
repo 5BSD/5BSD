@@ -14479,3 +14479,25 @@ kernel/rtld dependencies remain; this is not whole-world/package qualification.
 Reviewed build-bsd.c and format-5 source_graph.py: existing explicit target/test
 inputs support this component with no frontend contract change. Make remains
 production/default; no host installation, publication or reboot.
+
+### Native Kerberos server support archive (2026-10-29)
+
+Added //krb5/lib/apputils:static_archive with explicit net-server.c and
+udppktinfo.c sources. Declared server headers, bundled GSS-RPC public headers,
+the maintained FreeBSD gssrpc/types.h, generated GSSAPI public headers and verto
+headers as CcInfo dependencies. No configure output or host header scan supplies
+the new dependency graph. This component is INTERNALLIB under Make and has no
+separate installation manifest or payload.
+
+Run bazel-apputils-20261029 builds successfully. Fresh Make reference
+bazel-apputils-make-20261029 matches both ordered archive members and all 86
+global/weak symbol records. Its install adds zero records beyond distrib-dirs.
+Repeatable evidence: /usr/obj/usr/src/bazel-apputils-reference-20261029/verify.py
+and comparison.json. This is an archive comparison, not live server/network
+qualification. The new GSS-RPC header targets establish compilation dependencies;
+their standalone header package installation remains to be implemented and
+qualified with the RPC library. Prepared SDK and host dependencies remain.
+
+Reviewed build-bsd.c and format-5 source_graph.py: explicit archive labels are
+already supported; no frontend input contract change is required. Make remains
+production/default; no host installation, publication or reboot.

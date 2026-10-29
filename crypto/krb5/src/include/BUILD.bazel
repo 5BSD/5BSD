@@ -4,3 +4,11 @@ cc_library(name = "support_headers", hdrs = ['k5-platform.h', 'k5-thread.h', 'k5
 
 cc_library(name = "internal_headers", hdrs = ["k5-der.h", "CredentialsCache.h", "foreachaddr.h", "k5-regex.h", "k5-spake.h", "k5-tls.h", "k5-unicode.h", "kcm.h", "kdb.h", "k5-int.h", "k5-trace.h", "k5-int-pkinit.h", "krb5.h", "//crypto/krb5/src/include/krb5:authdata_plugin.h"], includes = ["."],
     deps = [":support_headers", "//krb5/include:config_headers", "//krb5/include/krb5:headers", "//krb5/util/profile:headers", "//crypto/krb5/src/util/et:headers"], visibility = ["//contrib/pam-krb5:__pkg__", "//lib/libpam/modules/pam_ksu:__pkg__", "//krb5:__subpackages__", "//crypto/krb5/src/lib/crypto:__pkg__", "//crypto/krb5/src/lib/krb5:__pkg__", "//crypto/krb5/src/lib/gssapi:__subpackages__"])
+
+cc_library(
+    name = "server_headers",
+    hdrs = ["adm_proto.h", "net-server.h"],
+    includes = ["."],
+    deps = [":internal_headers", "//crypto/krb5/src/include/gssrpc:headers", "//crypto/krb5/src/util/verto:headers"],
+    visibility = ["//krb5:__subpackages__"],
+)
