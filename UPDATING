@@ -27,6 +27,16 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261029:
+	The OpenTelemetry services (otelpfd, otelauditd and the local agent)
+	run as the new _otel user and group (uid/gid 830), which owns
+	/var/spool/otel.  Before installworld, add them, for example with
+	etcupdate or by merging /usr/src/etc/master.passwd and
+	/usr/src/etc/group; installworld refuses to run while they are
+	missing, as for the other users the mtree specifications name.
+	Staging installs with -DNO_ROOT on a host without them need
+	-DDB_FROM_SRC.
+
 20261021:
 	pf ruleset checksums ("pfctl -vsi") count the 5BSD jail and
 	dummynet fields only in rules that use them, so a ruleset without

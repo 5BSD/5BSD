@@ -1450,6 +1450,8 @@ CHECK_UIDS+=	smmsp
 CHECK_GIDS+=	smmsp
 CHECK_UIDS+=	unbound
 CHECK_GIDS+=	unbound
+CHECK_UIDS+=	_otel
+CHECK_GIDS+=	_otel
 _installcheck_world: __installcheck_UGID
 __installcheck_UGID: .PHONY
 .for uid in ${CHECK_UIDS}
