@@ -14708,3 +14708,39 @@ all date grammar forms remain unqualified. Prepared SDK and host dependencies
 remain. Reviewed frontend explicit-label support: build-bsd.c and format-5
 source_graph.py need no input-contract change. Make stays production/default;
 no host installation, publication or reboot. Whole-system gates remain open.
+
+### Native ktutil and PIE support-library variant (2026-10-29)
+
+Added ktutil with declared native Kerberos, readline/edit and system-library
+dependencies, shared command-table generation, and utility/manual/debug install
+rules. Integration exposed a missing link dependency and object variant in the
+internal ss graph: Make's krb5ss depends on edit and supplies a separate PIE
+archive. Added the native edit dependency and explicit krb5ss_pie/-fpie/PIC
+variant while retaining the ordinary archive. ktutil selects the PIE variant.
+An initial copied unrelated XDR-test stanza was removed before qualification.
+
+Final run bazel-ktutil-runtime-20261029-r3 passes the native Bazel PTY lifecycle
+test: dummy principal/key addition, version-2 keytab creation, clear/list-empty,
+reload/list-present, delete/list-empty, successful exit and temporary-file
+cleanup. HOME/config paths and dynamic-library inputs are controlled. A batch
+pipe trial exited without creating a keytab and was not accepted as evidence.
+The PTY harness initially deadlocked by waiting without draining output at exit;
+then an iteration-bound wait raced with immediate POLLHUP. Kernel-stack evidence
+identified the drain wait. The corrected harness drains output and uses a
+monotonic shutdown deadline. Failed test runs remain recorded.
+
+The final artifact comparison matches Make's five installation records, 94
+program and 133 debug global/weak symbols, dynamic dependencies/PIE flags,
+debuglink CRC, metadata and byte-identical compressed manual. The native PIE ss
+archive also matches Make's 14 ordered members and 152 global/weak symbols.
+Fresh reference: bazel-ktutil-make-20261029; evidence and verifier:
+/usr/obj/usr/src/bazel-ktutil-reference-20261029. A loader audit with the same
+library search path confirms every resolved library is declared (native
+Kerberos/edit/tinfo/sys/crypto, SDK libc/thr); hashes are recorded. Host kernel,
+rtld and remaining SDK dependencies persist.
+
+This qualifies one interactive keytab lifecycle, not password-derived keys,
+network/KDC authentication, every terminal/locale, independent bootstrap or
+performance. Reviewed build-bsd.c/format-5 source_graph.py: existing target/test
+inputs support this component without schema changes. Make stays production;
+no host installation, publication or reboot. Whole-system gates remain open.

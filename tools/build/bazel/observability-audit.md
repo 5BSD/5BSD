@@ -6839,3 +6839,10 @@ audit submission calls. Review command failure/dispatch observability together
 with kadmind's authoritative audit trail; do not log secret command arguments.
 Parser tests and artifact comparisons do not establish interactive or remote
 administrative operation auditing.
+
+### MIT ktutil (2026-10-29)
+
+The migrated ktutil.c/ktutil_funcs.c contain no explicit DTrace provider or audit
+submissions. Review keytab write failures and entry mutation observability while
+excluding key material/passwords. The PTY test qualifies dummy-key local lifecycle
+operations only; no authoritative KDC or system audit coverage is inferred.

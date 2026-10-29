@@ -10,9 +10,12 @@ filegroup(name = "error_header", srcs = [":errors"], output_group = "header")
 cc_library(name = "error_headers", hdrs = [":error_header"], includes = ["."],
     strip_include_prefix = ".", include_prefix = "ss", visibility = ["//visibility:public"])
 mit_command_table(name = "requests", src = "//crypto/krb5/src/util/ss:std_rqs.ct", output = "std_rqs.c")
-cc_library(name = "krb5ss",
+[cc_library(name = "krb5ss" + suffix,
     srcs = ["//crypto/krb5/src/util/ss:" + f for f in ['data.c', 'error.c', 'execute_cmd.c', 'help.c', 'invocation.c', 'list_rqs.c', 'listen.c', 'pager.c', 'parse.c', 'prompt.c', 'request_tbl.c', 'requests.c']] + [":requests", ":error_source"],
-    deps = ["//crypto/krb5/src/util/ss:headers", "//contrib/libedit:readline_compat_headers", "//lib/libedit/readline:history_compat_headers", "//crypto/krb5/src/util/et:headers"],
-    local_defines = ["HAVE_READLINE=1"], linkstatic = True,
+    deps = ["//lib/libedit:edit", "//crypto/krb5/src/util/ss:headers", "//contrib/libedit:readline_compat_headers", "//lib/libedit/readline:history_compat_headers", "//crypto/krb5/src/util/et:headers"],
+    local_defines = ["HAVE_READLINE=1"] + defines, copts = flags, linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//krb5:__subpackages__"])
+ for suffix, flags, defines in [("", [], []), ("_pie", ["-fpie"], ["PIC"])]]
 bsd_component_archive(name = "static_archive", groups = [":krb5ss"], visibility = ["//visibility:public"])
+
+bsd_component_archive(name = "pie_archive", groups = [":krb5ss_pie"], visibility = ["//visibility:public"])
