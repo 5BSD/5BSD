@@ -11595,3 +11595,29 @@ Frontend review: normal format-5 targets/settings and artifact collection suppor
 the new tool/action; no new build-bsd.c/backend/manual interface is required.
 Full llvm-tblgen/clang-tblgen, compiler graph, world/kernel/pkgbase/runtime/cache/
 performance qualification remain open; Make stays production/default.
+
+### 2026-10-29 full native llvm-tblgen bootstrap
+
+Added //usr.bin/clang/llvm-tblgen:bootstrap with all 72 maintained Make source
+entries, declared TableGen headers/fold definitions and the generated GenVT.inc
+provider from native llvm-min-tblgen. Execution actions retain native library
+runtime dependencies and cfg=exec generator selection. Added real attributes and
+intrinsic_enums actions; the latter declares the Intrinsics*.td family plus
+ValueTypes/SDNodeProperties inputs and its include root. No prebuilt generated
+header is substituted for the minimal-to-full generator dependency.
+
+Maintained 16-job frontend bazel-llvm-tblgen-generated-20261029 succeeds for the
+target and execution configurations and both sandboxed generation actions.
+Attributes.inc (17,018 bytes) and IntrinsicEnums.inc (37,170 bytes) match fresh
+invocations of the existing Make bootstrap tool exactly. Evidence and repeatable
+verify.py: /usr/obj/usr/src/bazel-llvm-tblgen-qualification-20261029. The reference
+generator itself was not freshly rebuilt. Initial build failure for undeclared
+X86ManualFoldTables.def is retained; the actual source definition was added to
+the header dependency without changing source or sandbox policy.
+
+This qualifies these two generation modes and their input closure, not every
+backend, cross-architecture execution, installed utility/package metadata or
+complete compiler bootstrap. Frontend review: existing format-5 target/settings,
+artifact collection and maintained TableGen backend need no new build-bsd.c or
+manual interface. Full Clang/LLVM, world/kernel/pkgbase/runtime/cache/performance
+gates remain open; Make stays production/default. No host installation occurred.

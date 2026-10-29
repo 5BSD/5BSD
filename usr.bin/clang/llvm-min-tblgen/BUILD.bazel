@@ -23,3 +23,6 @@ bsd_tablegen(
     tool = ":bootstrap",
     visibility = ["//visibility:public"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "value_type_headers", hdrs = [":value_types"], strip_include_prefix = ".", visibility = ["//visibility:public"])

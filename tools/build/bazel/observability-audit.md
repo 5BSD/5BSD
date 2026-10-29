@@ -6093,3 +6093,10 @@ Three maintained generator source files are carried into the native graph.
 No program-source instrumentation was changed. Native libthr remains a declared
 dependency, preserving its configured DTrace generation path. Qualification here
 executes value-type generation only; no tracing-session claim is made.
+
+### 2026-10-29 full LLVM TableGen bootstrap
+
+All 72 maintained source entries are represented. A scan of TableGen sources for
+DTRACE, SDT_PROBE and audit_submit found no matches. No instrumentation was
+removed or upstream source changed. Native runtime library dependencies retain
+their existing configured instrumentation; no tracing-session test was run.
