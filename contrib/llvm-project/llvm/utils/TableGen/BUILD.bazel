@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["Basic/TableGen.cpp", "Basic/VTEmitter.cpp", "Basic/TableGen.h", "llvm-min-tblgen.cpp"], visibility = ["//usr.bin/clang/llvm-min-tblgen:__pkg__"])

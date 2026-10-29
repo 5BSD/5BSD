@@ -11562,3 +11562,36 @@ source_graph.py setting handling cover this addition; build-bsd.c/backend/manual
 need no new interface. TableGen executable/actions, full LLVM/Clang, world/kernel,
 pkgbase/bootstrap/runtime/performance gates remain open. Make stays production/
 default; no host installation, VM or publication occurred.
+
+### 2026-10-29 native llvm-min-tblgen and first TableGen action
+
+Added //usr.bin/clang/llvm-min-tblgen:bootstrap with the maintained three-source
+bootstrap inventory and native llvmminimal, C++, execinfo, terminfo and threading
+dependencies. This is explicitly a build-time generator, not the installed
+full-libllvm compiler utility. Added bsd_tablegen with cfg=exec tool selection,
+FilesToRunProvider executable/runfiles, declared .td inputs/includes/output and
+argument-vector invocation without a shell. The value_types target generates
+llvm/CodeGen/GenVT.inc from the real ValueTypes.td input.
+
+First executable build succeeded, but first execution action failed because
+source libthr requires __uexterr_set_ue absent from host libc. Declared matching
+native libc/shared_link_interface and libc/libsys dynamic dependencies; retained
+failure evidence. The bootstrap tool opts into the existing runtime-search-path
+feature so execution uses its declared build libraries. No host library fallback
+or source patch was introduced.
+
+Maintained frontend bazel-llvm-min-tblgen-generated-20261029-r2 (16 jobs) succeeds
+including the sandboxed BSDTableGen action and separate execution-configuration
+tool build. Exact 44,357-byte GenVT.inc matches a fresh invocation of the existing
+Make bootstrap generator, SHA256
+7c495b06287ade97e34af8967228c93df905793a3688412c94c83f5282a2d431.
+Reference tool/input hashes, scripts, output and generator-parity.json are under
+/usr/obj/usr/src/bazel-llvm-min-tblgen-qualification-20261029. The Make reference
+generator itself was not rebuilt in this batch. This verifies one real generated
+header, not all TableGen modes, installed compiler metadata, cross-architecture
+execution, complete bootstrap independence, or system performance.
+
+Frontend review: normal format-5 targets/settings and artifact collection support
+the new tool/action; no new build-bsd.c/backend/manual interface is required.
+Full llvm-tblgen/clang-tblgen, compiler graph, world/kernel/pkgbase/runtime/cache/
+performance qualification remain open; Make stays production/default.

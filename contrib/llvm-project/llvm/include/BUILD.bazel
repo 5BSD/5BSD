@@ -7,3 +7,5 @@ cc_library(
     deps = ["//contrib/llvm-project/llvm/include/llvm/Demangle:headers", "//lib/clang/include:headers"],
     visibility = ["//visibility:public"],
 )
+
+exports_files(["llvm/CodeGen/ValueTypes.td"], visibility = ["//usr.bin/clang/llvm-min-tblgen:__pkg__"])

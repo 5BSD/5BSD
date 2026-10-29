@@ -6086,3 +6086,10 @@ audit_submit references; none found. No probes or audit integration were removed
 This internal build-tool library does not by itself justify adding privileged
 operation audit events. TableGen execution and complete compiler/runtime tracing
 remain outside this archive comparison.
+
+### 2026-10-29 llvm-min-tblgen bootstrap
+
+Three maintained generator source files are carried into the native graph.
+No program-source instrumentation was changed. Native libthr remains a declared
+dependency, preserving its configured DTrace generation path. Qualification here
+executes value-type generation only; no tracing-session claim is made.
