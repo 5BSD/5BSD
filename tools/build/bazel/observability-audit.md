@@ -7106,3 +7106,10 @@ archive/DSO parity establishes none of those behaviors.
 The maintained libbsnmp malformed-ASN.1 regression now passes through Bazel ATF
 with and without OpenSSL. This checks a parser error return only; it supplies no
 new evidence for SNMP daemon/network logging, probes or audit delivery.
+
+### bsnmpget/bsnmpwalk/bsnmpset (2026-10-29)
+
+Native client and four-source internal library preserve maintained sources; their
+Makefiles declare no DTrace provider. Source syslog/error paths remain unchanged.
+Authentication, SNMP writes, transport failures and server-side audit behavior
+still require runtime qualification. Build/install parity is not network coverage.

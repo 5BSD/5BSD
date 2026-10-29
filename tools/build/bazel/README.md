@@ -40523,3 +40523,33 @@ Generator implementation/tool mutation and sandbox/remote-cache gates remain ope
 Existing build-bsd and source_graph explicit-input interfaces suffice; no frontend
 changes required. Make remains production/default; full-system qualification and
 comparative CPU/memory/disk performance remain outstanding.
+
+### Native SNMP client tools and internal library (2026-10-29)
+
+Added the four-source internal libbsnmptools and bsnmpget, which supplies installed
+bsnmpwalk/bsnmpset through hardlinks. Explicit public/header dependencies select
+the native libbsnmp. Ordinary and PIE internal library variants preserve Make's
+separate compilation requirements. Initial PIE executable linkage rejected ordinary
+objects; the consumer now selects the explicitly -fPIE compiled variant.
+
+Run bazel-bsnmptools-20261029-r2 passes through build-bsd with 16 jobs. Against
+fresh Make all/install, both internal archives match global/weak symbols and
+ordered source-member identities. Ordinary member names match exactly; the PIE
+archive has Bazel .o versus Make .pieo member suffixes, explicitly recorded in
+comparison.json. These internal archives are not installed. The executable's
+symbols and ordered ELF dependency/security metadata match Make.
+
+All nine installation records match, including executable/manual hardlink aliases.
+Three regular payloads pass manual bytes or ELF symbol/dynamic comparisons; the
+debug-link name/CRC passes. Hardlink targets resolve to identical archive payloads
+and corresponding shared Make-stage inodes. The initial payload verifier wrongly
+required binary aliases to be byte-identical to Make; corrected it to verify
+hardlink identity while retaining symbol/dynamic verification of the target.
+
+Evidence/verifiers: /usr/obj/usr/src/bazel-bsnmptools-reference-20261029/
+verify.py, comparison.json, install-audit.py,json and payload-audit.py,json.
+No client network operations, installed default definitions, SNMP server interaction
+or daemon/modules are qualified by these build/install checks. Native daemon tree
+and OID generation remains next. Reviewed frontend/backend: existing explicit
+targets and metadata groups suffice; no build-bsd interface changes required.
+Make stays production/default; full-system/bootstrap/cache/performance gates remain.
