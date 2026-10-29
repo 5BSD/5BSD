@@ -10621,3 +10621,31 @@ Frontend review: existing format-5 explicit targets/artifact path supports the
 CLI candidate; no build-bsd C/protocol/manual change is needed for it. Library
 and whole-system packaging must be completed before any production/default
 switch. Make remains production/default.
+
+### 2026-10-29 libpkgconf complete default installation candidate
+
+Added native private-library installation: five maintained headers, static
+archive, libprivatepkgconf.so.5, debug companion, linker symlink and all three
+manuals. Preserved pkgconf/dev/dbg ownership and MAN versus MANNODEV package
+semantics. The initial archive had an extra component-owned include directory;
+Make relies on mtree for it. Removed the duplicate record without weakening
+comparison. No production library sources or public ABI name changed.
+
+Final frontend run /usr/obj/usr/src/bazel-libpkgconf-20261029-r2 (16 jobs) passes
+against fresh rootless Make at bazel-libpkgconf-reference-20261029. Evidence in
+bazel-libpkgconf-qualification-20261029: r2-installation-parity.json establishes
+14 distinct metadata records, symlink parity and eight byte-identical header/
+manual payloads. r2-archive-parity.json compares all 21 static members (only
+.nopic filename suffix normalized) and global/undefined symbol names/types.
+r2-elf-parity.json establishes valid shared-library debug linkage and matching
+symbols/dynamic fields. These checks do not establish instruction identity or
+ABI type-layout equivalence. Initial failure report remains retained.
+
+Make's ordinary install already installs the headers; the explicit reference
+installincludes repeats identical metadata, reconciled as distinct records.
+Native manifest contains each payload once. No host install or publication
+occurred. Bomtool, spdxtool and runtime .pc/cross-build/Make-consumer tests remain
+pending. Split-manpage configuration is declared but not separately qualified.
+Frontend review: maintained format-5 targets/artifacts and stage helpers already
+support this payload; no build-bsd C/protocol/manual change is required. Make
+remains production/default, with whole-system/package/performance gates open.
