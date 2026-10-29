@@ -6328,3 +6328,10 @@ bazel-llvm-debug[-extras]-qualification-20261029.
 31 default sources match Make source/object/archive inventories. No source/probe/
 audit changes. IR tracking and text-stub runtime behavior remain unqualified.
 Evidence: bazel-llvm-sandbox-textapi-qualification-20261029.
+
+### 2026-10-29 LLVM frontend and driver support
+
+20 maintained sources match Make object/archive inventories; two generated option
+tables match bytes. No compiler/probe/audit source changes. Tool-driver, OpenMP and
+offload runtime remains unqualified. Evidence:
+bazel-llvm-frontend-drivers-qualification-20261029.

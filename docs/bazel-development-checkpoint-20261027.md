@@ -12530,3 +12530,28 @@ artifacts suffice; no build-bsd.c/manual interface change needed. Remaining LLVM
 libraries/target backends, full compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance gates remain open. Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native LLVM frontend, options and tool drivers
+
+Added installed Frontend (13 sources), Option (4), WindowsDriver (1), and llvm-lib/
+llvm-dlltool driver components (one each): 20 sources. Tool drivers use distinct
+Bazel packages and separate native TableGen Options.inc outputs, preventing include
+name collisions. Each generation action declares its Options.td, shared OptParser.td
+and execution-configured native llvm-tblgen tool. OptParser.td visibility now permits
+only the additional driver packages. No LLVM sources or sandbox policy changed.
+
+Maintained frontend bazel-llvm-frontend-drivers-20261029 (16 jobs) succeeds. All 20 PIC
+object global/undefined symbol inventories match fresh isolated Make objects; all
+five archive member inventories match. Both generated Options.inc files match fresh
+Make generation bytewise (16,653 bytes combined). Reference generation uses the
+existing Make bootstrap tool; compilation uses staged SDK headers. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-frontend-drivers-qualification-20261029.
+Verification streams compile-action records. This does not qualify option parsing,
+driver execution, import/static-library output, OpenMP/offload behavior, instruction
+identity, full linkage, bootstrap variants or performance.
+
+Frontend review: maintained native TableGen/component backends and format-5 artifacts
+cover this addition; no build-bsd.c/manual interface change required. Remaining LLVM
+libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance gates stay open. Make stays production/default.
+No host installation/publication occurred.
