@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# A component of libllvm, not an additional installed library.
+cc_library(
+    name = "demangle",
+    srcs = ['DLangDemangle.cpp', 'Demangle.cpp', 'ItaniumDemangle.cpp', 'MicrosoftDemangle.cpp', 'MicrosoftDemangleNodes.cpp', 'RustDemangle.cpp'],
+    deps = ["//contrib/llvm-project/llvm/include/llvm/Demangle:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "pic_archive", groups = [":demangle"], pic = True, visibility = ["//visibility:public"])

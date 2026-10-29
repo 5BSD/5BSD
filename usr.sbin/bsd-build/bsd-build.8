@@ -3749,3 +3749,15 @@ Earlier SDKs still contain the corrupting transform and must be rebuilt;
 Make/Bazel CTF dump equality alone does not establish correct associations.
 Fuzzy name matching remains unsupported. This establishes static nullfs
 artifact qualification, not complete module, publication or runtime qualification.
+
+.Ss Native LLVM component settings
+The format-5 build-settings keys
+.Cm //tools/build/bazel/config:llvm_assertions
+and
+.Cm //tools/build/bazel/config:llvm_full_debuginfo
+control assertion compilation and full debug information for native LLVM
+components that declare these settings.
+Their defaults are true and false, respectively, matching the maintained
+LLVM defaults; reduced debug information uses line tables.
+These settings do not establish that the entire compiler toolchain has been
+converted or qualified.

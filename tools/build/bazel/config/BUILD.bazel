@@ -373,3 +373,9 @@ config_setting(name = "suid_newgrp_enabled", flag_values = {":enable_suid_newgrp
 
 bool_flag(name = "netgraph_support", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "netgraph_support_enabled", flag_values = {":netgraph_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches the maintained default WITH_LLVM_ASSERTIONS setting.
+bool_flag(name = "llvm_assertions", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_assertions_enabled", flag_values = {":llvm_assertions": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "llvm_full_debuginfo", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_full_debuginfo_enabled", flag_values = {":llvm_full_debuginfo": "true"}, visibility = ["//visibility:public"])

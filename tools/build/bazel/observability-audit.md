@@ -6071,3 +6071,10 @@ Native target retains the maintained cm.c implementation. Connection-management
 permission/error paths remain runtime/audit-review candidates. Aggregate parity
 preserves existing component sources but adds no claim about kernel probes or
 hardware behavior; no RDMA device operation was performed.
+
+### 2026-10-29 LLVM Demangle
+
+No explicit SDT/DTrace or direct audit calls found in reviewed Demangle sources
+and headers. Native component preserves source inventory and assertion selection.
+Malformed-input/resource-consumption runtime coverage remains unqualified; no
+compiler or whole-toolchain instrumentation coverage is claimed.

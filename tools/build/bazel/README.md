@@ -36187,3 +36187,30 @@ Frontend review: current format-5 transitive output collection and maintained
 archive backend cover the aggregate; no build-bsd.c/manual interface change.
 Whole-system world/kernel/pkgbase/bootstrap/runtime/performance gates remain open;
 Make stays production/default.
+
+### 2026-10-29 LLVM compiler graph foundation: Demangle
+
+Compiler subtree audit found no native libllvm/libclang/TableGen build graph.
+Added the reusable six-source LLVM Demangle component at
+//contrib/llvm-project/llvm/lib/Demangle:demangle with explicit source/public
+headers, source libc++ headers, C++17, no RTTI/exceptions, inline visibility and
+function/data sections. A PIC archive target supports structural qualification;
+this component does not install an extra library. Full libllvm linkage remains
+unimplemented. Compiler target triples, target backends, TableGen and bootstrap
+must be modeled for the remaining LLVM graph; this header-independent component
+does not consume those macros.
+
+Added llvm_assertions=true and llvm_full_debuginfo=false native settings matching
+maintained defaults, with NDEBUG selection and line-table/full debug flags.
+Maintained frontend bazel-llvm-demangle-20261029-r2 builds all six sources with
+16 jobs. Fresh Make Demangle/*.pico targets in an isolated object tree match all
+six global/undefined symbol inventories. Reference/copies/repeatable verify.py
+and reports are in bazel-llvm-demangle-qualification-20261029 under /usr/obj/usr/src.
+This is component object parity, not a compiler executable, installed library,
+full debug qualification, runtime demangling or performance result. Alternate
+assertion/full-debug configurations remain to be qualified.
+
+Frontend review: existing typed format-5 build-settings passes the new flags;
+bsd-build(8) documents their defaults and limited current scope. No build-bsd.c
+parser/backend change is needed. Make remains production/default and complete
+LLVM/Clang/world/kernel/pkgbase/runtime/performance qualification is open.
