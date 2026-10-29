@@ -29,7 +29,7 @@ bsd_install_archive(name = "program_install_archive", manifests = [":install_man
 
 cc_library(name = "test_source", hdrs = ["reboot.c"], visibility = ["//sbin/reboot/tests:__pkg__"])
 
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/reboot/tests:install_test", "//sbin/reboot/tests:install_extra"], "//conditions:default": []}),
+bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/reboot/tests:install_test", "//sbin/reboot/tests:install_extra"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
         for d in ["/usr/lib/debug/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {
         "/usr/tests/sbin/reboot": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime-tests"]}',

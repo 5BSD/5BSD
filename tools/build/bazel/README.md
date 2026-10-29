@@ -34623,3 +34623,33 @@ include tests must not be combined with duplicate standalone test archives.
 /sbin parent integration and full recursive comparison remain pending.
 Frontend review: format-5 target handling and the existing typed casper option
 cover this work; no frontend C/protocol change required.
+
+### 2026-10-29 /sbin native parent archive graph
+
+Added //sbin:installation_archives with explicit native component selection,
+optional program groups and test archives. Existing recursive program archives
+retain their tests; separately installed suites are selected only once. Internal
+reroot_seed is reached through init, not installed separately. Child archive
+visibility is narrowly extended to //sbin:__pkg__.
+
+Added quotas and bearssl settings (defaults yes/no respectively), veriexec
+tri-state auto/yes/no following BearSSL by default, and an IP-any selector for
+ping. Initial run incorrectly enabled BearSSL and hit the existing explicit
+libsecureboot policy requirement; fixed the default against src.opts.mk and
+retained the failed evidence. Enabling veriexec still needs a supplied policy;
+that variant has not been qualified in this batch.
+
+Maintained build-bsd runs with 16 jobs succeeded:
+/usr/obj/usr/src/bazel-sbin-aggregate-20261029-r2 (tests disabled) and
+/usr/obj/usr/src/bazel-sbin-aggregate-tests-20261029 (test installation enabled).
+The disabled run contains 73 archives/219 artifacts and 352 distinct non-directory
+payload paths, with no duplicates. Per-run aggregation-check.json records counts
+and duplicate-path checks. Building installed tests does not execute them.
+
+This is graph/build integration evidence, not full /sbin qualification. Fresh
+recursive Make references, full payload/debug/metadata comparison, option-selection
+matrix, matching-kernel runtime and resource/performance qualification remain.
+Frontend review: existing format-5 typed build-settings and metadata output groups
+cover the aggregate without C/protocol changes. Make remains production/default.
+
+Tests-enabled inventory: 81 archives, 243 artifacts, 988 distinct non-directory paths; no duplicate payload paths.

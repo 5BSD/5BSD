@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+# reroot_seed is an internal payload reached through init, not an installed tool.
+_ARCHIVES = [
+    "//sbin/adjkerntz:program_install_archive",
+    "//sbin/camcontrol:install_archive",
+    "//sbin/clri:program_install_archive",
+    "//sbin/conscontrol:program_install_archive",
+    "//sbin/ddb:program_install_archive",
+    "//sbin/devd:install_archive",
+    "//sbin/devfs:program_install_archive",
+    "//sbin/devmatch:install_archive",
+    "//sbin/dhclient:install_archive",
+    "//sbin/dmesg:install_archive",
+    "//sbin/dump:program_install_archive",
+    "//sbin/dumpfs:program_install_archive",
+    "//sbin/dumpon:program_install_archive",
+    "//sbin/etherswitchcfg:program_install_archive",
+    "//sbin/ffsinfo:program_install_archive",
+    "//sbin/fsck:program_install_archive",
+    "//sbin/fsck_ffs:program_install_archive",
+    "//sbin/fsck_msdosfs:install_archive",
+    "//sbin/fsdb:program_install_archive",
+    "//sbin/fsirand:program_install_archive",
+    "//sbin/geom:program_install_archive",
+    "//sbin/ggate:install_archive",
+    "//sbin/growfs:program_install_archive",
+    "//sbin/ifconfig:install_archive",
+    "//sbin/init:program_install_archive",
+    "//sbin/kldconfig:install_archive",
+    "//sbin/kldload:install_archive",
+    "//sbin/kldstat:install_archive",
+    "//sbin/kldunload:install_archive",
+    "//sbin/ldconfig:program_install_archive",
+    "//sbin/md5:install_archive",
+    "//sbin/mdconfig:install_archive",
+    "//sbin/mdmfs:program_install_archive",
+    "//sbin/mknod:install_archive",
+    "//sbin/mksnap_ffs:program_install_archive",
+    "//sbin/mount:install_archive",
+    "//sbin/mount_cd9660:install_archive",
+    "//sbin/mount_fusefs:program_install_archive",
+    "//sbin/mount_msdosfs:install_archive",
+    "//sbin/mount_nfs:install_archive",
+    "//sbin/mount_nullfs:install_archive",
+    "//sbin/mount_unionfs:install_archive",
+    "//sbin/newfs:install_archive",
+    "//sbin/newfs_msdos:install_archive",
+    "//sbin/nfsiod:install_archive",
+    "//sbin/nos-tun:program_install_archive",
+    "//sbin/nvmecontrol:install_archive",
+    "//sbin/pfilctl:program_install_archive",
+    "//sbin/rcorder:install_archive",
+    "//sbin/reboot:install_archive",
+    "//sbin/recoverdisk:program_install_archive",
+    "//sbin/resolvconf:install_archive",
+    "//sbin/restore:program_install_archive",
+    "//sbin/route:install_archive",
+    "//sbin/savecore:install_archive",
+    "//sbin/setkey:program_install_archive",
+    "//sbin/shutdown:program_install_archive",
+    "//sbin/swapon:install_archive",
+    "//sbin/sysctl:install_archive",
+    "//sbin/tunefs:install_archive",
+    "//sbin/umbctl:program_install_archive",
+    "//sbin/umount:install_archive",
+]
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:ip_enabled": ['//sbin/ping:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:hast_enabled": ['//sbin/hastctl:program_install_archive', '//sbin/hastd:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:inet6_support_enabled": ['//sbin/rtsol:program_install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:dummynet_enabled": ['//sbin/dnctl:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:openssl_enabled": ['//sbin/decryptcore:program_install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:pf_enabled": ['//sbin/pfctl:install_archive', '//sbin/pflogd:program_install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:quotas_enabled": ['//sbin/quotacheck:program_install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:veriexec_enabled": ['//sbin/veriexec:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:zfs_enabled": ['//sbin/bectl:install_archive', '//sbin/zfsbootcfg:install_archive'], "//conditions:default": []})
+_ARCHIVES = _ARCHIVES + select({"//tools/build/bazel/config:tests_enabled": ['//sbin/devd/tests:install_archive', '//sbin/growfs/tests:install_archive', '//sbin/md5/tests:install_archive', '//sbin/mdconfig/tests:install_archive', '//sbin/nvmecontrol/tests:install_archive', '//sbin/route/tests:install_archive', '//sbin/tests:install_archive'], "//conditions:default": []})
+selects.config_setting_group(name = "zfs_tests", match_all = ["//tools/build/bazel/config:zfs_enabled", "//tools/build/bazel/config:tests_enabled"])
+_ARCHIVES = _ARCHIVES + select({":zfs_tests": ["//sbin/bectl/tests:install_archive"], "//conditions:default": []})
+bsd_install_archive_set(name = "installation_archives", archives = _ARCHIVES, visibility = ["//visibility:public"])

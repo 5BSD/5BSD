@@ -353,3 +353,16 @@ string_flag(name = "tap_perl_interpreter", build_setting_default = "/usr/local/b
 
 bool_flag(name = "tcsh", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "tcsh_enabled", flag_values = {":tcsh": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "quotas", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "quotas_enabled", flag_values = {":quotas": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "bearssl", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bearssl_enabled", flag_values = {":bearssl": "true"}, visibility = ["//visibility:public"])
+
+# src.opts.mk defaults VERIEXEC to BEARSSL; an explicit choice is independent.
+string_flag(name = "veriexec", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "veriexec_requested", flag_values = {":veriexec": "yes"})
+config_setting(name = "veriexec_default", flag_values = {":veriexec": "auto", ":bearssl": "true"})
+selects.config_setting_group(name = "veriexec_enabled", match_any = [":veriexec_requested", ":veriexec_default"], visibility = ["//visibility:public"])
+selects.config_setting_group(name = "ip_enabled", match_any = [":inet_support_enabled", ":inet6_support_enabled"], visibility = ["//visibility:public"])
