@@ -337,6 +337,67 @@ dt_cg_field_get(dt_node_t *dnp, dt_irlist_t *dlp, dt_regset_t *drp,
 }
 
 /*
+ * Whether the member that `dnp' loads is a bit-field for the linker: an
+ * integer whose value bits do not fill its storage.  This includes 8-, 16-,
+ * 32- and 64-bit fields of a wider type, which the front end does not mark
+ * DT_NF_BITFIELD (a load of their own width reads them where they are
+ * naturally aligned; the linker decides once it knows the layout).
+ */
+static int
+dt_cg_reloc_bitfield(dt_node_t *dnp)
+{
+	ctf_file_t *fp = dnp->dn_ctfp;
+	ctf_id_t type = ctf_type_resolve(fp, dnp->dn_type);
+	ctf_encoding_t e;
+	ssize_t size;
+
+	if (dnp->dn_flags & DT_NF_BITFIELD)
+		return (1);
+	if (ctf_type_kind(fp, type) != CTF_K_INTEGER ||
+	    ctf_type_encoding(fp, type, &e) != 0 ||
+	    (size = ctf_type_size(fp, type)) <= 0)
+		return (0);
+	return (e.cte_offset != 0 || e.cte_bits != (size_t)size * NBBY);
+}
+
+/*
+ * The extraction that follows the load of a bit-field member whose layout the
+ * linker resolves (a member of a type the D program does not define).  Its
+ * shift counts are placeholders that make it the identity:
+ *
+ *	setx	0, r2
+ *	sll	r1, r2, r1
+ *	setx	0, r2
+ *	srl	r1, r2, r1		(sra for a signed field)
+ *
+ * HyperTraceLinker::relocateBitfieldLoad() chooses the load and the counts
+ * from the CTF the program is linked against: the field is shifted to the
+ * top of the register and back down, which also sign-extends a signed one.
+ * The linker relies on this exact shape directly after the load.
+ */
+static void
+dt_cg_field_get_reloc(dt_node_t *dnp, dt_irlist_t *dlp, dt_regset_t *drp)
+{
+	dif_instr_t instr;
+	int r1, r2;
+
+	assert(dnp->dn_op == DT_TOK_PTR || dnp->dn_op == DT_TOK_DOT);
+	r1 = dnp->dn_left->dn_reg;
+	r2 = dt_regset_alloc(drp);
+
+	dt_cg_setx(dlp, r2, 0);
+	instr = DIF_INSTR_FMT(DIF_OP_SLL, r1, r2, r1);
+	dt_irlist_append(dlp, dt_cg_node_alloc(DT_LBL_NONE, instr));
+
+	dt_cg_setx(dlp, r2, 0);
+	instr = DIF_INSTR_FMT((dnp->dn_flags & DT_NF_SIGNED) ?
+	    DIF_OP_SRA : DIF_OP_SRL, r1, r2, r1);
+	dt_irlist_append(dlp, dt_cg_node_alloc(DT_LBL_NONE, instr));
+
+	dt_regset_free(drp, r2);
+}
+
+/*
  * If the destination of a store operation is a bit-field, we use this routine
  * to generate a prologue to the store instruction that loads the surrounding
  * bits, clears the destination field, and ORs in the new value of the field.
@@ -2137,6 +2198,9 @@ dt_cg_node(dt_node_t *dnp, dt_irlist_t *dlp, dt_regset_t *drp)
 
 				dt_irlist_append(dlp,
 				    dt_cg_node_alloc(DT_LBL_NONE, instr));
+
+				if (dt_cg_reloc_bitfield(dnp))
+					dt_cg_field_get_reloc(dnp, dlp, drp);
 			}
 		} else {
 			ctfp = dnp->dn_left->dn_ctfp;

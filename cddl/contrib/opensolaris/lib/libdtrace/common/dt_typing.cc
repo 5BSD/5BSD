@@ -1136,9 +1136,17 @@ TypeInference::inferNode(DFGNode *n)
 			memset(mip, 0, sizeof(ctf_membinfo_t));
 
 			/*
-			 * Get the non-pointer type. This should NEVER fail.
+			 * The structure the member is in: the one `other' points
+			 * to, or `other' itself when it is a structure held by
+			 * reference (an embedded member such as the inp_inc of
+			 * tcpcb's t_inpcb, which tcp.d's translators read).
 			 */
-			type = other->tf->getReference(other->ctfid);
+			{
+				ctf_id_t base = other->tf->resolve(other->ctfid);
+				int bkind = (int)other->tf->getKind(base);
+				type = bkind == CTF_K_STRUCT || bkind == CTF_K_UNION ?
+				    base : other->tf->getReference(other->ctfid);
+			}
 			if (other->tf->getMembInfo(type, other->sym, mip) == 0)
 				return (progErr(
 				    "inferNode(%s, %zu@%p): failed to get "
@@ -1146,11 +1154,23 @@ TypeInference::inferNode(DFGNode *n)
 				    insname[opcode].c_str(), n->uidx, (void *)n->difo,
 				    buf, other->sym, other->tf->getErrMsg()));
 
-			n->mip = mip;
+			/*
+			 * `other' is the address of its member (other->sym), a
+			 * structure that holds this node's member
+			 * (symnode->sym): the node is that structure with the
+			 * symbol, like the address of a member of the
+			 * structure a pointer points to (above).  Its member
+			 * information is that of its own member, which the
+			 * linker resolves from the symbol; the member of
+			 * `other' would relocate it to the offset of the
+			 * enclosing member.
+			 */
 			n->sym = symnode->sym;
 			n->ctfid = mip->ctm_type;
 			n->tf = other->tf;
 			n->dType = DIF_TYPE_CTF;
+			n->mip = nullptr;
+			free(mip);
 		}
 
 		TYPING_LOG_DEFAULT(opcode, n);

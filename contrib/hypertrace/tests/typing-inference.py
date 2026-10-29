@@ -4,8 +4,11 @@
 
 Builds the C++ harnesses typing-inference.cc (compiled D corpus checked by
 the independent oracle in typing-oracle.h), typing-units.cc (typing rules
-and diagnostics on constructed data-flow graphs) and typing-reject.cc
-(hand-assembled and mutated DIFOs through hypertrace_link()) against the
+and diagnostics on constructed data-flow graphs), typing-reject.cc
+(hand-assembled and mutated DIFOs through hypertrace_link()) and
+typing-bitfield.cc (bit-field members of linker-resolved types, executed
+against the C++ compiler's layout, and the tcp_state_string link time bound)
+against the
 instrumented libdtrace of an object tree, and runs every case in its own
 child process.
 
@@ -116,6 +119,16 @@ char *kmin_p;
 typedef struct mblk { char b; } mblk_t;
 mblk_t *kmin_mblk;
 ''',
+    # Bit-field layouts (typing-bitfield.h, shared with typing-bitfield.cc,
+    # whose C++ member accesses are the oracle), converted from DWARF.
+    'typingbf': r'''
+#include "typing-bitfield.h"
+struct tf_bf tf_bf_v; struct tf_bftcp tf_bftcp_v; struct tf_bfpacked tf_bfpacked_v;
+/* The pointer types the casts name, as the kernel's CTF has them: without
+ * one the compiler copies the structure into the D container and generates
+ * the load itself instead of leaving it to the linker. */
+struct tf_bf *tf_bf_p; struct tf_bftcp *tf_bftcp_p; struct tf_bfpacked *tf_bfpacked_p;
+''',
     # A module without CTF (built without ctfconvert).
     'typingnoctf': r'''
 int typingnoctf_v;
@@ -197,7 +210,7 @@ kldstat(int id, struct kld_file_stat *st)
 
 HARNESSES = ['typing-inference', 'typing-units', 'typing-rules', 'typing-reject',
              'typing-args', 'typing-kernelenv', 'typing-progerr', 'typing-roundtrip', 'typing-casts', 'typing-vprog',
-             'typing-linktype']
+             'typing-linktype', 'typing-bitfield']
 # Runs with another module inventory: (harness, run name, kernel fixture or
 # None for no kernel at all, extra environment).
 ENV_RUNS = [('typing-kernelenv', 'min', 'kernelmin', {}),
@@ -234,7 +247,8 @@ def main():
         c = out / (name + '.c')
         c.write_text(text)
         o = out / (name + '.o')
-        subprocess.run(['cc', '-c', '-g', '-O0', str(c), '-o', str(o)], check=True)
+        subprocess.run(['cc', '-c', '-g', '-O0', '-I' + str(tests), str(c), '-o', str(o)],
+                       check=True)
         if name != 'typingnoctf':
             subprocess.run(['ctfconvert', '-L', 'typing-fixture', str(o)], check=True)
         objs[name] = o
@@ -378,6 +392,7 @@ def main():
     (out / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     sources = [Path(__file__).resolve()] + [tests / (h + '.cc') for h in HARNESSES] + \
         [tests / 'typing-harness.h', tests / 'typing-oracle.h', tests / 'typing-unit.h',
+         tests / 'typing-bitfield.h',
          tests / 'dtraced-client-shim.c', tests / 'tool-dof-shim.c'] + \
         [p for v in tool_srcs.values() for p in v]
     (out / 'provenance.json').write_text(json.dumps({

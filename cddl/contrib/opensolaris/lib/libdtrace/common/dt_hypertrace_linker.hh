@@ -96,7 +96,14 @@ class HyperTraceLinker {
 	void setErrorMessage(const char *, ...)
 	    __attribute__((__format__(__printf__, 2, 3)));
 
+	int integerIndex(dtrace_difo_t *, uint64_t, uint16_t *);
 	int patchUsetxDefs(DFGNode *);
+	int patchUsetxDefs(DFGNode *, uint64_t);
+	int relocateBitfieldLoad(DFGNode *, ctf_id_t, const ctf_encoding_t &);
+	/* Additions of a bit-field member's offset that no load has resolved
+	 * yet, and those that one has (relocateProgram()). */
+	NodeSet bitfieldAdds;
+	NodeSet bitfieldAddsDone;
 	int processDIFO(dtrace_actdesc_t *, dtrace_difo_t *, dtrace_ecbdesc_t *,
 	    Array<UMap<uint32_t, dtrace_diftype_t>, DIFV_NSCOPES> &);
 	int relocateDFGNode(DFGNode *, dtrace_actkind_t, dtrace_actdesc_t *,
@@ -105,8 +112,6 @@ class HyperTraceLinker {
 	    Array<UMap<uint32_t, dtrace_diftype_t>, DIFV_NSCOPES> &);
 	int relocateProgram(dtrace_actkind_t, dtrace_actdesc_t *,
 	    dtrace_difo_t *, dtrace_diftype_t *);
-	void updateUsetxDefsInBB(dtrace_difo_t *, BasicBlock *, DFGNode *);
-	void updateUsetxDefs(dtrace_difo_t *, BasicBlock *, DFGNode *);
 	void inferUsetxDefs(dtrace_difo_t *);
 	int relocateRetOrPush(DFGNode *);
 	int relocatePush(DFGNode *);
@@ -127,6 +132,8 @@ class HyperTraceLinker {
 	int updateNodesInBBForReg(dtrace_difo_t *, BasicBlock *, uint8_t,
 	    DFGList::iterator, int *);
 	void updateDFG(dtrace_difo_t *, DFGNode *, DFGList::iterator);
+	void updateDFGReach(dtrace_difo_t *, DFGNode *, DFGList::iterator);
+	void updateDFGStack(dtrace_difo_t *, DFGNode *, DFGList::iterator);
 	void computeDFG(dtrace_ecbdesc_t *, dtrace_difo_t *);
 	int checkDIFO(dtrace_difo_t *);
 

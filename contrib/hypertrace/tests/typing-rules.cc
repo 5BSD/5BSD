@@ -758,7 +758,11 @@ PROGERR_CASE("add-symbolic-struct-and-non-uint64",
 CASE("add-usetx-to-symbolic-pointer-selects-member")
 {
 	/* other : t | sym (a member address) plus a usetx: the result is the
-	 * member's type, with the usetx symbol. */
+	 * member's type, with the usetx symbol, and no member information:
+	 * the linker resolves the usetx's own member from the symbol in that
+	 * type.  (The member information of `other' made the linker relocate
+	 * the usetx to the enclosing member's offset: an embedded member such
+	 * as tcp.d's p->t_inpcb.inp_inc read the wrong bytes.) */
 	Unit u;
 	DFGNode *other = u.ctf("kernel", "struct thread *", "td_proc",
 	    DIF_INSTR_FMT(DIF_OP_ADD, 1, 2, 1));
@@ -766,7 +770,7 @@ CASE("add-usetx-to-symbolic-pointer-selects-member")
 	DFGNode *n = arith(u, DIF_OP_ADD, other, off);
 	std::string want = kmember("struct thread", "td_proc");
 	expect_type(u, n, DIF_TYPE_CTF, want.c_str());
-	CHECK(n->mip != nullptr && strcmp(n->sym, "td_tid") == 0);
+	CHECK(n->mip == nullptr && strcmp(n->sym, "td_tid") == 0);
 	Unit v;
 	off = v.node(DIF_INSTR_USETX(v.sym("td_tid"), 1));
 	other = v.ctf("kernel", "struct thread *", "td_proc",
