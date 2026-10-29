@@ -17,3 +17,8 @@ cc_test(name = "utilities_test", srcs = ["llvm_utilities_test.c"],
     args = ["$(location //usr.bin/clang/clang:clang)", "$(location //usr.bin/clang/llvm-nm:llvm-nm)", "$(location //usr.bin/clang/llvm-cxxfilt:llvm-cxxfilt)", "$(location //usr.bin/clang/llvm-size:llvm-size)", "$(location //usr.bin/clang/llvm-strings:llvm-strings)", "$(location //usr.bin/clang/llvm-readobj:llvm-readobj)", "$(location //usr.bin/clang/llvm-symbolizer:llvm-symbolizer)", "$(location //usr.bin/clang/lld:ld.lld)", "$(location //usr.bin/clang/llvm-objcopy:llvm-objcopy)", "$(location //usr.bin/clang/llvm-objdump:llvm-objdump)"],
     linkopts = ["-static"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
+
+cc_test(name = "profiles_test", srcs = ["llvm_profiles_test.c"],
+    data = ["//usr.bin/clang/clang:coverage_probe", "//usr.bin/clang/llvm-profdata:llvm-profdata", "//usr.bin/clang/llvm-cov:llvm-cov"],
+    args = ["$(location //usr.bin/clang/clang:coverage_probe)", "$(location //usr.bin/clang/llvm-profdata:llvm-profdata)", "$(location //usr.bin/clang/llvm-cov:llvm-cov)"],
+    linkopts = ["-static"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

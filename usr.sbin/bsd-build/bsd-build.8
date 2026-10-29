@@ -4096,3 +4096,12 @@ options and install_archive targets, with native ObjdumpOpts/OtoolOpts generatio
 also checks AMD64 disassembly and code/debug-section reporting on native Clang
 and LLD output. Other object formats and cross-architecture disassembly remain
 outside this runtime qualification.
+
+.Pp
+The llvm-profdata and llvm-cov packages provide native runtime, _installed,
+source_inventory and install_archive targets.
+.Cm //lib/clang:profiles_test
+runs a native Clang/LLD instrumented probe, merges its profile with native
+llvm-profdata and reports coverage with native llvm-cov. Select it in targets
+and tests. The probe still links the declared SDK profile runtime; this does
+not establish independent compiler-runtime bootstrap or exhaustive gcov coverage.

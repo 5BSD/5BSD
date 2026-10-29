@@ -20,6 +20,8 @@ def _impl(ctx):
     args.add_all(["-O2", "-static"])
     if ctx.attr.lto != "none":
         args.add("-flto=" + ctx.attr.lto)
+    if ctx.attr.coverage:
+        args.add_all(["-fprofile-instr-generate", "-fcoverage-mapping"])
     if ctx.attr.cxx:
         args.add("--driver-mode=g++")
     args.add(ctx.file.src)
@@ -37,5 +39,6 @@ bsd_compiler_probe = rule(implementation = _impl, executable = True, attrs = {
     "sdk": attr.label_list(mandatory = True),
     "src": attr.label(allow_single_file = True, mandatory = True),
     "cxx": attr.bool(),
+    "coverage": attr.bool(),
     "lto": attr.string(default = "none", values = ["none", "full", "thin"]),
 })

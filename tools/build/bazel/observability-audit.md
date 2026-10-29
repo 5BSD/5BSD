@@ -6586,3 +6586,11 @@ All nine Make sources retained. Source scan finds Mach-O DTrace DOF section-name
 decoding, not an instrumentation call. No probe/audit changes. Maintained native
 AMD64 disassembly and section-reporting checks pass; runtime decoding of Mach-O
 DOF and system-wide audit/DTrace delivery are not established by this test.
+
+### Native coverage/profile-data utilities (2026-10-29)
+
+All fourteen Make sources retained. Direct upstream source/header scan found no
+DTrace/SDT or audit calls; no instrumentation code changed. The maintained profile
+test verifies compiler-generated counters, native profile merging and a source
+coverage report using the SDK profile runtime. This is not kernel DTrace/audit
+qualification, a native compiler-runtime build or full PGO/gcov coverage.

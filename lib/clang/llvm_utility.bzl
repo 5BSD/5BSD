@@ -10,21 +10,22 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_lin
 
 def llvm_utility(name, srcs, options, manual, deps = [], aliases = {}, generated_options = []):
     """Default shared-LLVM utility with declared option generation and installation."""
-    if bool(options) == bool(generated_options):
-        fail("Supply one option-table source or explicit generated option tables")
+    if options and generated_options:
+        fail("Option-table source and generated option tables are mutually exclusive")
     if options:
         bsd_tablegen(name = "options", src = options,
             includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
             include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-opt-parser-defs"],
             output = "Opts.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
-    else:
+    elif generated_options:
         native.filegroup(name = "options", srcs = generated_options, visibility = ["//visibility:public"])
-    cc_library(name = "option_headers", hdrs = [":options"], strip_include_prefix = ".")
+    if options or generated_options:
+        cc_library(name = "option_headers", hdrs = [":options"], strip_include_prefix = ".")
     bsd_llvm_targets(name = "registered_targets")
     bsd_clang_defaults(name = "compiler_defaults")
     platform = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
     cc_library(name = "objects", srcs = srcs,
-        deps = deps + [":option_headers", ":registered_targets", ":compiler_defaults", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//usr.bin/clang/llvm-min-tblgen:value_type_headers"],
+        deps = deps + ([":option_headers"] if options or generated_options else []) + [":registered_targets", ":compiler_defaults", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//usr.bin/clang/llvm-min-tblgen:value_type_headers"],
         copts = ["-fPIE", "-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
         local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
         target_compatible_with = platform)

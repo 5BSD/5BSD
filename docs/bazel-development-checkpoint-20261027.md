@@ -13574,3 +13574,33 @@ targets/tests; manual updated. The fresh reference reuses Make SDK/private LLVM
 libraries. Independent bootstrap, remaining system/tool targets, static/cross
 configuration, cache/performance and complete pkgbase gates remain open. Make
 stays production/default; no host installation, upgrade or publication.
+
+### Native coverage and profile-data utilities (2026-10-29)
+
+Added llvm-profdata (two sources) and llvm-cov (twelve sources), including declared
+private coverage headers. The common LLVM utility macro now permits utilities
+without option-table generation; it creates no artificial option action for them.
+Resolved inventories match expanded Make. Maintained native build
+/usr/obj/usr/src/bazel-llvm-profiles-native-20261029 passes, including the existing
+utilities test. Fresh Make driver/link/install comparisons show no global/weak
+ELF symbol record differences. All six installation records, both manuals and
+both debuglink CRCs match. References/scripts/reports are under
+/usr/obj/usr/src/bazel-llvm-profiles-reference-20261029. Reference builds use the
+existing SDK/private LLVM library, not a fresh independent bootstrap.
+
+Added the coverage attribute to bsd_compiler_probe and a native Clang/LLD static
+coverage probe. Its headers, CRT, libraries and libclang_rt.profile archive are
+explicit staged SDK inputs. //lib/clang:profiles_test executes this instrumented
+program with an isolated LLVM_PROFILE_FILE, merges it with native llvm-profdata,
+checks main's invocation count is one, then checks native llvm-cov reports the
+probe source and a 100% metric. It does not assert every coverage metric is 100%.
+Run /usr/obj/usr/src/bazel-llvm-profiles-test-20261029 passes (one reported case,
+none skipped). PATH is /nonexistent; tools/probe are declared runfiles. This is
+real instrumentation/profile/report smoke coverage, not a native profile-runtime
+build or exhaustive gcov/PGO/instrumentation-format qualification.
+
+Frontend review: build-bsd.c/format-5 source_graph.py already transport these
+explicit targets/tests; manual updated. Static LLVM/cross-host variants, complete
+native SDK/bootstrap, remaining system targets, cache/performance and pkgbase
+qualification remain open. Make stays production/default; no host installation,
+upgrade or publication.

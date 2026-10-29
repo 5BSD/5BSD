@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-cov",
+    srcs = ['//contrib/llvm-project/llvm/tools/llvm-cov:CodeCoverage.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:CoverageExporterJson.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:CoverageExporterLcov.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:CoverageFilters.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:CoverageReport.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:CoverageSummaryInfo.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:SourceCoverageView.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:SourceCoverageViewHTML.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:SourceCoverageViewText.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:TestingSupport.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:gcov.cpp', '//contrib/llvm-project/llvm/tools/llvm-cov:llvm-cov.cpp'],
+    options = None, manual = "llvm-cov.1",
+    deps = ['//contrib/llvm-project/llvm/tools/llvm-cov:headers'])
