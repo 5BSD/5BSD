@@ -6954,3 +6954,9 @@ All four native program installations match Make. sserver retains syslog error
 reporting for sockets and authentication; source scans found no DTrace/SDT or
 explicit audit hooks in the four programs. Authentication exchange and logging
 runtime remain untested. Vendor source instrumentation is unchanged.
+
+### ksu (2026-10-29)
+
+Both installation configurations match Make. main.c retains syslog reporting
+for authorization/authentication failures and successful authentication. No
+privilege transitions, audit-event delivery or log runtime were tested.

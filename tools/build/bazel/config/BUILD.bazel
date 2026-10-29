@@ -445,3 +445,9 @@ config_setting(name = "install_conflicting_clang_headers_enabled", flag_values =
 # Native LLVM tool default-name aliases (MK_LLVM_BINUTILS).
 bool_flag(name = "llvm_binutils", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "llvm_binutils_enabled", flag_values = {":llvm_binutils": "true"}, visibility = ["//visibility:public"])
+
+# Presence of ENABLE_SUID_K5SU in Make selects setuid installation metadata.
+bool_flag(name = "enable_suid_k5su", build_setting_default = False,
+    visibility = ["//visibility:public"])
+config_setting(name = "suid_k5su_enabled", flag_values = {":enable_suid_k5su": "true"},
+    visibility = ["//visibility:public"])

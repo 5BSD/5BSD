@@ -2340,6 +2340,14 @@ It defaults to false.
 Live tracing, complete package validation, and resource gates remain open;
 this is not a production backend selection.
 .Pp
+The native ksu installation setting
+.Dv //tools/build/bazel/config:enable_suid_k5su
+is a boolean, defaulting to false.
+True selects mode 4555 and the schg file flag, matching Make's
+.Dv ENABLE_SUID_K5SU
+installation contract; false selects mode 0555 without that flag.
+This selects archive metadata and does not install or execute ksu.
+.Pp
 The optional build-settings object maps source target labels to JSON boolean,
 integer or string values for declared Bazel settings.
 Native command-line flags and composite values are not accepted in this object.

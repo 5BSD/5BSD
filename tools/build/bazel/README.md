@@ -39764,3 +39764,29 @@ and source_graph.py: explicit native target inputs remain adequate; maintained
 Make receives the source fixes directly, without a frontend/schema change.
 Make remains production/default; SDK bootstrap and full world/kernel/pkgbase/
 sandbox/cache/performance gates remain open. No host installation or publication.
+
+### Native ksu and explicit setuid installation option (2026-10-29)
+
+Added all six ksu sources, local header, maintained GET_TGT_VIA_PASSWD and
+PRINC_LOOK_AHEAD definitions, native Kerberos dependencies and PIE installation.
+Compilation exposed undeclared k5-util.h and adm_proto.h; the former is now in
+internal_headers and ksu selects the server-header closure for the latter.
+
+Added boolean //tools/build/bazel/config:enable_suid_k5su (default false).
+The default installs mode 0555 with no flags. True preserves Make's
+ENABLE_SUID_K5SU mode 4555 and PRECIOUSPROG schg flag in package metadata.
+Make's atomic replacement install behavior is separate from archive contents.
+The frontend manual documents the setting; format-5 typed build-settings already
+passes it through build-bsd/source_graph.py without a parser/schema change.
+
+Runs bazel-ksu-runtime-20261029-r3 and bazel-ksu-suid-20261029 both match isolated
+Make references for complete installation metadata (explicitly including flags),
+program/debug symbols, dynamic dependencies/PIE flags, debuglink CRC and manual
+bytes. Evidence and both verifiers: /usr/obj/usr/src/bazel-ksu-reference-20261029.
+Initial missing-header failures remain recorded. Make references use NO_ROOT;
+no privileged binary was installed or executed on the host.
+
+No runtime tests were requested. Authentication, authorization denials, credential
+cache behavior, privilege transitions and actual installed file-flag enforcement
+remain qualification work. SDK bootstrap and whole-world/kernel/pkgbase/sandbox/
+cache/performance gates remain open. Make stays production/default.
