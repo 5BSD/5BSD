@@ -14653,3 +14653,33 @@ Prepared SDK and host dependencies remain. Reviewed build-bsd.c and format-5
 source_graph.py: existing explicit target selections need no contract change.
 Make stays production/default; no host installation, publication or reboot.
 Whole-world/kernel/pkgbase/runtime/performance gates remain open.
+
+### Native interactive administration support and command-table generator (2026-10-29)
+
+Added the internal krb5ss archive and declared command-table generation using
+the maintained vendor ct_c_sed.in and ct_c_awk.in parsers. The action declares
+its input table, parser programs, sed/AWK/Python execution tools and runtime
+inputs. Its driver preserves upstream error-marker rejection and removes failed
+output; no Make-produced mk_cmds or ambient PATH tools are used by the action.
+Error-table generation reuses the maintained MIT error-table rule.
+
+Initial compilation exposed an undeclared readline/history.h dependency. Added
+the existing source history header and renamed the shared readline/history
+compatibility header targets from Lua-specific names, updating flua's references.
+The header contents and include paths are unchanged. HAVE_READLINE=1 matches
+the maintained non-bootstrap Make build; bootstrap option coverage remains open.
+
+Run bazel-ss-20261029-r2 matches fresh Make reference bazel-ss-make-20261029:
+14 ordered members, 152 global/weak symbol records and zero independent installed
+records. std_rqs.c matches except for the explicit source-path comment.
+Evidence: /usr/obj/usr/src/bazel-ss-reference-20261029. The maintained
+command_table_test.py directly exercises malformed input through the actual
+SDK sed/AWK and vendor parsers; it confirms rejection and failed-output removal.
+That negative regression was executed with Python, not through Bazel's test
+protocol. Interactive readline/pager/signal behavior and bootstrap variants are
+not qualified by these archive checks.
+
+Reviewed build-bsd.c and format-5 source_graph.py: existing explicit targets
+support the archive/generator without frontend/schema changes. Prepared SDK and
+host dependencies remain. Make stays production/default; no host installation,
+publication or reboot. Complete-system and performance gates remain open.

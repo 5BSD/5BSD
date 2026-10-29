@@ -6824,3 +6824,10 @@ submission calls. Review principal/policy mutations, password-quality rejection
 and hook failures alongside kadmind's authoritative request/authentication logs.
 Artifact comparisons preserve the existing sources; they do not establish
 security-audit completeness or runtime behavior of those operations.
+
+### MIT interactive subsystem support (2026-10-29)
+
+The migrated ss C sources contain no explicit DTrace provider or audit calls.
+Review command dispatch and errors at kadmin/ktutil consumer boundaries; avoid
+recording command text containing secrets. Archive/generator checks do not prove
+interactive terminal, pager, signal or authoritative administrative audit behavior.

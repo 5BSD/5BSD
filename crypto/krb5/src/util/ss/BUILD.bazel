@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['data.c', 'error.c', 'execute_cmd.c', 'help.c', 'invocation.c', 'list_rqs.c', 'listen.c', 'pager.c', 'parse.c', 'prompt.c', 'request_tbl.c', 'requests.c', 'ss_err.et', 'std_rqs.ct', 'ct_c_sed.in', 'ct_c_awk.in'])
+cc_library(name = "headers", hdrs = ["copyright.h", "mit-sipb-copyright.h", "ss.h", "ss_internal.h"],
+    includes = ["."], strip_include_prefix = ".", include_prefix = "ss",
+    deps = ["//crypto/krb5/src/include:support_headers", "//krb5/util/ss:error_headers"],
+    visibility = ["//krb5:__subpackages__"])

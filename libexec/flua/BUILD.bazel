@@ -3,7 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 cc_library(name = "module_headers", hdrs = ["modules/lposix.h"], strip_include_prefix = "modules")
 cc_binary(name = "flua", srcs = ["//contrib/lua/src:lua.c", "linit_flua.c", "modules/lposix.c", "bootstrap.h"],
     deps = [":module_headers", "//lib/liblua:lua_pie", "//lib/libedit:edit",
-        "//contrib/libedit:lua_readline_headers", "//lib/libedit/readline:lua_history_headers"],
+        "//contrib/libedit:readline_compat_headers", "//lib/libedit/readline:history_compat_headers"],
     dynamic_deps = ["//lib/libedit:edit_shared", "//lib/msun:m_shared"],
     local_defines = ["LUA_USE_READLINE", "LUA_PROGNAME=\\\"flua\\\""],
     copts = ["-fPIE"], linkopts = ["-pie", "-Wl,-E"],
