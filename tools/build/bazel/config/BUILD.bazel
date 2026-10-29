@@ -425,3 +425,7 @@ config_setting(name = "llvm_target_powerpc_enabled", flag_values = {":llvm_targe
 # Matches the current native AMD64 world LLVM target-all selection.
 bool_flag(name = "llvm_target_aarch64", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "llvm_target_aarch64_enabled", flag_values = {":llvm_target_aarch64": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_riscv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_riscv_enabled", flag_values = {":llvm_target_riscv": "true"}, visibility = ["//visibility:public"])

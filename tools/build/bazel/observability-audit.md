@@ -6456,3 +6456,11 @@ Evidence: `/usr/obj/usr/src/bazel-llvm-aarch64-backend-qualification-20261029`.
 closure verified. No source probes/audit hooks changed. Backend diagnostics, unwind/
 debug behavior and generated-code execution/tracing remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-riscv-tables-qualification-20261029`.
+
+### RISC-V backend (2026-10-29)
+
+63 extras-enabled objects preserve upstream sources and match Make ELF symbol
+type/binding/visibility/defined state. No new probes/audit hooks. Runtime target
+diagnostics, unwind/debug behavior, MCA behavior and generated-code execution/tracing
+still need qualification. Evidence:
+`/usr/obj/usr/src/bazel-llvm-riscv-backend-qualification-20261029`.

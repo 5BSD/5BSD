@@ -37632,3 +37632,27 @@ qualification remain open. Frontend review: build-bsd.c/format-5 backend accepts
 these targets; no new input/staging/security/manual contract. Other backends and
 world/kernel/pkgbase/runtime gates remain open. Make remains production/default;
 no host installation/publication occurred.
+
+### RISC-V backend component (2026-10-29)
+
+Added native installed-world RISC-V cc_library: 62 core sources plus MCA custom
+behavior selected by clang_extras. Private headers and generated tables declared;
+hidden visibility follows Make. llvm_target_riscv defaults true for current native
+AMD64 world target-all selection; disabling makes explicit component incompatible.
+Aggregate target-all/registration and cross-platform defaults remain unfinished.
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-riscv-backend-20261029` succeeds
+with 16 jobs and clang_extras. All 63 PIC objects match fresh Make global/weak ELF
+symbol type, binding, visibility, defined/undefined state and name. Archive member
+multiplicities and resolved source inventory match. Separate default inventory run
+`bazel-llvm-riscv-default-20261029` matches Make's 62 sources; that run is inventory-only.
+Evidence/scripts: `/usr/obj/usr/src/bazel-llvm-riscv-backend-qualification-20261029`.
+Reference uses staged SDK and existing bootstrap generators; no compiler source/
+sandbox modification.
+
+These are AMD64-hosted backend objects, not a qualified RISC-V system or generated-code
+execution test. BPF/LoongArch backends, complete compiler linkage, independent bootstrap
+and world/kernel/pkgbase/runtime/CPU/memory/disk qualification remain open. Concurrent
+builds do not provide comparative performance evidence. Frontend review: build-bsd.c/
+format-5 backend transports new setting; manual updated. Make remains production/
+default; no host installation/publication occurred.

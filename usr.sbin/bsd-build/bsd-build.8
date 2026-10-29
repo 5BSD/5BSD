@@ -3912,3 +3912,12 @@ which defaults to true for current world target-all selection. Disabling it make
 the explicit component incompatible. Installed-world sources include its disassembler
 and external symbolizer. This does not qualify an AArch64 host or cross-system build;
 aggregate target selection and cross-platform defaults remain unfinished.
+
+.Pp
+The native AMD64-hosted LLVM RISC-V component uses the boolean
+.Cm //tools/build/bazel/config:llvm_target_riscv ,
+which defaults to true for current world target-all selection. Disabling it makes
+the explicit component incompatible. Its MCA source is selected by
+.Cm clang_extras .
+This selects a compiler backend, not a qualified RISC-V host/system build.
+Aggregate target selection and cross-platform defaults remain unfinished.
