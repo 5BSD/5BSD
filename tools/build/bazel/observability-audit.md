@@ -5996,3 +5996,10 @@ No explicit SDT/DTrace or direct audit calls found in reviewed Kyua C++ sources.
 Native source inventory preserves logging, results and jail implementation.
 Jail/module preparation remains an audit-review candidate; no privileged
 operation was exercised. Plain-test reporting passed with host runtime libraries.
+
+### 2026-10-29 mlx4 user provider
+
+No explicit SDT/DTrace or direct audit calls found in libmlx4 sources/build files.
+Native target retains all seven maintained source files. RDMA resource lifecycle,
+error paths and kernel/provider observability require hardware/runtime review;
+archive/ELF parity does not qualify them. No kernel driver conversion is claimed.

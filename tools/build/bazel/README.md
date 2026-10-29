@@ -35908,3 +35908,24 @@ Kyua's own db-exec command. Runtime uses host libraries/shell and Make-staged
 schema/report assets verified byte-identical to native installation payloads.
 Full native-library runtime, jail execution, old-database migrations, maintained
 ATF suites and performance remain unqualified. No host installation occurred.
+
+### 2026-10-29 mlx4 OFED provider dependency
+
+Added native mlx4 provider with all seven maintained sources, explicit private
+headers and native ibverbs/pthread dependencies. Preserves /usr/lib shared-library
+placement (unlike mlx5 in /lib), static archive, development link and debug files.
+Make does not specify a version map for mlx4; no mlx5 version-map substitution.
+
+Maintained frontend bazel-mlx4-20261029 (16 jobs) matches fresh isolated Make
+reference bazel-mlx4-reference-20261029 on six installation metadata records,
+static archive members/global/undefined symbols and one valid ELF/debug pair
+with matching symbols/dynamic fields. Evidence/scripts:
+/usr/obj/usr/src/bazel-mlx4-qualification-20261029. No RDMA hardware operations,
+device discovery, traffic, provider loading or performance testing occurred.
+
+Dependency review: all seven libibverbs utilities require ibverbs, mlx4, mlx5,
+bnxtre, cxgb4, irdma and pthread under maintained Make. Native cxgb4/irdma remain
+missing before migrating these consumers; do not silently omit providers.
+Frontend review: current format-5 library targets/archive staging suffice;
+no build-bsd.c/backend/manual interface change required. Make remains the
+production/default builder and whole-system qualification remains incomplete.

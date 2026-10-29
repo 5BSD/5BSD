@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["buf.c", "cq.c", "dbrec.c", "mlx4.c", "qp.c", "srq.c", "verbs.c"], visibility = ["//lib/ofed/libmlx4:__pkg__"])
+cc_library(name = "private_headers", hdrs = ["config.h", "doorbell.h", "mlx4-abi.h", "mlx4.h", "mmio.h", "wqe.h"], strip_include_prefix = ".", deps = ["//contrib/ofed/libibverbs:headers"], visibility = ["//lib/ofed/libmlx4:__pkg__"])
