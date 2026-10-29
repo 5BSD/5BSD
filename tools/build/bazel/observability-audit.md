@@ -6205,3 +6205,10 @@ All 100 maintained CodeGen sources are represented without source changes. Scan
 for DTRACE, SDT_PROBE and audit_submit found no matches. No instrumentation was
 removed. Emitted-code instrumentation and runtime behavior await linked compiler
 and system tests; object-symbol comparison is not proof of those properties.
+
+### 2026-10-29 Clang Driver
+
+Native Driver covers 75 maintained sources; no compiler sources, probes or audit
+behavior were changed. Per-object symbol and archive inventory checks pass; full
+compiler execution/tool discovery and runtime observability remain unqualified.
+See bazel-clang-driver-qualification-20261029 for retained evidence.

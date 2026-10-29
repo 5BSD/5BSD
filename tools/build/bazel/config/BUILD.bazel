@@ -386,3 +386,9 @@ config_setting(name = "clang_full_enabled", flag_values = {":clang_full": "true"
 
 bool_flag(name = "lldb", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "lldb_enabled", flag_values = {":lldb": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_host_triple", build_setting_default = "", visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_default_target_triple", build_setting_default = "", visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_default_sysroot", build_setting_default = "", visibility = ["//visibility:public"])

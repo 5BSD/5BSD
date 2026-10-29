@@ -36710,3 +36710,31 @@ change needed. Seven qualified default Clang components now cover 430 sources;
 compiler linkage and remaining components/world/kernel/pkgbase/bootstrap/runtime/
 performance gates remain open. Make stays production/default; no host installation
 or publication occurred.
+
+### 2026-10-29 native Clang Driver
+
+Added all 75 maintained Driver sources as a native component with declared
+private/public headers and generated dependencies. Added a CcInfo configuration
+provider: llvm_host_triple and llvm_default_target_triple default to the selected
+C++ toolchain target triple, while llvm_default_sysroot defaults to empty. These
+are independent typed string inputs; the produced compiler does not inherit the
+SDK path. The manual documents them. Cross-compiler override behavior remains
+unqualified; these settings currently apply to Driver, not a complete compiler.
+
+Maintained frontend bazel-clang-driver-20261029 (16 jobs) succeeds. All 75 individual
+PIC global/undefined symbol inventories match fresh isolated Make objects;
+archive member multiplicities match. Recorded native compile arguments confirm
+all 75 use x86_64-unknown-freebsd16.0 for both default triples and an empty runtime
+sysroot, matching this Make configuration. The triple is supplied by the selected
+toolchain, not a literal in the rule. Evidence and scripts:
+/usr/obj/usr/src/bazel-clang-driver-qualification-20261029.
+Reference compilation uses existing bootstrap generators and staged SDK headers.
+This establishes object structure/default definitions, not instruction identity,
+compiler execution, cross compilation, tool discovery or performance.
+
+Frontend review: source_graph.py already validates and forwards typed format-5
+settings. Existing build-bsd.c dispatch and artifacts suffice; updated the
+maintained backend rule and manual together. Eight qualified default Clang
+components now cover 505 sources. Remaining compiler components/linkage and
+world/kernel/pkgbase/bootstrap/runtime/cache/performance gates remain open.
+Make remains production/default. No host installation or publication occurred.

@@ -3777,3 +3777,17 @@ The native
 setting defaults to true for the currently supported amd64 compiler components.
 It selects LLDB-dependent component sources; it does not establish that the
 complete debugger has been built or qualified.
+
+.Ss Native Clang compiler defaults
+The string settings
+.Cm //tools/build/bazel/config:llvm_host_triple
+and
+.Cm //tools/build/bazel/config:llvm_default_target_triple
+select the produced compiler's host and default output triples.
+An empty value uses the selected C++ toolchain target triple.
+Cross compilers may specify these independently.
+.Cm //tools/build/bazel/config:llvm_default_sysroot
+sets the produced compiler's default runtime sysroot; its default is empty.
+It does not inherit the SDK used to compile Clang.
+These inputs currently apply to the native Driver component;
+complete compiler and cross-compilation qualification remain outstanding.
