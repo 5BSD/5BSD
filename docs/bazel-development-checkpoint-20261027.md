@@ -13320,3 +13320,28 @@ new boolean and explicit targets; manual documents them. Resource-header archive
 is separate from driver/runtime libraries; complete toolchain composition and
 installed execution still need qualification. Make remains production/default;
 independent bootstrap, world/kernel/pkgbase/cache and performance gates remain open.
+
+### Composed compiler installation candidate (2026-10-29)
+
+Added shared-library installation manifests for native LLVM and Clang: versioned
+private shared library, separate debug file and development symlink. Make's installed
+configuration has no static LIB archive; native PIC aggregation remains a build
+input, not an extra installed artifact. Expanded Make installation variables are
+recorded at /usr/obj/usr/src/bazel-clang-libraries-install-contract-20261029.
+
+//lib/clang:compiler_install_archive composes driver, resource headers and both
+private libraries. Maintained run /usr/obj/usr/src/bazel-clang-composed-20261029
+passes. All 277 payload records match the union of independent Make installation
+references: driver and headers freshly built, libraries pre-existing Make artifacts
+freshly staged. Owner/group/mode/package tags, hardlinks and symlinks match;
+264 nonbinary payloads match byte-for-byte. All three debuglink names and CRCs
+match packaged debug files (CRC validation streams large files in 1 MiB chunks).
+Evidence/script: /usr/obj/usr/src/bazel-clang-libraries-reference-qualification-20261029.
+No library machine-code identity or fresh full-library rebuild is claimed.
+
+The archive is not a complete sysroot: system runtime libraries, CRT objects,
+linker and compiler runtime packages remain separate dependencies. Installed-layout
+execution, dynamic runtime, independent bootstrap and world/kernel/pkgbase/cache/
+performance gates remain open. No host installation, upgrade or publication.
+Frontend review: existing build-bsd.c/format-5 backend accepts composed target;
+manual updated with artifact boundaries. Make remains production/default.

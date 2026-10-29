@@ -6531,3 +6531,9 @@ Default 256 and optional 272 resource headers and installation metadata match
 fresh Make; all nine generated input closures match reference depfiles. Header
 payload generation has no runtime audit/probe behavior. This does not qualify
 compiler runtime libraries or an installed complete toolchain.
+
+### Composed compiler archive (2026-10-29)
+
+277 installation records, 264 nonbinary payloads and three debuglink CRCs verified
+against scoped Make references. No source/probe changes; these packaging checks
+do not establish dynamic runtime audit/probe delivery or installed-system behavior.

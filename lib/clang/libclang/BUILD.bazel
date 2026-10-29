@@ -430,3 +430,6 @@ cc_shared_library(name = "clang_shared", deps = [":clang"],
     user_link_flags = ["-Wl,-soname,libprivateclang.so.21", "-Wl,--gc-sections", "-Wl,-znow", "-Wl,-zrelro", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
+compiler_shared_installation(name = "install_manifest", library = "clang", major = 21, binary = ":clang_shared")

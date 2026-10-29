@@ -4012,3 +4012,11 @@ defaults to false and enables the additional headers corresponding to Make's
 .Cm INSTALL_CONFLICTING_CLANG_HEADERS
 when true. This archive contains headers only; driver and runtime libraries are
 separate targets. Set the boolean through format-5 build-settings.
+
+.Pp
+The
+.Cm //lib/clang:compiler_install_archive
+target combines the driver, resource headers and private LLVM/Clang shared
+libraries, including debug files and development symlinks. It does not contain
+system runtime libraries, CRT objects, linker or compiler runtime packages and
+is not a complete sysroot. Building the archive does not install it on the host.
