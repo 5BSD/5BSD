@@ -13132,3 +13132,27 @@ execution, non-native kernel boot or performance. Fresh Make object/install pari
 Bazel test integration and full bootstrap/world/kernel/pkgbase remain open.
 Frontend review: build-bsd.c and source_graph.py format-5 already accept this target
 and existing settings; manual updated. Make remains production/default.
+
+### Maintained compiler code-generation test and selection checks (2026-10-29)
+
+Added //usr.bin/clang/clang:codegen_test, a native Bazel cc_test that executes the
+produced compiler with declared runfiles. For each enabled backend it compiles C
+and C++ probes, checks successful exit and verifies the emitted ELF e_machine
+value in either byte order. Fixed triples in this test are representative fixtures,
+not compiler defaults. No shell/host compiler or generator stand-in is used.
+Default frontend run bazel-clang-codegen-test-20261029 passes one Bazel test
+containing ten compile/object checks. X86-only run bazel-clang-codegen-x86-20261029
+passes the same test with two checks. Other backends' optional test branches
+(BPF/LoongArch) have not yet executed.
+
+Additional reduced-configuration inspection verifies exactly x86 and x86-64 in
+--print-targets and confirms AArch64 compilation fails without producing an object.
+Compiler digest before/after and diagnostic are saved in the reduced run's
+selection-check.json. Zero-backend run bazel-clang-zero-backends-20261029 fails
+analysis with the intended 'requires at least one enabled backend' diagnostic;
+that retained failed run is a negative-policy result, not a passing build.
+All runs and inputs are under /usr/obj/usr/src. The normal build-bsd format-5
+frontend accepts explicit test labels and existing backend flags without changes;
+manual documents the test. CPU/memory/disk benchmarking, installed compiler,
+system headers/linker and produced-program execution remain unqualified. Make
+remains production/default; independent bootstrap/world/kernel/pkgbase remain open.

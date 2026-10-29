@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
 load("//tools/build/bazel:bsd_llvm_targets.bzl", "bsd_llvm_targets")
 load("//tools/build/bazel:bsd_clang_defaults.bzl", "bsd_clang_defaults")
 bsd_llvm_targets(name = "registered_targets")
@@ -16,3 +16,18 @@ cc_binary(
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"],
 )
+
+# Exercise the produced compiler, including object architecture, through bazel test.
+cc_test(name = "codegen_test", srcs = ["codegen_test.c"],
+    data = [":clang"],
+    args = ["$(location :clang)"] +
+        select({"//tools/build/bazel/config:llvm_target_x86_enabled": ["x86_64-unknown-freebsd16.0", "62"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_aarch64_enabled": ["aarch64-unknown-freebsd16.0", "183"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_arm_enabled": ["armv7-unknown-freebsd16.0-gnueabihf", "40"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_powerpc_enabled": ["powerpc64-unknown-freebsd16.0", "21"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_riscv_enabled": ["riscv64-unknown-freebsd16.0", "243"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_bpf_enabled": ["bpfel", "247"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:llvm_target_loongarch_enabled": ["loongarch64-unknown-freebsd16.0", "258"], "//conditions:default": []}),
+    linkopts = ["-static"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

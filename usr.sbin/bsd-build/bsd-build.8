@@ -3972,3 +3972,11 @@ At least one backend must be selected.
 This runtime qualification target uses Bazel runfile library paths and is not an
 installation or package target. Cross-system builds and compiler installation
 remain separate qualification requirements.
+
+.Pp
+The
+.Cm //usr.bin/clang/clang:codegen_test
+target executes the produced compiler on C and C++ fixtures for enabled backends
+and checks the emitted ELF architecture. Select it in both the format-5 targets
+and tests lists. It does not exercise system headers, linking or execution of
+the generated objects.

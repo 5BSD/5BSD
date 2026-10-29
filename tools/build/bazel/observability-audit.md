@@ -6505,3 +6505,8 @@ The native five-source driver executes and emits C/C++ objects for five default
 backend families. No source/probe changes. This does not establish audit events,
 DTrace delivery, linker operation or generated-program runtime. Retain these gaps
 alongside the compiler installation and configuration qualification work.
+
+### Maintained compiler execution test (2026-10-29)
+
+Default and X86-only codegen_test runs pass; these exercise compilation and ELF
+architecture checks, not audit or DTrace delivery. Prior observability gaps remain.
