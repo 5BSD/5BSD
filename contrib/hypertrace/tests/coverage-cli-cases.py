@@ -372,6 +372,45 @@ case('exec-consume-interrupted', FAST + ['-n', ENTRY + ' { trace(arg0); }'],
 case('exec-zero-probes-allowed', FAST + ['-Z', '-n', 'nosuch:::probe'],
      signals=[('ROUND 2', signal.SIGINT)], stdout='\n\n',
      stderr=matched('nosuch:::probe', 0))
+
+
+def enabled_before_go(count):
+    """Every program is enabled before the one GO: the model, like
+    dtrace(4), refuses ENABLE on an active state with EBUSY.  dtrace_go()
+    itself adds two ENABLEs (the dtrace:::ERROR program and the option DOF)
+    right before its GO."""
+    def check(d, stdout, stderr, shimlog, daemonlog):
+        lines = shimlog.splitlines()
+        enables = [i for i, l in enumerate(lines) if l.startswith('ENABLE matched')]
+        gos = [i for i, l in enumerate(lines) if l == 'GO']
+        if len(enables) != count + 2 or len(gos) != 1 or max(enables) > gos[0]:
+            return [f'expected {count} program ENABLEs and dtrace_go()\'s two, then one '
+                    f'GO; got enables at {enables}, GO at {gos}']
+        return []
+    return check
+
+
+# Several programs in one invocation (-s, -n, -P) are all enabled, then
+# tracing starts once; each program's clauses fire.
+case('exec-two-programs', FAST + ['-s', '{d}/a.d', '-n', ENTRY + ' { trace(arg0); exit(0); }'],
+     inputs={'a.d': 'BEGIN { trace(1); }\n'},
+     script=f'go 0 dtrace:::BEGIN n:1 ; go 0 {ENTRY} n:7 n:0',
+     stdout=HDR + probe(0, 1, '', 'BEGIN') + t4(1) + '\n' + probe(0, 4, 'alpha', 'entry')
+     + t8(7) + '\n\n',
+     stderr=matched('{d}/a.d', 1, 'script') + matched(ENTRY + ' ', 1),
+     check=enabled_before_go(2))
+case('exec-three-programs', FAST + ['-n', 'BEGIN { trace(1); }', '-s', '{d}/a.d',
+                                    '-P', 'test { exit(0); }'],
+     inputs={'a.d': ENTRY + ' { trace(arg0); }\n'},
+     script=f'go 0 dtrace:::BEGIN n:1 ; go 0 {ENTRY} n:7 ; go 0 test:kernel:beta:entry n:0',
+     stdout=HDR + probe(0, 1, '', 'BEGIN') + t4(1) + '\n' + probe(0, 4, 'alpha', 'entry')
+     + t8(7) + '\n' + probe(0, 6, 'beta', 'entry') + '\n\n',
+     stderr=matched('BEGIN ', 1) + matched('{d}/a.d', 1, 'script') + matched('test ', 4),
+     check=enabled_before_go(3))
+case('exec-programs-zero-allowed', FAST + ['-Z', '-n', 'nosuch:::probe', '-n',
+                                           'BEGIN { exit(0); }'],
+     script='go 0 dtrace:::BEGIN n:0', stdout=HDR + probe(0, 1, '', 'BEGIN') + '\n\n',
+     stderr=matched('nosuch:::probe', 0) + matched('BEGIN ', 1), check=enabled_before_go(2))
 # Slow rates keep the consumer asleep while both signals are taken.
 case('exec-impatient', ['-x', 'switchrate=500ms', '-x', 'statusrate=500ms', '-x',
                         'aggrate=500ms', '-n', ENTRY + ' { @c = count(); }'],
@@ -1190,9 +1229,10 @@ case('proc-argv-allocation-fails', FAST + ['-c', '/bin/sleep 30', '-n', 'BEGIN {
      stderr='dtrace: failed to allocate memory: Cannot allocate memory\n')
 case('macro-argument', ['-e', '-n', 'BEGIN { trace($1); }', '42'], open='nodev', stdout='',
      stderr='')
-# The model has no anonymous state to claim; consumption reports EINVAL.
-case('grab-anonymous', FAST + ['-a'], status=1, stdout_re='.*',
-     stderr='dtrace: processing aborted: Invalid argument\n')
+# -a with no program still starts tracing (dtrace_go() claims anonymous
+# state); the model has none to claim, so the consumer runs until stopped.
+case('grab-anonymous', FAST + ['-a'], signals=[('ROUND 2', signal.SIGINT)], stdout='\n\n',
+     stderr='', log_has=['GO'])
 case('libxo-invalid', ['--libxo', 'no-such-style', '-V'], status=2, stdout='',
      stderr_re=r'(?s).*Usage: dtrace.*')
 case('script-unreadable', ['-e', '-s', '{d}/s.d'], open='nodev', inputs={'s.d': 'BEGIN {}\n'},

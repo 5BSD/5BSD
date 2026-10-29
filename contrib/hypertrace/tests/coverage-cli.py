@@ -283,11 +283,15 @@ def load_cases():
 # 2026-10-26: 3301/3477, 1628/1859, 84/84 -- 136 new lines, 98 new
 # branches and 3 new functions; the rate rose from 94.79%/87.11% to
 # 94.94%/87.57%, and the added or changed code itself is 142/144 lines,
-# 110/116 branches).  A changed denominator needs an explicit baseline
+# 110/116 branches), then reviewed after tracing was moved back out of
+# exec_prog() so every -s/-n/-P program is enabled before dtrace_go()
+# (multiple programs failed with EBUSY; -a never started tracing;
+# multi-cli-2, 2026-10-29: 3308/3478, 1632/1861, 84/84 -- one line and two
+# branches more, all covered).  A changed denominator needs an explicit baseline
 # review; floors allow a small tolerance for interleaving-dependent paths
 # (session-stop exits in the worker).
 REGRESSION = {
-    'dtrace.c': {'lines': (3291, 3477), 'branches': (1618, 1859), 'functions': (84, 84)},
+    'dtrace.c': {'lines': (3295, 3478), 'branches': (1619, 1861), 'functions': (84, 84)},
     'dtrace_identifiers.h': {'lines': (53, 57), 'branches': (33, 46), 'functions': (3, 3)},
     'hypertrace_frame.h': {'lines': (47, 48), 'branches': (47, 60), 'functions': (2, 2)},
 }
