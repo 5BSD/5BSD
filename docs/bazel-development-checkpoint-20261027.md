@@ -12625,3 +12625,22 @@ Frontend review: build-bsd.c and format-5 backend already accept these native ta
 no input, staging, signing, packaging or manual contract changes are needed.
 Full LLVM Support/backends, compiler linkage and system qualification remain open.
 Make remains production/default; no installation or publication occurred.
+
+### LLVM DWARFLinker component (2026-10-29)
+
+Added native DWARFLinker cc_library with declared private headers, PIC archive/object
+exports and resolved source inventory. Its 17 sources require clang_extras, matching
+Make selection; the component is incompatible when that option is disabled.
+Maintained frontend run `/usr/obj/usr/src/bazel-llvm-dwarflinker-20261029` succeeds
+with 16 jobs and clang_extras enabled. All 17 PIC global/undefined symbol inventories
+match fresh isolated Make objects; archive member multiplicities and resolved native
+source inventory match Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-dwarflinker-qualification-20261029`. Reference headers
+use existing bootstrap generators and the staged SDK. No source/sandbox workaround.
+
+These checks establish component compilation, not instruction identity, debug-info
+linking runtime behavior, complete compiler linkage, independent bootstrap or
+performance. Frontend review: existing build-bsd.c format-5 input/backend supports
+this target and clang_extras setting; manual documents its new consumer.
+Remaining LLVM components, complete compiler and world/kernel/package qualification
+remain open. Make remains production/default. No host installation/publication.

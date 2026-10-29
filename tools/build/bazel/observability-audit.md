@@ -6356,3 +6356,10 @@ The new 11-source component preserves upstream sources and compile-time contract
 No DTrace probes or audit hooks added; object symbol parity does not establish
 runtime observability. YAML conversion/error paths await linked-tool runtime tests.
 Evidence: `/usr/obj/usr/src/bazel-llvm-objectyaml-qualification-20261029`.
+
+### LLVM DWARFLinker (2026-10-29)
+
+The 17-source optional debug-info linking component preserves upstream sources.
+No probes or audit hooks added. Symbol parity does not establish runtime error
+reporting or observability; linked-tool debug-info tests remain required. Evidence:
+`/usr/obj/usr/src/bazel-llvm-dwarflinker-qualification-20261029`.

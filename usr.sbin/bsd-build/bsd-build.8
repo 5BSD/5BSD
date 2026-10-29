@@ -3843,3 +3843,9 @@ The installed LLVM DebugInfo component selects additional debug-format and
 symbolization sources with
 .Cm clang_extras .
 This does not establish debugger execution or bootstrap library qualification.
+
+.Pp
+The native LLVM DWARFLinker component requires
+.Cm clang_extras .
+Its component qualification does not establish debug-information linking runtime
+behavior or complete compiler linkage.
