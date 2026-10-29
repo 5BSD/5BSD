@@ -12584,3 +12584,27 @@ Frontend review: existing typed compiler-default settings/format-5 artifacts suf
 manual updated, no build-bsd.c parser change required. Remaining LLVM libraries/
 target backends, linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance
 gates remain open. Make stays production/default; no host installation/publication.
+
+### 2026-10-29 native LLVM LTO and pass pipeline components
+
+Added installed LTO (three core plus three clang_extras-or-lld sources) and Passes
+(five sources): 11 default. Reused the existing selector and declared private
+PassRegistry.def plus native public/generated dependencies. No LLVM source/sandbox
+changes. Bootstrap TOOLS_PREFIX/LLD_BOOTSTRAP selection remains unqualified.
+
+Maintained frontend bazel-llvm-lto-passes-20261029 (16 jobs) succeeds. All 11 PIC
+object global/undefined symbol inventories match fresh isolated Make objects;
+both archive member inventories match. The reference helper completes generated
+headers before object compilation. Resolved native inventories match expanded Make
+for default (11) and lld=false/clang_extras=false (8). Reduced run is inventory-only,
+not alternate compiled/runtime qualification. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-lto-passes-qualification-20261029.
+Reference uses existing bootstrap generators/staged SDK headers; verification streams
+execution records. Results do not establish LTO/ThinLTO execution, pipeline semantics,
+plugin loading, optimization correctness, instruction identity, linkage or performance.
+
+Frontend review: existing typed lld/extras selection and format-5 backend suffice;
+manual updated for LTO consumer, no build-bsd.c parser change. Remaining LLVM
+libraries/target backends, full compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance qualification stay open. Make remains production/default.
+No host installation/publication occurred.

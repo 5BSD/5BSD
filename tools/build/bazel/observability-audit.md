@@ -6342,3 +6342,10 @@ bazel-llvm-frontend-drivers-qualification-20261029.
 reference-helper generation ordering. No compiler/probe/audit source changes.
 Runtime CPU detection and cross-target behavior remain unqualified. Evidence:
 bazel-llvm-targetparser-qualification-20261029.
+
+### 2026-10-29 LLVM LTO/Passes
+
+11 default objects match Make symbol/archive inventories; default/reduced source
+selections match expanded Make. No compiler/probe/audit source changes. LTO,
+pass-pipeline and plugin runtime behavior remain unqualified. Evidence:
+bazel-llvm-lto-passes-qualification-20261029.
