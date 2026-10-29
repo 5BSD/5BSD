@@ -15513,3 +15513,23 @@ No frontend/backend contract changes: explicit tests and existing runtime-path
 features support this. Daemon policy effects, malformed ancillary messages,
 concurrent API calls and error-log delivery remain outside this test. Full-system,
 bootstrap, sandbox/cache and performance gates remain open; Make stays default.
+
+### Native libble artifacts and installation (2026-10-29)
+
+Added native ble.c library, archive, DSO, debug split and installation. Bluetooth
+and libservice dependencies are declared native targets; blued_plane.h and
+ipc_proto.h remain private compilation inputs, with only ble.h installed. No
+protocol substitute or hardware stub was introduced. No generator is required
+by the maintained Make recipe.
+
+Run bazel-libble-20261029 passes through build-bsd using 16 jobs. Fresh Make
+comparison verifies all 8 installation records, header/manual bytes, archive
+order/symbols, DSO/debug symbols, dynamic metadata and debuglink CRC. Evidence:
+/usr/obj/usr/src/bazel-libble-reference-20261029 (verify.py,
+install-comparison.json), with separate bazel-libble-make-20261029 staging.
+No runtime test was requested in this run: Bluetooth hardware, blued protocol,
+capability-plane hand-off and libservice runtime are not qualified by it.
+
+Existing frontend explicit targets and backend metadata groups require no change.
+Full-system, independent bootstrap, sandbox/cache and performance gates remain
+open; Make remains production/default. No host installation occurred.

@@ -7036,3 +7036,11 @@ artifact parity does not establish those behaviors.
 Legacy libblacklist runtime_test now verifies private-socket action/message,
 credentials and descriptor transfer. Its logger writes diagnostics to stderr;
 this does not prove host syslog delivery or blocklistd policy/audit behavior.
+
+### libble (2026-10-29)
+
+The native target carries ble.c and both private daemon contracts unchanged.
+No DTrace provider, syslog or OS audit hook appears in this library's maintained
+recipe/source. The native libservice dependency retains its existing provider
+targets. Capability hand-off and daemon operation need integration tests; this
+artifact comparison does not prove probe or audit-event delivery.
