@@ -5881,3 +5881,13 @@ integration to carry forward. Exact installed tip/index bytes and three ELF
 pairs are compared; random choice, regex/locale behavior and malformed database
 handling remain runtime coverage gaps. Index generation executes the declared
 native strfile; it does not substitute a synthetic database or host PATH tool.
+
+### 2026-10-29 locate group
+
+Native rules preserve locate.bigram's Capsicum helper calls and all source/header
+inputs; no explicit DTrace/SDT/audit_submit/auditon sites were found in focused
+C/header scanning. Fifteen host runtime encoding/query comparisons succeeded;
+both Make/native bigram binaries fail host loading for missing
+cap_rights_intersect@FBSD_1.9 and remain unqualified. Maintenance scripts and
+filesystem visibility/privacy behavior require separate runtime qualification.
+No source checks or capability calls were removed to bypass host limitations.

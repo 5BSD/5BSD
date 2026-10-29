@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = ["//usr.bin/locate/" + n + ":install_archive" for n in ["bigram", "code", "locate"]], visibility = ["//usr.bin:__pkg__"])

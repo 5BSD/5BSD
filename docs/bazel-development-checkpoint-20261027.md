@@ -10802,3 +10802,36 @@ No host installation/publication occurred. Random selection, regex, locale,
 malformed databases, cross-host generator behavior and comparative performance
 remain runtime/configuration coverage gaps. These component comparisons do not
 qualify complete world/kernel/pkgbase; Make remains production/default.
+
+### 2026-10-29 locate group
+
+Added native locate, locate.code and locate.bigram with maintained MMAP build
+configuration and declared shared headers. fastfind.c is explicitly a textual
+header input, preserving its four inclusions from locate.c rather than compiling
+it as a separate translation unit. Installation includes locate.rc, all three
+unmodified maintenance scripts, both manuals and the updatedb.8 hardlink.
+
+Maintained frontend /usr/obj/usr/src/bazel-locate-20261029-r2 (16 jobs) matches
+fresh recursive rootless Make reference bazel-locate-reference-20261029:
+18 distinct metadata records, seven exact nonbinary payloads and three ELF/debug
+pairs with matching global/undefined symbols and dynamic fields. Initial
+comparison caught missing package ownership of /usr/libexec for the scripts;
+added the directory record without changing the verifier. Initial failure and
+final reports remain in bazel-locate-qualification-20261029.
+
+runtime.py in that evidence directory executes disposable copies of saved
+native artifacts and Make reference binaries with host shared libraries and
+PATH=/nonexistent. Fifteen comparisons succeed: encoding plus seven query modes
+in each mmap/stdio reader (full output, substring, case-insensitive, count,
+NUL-separated, limit and glob). Separate roundtrip.json confirms exact recovery
+of all four fixture paths. The full runtime script intentionally remains FAILED:
+locate.bigram from BOTH builders cannot load against host libc, which lacks
+cap_rights_intersect@FBSD_1.9. This is not a passing bigram test or complete
+runtime qualification; matching-library/kernel testing remains necessary.
+
+No maintenance script was executed, no filesystem scan or host database update
+occurred. Periodic updates, compressed-bigram round trips, malformed databases,
+locale/cross-platform behavior and performance remain open. Frontend review:
+existing format-5 target/artifact staging covers the complete payload; no
+build-bsd C/backend/manual change is required. Make remains production/default;
+complete world/kernel/pkgbase/runtime/performance gates remain open.
