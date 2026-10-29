@@ -4224,3 +4224,12 @@ instrumentation and explicitly linked native archives. Compiler-rt uses -fpic
 without the toolchain PIC variant's -DPIC, matching Make's static-runtime policy.
 The C++ companion currently has archive comparison only; SDK system libraries,
 host kernel/rtld and independent bootstrap remain qualification boundaries.
+
+.Pp
+The lib/libclang_rt/ubsan_standalone and ubsan_standalone_cxx packages provide
+native amd64 archive and installation targets matching fresh Make references.
+.Cm //lib/libclang_rt/ubsan_standalone:runtime_test
+checks clean execution and a signed-overflow diagnostic/nonzero exit using real
+compiler instrumentation and the explicitly linked native standalone archive.
+C++ type checks and broader handler coverage remain unqualified; the prepared
+SDK compiler/system libraries and host kernel/rtld remain in use.

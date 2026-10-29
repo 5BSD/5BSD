@@ -38712,3 +38712,28 @@ the production default. The final rerun includes initialization of the test harn
 diagnostic. Its three tests and all artifact comparisons pass. Saved link
 parameters select native ASan archives; loader-audit.json verifies every resolved
 shared library is a declared SDK artifact. Host kernel and rtld remain.
+
+### Standalone UBSan runtime (2026-10-29)
+
+Added explicit native amd64 ubsan_standalone and ubsan_standalone_cxx source,
+archive and installation targets using the common compiler-runtime policy.
+The main archive's 57 members and 2160 global/weak symbol records match a fresh
+Make reference; the C++ companion matches three members and 41 records. Both
+installed archive records match owner/group/mode/package tags.
+
+The maintained runtime_test compiles actual signed-overflow instrumentation and
+links the native standalone archive explicitly. Clean input succeeds without a
+diagnostic; overflow emits the runtime diagnostic and exits with the configured
+nonzero status. Final frontend run bazel-ubsan-standalone-runtime-20261029 has one
+passing test and no skipped cases. Link parameters contain no sanitizer driver
+link flag; loader inspection resolves all shared libraries to declared SDK files.
+Scripts, link parameters and reports are retained in
+/usr/obj/usr/src/bazel-ubsan-standalone-reference-20261029.
+
+This covers the amd64 archive/install contract and basic C overflow handling.
+C++ type checks, remaining handlers, recovery/concurrency, other architectures,
+independent bootstrap and full world/kernel/pkgbase/performance remain open.
+The prepared SDK compiler/system libraries and host kernel/rtld are still used.
+No host installation or publication. Frontend review: build-bsd.c and format-5
+source_graph.py already accept the explicit target/test list, so no CLI/schema
+change is required. Make remains production/default.

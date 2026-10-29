@@ -6676,3 +6676,10 @@ Main ASan and its C++ companion preserve their maintained source inventories.
 The runtime test verifies real heap-boundary and lifetime diagnostics. This does
 not establish C++ instrumentation, leak detection, concurrency, or tracing/audit
 coverage. No production instrumentation was added or removed for this migration.
+
+### Standalone UBSan (2026-10-29)
+
+The native main/C++ archives preserve the maintained source inventories. The
+runtime test checks actual C signed-overflow diagnostics, not replacement
+handlers. C++ type checks and broader handler coverage remain open; no production
+DTrace/audit instrumentation was added or removed.
