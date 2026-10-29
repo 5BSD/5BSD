@@ -40840,3 +40840,25 @@ performance remain open. Reviewed build-bsd.c and source_graph.py: the existing
 explicit configuration inputs and aggregate metadata contract suffice; no frontend
 interface change is required. Make remains production/default. No host installation
 or service startup was performed.
+
+### Private SNMP daemon/client runtime pilot (2026-10-29)
+
+Executed the saved Bazel-built bsnmpd and bsnmpget over a private Unix stream
+socket. Configuration, PID and engine state use a temporary private directory;
+no IP listener, host service configuration or installation is involved. A numeric
+SNMPv2 GET of sysLocation returns the configured bazel-private-test value. The
+harness enforces request/process timeouts and terminates/reaps the daemon before
+removing temporary state. Saved archive hashes are verified before extraction.
+
+Dependency inspection caught an initial extraction error: libbegemot is installed
+under /lib rather than /usr/lib, causing the first pilot to use the host library.
+Corrected the extraction and reran with explicit dependency-resolution assertions
+for both native libbegemot and libbsnmp. The corrected run passes. Host libwrap,
+libc, libcrypto, libsys and libthr still supply other runtime dependencies.
+Evidence: /usr/obj/usr/src/bazel-snmp-runtime-pilot-20261029/run.py, ldd.log,
+query.json and daemon.log. This is a direct runtime pilot, not yet a maintained
+Bazel test target. It establishes one daemon/client request; module loading,
+authorization failures, mutation, reload and complete installed-system behavior
+remain unqualified. No performance or independent bootstrap claim follows.
+Existing build-bsd explicit target/configuration interfaces remain sufficient;
+no production input or frontend contract changed. Make remains production/default.
