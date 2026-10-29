@@ -40460,3 +40460,31 @@ qualification remain next, alongside the overall world/kernel/pkgbase/bootstrap
 and performance gates. Reviewed build-bsd.c and source_graph.py; existing explicit
 target/test lists and ATF reporting support this without frontend changes.
 Make remains production/default. No host installation or service changes.
+
+### libbsnmp library and test installation aggregate (2026-10-29)
+
+Added explicit native library installation metadata: archive/DSO/debug, four
+public headers, tc.def, four manuals and 88 manual aliases. Added the maintained
+ATF executable/debug/Kyuafile installation. The root aggregate selects tests
+through the existing tests build setting. Alias inventories are maintained in
+Starlark; no Make parsing runs during Bazel builds. Library manual package tags
+follow the existing split-manpages setting; test payload retains package=tests.
+
+Run bazel-libbsnmp-install-20261029-r2 passes via build-bsd with 16 jobs, including
+the one maintained regression case. Against fresh full Make all/install, all
+110 changed installation destinations match: no missing/extra entries or
+ownership/mode/non-directory tag mismatches. All 15 regular payloads pass symbol,
+archive/dynamic, or byte comparisons; both debug links pass name/CRC checks.
+Each archived manual hardlink resolves to identical Make bytes and the expected
+shared inode in the Make stage. Initial reconciliation caught missing package
+ownership metadata for /usr/share/snmp/defs; the explicit directory entry fixes it.
+
+Evidence/scripts: /usr/obj/usr/src/bazel-libbsnmp-reference-20261029/
+install-audit.py,json and payload-audit.py,json; independent reference is
+bazel-libbsnmp-full-make-20261029. Tests-disabled installation and generator
+mutation/cache checks remain unqualified, as do whole-system pkgbase composition,
+boot/runtime, independent bootstrap and comparative performance.
+
+Reviewed build-bsd.c and source_graph.py: existing typed tests setting, targets,
+metadata groups and ATF reports support this addition without frontend changes.
+Make remains production/default; no host installation or service changes.

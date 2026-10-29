@@ -17,3 +17,6 @@ bsd_component_archive(name = "static_archive", groups = [":bsnmp"], visibility =
 cc_shared_library(name = "bsnmp_shared", deps = [":bsnmp"],
     dynamic_deps = select({_CRYPTO: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}),
     shared_lib_name = "libbsnmp.so.7", user_link_flags = ["-Wl,-soname,libbsnmp.so.7", "-Wl,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
