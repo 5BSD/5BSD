@@ -15,20 +15,21 @@ verify unsigned inputs; signing and runtime trust qualification remain separate.
 
 ## Current coverage audit and next work order (2026-10-27, refreshed)
 
-A fresh configured world traversal and component metadata query covers all
-**2,103 directories with no query failures**. Of those directories, **596** have
-local BUILD/BUILD.bazel files and **1,507** do not. The earlier survey recorded
-509/1,594. This is **not a completion percentage**: parent packages can own child
-outputs, upstream BUILD files may not implement BSD behavior, and local files can
-contain only exports or omit compilation, tests or installation.
+The current configured metadata survey covers **2,103 directories with no query
+failures**. The maintained `world-native-survey.py` verifies the recorded input
+hashes and maps those directories to package-file presence. Its 2026-10-29 run
+finds **1,099 directories with local BUILD files** and **1,004 with ancestor
+packages only**. This is not a completion percentage or a qualified product count.
+Among the ancestor-only directories, 364 have program metadata and 120 have
+library metadata. Test helpers and aggregates are included; these are not missing
+binary counts. Parent packages may own outputs, and local packages may only export
+files or omit build/test/install behavior.
 
-The new survey finds 627 program-metadata and 260 library-metadata directories
-without local BUILD files; 502 and 243 respectively also lack an ancestor package.
-These include test helpers, aggregate directories and multiple-output components,
-so they are not counts of missing binaries/libraries. The prior 264-program,
-105-library, four-framework and 24-PAM counts were historical checkpoints; they
-are not a fresh reconciled qualified-output count. Current qualification remains
-component-specific in the evidence entries below.
+The root BUILD.bazel currently exports COPYRIGHT only. It does not supply a world
+aggregate. Of the ancestor-only directories, 536 resolve to this root package;
+that is package membership, not evidence of implementation. The earlier 596/1,507
+survey and statement that no root BUILD file existed were stale. Fresh evidence:
+`/usr/obj/usr/src/bazel-world-components-refresh-20261029/native-package-survey.json`.
 
 Native libchannel, libcapability and libfidl runtime graphs now exist, together
 with native FIDL generation/compiler work, Capsule/Switchboard candidates and
@@ -74,7 +75,8 @@ Next work order within the unchanged completion contract:
    installed-system/VM tests and CPU/memory/disk performance gates remain required
    before choosing Bazel as the production default.
 
-There is still no root BUILD file or complete world/kernel/package/image backend.
+There is still no complete world/kernel/package/image backend. The root package
+currently exports a source file only.
 Current evidence: /usr/obj/usr/src/bazel-world-inventory-refresh-20261027 and
 /usr/obj/usr/src/bazel-world-components-refresh-20261027. The latter retains every
 metadata record, source bindings and the reproducible native-package-survey.json

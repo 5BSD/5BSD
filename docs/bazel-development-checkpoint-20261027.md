@@ -16247,3 +16247,29 @@ Reviewed build-bsd.c/source_graph.py: existing explicit targets/tests and runtim
 inputs carry the new test without interface changes. No production build default,
 installation, signing or publication contract changed. Whole-system/kernel/pkgbase,
 bootstrap, sandbox/cache and comparative performance gates remain incomplete.
+
+### Refreshed world package-presence review queue (2026-10-29)
+
+Added maintained tools/build/bazel/world-native-survey.py, replacing the historical
+one-off presence script. It validates metadata record counts, unique directories,
+record hashes and bound input hashes before/after surveying, rejects failed metadata
+queries and escaping component paths, and writes only a fresh output. BUILD-file
+hashes and explicit unverified review state accompany each directory mapping.
+This is a diagnostic review queue, not a native build coverage gate.
+
+The older 2026-10-27 metadata has eight changed bound inputs; do not reuse it as
+current evidence. The existing 2026-10-29 metadata survey still has all bound hashes
+intact and covers 2,103 directories with no query failures. Its new package survey
+finds 1,099 local BUILD-file directories and 1,004 ancestor-only directories,
+including 364 program-metadata and 120 library-metadata ancestor-only directories.
+A root BUILD.bazel exists but exports COPYRIGHT only; 536 ancestor-only directories
+resolve to it. This corrects the earlier statement that no root BUILD file existed.
+No complete world aggregate has been implemented or demonstrated by this survey.
+
+Run: python3.12 tools/build/bazel/world-native-survey.py --src /usr/src
+--metadata /usr/obj/usr/src/bazel-world-components-refresh-20261029
+--output /usr/obj/usr/src/bazel-world-components-refresh-20261029/native-package-survey.json
+(on one command line). Review actual target/action/install mappings before treating
+any directory as covered. Complete world/kernel/pkgbase/bootstrap/runtime and
+performance gates remain open. This diagnostic changes no production input or
+backend contract; existing build-bsd qualification/publication behavior is unchanged.
