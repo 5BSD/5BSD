@@ -6018,3 +6018,11 @@ sources or utility build files. Native source inventory preserves diagnostics.
 Device opening, memory registration and queue lifecycle remain observability
 review candidates; no claim about kernel-side auditing or probes follows from
 this userland source scan. Hardware behavior remains unqualified.
+
+### 2026-10-29 librdmacm and consumers
+
+No explicit SDT/DTrace or direct audit calls found in reviewed librdmacm C/header
+sources. Native declarations preserve maintained diagnostics and source selection.
+Connection/address resolution, multicast and error paths remain runtime and
+observability-review candidates. No hardware operations were performed; these
+build comparisons do not assess kernel auditing or driver instrumentation.

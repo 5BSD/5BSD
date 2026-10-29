@@ -11296,3 +11296,30 @@ infiniband diagnostics and optional opensm. Frontend review: existing format-5
 archive sets and target staging cover these consumers, requiring no build-bsd.c/
 backend/manual interface change. Make remains production/default; complete
 world/kernel/pkgbase/runtime/performance qualification remains open.
+
+### 2026-10-29 librdmacm and all four consumers
+
+Added native librdmacm (acm, addrinfo, cma, indexer), declared public/private
+headers and native ibverbs dependency, maintained symbol-version map, static/
+shared/debug artifacts and 49 manuals. Public header installation remains owned
+by the existing OFED include package. Shared library remains in /usr/lib.
+Added ucmatose, mckey, rping and udaddy with exact maintained sources/common.c
+selection and full native RDMA/provider/pthread dependencies. Parent archive set
+covers all four maintained consumer subdirectories. No upstream source changes.
+
+Maintained 16-job frontend runs bazel-rdmacm-20261029 and
+bazel-rdmacm-clients-20261029 match fresh isolated Make references. Library:
+55 metadata records, 49 exact manuals, static member/global/undefined-symbol
+inventory and one ELF/debug pair. Consumers: 14 records, four exact manuals and
+four ELF/debug pairs. All checked dynamic fields and symbols match. Evidence
+and scripts live in bazel-rdmacm-qualification-20261029 and
+bazel-rdmacm-clients-qualification-20261029 under /usr/obj/usr/src.
+
+Make reference consumers reuse staged dependency libraries; not every reference
+dependency was rebuilt. No RDMA device operations, connections, multicast,
+traffic, privileged configuration or performance checks were run. Structural
+parity does not establish runtime equivalence. Next OFED work is the diagnostics
+and their remaining libraries, plus optional opensm. Frontend review: current
+format-5 targets/archive sets and staging helpers cover this addition; no
+build-bsd.c/backend/manual interface change. Make remains production/default;
+whole-system world/kernel/pkgbase/runtime/performance qualification remains open.
