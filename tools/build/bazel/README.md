@@ -34746,3 +34746,27 @@ credential changes or service actions occurred. Existing format-5 target/artifac
 handling covers this batch; no frontend C/protocol change required. Make remains
 production/default; complete /usr/bin, world/kernel/pkgbase and performance gates
 remain open.
+
+### 2026-10-29 command, lorder and ssh-copy-id installation
+
+Added native script/manual installation archives for command, lorder and
+ssh-copy-id. Existing script bytes are installed verbatim with maintained names,
+permissions and package ownership. lorder includes its existing ATF shell suite
+when tests are enabled, retaining required_programs=nm metadata. No SSH connection,
+key installation or host account change was performed.
+
+Maintained frontend qualification, 16 jobs:
+/usr/obj/usr/src/bazel-usr-bin-scripts-20261029-r2.
+Fresh Make reference roots are bazel-<component>-scripts-reference-20261029 under
+/usr/obj/usr/src. Scripts are in bazel-usr-bin-scripts-qualification-20261029;
+per-component qualification reports prove all seven payload files byte-identical
+and eleven per-component metadata records equal. The initial comparison caught
+missing package-owned /usr/bin directory records; fixed these in the native
+archives and retained the initial run and comparison script. These scripts have
+no compiled ELF payloads. lorder's test body, wrapper and discovery file are
+installation-qualified, not runtime-qualified.
+
+Frontend review: existing format-5 target capture and metadata output groups
+cover these targets, with no C/protocol change needed. /usr/bin parent assembly,
+remaining utilities, runtime and performance qualification are still open; Make
+remains production/default and ports retain Make.

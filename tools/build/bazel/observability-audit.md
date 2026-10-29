@@ -5696,3 +5696,9 @@ sources. Source scan is not evidence of absent kernel syscall tracing or audit.
 No sources modified. mdo's credential/authorization behavior warrants a dedicated
 runtime audit review; resizewin terminal and mididump device behavior also remain
 unqualified. Current evidence covers installation and ELF interfaces only.
+
+### 2026-10-29 command, lorder and ssh-copy-id
+
+Script bodies and lorder test assertions are installed unchanged. No probes or
+audit hooks added or removed. ssh-copy-id's remote authentication/key-installation
+behavior was not exercised; installed byte equality is not runtime qualification.
