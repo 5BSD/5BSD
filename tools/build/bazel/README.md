@@ -37187,3 +37187,27 @@ manual updated for the setting consumer, no build-bsd.c parser change. Remaining
 LLVM libraries/target backends, full compiler linkage and world/kernel/pkgbase/
 bootstrap/runtime/cache/performance gates stay open. Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native LLVM SandboxIR and TextAPI
+
+Added SandboxIR (15 core sources) and installed TextAPI (13 MIN plus three MIW
+sources): 31 default sources. Native generated/public dependencies and TextAPI
+private headers are declared; SandboxIR has no private header inputs. SandboxIR
+here is LLVM's IR abstraction, not the Bazel execution sandbox. No LLVM source or
+sandbox-policy changes were required.
+
+Maintained frontend bazel-llvm-sandbox-textapi-20261029 (16 jobs) succeeds. All 31 PIC
+object global/undefined symbol inventories match fresh isolated Make references;
+both archive member inventories match. Resolved source inventories match expanded
+Make ${SRCS} exactly. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-sandbox-textapi-qualification-20261029.
+References use existing bootstrap generators/staged SDK headers; verification streams
+execution records. This does not qualify IR mutation/tracking semantics, text-stub
+parsing/writing, symbol behavior, instruction identity, linkage, runtime or performance.
+Bootstrap library selection remains unqualified.
+
+Frontend review: existing typed inputs, generated providers and format-5 backend/
+artifacts suffice; no build-bsd.c/manual interface change needed. Remaining LLVM
+libraries/target backends, full compiler linkage and world/kernel/pkgbase/bootstrap/
+runtime/cache/performance gates remain open. Make stays production/default.
+No host installation/publication occurred.
