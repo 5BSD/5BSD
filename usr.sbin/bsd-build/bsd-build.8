@@ -4020,3 +4020,18 @@ target combines the driver, resource headers and private LLVM/Clang shared
 libraries, including debug files and development symlinks. It does not contain
 system runtime libraries, CRT objects, linker or compiler runtime packages and
 is not a complete sysroot. Building the archive does not install it on the host.
+
+.Pp
+The native ELF linker targets
+.Cm //usr.bin/clang/lld:ld.lld
+and
+.Cm //usr.bin/clang/lld:lld_installed
+provide a build-tree runtime candidate and a PIE installed candidate respectively.
+.Cm //usr.bin/clang/lld:install_archive
+contains its driver, debug file, manual and ld aliases.
+The tests
+.Cm //usr.bin/clang/clang:native_link_c_test
+and
+.Cm //usr.bin/clang/clang:native_link_cc_test
+use native Clang and LLD together with the selected staged SDK.
+They do not establish independent bootstrap or cross-system linker qualification.

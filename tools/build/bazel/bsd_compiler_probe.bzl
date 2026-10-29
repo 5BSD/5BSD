@@ -24,14 +24,14 @@ def _impl(ctx):
     args.add("-o", out)
     ctx.actions.run(executable = ctx.attr.compiler[DefaultInfo].files_to_run,
         arguments = [args], inputs = depset([ctx.file.src], transitive = [sdk]),
-        tools = [ctx.file.linker], outputs = [out],
+        tools = [ctx.attr.linker[DefaultInfo].files_to_run], outputs = [out],
         env = {"LC_ALL": "C"}, use_default_shell_env = False,
         mnemonic = "BSDCompilerProbe")
     return [DefaultInfo(executable = out, files = depset([out]))]
 
 bsd_compiler_probe = rule(implementation = _impl, executable = True, attrs = {
     "compiler": attr.label(executable = True, cfg = "exec", mandatory = True),
-    "linker": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
+    "linker": attr.label(allow_single_file = True, executable = True, cfg = "exec", mandatory = True),
     "sdk": attr.label_list(mandatory = True),
     "src": attr.label(allow_single_file = True, mandatory = True),
     "cxx": attr.bool(),

@@ -6545,3 +6545,10 @@ aliases checked from the composed archive. Loader paths checked for compiler and
 dynamic outputs. SDK runtime/linker and host rtld/kernel remain dependencies.
 This diagnostic does not exercise audit/DTrace delivery or the CC script under a
 matching root; installed-system tests remain required.
+
+### Native LLD (2026-10-29)
+
+55-source ELF linker inventory, generated option table, fresh Make ELF symbols,
+five installation records and debuglink verified. Native compiler/linker C/C++
+execution tests pass. No source/probe changes. This does not qualify linker audit
+or DTrace delivery, LTO/cross-link variants or complete installed-system behavior.

@@ -38039,3 +38039,34 @@ layout coverage, native linker/runtime composition, independent bootstrap and fu
 world/kernel/pkgbase/cache/performance qualification remain open.
 Frontend review: no new build inputs/policy/publication semantics; existing composed
 artifact is exercised. Make remains production/default.
+
+### Native ELF LLD build, installation and compiler integration (2026-10-29)
+
+Added native LLD's 55 maintained sources with explicit dependencies, PIE compilation,
+native LLVM registration/default providers, LLD version configuration and generated
+Options.inc. Runtime and installed variants share one object target. The first
+analysis rejected nonexistent header glob patterns; corrected inventory includes
+actual ELF .h/.def and public .h/.inc files. No source or sandbox workaround.
+The resolved 55-source inventory matches expanded Make exactly.
+
+Corrected build bazel-lld-native-20261029-r2 and build/test/install run
+bazel-lld-install-tests-20261029 pass under /usr/obj/usr/src with 16 jobs. Fresh
+Make reference generates Options.inc then builds/links/stages LLD using the existing
+SDK and LLVM library (not independent bootstrap). Option table matches all 139,009
+bytes, and its included OptParser.td matches Make's depfile. Global/weak ELF symbol
+records match the fresh Make linker with zero additions/removals. All five
+installation records, both compressed manuals, links, metadata and debuglink CRC
+match. Installed ELF is PIE with BIND_NOW/RELRO/non-executable stack and no
+RPATH/RUNPATH/TEXTREL. Evidence/scripts:
+/usr/obj/usr/src/bazel-lld-reference-qualification-20261029.
+
+The compiler probe rule now declares the linker's files_to_run, preserving native
+linker runtime dependencies. New native_link_c_test/native_link_cc_test compile,
+link and execute probes with native Clang AND native LLD. Both pass, alongside the
+two original staged-linker SDK tests (four passing reported cases, none skipped).
+System headers/libraries/CRT still come from the declared Make-prepared SDK.
+
+Frontend review: existing build-bsd.c/format-5 transports new targets; manual
+updated. Cross-link/platform/configuration variants, LTO and broader linker tests,
+installed compiler/linker composition, independent bootstrap and full system/cache/
+performance gates remain open. Make remains production/default; no host install.
