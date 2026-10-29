@@ -6785,3 +6785,10 @@ or audit submission calls. Review connection acceptance, dispatch failure and
 UDP ancillary-data errors for useful probes when qualifying KDC/kadmind. Preserve
 consumer-owned authentication auditing; this archive comparison does not prove
 those daemon paths or justify adding duplicate security events.
+
+### MIT GSS-RPC (2026-10-29)
+
+The migrated RPC C sources contain no explicit DTrace provider or audit calls.
+Review authentication rejection and RPC transport/dispatch failures with KDC
+consumer observability. The XDR wire-format test does not establish authentication
+or audit coverage; no probes or audit submissions were added during conversion.

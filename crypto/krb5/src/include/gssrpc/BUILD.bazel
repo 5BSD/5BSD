@@ -8,3 +8,5 @@ cc_library(
     deps = ["//krb5/include/gssrpc:types", "//krb5/lib/gssapi:public_headers"],
     visibility = ["//visibility:public"],
 )
+
+exports_files(['auth.h', 'auth_gss.h', 'auth_gssapi.h', 'auth_unix.h', 'clnt.h', 'netdb.h', 'pmap_clnt.h', 'pmap_prot.h', 'pmap_rmt.h', 'rename.h', 'rpc_msg.h', 'rpc.h', 'svc_auth.h', 'svc.h', 'xdr.h'], visibility = ["//krb5:__subpackages__"])

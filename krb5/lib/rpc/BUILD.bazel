@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(
+    name = "gssrpc",
+    srcs = [
+        "//crypto/krb5/src/lib/rpc:auth_gss.c",
+        "//crypto/krb5/src/lib/rpc:auth_gssapi.c",
+        "//crypto/krb5/src/lib/rpc:auth_gssapi_misc.c",
+        "//crypto/krb5/src/lib/rpc:auth_none.c",
+        "//crypto/krb5/src/lib/rpc:auth_unix.c",
+        "//crypto/krb5/src/lib/rpc:authgss_prot.c",
+        "//crypto/krb5/src/lib/rpc:authunix_prot.c",
+        "//crypto/krb5/src/lib/rpc:bindresvport.c",
+        "//crypto/krb5/src/lib/rpc:clnt_generic.c",
+        "//crypto/krb5/src/lib/rpc:clnt_perror.c",
+        "//crypto/krb5/src/lib/rpc:clnt_raw.c",
+        "//crypto/krb5/src/lib/rpc:clnt_simple.c",
+        "//crypto/krb5/src/lib/rpc:clnt_tcp.c",
+        "//crypto/krb5/src/lib/rpc:clnt_udp.c",
+        "//crypto/krb5/src/lib/rpc:dyn.c",
+        "//crypto/krb5/src/lib/rpc:get_myaddress.c",
+        "//crypto/krb5/src/lib/rpc:getrpcport.c",
+        "//crypto/krb5/src/lib/rpc:pmap_clnt.c",
+        "//crypto/krb5/src/lib/rpc:pmap_getmaps.c",
+        "//crypto/krb5/src/lib/rpc:pmap_getport.c",
+        "//crypto/krb5/src/lib/rpc:pmap_prot.c",
+        "//crypto/krb5/src/lib/rpc:pmap_prot2.c",
+        "//crypto/krb5/src/lib/rpc:pmap_rmt.c",
+        "//crypto/krb5/src/lib/rpc:rpc_callmsg.c",
+        "//crypto/krb5/src/lib/rpc:rpc_commondata.c",
+        "//crypto/krb5/src/lib/rpc:rpc_dtablesize.c",
+        "//crypto/krb5/src/lib/rpc:rpc_prot.c",
+        "//crypto/krb5/src/lib/rpc:svc.c",
+        "//crypto/krb5/src/lib/rpc:svc_auth.c",
+        "//crypto/krb5/src/lib/rpc:svc_auth_gss.c",
+        "//crypto/krb5/src/lib/rpc:svc_auth_gssapi.c",
+        "//crypto/krb5/src/lib/rpc:svc_auth_none.c",
+        "//crypto/krb5/src/lib/rpc:svc_auth_unix.c",
+        "//crypto/krb5/src/lib/rpc:svc_raw.c",
+        "//crypto/krb5/src/lib/rpc:svc_run.c",
+        "//crypto/krb5/src/lib/rpc:svc_simple.c",
+        "//crypto/krb5/src/lib/rpc:svc_tcp.c",
+        "//crypto/krb5/src/lib/rpc:svc_udp.c",
+        "//crypto/krb5/src/lib/rpc:xdr.c",
+        "//crypto/krb5/src/lib/rpc:xdr_alloc.c",
+        "//crypto/krb5/src/lib/rpc:xdr_array.c",
+        "//crypto/krb5/src/lib/rpc:xdr_float.c",
+        "//crypto/krb5/src/lib/rpc:xdr_mem.c",
+        "//crypto/krb5/src/lib/rpc:xdr_rec.c",
+        "//crypto/krb5/src/lib/rpc:xdr_reference.c",
+        "//crypto/krb5/src/lib/rpc:xdr_sizeof.c",
+        "//crypto/krb5/src/lib/rpc:xdr_stdio.c",
+    ],
+    deps = ['//crypto/krb5/src/lib/rpc:headers', '//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/support:krb5support'],
+    local_defines = ["GSSAPI_KRB5", "DEBUG_GSSAPI=0", "GSSRPC__IMPL"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":gssrpc"], visibility = ["//visibility:public"])
+cc_shared_library(
+    name = "gssrpc_shared",
+    deps = [":gssrpc"],
+    dynamic_deps = ['//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared'],
+    shared_lib_name = "libgssrpc.so.122",
+    additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,libgssrpc.so.122"],
+    visibility = ["//visibility:public"],
+)
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(
+    name = "xdr_test",
+    srcs = ["xdr_test.c"],
+    deps = [":archive_link", "//crypto/krb5/src/include/gssrpc:headers"],
+    size = "small",
+)

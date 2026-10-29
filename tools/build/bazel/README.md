@@ -39144,3 +39144,40 @@ qualified with the RPC library. Prepared SDK and host dependencies remain.
 Reviewed build-bsd.c and format-5 source_graph.py: explicit archive labels are
 already supported; no frontend input contract change is required. Make remains
 production/default; no host installation, publication or reboot.
+
+### Native GSS-RPC library and public headers (2026-10-29)
+
+Added all 47 explicit RPC C sources, source/private/public header dependencies,
+static/shared library targets and version-map linking. The package metadata uses
+the maintained gssrpc.pc.in and derives the version from the declared upstream
+configure input. Added separate installation manifests for the library and all
+16 public headers, including the maintained FreeBSD types.h. This closes the
+header-installation gap recorded in the preceding apputils entry.
+
+Run bazel-gssrpc-runtime-20261029 passes a native archive-linked XDR test: known
+wire bytes for a negative integer and padded string, decode/allocation/free, and
+rejection of a truncated integer. It does not qualify GSS authentication,
+network transport, client/server lifecycle, dynamic runtime or performance.
+
+Fresh Make references bazel-gssrpc-make-20261029 and
+bazel-gssrpc-headers-make-20261029 match seven library installation records and
+16 header records. Checks cover ordered archive members, global/weak symbols
+(703 static, 257 shared/debug), NEEDED/SONAME/flags, debuglink CRC, ownership,
+modes, tags, symlink and byte-identical pkg-config/header payloads. Evidence:
+/usr/obj/usr/src/bazel-gssrpc-reference-20261029, including verify.py and
+verify-headers.py. Prepared SDK and host dependencies remain.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already accept the
+explicit library/header archive and test targets; no input-contract change.
+No host installation, publication or reboot; Make stays production/default.
+
+### Configured metadata survey completed (2026-10-29)
+
+bazel-world-components-refresh-20261029/summary.json reports all 2,103 directories
+queried, zero failures, elapsed 929.36 seconds, with input and record hashes.
+This supersedes the running-survey status above. At the current checkout, 490
+directories with LIB/PROG/PROG_CXX/PROGS/PROGS_CXX metadata lack a local BUILD file;
+33 are under krb5. These are review candidates, not missing-product counts:
+parent targets may cover them and multi-program values require expansion.
+Next Kerberos work includes administration/database support libraries, plugins,
+programs and daemons. Whole-world/kernel/pkgbase qualification remains open.
