@@ -10169,3 +10169,25 @@ query or host installation performed. Runtime system interactions remain pending
 Frontend review: format-5 target/artifact handling suffices; no C/protocol change
 required. /usr/bin parent integration, remaining world/kernel/pkgbase work and
 runtime/performance gates remain open. Make remains production/default.
+
+### 2026-10-29 w and uptime native build/install
+
+Added //usr.bin/w:install_archive, compiling local w/pr_time/proc_compare sources
+and the declared //bin/ps:fmt.c source with its ps.h/extern.h inputs. Source exports
+are restricted to //usr.bin/w:__pkg__. The first sandbox build exposed the missing
+transitive ps extern.h; declared it explicitly without broadening include paths.
+Preserved uptime as a hardlink to w and installed its distinct manual source.
+
+Maintained frontend, 16 jobs: /usr/obj/usr/src/bazel-w-20261029-r2.
+Fresh rootless Make reference: bazel-w-native-reference-20261029 under that object
+root. Scripts: bazel-w-qualification-20261029. qualification/w reports establish
+seven equal metadata records, both manual payloads byte-identical, Make hardlink
+inode identity and equal native alias bytes, valid debug linkage, and matching
+global/undefined symbols and dynamic dependency/search-path properties. Initial
+failed sandbox evidence is retained. No instruction or live process/session-query
+behavior equivalence claimed, and no host installation performed.
+
+Frontend review: existing format-5 target/artifact path covers this change;
+no C/protocol update needed. /usr/bin parent assembly, remaining components,
+world/kernel/pkgbase, runtime and performance qualification remain incomplete.
+Make remains production/default.

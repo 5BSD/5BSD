@@ -5725,3 +5725,10 @@ No explicit SDT/DTRACE/audit references found in these command C/header sources.
 This does not establish absence of kernel tracing/audit. No source modifications.
 Review resource-control updates and process-attachment/core-dump auditing during
 VM runtime qualification; current evidence covers installation and ELF interfaces.
+
+### 2026-10-29 w/uptime
+
+No explicit SDT/DTRACE/audit references found in local w C/header sources.
+Production sources and shared ps formatter unchanged. Kernel/libkvm process-query
+and login-session behavior remain runtime qualification items; source scanning
+and ELF parity do not establish live tracing/audit coverage.
