@@ -5667,3 +5667,11 @@ Preserved both stream and seqpacket test bodies and diagnostics. No runtime
 probe/audit qualification performed. Production devd migration is still pending;
 Make conditionally compiles devd_provider.d with WITH_DTRACE, which must be
 carried into its native graph. The current devd BUILD file only installs nvmf.conf.
+
+### 2026-10-29 devd provider migration
+
+Native devd now carries devd_provider.d through header generation, compiled-object
+probe rewriting and provider linkage. Provider attributes, argument mappings,
+function/probe schemas and site counts match fresh Make output: nine ordinary
+and twelve enabled sites validated against function bounds and instruction bytes.
+DTrace-disabled output has no DOF. No live probe firing or audit runtime claim.

@@ -9857,3 +9857,29 @@ configuration: devd itself is still unmigrated. The next dependency is a native
 devd executable including lex/yacc generation, its DTrace provider, option-selected
 configuration groups and manuals, before complete /sbin aggregation can qualify.
 A BUILD file's existence alone must not be counted as a migrated program.
+
+### 2026-10-29 native devd executable and generators
+
+Added //sbin/devd:devd using native cc rules, source-built yacc/lex/m4 execution
+tools, explicit generated parser source/header/report outputs, declared C++ and
+libutil dependencies, and the existing DTrace object transformation. DTrace is
+selected by the maintained typed build setting; no generated source is checked
+in or imported from a prior Make build. Production sources are unchanged.
+
+Maintained frontend builds (16 jobs) succeeded in both configurations:
+`/usr/obj/usr/src/bazel-devd-native-20261029` and
+`/usr/obj/usr/src/bazel-devd-native-no-dtrace-20261029`.
+The first contains dof.json and make-comparison.json. Fresh rootless Make
+reference is bazel-devd-native-reference-20261029 under the same object root.
+Provider attributes and complete probe schemas/site counts match Make. Both
+binaries pass function-address/range and patched-instruction checks for nine
+ordinary and twelve enabled sites. Dynamic dependencies and search paths match.
+The disabled variant's no-dof.json proves no embedded DOF section. No live probe
+firing, daemon execution, instruction equivalence or full installation claim.
+
+The DTrace-enabled qualification uses the existing experimental section archive
+setting; it does not promote that feature or Bazel to a production default.
+Configuration groups, two manuals, debug installation and full /sbin parent
+selection remain to be integrated and compared. Existing NVMe configuration
+manifest stays available to its package consumer. Frontend review: existing
+format-5 native targets and typed DTrace settings suffice; no C/protocol change.
