@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = 'ibstat',
+    srcs = ["//contrib/ofed/infiniband-diags:src/ibstat.c", "//contrib/ofed/infiniband-diags:src/ibdiag_common.c", "//contrib/ofed/infiniband-diags:src/ibdiag_sa.c"],
+    deps = ["//contrib/ofed/infiniband-diags:headers", "//lib/ofed/complib:osmcomp", "//lib/ofed/libibmad:ibmad", "//lib/ofed/libibumad:ibumad"],
+    dynamic_deps = ["//lib/ofed/complib:osmcomp_shared", "//lib/ofed/libibmad:ibmad_shared", "//lib/ofed/libibumad:ibumad_shared"],
+    local_defines = ["HAVE_CONFIG_H=1"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'ibstat', manual = '//contrib/ofed/infiniband-diags:man/ibstat.8', package = "utilities", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin/ofed/infiniband-diags:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

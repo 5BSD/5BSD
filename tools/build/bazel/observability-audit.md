@@ -6033,3 +6033,11 @@ No explicit SDT/DTrace or direct audit calls found in the reviewed management
 library sources/build files. Native targets preserve source inventory and existing
 diagnostics. Management-datagram routing, timeout and permission failures remain
 runtime/observability-review candidates. No device operations were exercised.
+
+### 2026-10-29 osmcomp and ibstat
+
+No explicit SDT/DTrace or direct audit calls found in the reviewed common-library,
+ibstat and shared diagnostic C sources. Native targets preserve logging and all
+selected sources. Thread/timer lifecycle, device status queries and management
+operation error paths remain runtime/observability-review candidates. No device
+operations were exercised by these structural build comparisons.

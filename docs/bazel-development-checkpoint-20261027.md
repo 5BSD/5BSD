@@ -11345,3 +11345,27 @@ management datagrams, device operations, traffic or performance tests occurred.
 Frontend review: existing format-5 targets/staging cover these libraries; no
 build-bsd.c/backend/manual interface change required. Make remains production/
 default, and full world/kernel/pkgbase/runtime qualification is incomplete.
+
+### 2026-10-29 OpenSM common library and default ibstat
+
+Added native osmcomp with all 17 maintained sources, native pthread dependency,
+HAVE_CONFIG_H, symbol version map and static/shared/debug installation. Shared
+OpenSM complib/IBA header providers support both maintained include spellings
+(complib/iba and infiniband/complib/iba), without duplicating installed headers.
+Added ibstat with inherited ibdiag_common.c/ibdiag_sa.c, declared diagnostic and
+ibnetdisc headers, and native osmcomp/ibmad/ibumad dynamic dependencies.
+
+Maintained frontend bazel-osmcomp-20261029 matches fresh Make reference on six
+metadata records, static member/global/undefined-symbol inventory and one valid
+ELF/debug pair. ibstat run bazel-ibstat-20261029-r2 matches five metadata records,
+one exact manual and one ELF/debug pair. Both use 16 jobs and match checked
+symbols/dynamic fields. Evidence/scripts: bazel-osmcomp-qualification-20261029
+and bazel-ibstat-qualification-20261029/r2 under /usr/obj/usr/src.
+
+Initial ibstat comparison rejected package=rdma metadata; maintained Make uses
+package=utilities. Corrected target/package tags and retained the failed report.
+No program source changes, device discovery, network operations or performance
+testing. Native optional diagnostics and complete parent aggregation remain
+unfinished. Frontend review: existing format-5 targets/archive helpers suffice;
+no build-bsd.c/backend/manual interface change. Make remains production/default;
+complete world/kernel/pkgbase/runtime/performance qualification remains open.
