@@ -41371,3 +41371,22 @@ Do not report these as passing runtime suites without correcting their execution
 contract. This migration preserves the current installation contract and does
 not enable the broken test registration. Existing build-bsd/source_graph targets
 support this addition without frontend changes. Full-system gates remain open.
+
+### Maintained libpathconv conversion fixture and native tests (2026-10-29)
+
+Moved all existing test.pl examples into one shared cases.tsv: four abs2rel,
+23 rel2abs and 17 common cases exercised in both directions, 61 total. Preserved
+fixture copyright/license. A native cc_test reads the fixture and calls the
+native library directly; it fails on mismatches, malformed input or empty input.
+The legacy Perl driver reads the same fixture, invokes helpers without shell
+interpolation, checks child status and returns nonzero on mismatches. Existing
+Make test registration remains disabled; its command helpers are not TAP tests.
+
+Run bazel-libpathconv-tests-20261029 passes one Bazel case containing all 61
+conversions. Independent Make-archive runner checks pass the same 61 examples
+and reject an intentionally wrong expected result. The corrected Perl driver
+also passes 61 cases and rejects that wrong result using Make-linked helpers.
+Evidence: native saved test log/receipt and
+bazel-libpathconv-reference-20261029/{runner-check,perl-runner-check}.json.
+This does not cover arbitrary buffer-boundary/fuzz behavior or full-system runtime.
+Existing build-bsd/source_graph explicit test inputs support this unchanged.

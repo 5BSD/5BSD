@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "conversion_test", srcs = ["runtime_test.c"],
+    deps = ["//lib/libpathconv:pathconv"], data = ["cases.tsv"],
+    args = ["$(rootpath cases.tsv)"], linkstatic = True, size = "small")
