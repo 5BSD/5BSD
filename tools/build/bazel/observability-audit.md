@@ -6114,3 +6114,10 @@ This batch adds generation actions only and changes no generator or compiler
 sources. All maintained diagnostic families are retained; no probes or audit
 hooks were removed. Actual compiler diagnostic behavior remains to qualify after
 native compiler linkage.
+
+### 2026-10-29 Clang attribute definitions
+
+Only generation declarations/provider wiring changed. Maintained AST, Sema and
+serialization definitions are retained byte-for-byte against the reference. No
+generator/compiler source instrumentation was changed. Runtime behavior remains
+unqualified until the consuming compiler is built and tested.

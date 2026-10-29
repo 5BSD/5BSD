@@ -14,5 +14,4 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
-load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
-bsd_tablegen(name = "attribute_list", src = "//contrib/llvm-project/clang/include:clang/Basic/Attr.td", includes = ["//contrib/llvm-project/clang/include:attribute_definitions"], include_dirs = ["contrib/llvm-project/clang/include"], flags = ["-gen-clang-attr-list"], output = "clang/Basic/AttrList.inc", tool = ":bootstrap", visibility = ["//visibility:public"])
+alias(name = "attribute_list", actual = "//lib/clang/libclang:clang_Basic_AttrList", visibility = ["//visibility:public"])

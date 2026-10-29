@@ -11672,3 +11672,27 @@ existing format-5 targets/artifacts and maintained TableGen backend suffice; no
 build-bsd.c/manual interface change required. Compiler/world/kernel/pkgbase/runtime/
 cache/performance gates remain open; Make stays production/default. No host
 installation or publication occurred.
+
+### 2026-10-29 Clang attribute generated-header family
+
+Added all 18 maintained libclang generation recipes consuming Attr.td: AST
+classes/implementation/visitors/dumps, Basic attribute lists/spellings, Sema tables
+and serialization readers/writers. Each has a native TableGen action and declared
+transitive definitions; attribute_headers supplies the compiler include namespace.
+Moved the earlier generator demonstration to an alias of the maintained AttrList
+output, avoiding a duplicate producer. Explicit mappings are native Bazel metadata;
+Make recipe extraction was used only to prepare the independent comparison.
+
+Maintained frontend bazel-clang-attributes-20261029 (16 jobs) succeeds. All 18
+relative output paths and 4,537,357 bytes match fresh invocations of the existing
+Make bootstrap generator exactly. Comparison preserves directories (Basic and Sema
+both have AttrParsedAttrList.inc); it does not collapse duplicate basenames.
+Evidence: /usr/obj/usr/src/bazel-clang-attributes-qualification-20261029, including
+recipe inventory, tool hash, reference commands and per-output hashes. Reference
+generator itself was not freshly rebuilt. This qualifies generated definitions,
+not compiled attribute semantics, PCH interoperability or full compiler behavior.
+
+Frontend review: format-5 artifact collection and existing TableGen action backend
+cover this change; no new build-bsd.c/manual interface. Remaining generated families,
+compiler libraries, world/kernel/pkgbase/bootstrap/runtime/performance gates are
+open. Make stays production/default; no host installation or publication occurred.

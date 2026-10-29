@@ -21,3 +21,35 @@ _DIAGNOSTICS = {"Diagnostic" + component + suffix: [flag, "-clang-component=" + 
 ) for name, flags in _DIAGNOSTICS.items()]
 cc_library(name = "diagnostic_headers", hdrs = [":" + name for name in _DIAGNOSTICS], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "diagnostic_outputs", srcs = [":" + name for name in _DIAGNOSTICS], visibility = ["//visibility:public"])
+
+_ATTRIBUTES = {
+    "clang/AST/AttrImpl.inc": "-gen-clang-attr-impl",
+    "clang/AST/AttrNodeTraverse.inc": "-gen-clang-attr-node-traverse",
+    "clang/AST/AttrTextNodeDump.inc": "-gen-clang-attr-text-node-dump",
+    "clang/AST/AttrVisitor.inc": "-gen-clang-attr-ast-visitor",
+    "clang/AST/Attrs.inc": "-gen-clang-attr-classes",
+    "clang/Basic/AttrHasAttributeImpl.inc": "-gen-clang-attr-has-attribute-impl",
+    "clang/Basic/AttrList.inc": "-gen-clang-attr-list",
+    "clang/Basic/AttrParsedAttrList.inc": "-gen-clang-attr-parsed-attr-list",
+    "clang/Basic/AttrSubMatchRulesList.inc": "-gen-clang-attr-subject-match-rule-list",
+    "clang/Basic/AttributeSpellingList.inc": "-gen-attribute-spelling-list",
+    "clang/Basic/CXX11AttributeInfo.inc": "-gen-cxx11-attribute-info",
+    "clang/Basic/RegularKeywordAttrInfo.inc": "-gen-clang-regular-keyword-attr-info",
+    "clang/Sema/AttrParsedAttrImpl.inc": "-gen-clang-attr-parsed-attr-impl",
+    "clang/Sema/AttrParsedAttrKinds.inc": "-gen-clang-attr-parsed-attr-kinds",
+    "clang/Sema/AttrParsedAttrList.inc": "-gen-clang-attr-parsed-attr-list",
+    "clang/Sema/AttrSpellingListIndex.inc": "-gen-clang-attr-spelling-index",
+    "clang/Serialization/AttrPCHRead.inc": "-gen-clang-attr-pch-read",
+    "clang/Serialization/AttrPCHWrite.inc": "-gen-clang-attr-pch-write"
+}
+[bsd_tablegen(
+    name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:clang/Basic/Attr.td",
+    includes = ["//contrib/llvm-project/clang/include:attribute_definitions"],
+    include_dirs = ["contrib/llvm-project/clang/include"],
+    flags = [flag], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+    visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"],
+) for output, flag in _ATTRIBUTES.items()]
+cc_library(name = "attribute_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "attribute_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], visibility = ["//visibility:public"])
