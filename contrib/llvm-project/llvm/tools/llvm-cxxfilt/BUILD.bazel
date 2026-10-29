@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['llvm-cxxfilt.cpp', 'Opts.td'], visibility = ["//usr.bin/clang/llvm-cxxfilt:__pkg__"])

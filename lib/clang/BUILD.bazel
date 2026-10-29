@@ -10,3 +10,10 @@ bsd_install_archive(name = "compiler_install_archive",
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "utilities_test", srcs = ["llvm_utilities_test.c"],
+    data = ["//usr.bin/clang/clang:clang", "//usr.bin/clang/llvm-nm:llvm-nm", "//usr.bin/clang/llvm-cxxfilt:llvm-cxxfilt", "//usr.bin/clang/llvm-size:llvm-size", "//usr.bin/clang/llvm-strings:llvm-strings"],
+    args = ["$(location //usr.bin/clang/clang:clang)", "$(location //usr.bin/clang/llvm-nm:llvm-nm)", "$(location //usr.bin/clang/llvm-cxxfilt:llvm-cxxfilt)", "$(location //usr.bin/clang/llvm-size:llvm-size)", "$(location //usr.bin/clang/llvm-strings:llvm-strings)"],
+    linkopts = ["-static"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

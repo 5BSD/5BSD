@@ -4059,3 +4059,13 @@ configuration on amd64 FreeBSD.
 contains llvm-ar, its debug file, the llvm-ranlib binary hardlink and both distinct
 manual pages. Static LLVM library linking and cross-host variants remain outside
 this qualification. Building the archive does not install it on the host.
+
+.Pp
+The llvm-nm, llvm-cxxfilt, llvm-size and llvm-strings packages under usr.bin/clang
+provide native targets named after the utility, an _installed variant, options,
+source_inventory and install_archive. They currently qualify the default shared
+LLVM configuration on native amd64 FreeBSD.
+.Cm //lib/clang:utilities_test
+uses native Clang output to exercise symbol reporting, demangling, section
+reporting and string extraction. Select this label in both targets and tests.
+It does not qualify exhaustive options, cross-host execution or bootstrap.

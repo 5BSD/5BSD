@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-strings",
+    srcs = ['//contrib/llvm-project/llvm/tools/llvm-strings:llvm-strings.cpp'],
+    options = "//contrib/llvm-project/llvm/tools/llvm-strings:Opts.td", manual = "llvm-strings.1")

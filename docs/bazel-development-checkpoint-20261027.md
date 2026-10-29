@@ -13452,3 +13452,34 @@ explicit runtime/installed/inventory/archive targets; manual records the scope.
 No host installation or publication. Independent bootstrap, complete system,
 configuration coverage, cache and performance qualification remain open.
 Make remains production/default.
+
+### Four native LLVM utilities (2026-10-29)
+
+Added llvm-nm, llvm-cxxfilt, llvm-size and llvm-strings using shared llvm_utility.bzl
+for common default-shared LLVM compilation/link/installation policy. Each BUILD
+owns explicit sources and option-table input; native llvm-tblgen generates Opts.inc
+with the declared OptParser.td include. Resolved source counts 2/2/2/1 match expanded
+Make exactly, and each fresh Make depfile confirms the declared TableGen include.
+Runtime and installed variants share compiled objects; installed variants omit
+build-tree runtime search paths. Current supported qualification is native amd64
+FreeBSD/default shared LLVM, not LLVM_LINK_STATIC_LIBRARIES or cross-host variants.
+
+Maintained build /usr/obj/usr/src/bazel-llvm-utilities-20261029 passes. Fresh Make
+references build all seven sources and four option tables, then link/install using
+the existing SDK/private LLVM library. Each utility has zero global/weak ELF symbol
+record differences. All twelve installation payload records match ownership,
+modes/tags, four manuals match bytes, and all four debuglink CRCs validate.
+Generated tables match respectively 20,946 / 6,638 / 7,872 / 6,023 bytes.
+Reports/scripts: /usr/obj/usr/src/bazel-llvm-utilities-reference-qualification-20261029.
+
+Maintained //lib/clang:utilities_test passes in bazel-llvm-utilities-test-20261029
+(one reported case, none skipped). Native Clang creates a relocatable object;
+native utilities check its defined code/data symbols, C++ name demangling, section
+reporting and extraction of a known string. All executable paths are declared
+runfiles; PATH is /nonexistent. This is smoke coverage, not exhaustive options or
+numeric size validation. Test harness still builds with the Make-prepared SDK.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already support these
+explicit target/test selections; manual updated. No host installation/publication.
+Independent bootstrap, remaining tools/system targets, static/cross configuration,
+cache and performance qualification remain open. Make stays production/default.

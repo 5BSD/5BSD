@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-size",
+    srcs = ['llvm-size-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-size:llvm-size.cpp'],
+    options = "//contrib/llvm-project/llvm/tools/llvm-size:Opts.td", manual = "llvm-size.1")

@@ -6552,3 +6552,12 @@ matching root; installed-system tests remain required.
 five installation records and debuglink verified. Native compiler/linker C/C++
 execution tests pass. No source/probe changes. This does not qualify linker audit
 or DTrace delivery, LTO/cross-link variants or complete installed-system behavior.
+
+### LLVM object-inspection utilities (2026-10-29)
+
+llvm-nm, llvm-cxxfilt, llvm-size and llvm-strings retain all seven Make sources.
+Direct source inspection found no explicit DTrace/SDT or audit calls in these
+translation units. No instrumentation was removed or added. They are object/file
+inspection utilities; this check does not establish kernel audit delivery or decide
+whether future instrumentation is desirable. Maintained native execution smoke
+coverage and fresh Make source/options/install comparisons pass.
