@@ -383,3 +383,6 @@ config_setting(name = "llvm_full_debuginfo_enabled", flag_values = {":llvm_full_
 # Matches MK_CLANG_FULL; components consuming it enable static analyzer support.
 bool_flag(name = "clang_full", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "clang_full_enabled", flag_values = {":clang_full": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "lldb", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "lldb_enabled", flag_values = {":lldb": "true"}, visibility = ["//visibility:public"])

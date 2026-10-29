@@ -48,3 +48,8 @@ _TARGET_DEFINITIONS = [
 ) for arch, stem, flag, output in _TARGET_DEFINITIONS]
 cc_library(name = "target_definition_headers", hdrs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "target_definition_outputs", srcs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], visibility = ["//visibility:public"])
+
+bsd_tablegen(name = "attributes", src = "//contrib/llvm-project/llvm/include:llvm/IR/Attributes.td", flags = ["-gen-attrs"], output = "llvm/IR/Attributes.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap", visibility = ["//visibility:public"])
+bsd_tablegen(name = "intrinsic_enums", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td", includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-intrinsic-enums"], output = "llvm/IR/IntrinsicEnums.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap", visibility = ["//visibility:public"])
+
+cc_library(name = "ir_generated_headers", hdrs = [":attributes", ":intrinsic_enums"], strip_include_prefix = ".", visibility = ["//visibility:public"])

@@ -6179,3 +6179,10 @@ All 74 maintained sources are represented, including target implementations and
 version handling. Scan for DTRACE, SDT_PROBE and audit_submit found no matches.
 No source instrumentation changed. Actual compiler target/runtime behavior remains
 outside the object-symbol comparison.
+
+### 2026-10-29 Clang AST
+
+109 mandatory plus one LLDB-selected source are represented without source changes.
+DTRACE, SDT_PROBE and audit_submit scan found no matches. No instrumentation was
+removed. Bytecode/constexpr runtime and debugger interactions remain unqualified
+until compiler linkage and execution tests.

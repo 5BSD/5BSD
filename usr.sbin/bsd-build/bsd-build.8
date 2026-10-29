@@ -3770,3 +3770,10 @@ is true by default, matching
 Components that consume it define
 .Dv CLANG_ENABLE_STATIC_ANALYZER .
 This setting does not yet establish complete compiler feature-selection coverage.
+
+.Pp
+The native
+.Cm //tools/build/bazel/config:lldb
+setting defaults to true for the currently supported amd64 compiler components.
+It selects LLDB-dependent component sources; it does not establish that the
+complete debugger has been built or qualified.

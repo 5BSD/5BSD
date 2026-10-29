@@ -36601,3 +36601,33 @@ Frontend review: current documented settings and format-5 artifacts suffice; no
 build-bsd.c/backend/manual interface change. Compiler/world/kernel/pkgbase/bootstrap/
 runtime/performance qualification remains open. Make stays production/default;
 no host installation or publication occurred.
+
+### 2026-10-29 native Clang AST component and LLDB source selection
+
+Added 109 unconditional AST sources plus ExternalASTMerger.cpp selected by the
+new typed lldb setting (default true for the supported amd64 configuration).
+Includes bytecode interpreter, ASTContext, expression evaluation, layouts and
+printing. Updated opcode source ownership for the new Bazel package boundary.
+Promoted existing LLVM attribute/intrinsic generation into libllvm header providers;
+old generator labels alias the maintained outputs. Declared IR, directive and
+target-parser generated headers required by AST compilation. Initial missing IR
+and target-parser header failures remain recorded; no source patches/fallbacks.
+
+Maintained frontend bazel-clang-ast-component-20261029-r3 (16 jobs) succeeds. All
+110 individual PIC global/undefined symbol inventories match fresh isolated Make
+AST objects. LLDB-disabled frontend bazel-clang-ast-component-nolldb-20261029 also
+succeeds: 109 objects match independently queried Make MK_LLDB=no source selection
+and the unchanged default-reference objects. The reference excludes only
+ExternalASTMerger.cpp; no alternate Make object rebuild is claimed. Evidence:
+/usr/obj/usr/src/bazel-clang-ast-component-qualification-20261029.
+
+Reference compilation uses existing bootstrap tools and staged LLVM/SDK headers.
+Results qualify compilation structure and this source-selection branch, not AST
+runtime behavior, constexpr interpreter correctness, object instruction identity,
+compiler linkage, debugger execution or performance. Documentation now describes
+the lldb setting and its limited scope. Frontend review: format-5 typed settings
+and artifacts already support it; no build-bsd.c parser change required.
+
+Remaining compiler components/linkage and world/kernel/pkgbase/bootstrap/runtime/
+performance gates remain open. Make stays production/default. No host installation
+or publication occurred.

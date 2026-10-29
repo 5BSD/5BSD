@@ -14,6 +14,5 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
-load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
-bsd_tablegen(name = "attributes", src = "//contrib/llvm-project/llvm/include:llvm/IR/Attributes.td", flags = ["-gen-attrs"], output = "llvm/IR/Attributes.inc", tool = ":bootstrap", visibility = ["//visibility:public"])
-bsd_tablegen(name = "intrinsic_enums", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td", includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-intrinsic-enums"], output = "llvm/IR/IntrinsicEnums.inc", tool = ":bootstrap", visibility = ["//visibility:public"])
+alias(name = "attributes", actual = "//lib/clang/libllvm:attributes", visibility = ["//visibility:public"])
+alias(name = "intrinsic_enums", actual = "//lib/clang/libllvm:intrinsic_enums", visibility = ["//visibility:public"])

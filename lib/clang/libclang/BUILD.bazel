@@ -376,7 +376,7 @@ bsd_tablegen(name = "checker_definitions", src = "//contrib/llvm-project/clang/i
     includes = ["//contrib/llvm-project/clang/include:clang/StaticAnalyzer/Checkers/CheckerBase.td"],
     include_dirs = ["contrib/llvm-project/clang/include/clang/StaticAnalyzer/Checkers"],
     flags = ["-gen-clang-sa-checkers"], output = "clang/StaticAnalyzer/Checkers/Checkers.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
-bsd_tablegen(name = "opcode_definitions", src = "//contrib/llvm-project/clang/lib:AST/ByteCode/Opcodes.td",
+bsd_tablegen(name = "opcode_definitions", src = "//contrib/llvm-project/clang/lib/AST:ByteCode/Opcodes.td",
     flags = ["-gen-clang-opcodes"], output = "Opcodes.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
 bsd_tablegen(name = "opencl_definitions", src = "//contrib/llvm-project/clang/lib:Sema/OpenCLBuiltins.td",
     flags = ["-gen-clang-opencl-builtins"], output = "OpenCLBuiltins.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
