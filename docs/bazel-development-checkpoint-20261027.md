@@ -15633,3 +15633,29 @@ and NAT behavior are not runtime-qualified by these artifact checks.
 Existing frontend explicit target inputs support this addition without changes.
 Full world/kernel/pkgbase/bootstrap, sandbox/cache and performance gates remain
 open; Make remains production/default. No host installation occurred.
+
+### libalias family installation reconciliation (2026-10-29)
+
+Added shared installation rules for main libalias and seven userland modules,
+including static/DSO/debug payloads, main header/manual/library link, and the
+maintained libalias.conf configuration file. The aggregate explicitly selects
+the same eight components. The initial Make reference's install omitted CONFS;
+fresh bazel-libalias-make-config-20261029 runs all/install/installconfig. The
+initial native archive also omitted Make's explicit /etc directory package
+metadata, caught by reconciliation and corrected without filtering the difference.
+
+Run bazel-libalias-install-20261029-r2 passes through build-bsd with 16 jobs.
+Complete comparison has 30 installation destinations, no missing/extra entries,
+matching ownership/modes and non-directory package tags. Archive members are
+only declared payloads plus mtree-matching ancestor directories. Symlink target
+matches. All 27 regular payloads pass header/manual/config bytes or archive/ELF
+symbol comparisons; DSO dynamic metadata and all eight debug-link CRCs pass.
+Evidence and repeatable scripts: /usr/obj/usr/src/bazel-libalias-reference-20261029/
+install-audit.py,json and payload-audit.py,json. These are installation/artifact
+checks, not module-loading or NAT/protocol runtime qualification.
+
+Existing frontend explicit aggregate targets and backend metadata output groups
+support this without contract changes. Shared package directory entries remain
+in component metadata; this is not final pkgbase composition. Kernel modules,
+full-system/bootstrap, sandbox/cache and performance gates remain open. Make
+stays production/default; no host installation or networking changes occurred.

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = ["//lib/libalias/libalias:install_archive"] + ["//lib/libalias/modules/" + name + ":install_archive" for name in ['dummy', 'ftp', 'irc', 'nbt', 'pptp', 'skinny', 'smedia']], visibility = ["//visibility:public"])

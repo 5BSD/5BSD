@@ -2,6 +2,8 @@
 """Userland libalias protocol modules; kernel modules are separate targets."""
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//lib/libalias:installation.bzl", "alias_installation")
+
 def alias_module(name):
     cc_library(name = "objects", srcs = ["//sys/netinet/libalias:alias_" + name + ".c"],
         deps = ["//sys/netinet/libalias:headers"], linkstatic = True,
@@ -10,3 +12,4 @@ def alias_module(name):
     cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "libalias_" + name + ".so",
         user_link_flags = ["-Wl,-soname,libalias_" + name + ".so", "-Wl,--fatal-warnings,--warn-shared-textrel"],
         visibility = ["//visibility:public"])
+    alias_installation(library = "alias_" + name, shared = ":module")

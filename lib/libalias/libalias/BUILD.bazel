@@ -7,3 +7,6 @@ cc_library(name = "alias", srcs = ["//sys/netinet/libalias:" + source for source
 bsd_component_archive(name = "static_archive", groups = [":alias"], visibility = ["//visibility:public"])
 cc_shared_library(name = "alias_shared", deps = [":alias"], shared_lib_name = "libalias.so.7",
     user_link_flags = ["-Wl,-soname,libalias.so.7", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//lib/libalias:installation.bzl", "alias_installation")
+alias_installation(library = "alias", shared = ":alias_shared", main = True)
