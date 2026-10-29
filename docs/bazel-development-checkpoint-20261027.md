@@ -9593,3 +9593,40 @@ combinations, or runtime. Legacy NO_PIC/NO_RTLD selection and MAN-dependent
 man_utils defaulting have not been implemented in the native parent. Kernel,
 other world subtrees, merged package construction/publication, complete runtime,
 bootstrap independence and performance gates remain open. Make stays default.
+
+## 2026-10-29: recursive libexec installation comparison
+
+A fresh recursive Make build/install of libexec with clean defaults plus
+WITHOUT_TESTS, WITHOUT_NIS and WITHOUT_MALLOC_PRODUCTION matches the previously
+built native tests-disabled aggregate for all 293 distinct metadata records and
+210 non-ELF payloads. Compared ownership, modes, package/config/debug tags, flags,
+symlinks, hardlink relationships and payload bytes. Directory records preserve
+different package tag combinations rather than dropping all but one owner.
+
+All 23 executable/shared-module debug pairs validate. Their global/undefined
+symbol lists and NEEDED/RPATH/RUNPATH/SONAME properties match the fresh Make
+reference. This does not assert byte-identical ELF/debug files or runtime
+behavior; previous component qualifications remain separate evidence.
+
+Evidence: /usr/obj/usr/src/bazel-libexec-recursive-qualification-20261029/
+clean-installation-parity.json and elf-parity.json; preserved native ELF payloads
+in native-elf/. Reproducers: make-clean.py, verify-clean.py and elf.py. Independent
+reference: bazel-libexec-recursive-clean-reference-20261029, with a separate
+-reference-objects tree. Native source artifacts: bazel-libexec-aggregate-20261029-r2.
+
+The initial reference inherited WITH_TESTS_SUPPORT=1 from the SDK profile, so
+it installed 37 extra ATF records absent from the native auto/tests-off graph.
+Receipt inspection identified the mismatched inputs. Rebuilt in a fresh directory
+with clean explicit options; no files were excluded from comparison and no
+assertion was weakened. Initial stage and installation-parity.json remain as
+diagnostic evidence.
+
+All compilation used 16 jobs; Make commands retain time -l CPU/RSS/block-I/O
+logs. These runs are not a controlled performance comparison against the warm
+Bazel cache and must not be presented as one. No host install or services run.
+No frontend implementation change was needed: this qualifies output already
+produced by the maintained format-5 path, not a separate build backend.
+
+Tests-enabled full-tree comparison, other options/architectures, semantic/runtime
+checks, complete world/kernel/pkgbase publication, reproducible bootstrap and
+controlled memory/disk/CPU performance gates remain open. Make is still default.

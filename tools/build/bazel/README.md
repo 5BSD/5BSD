@@ -34441,3 +34441,9 @@ Default amd64 builds with and without test payloads passed; five configured
 child-selection comparisons match Make. Other architectures, legacy NO_PIC/
 NO_RTLD modes, MAN-dependent man_utils defaulting, full merged installation
 comparison and runtime tests remain unqualified. Make remains production/default.
+
+The tests-disabled libexec aggregate also matches a fresh recursive Make
+installation for all 293 metadata records and 210 non-ELF payloads. All 23
+executable/module debug pairs validate, and their global/undefined symbols and
+dynamic dependency properties match Make. This is installed-output evidence,
+not complete runtime, whole-ELF reproducibility or performance qualification.
