@@ -7121,3 +7121,11 @@ symbols. The Makefile declares no DTrace provider. Daemon authentication, module
 loading, configuration reload, SNMP writes and audit/log behavior need isolated
 runtime tests; build parity does not establish those. No production source changes
 or new audit-policy requirements were introduced.
+
+### SNMP USM/VACM/target modules (2026-10-29)
+
+Native module builds preserve maintained sources/generated tables and unresolved
+daemon ABI symbols. Their Makefiles declare no DTrace providers. USM credential
+changes, VACM permission changes and notification-target changes are security-
+relevant runtime audit/log review items; artifact parity does not prove their
+observability or authorization behavior. No new probes or audit policy added.

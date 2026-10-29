@@ -19,3 +19,5 @@ cc_binary(name = "bsnmpd", srcs = [":tree_source"] + ["//contrib/bsnmp/snmpd:" +
 
 load(":installation.bzl", "daemon_installation")
 daemon_installation()
+
+exports_files(["generation.bzl", "generate.py"], visibility = ["//usr.sbin/bsnmpd/modules:__subpackages__"])

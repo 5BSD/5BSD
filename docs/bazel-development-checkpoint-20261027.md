@@ -15962,3 +15962,29 @@ layout and full-system package composition remain unqualified. Reviewed build-bs
 and source_graph.py: existing target/metadata input contracts support this without
 frontend changes. Make remains production/default; bootstrap/cache/sandbox and
 comparative CPU/memory/disk performance gates remain open.
+
+### Native SNMP USM, VACM and target modules (2026-10-29)
+
+Added native source/table/module targets for snmp_usm, snmp_vacm and snmp_target.
+The declared generation rule now takes semantic filename/C-symbol prefixes and
+local-vs-installed include mode. Daemon defaults retain local includes and empty
+prefix; modules use their maintained prefixes and installed bsnmp/ includes.
+All use exec-configured native gensnmptree and declared tc.def input. Module DSOs
+preserve major version 6 and their existing unresolved daemon/plugin ABI symbols;
+no dummy definitions or host objects were linked to hide missing interfaces.
+
+Run bazel-snmpmodules-20261029 passes via build-bsd with 16 jobs. Against fresh
+Make module references, all nine module-generated files match exactly. All three
+DSOs match global/weak symbols and ordered dynamic/security metadata. The same
+run requalifies the daemon after generator changes: its three generated files
+remain byte-identical, and executable symbols/dependencies still match Make.
+Total: 12 generated files and four ELF artifacts verified. Evidence/scripts:
+/usr/obj/usr/src/bazel-snmpmodules-reference-20261029/verify.py and comparison.json.
+
+These are build candidates, not loaded-module/runtime qualification. Module
+installation/manual/data, remaining configured modules, USM credentials, VACM
+access control, notifications and actual daemon linkage at load time still need
+qualification. Reviewed build-bsd.c/source_graph.py; existing target inputs suffice
+without frontend changes. No host daemon started, installation or policy change.
+Make remains production/default; full-system/bootstrap/cache/performance gates stay
+open. These are userland SNMP plugins, not kernel modules.

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["target_snmp.c", "target_tree.def"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_target:__pkg__"])

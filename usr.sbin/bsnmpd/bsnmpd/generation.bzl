@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Declared native SNMP daemon tree and OID generation."""
 def _generate(ctx):
-    tree = ctx.actions.declare_file(ctx.label.name + "/tree.c")
-    header = ctx.actions.declare_file(ctx.label.name + "/tree.h")
-    oid = ctx.actions.declare_file(ctx.label.name + "/oid.h")
+    tree = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.prefix + "tree.c")
+    header = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.prefix + "tree.h")
+    oid = ctx.actions.declare_file(ctx.label.name + "/" + ctx.attr.prefix + "oid.h")
     args = ctx.actions.args()
     args.add_all(["-B", "-S", ctx.file.driver.path, "--generator", ctx.executable.generator.path,
                   "--source", ctx.file.source.path, "--output-dir", tree.dirname])
+    args.add("--prefix", ctx.attr.prefix)
+    if ctx.attr.local_includes:
+        args.add("--local-includes")
     for file in ctx.files.includes:
         args.add("--include", file)
     for symbol in ctx.attr.symbols:
@@ -20,6 +23,8 @@ def _generate(ctx):
             OutputGroupInfo(source = depset([tree]), headers = depset([header, oid]))]
 
 snmp_tree = rule(implementation = _generate, attrs = {
+    "prefix": attr.string(),
+    "local_includes": attr.bool(default = True),
     "source": attr.label(mandatory = True, allow_single_file = True),
     "includes": attr.label_list(allow_files = True),
     "symbols": attr.string_list(mandatory = True),

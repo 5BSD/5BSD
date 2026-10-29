@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "//contrib/bsnmp/snmp_target:target_tree.def", includes = ["//contrib/bsnmp/lib:tc.def"],
+    prefix = "target_", local_includes = False, symbols = ["snmpTargetMIB", "snmpNotificationMIB", "snmpUDPDomain"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["//contrib/bsnmp/snmp_target:target_snmp.c", ":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:headers", "//contrib/bsnmp/lib:public_headers"],
+    local_defines = ["HAVE_ERR_H", "HAVE_GETADDRINFO", "HAVE_STRLCPY", "HAVE_SYS_TREE_H"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_target.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_target.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
