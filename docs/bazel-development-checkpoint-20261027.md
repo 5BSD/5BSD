@@ -15533,3 +15533,22 @@ capability-plane hand-off and libservice runtime are not qualified by it.
 Existing frontend explicit targets and backend metadata groups require no change.
 Full-system, independent bootstrap, sandbox/cache and performance gates remain
 open; Make remains production/default. No host installation occurred.
+
+### Native libbsdconf build and installation (2026-10-29)
+
+Added all ten maintained parser/format sources, explicit public/private headers,
+static archive and libbsdconf.so.1, debug split, public header, three manuals and
+sixteen manual hard links. Native metadata preserves package=utilities and the
+existing split-manpages setting. No Make queries run inside these native targets.
+
+Run bazel-libbsdconf-20261029-r2 passes via build-bsd with 16 jobs. Fresh Make
+comparison matches 26 installation records, public header/manual bytes, all
+manual hard links, archive order and symbols, DSO/debug symbols, dynamic metadata
+and debuglink CRC. Evidence/verifier: /usr/obj/usr/src/bazel-libbsdconf-reference-20261029.
+The initial run failed analysis due to an adaptation typo in the split-manpages
+label; corrected before the passing run. Parser round-trip/error-path runtime
+qualification remains open. No host configuration files or installation changed.
+
+Reviewed frontend/backend requirements: existing explicit target inputs and
+metadata groups suffice. Complete world/kernel/pkgbase/bootstrap, sandbox/cache
+and performance gates remain open. Make remains production/default.

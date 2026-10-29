@@ -7044,3 +7044,10 @@ No DTrace provider, syslog or OS audit hook appears in this library's maintained
 recipe/source. The native libservice dependency retains its existing provider
 targets. Capability hand-off and daemon operation need integration tests; this
 artifact comparison does not prove probe or audit-event delivery.
+
+### libbsdconf (2026-10-29)
+
+All ten maintained parser/format sources are carried forward. No DTrace/SDT,
+syslog or OS audit hooks appear in these sources or a provider in the Makefile.
+Configuration write authorization/auditing remains a consumer responsibility;
+artifact parity does not qualify parser behavior or audit-event delivery.
