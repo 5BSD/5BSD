@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["lz4.c"], visibility = ["//usr.bin/vtfontcvt:__pkg__"])
+cc_library(
+    name = "headers",
+    hdrs = ["lz4.h"],
+    strip_include_prefix = ".",
+    visibility = ["//usr.bin/vtfontcvt:__pkg__"],
+)

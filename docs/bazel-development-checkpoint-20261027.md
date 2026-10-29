@@ -10437,3 +10437,30 @@ archive-set handling cover this integration; no build-bsd C/manual/protocol
 change is needed. Future usr.bin aggregation must consume this parent target.
 Make remains production/default and whole-world/kernel/pkgbase/runtime gates
 remain open. No host install, upgrade, reboot or publication occurred.
+
+### 2026-10-29 morse, random and vtfontcvt native installation
+
+Added native program/install targets for morse, random (including randomize_fd
+and its header), and vtfontcvt. The latter uses the exact maintained common
+LZ4 source and an explicit header provider, with narrow source visibility;
+there was no existing BUILD package at that path or ancestor below the root.
+Manual sections remain 6, 6 and 8 respectively. No program sources changed.
+
+Initial bazel-usr-bin-misc-20261029 analysis caught a rule-edit error: the LZ4
+header provider was incorrectly duplicated in dynamic_deps. Removed that
+invalid shared-library dependency; retained the ordinary compilation dependency.
+Successful maintained frontend run (16 jobs) is
+/usr/obj/usr/src/bazel-usr-bin-misc-20261029-r2. Each fresh rootless Make
+reference is bazel-<program>-native-reference-20261029. Scripts are retained in
+bazel-usr-bin-misc-qualification-20261029. Each program passes five installed
+metadata records, exact compressed manual bytes, valid separate debug linkage,
+and matching global/undefined symbols and dynamic dependency fields (libc only).
+Saved comparison reports are under the successful run's qualification/<program>.
+This establishes installation/ELF interface parity, not instruction identity.
+
+No runtime tests or device operations were performed. Morse speaker/TTY output,
+locale behavior, randomization semantics and font conversion/compression remain
+runtime gates. Resource logs do not constitute comparative performance proof.
+Frontend review: existing format-5 explicit target/artifact handling suffices;
+no C/protocol/manual change is required. Make remains production/default.
+Whole-world/kernel/pkgbase integration remains unfinished.

@@ -5786,3 +5786,14 @@ Mkimg follow-up: declared bootstrap jot resolves fixture generation; exact
 installation parity passes in bazel-mkimg-tests-20261029-r4. Native ATF startup
 still hits the documented host Capsicum ABI failure; no image/runtime or
 performance qualification is claimed. Original probes/audit behavior is unchanged.
+
+### 2026-10-29 morse, random and vtfontcvt
+
+Native migration preserves the maintained production sources. Focused source
+inspection found no direct DTrace/SDT or audit submission calls. Morse retains
+its optional speaker/TTY access and ioctls; those device paths require separate
+runtime qualification. Random retains its normal entropy/file paths, and
+vtfontcvt its output file/font compression behavior. No new privileged boundary
+or observability mechanism was introduced; syscall audit coverage is not
+established by build/metadata parity. Device and file-format runtime coverage
+remains open rather than adding migration-only probes.
