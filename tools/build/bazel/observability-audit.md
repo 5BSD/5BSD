@@ -6524,3 +6524,10 @@ resource-header installation, fresh Make parity or whole-system behavior.
 Fresh driver ELF symbol and 15-record installation comparisons pass, including
 all eight nonbinary payloads and debuglink CRC. Existing SDK/library dependencies
 were reused. These artifact checks do not establish runtime audit/probe delivery.
+
+### Clang resource headers (2026-10-29)
+
+Default 256 and optional 272 resource headers and installation metadata match
+fresh Make; all nine generated input closures match reference depfiles. Header
+payload generation has no runtime audit/probe behavior. This does not qualify
+compiler runtime libraries or an installed complete toolchain.

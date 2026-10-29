@@ -3999,3 +3999,16 @@ packages its stripped executable, debug file, manual, aliases and CC script.
 The driver archive does not include the separately installed Clang resource
 headers or compiler runtime libraries. Building it does not install or qualify
 a complete toolchain or system.
+
+.Pp
+The
+.Cm //lib/clang/headers:generated_headers
+and
+.Cm //lib/clang/headers:install_archive
+targets generate and package the selected Clang resource headers.
+The boolean
+.Cm //tools/build/bazel/config:install_conflicting_clang_headers
+defaults to false and enables the additional headers corresponding to Make's
+.Cm INSTALL_CONFLICTING_CLANG_HEADERS
+when true. This archive contains headers only; driver and runtime libraries are
+separate targets. Set the boolean through format-5 build-settings.

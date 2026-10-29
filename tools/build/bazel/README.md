@@ -37953,3 +37953,33 @@ resource-header installation, independent bootstrap, dynamic installed runtime,
 world/kernel/pkgbase or comparative performance. Native resource headers remain
 next. Frontend review: qualification-only evidence; no new build-bsd inputs,
 staging/signing/publication semantics or manual contract change. Make stays default.
+
+### Native Clang resource headers and installation (2026-10-29)
+
+Added native lib/clang/headers targets with explicit maintained inventories:
+247 source headers plus nine generated headers, installed root:wheel 0444 under
+/usr/lib/clang/21/include with package=clang and dev tags. Generation uses native
+clang-tblgen actions and declared primary/include inputs. arm_vector_types.h
+correctly declares arm_neon.td, the actual generator input. No runtime Make parser
+or staged generated-header substitute. Source exports and input-group visibility
+are limited to the consuming packages.
+
+Default frontend run /usr/obj/usr/src/bazel-clang-resource-headers-20261029 passes.
+All 256 installed header payloads match fresh Make byte-for-byte (14,747,091 bytes),
+as do payload paths, owner/group/mode/package tags. The nine generated input
+closures, including primary files, match fresh Make depfiles. The reference uses
+an existing staged clang-tblgen; this is not independent generator bootstrap.
+
+Added boolean install_conflicting_clang_headers, default false. Enabled run
+bazel-clang-resource-conflicting-20261029 passes and matches fresh Make with
+INSTALL_CONFLICTING_CLANG_HEADERS=yes: 272 headers, 14,883,615 bytes. It adds exactly
+16 headers; all 256 default payloads remain unchanged. Verification/reference
+scripts and reports: /usr/obj/usr/src/bazel-clang-resource-reference-qualification-20261029.
+Reference stages: bazel-clang-resource-make-20261029 and
+bazel-clang-resource-conflicting-make-20261029 under /usr/obj/usr/src.
+
+Frontend review: build-bsd.c and format-5 source_graph.py already transport the
+new boolean and explicit targets; manual documents them. Resource-header archive
+is separate from driver/runtime libraries; complete toolchain composition and
+installed execution still need qualification. Make remains production/default;
+independent bootstrap, world/kernel/pkgbase/cache and performance gates remain open.
