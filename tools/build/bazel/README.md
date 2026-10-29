@@ -39326,3 +39326,28 @@ Reviewed build-bsd.c and format-5 source_graph.py: existing explicit targets
 support the archive/generator without frontend/schema changes. Prepared SDK and
 host dependencies remain. Make stays production/default; no host installation,
 publication or reboot. Complete-system and performance gates remain open.
+
+### Native common administration library and date parser (2026-10-29)
+
+Added //krb5/lib/kadmin_common:static_archive with explicit kadmin.c,
+ss_wrapper.c, both command tables and the generated getdate parser. Command
+tables use the maintained declared sed/AWK action; the parser uses the native
+//usr.bin/yacc:yacc execution tool through bsd_yacc. Its generated header is
+also declared, matching Make's -d behavior. The standalone parser test exposed
+kadmin.h's missing direct configuration/database-header dependency; that closure
+is now declared on the header target rather than supplied incidentally by callers.
+
+Final run bazel-kadmin-common-20261029-r3 passes the archive-linked date test:
+fixed UTC absolute date, tomorrow, one day ago and malformed input. It matches
+fresh Make reference bazel-kadmin-common-make-20261029: five ordered archive
+members, 198 global/weak symbol records, and zero independent installed records.
+Both generated tables and the parser source match except exact source-path
+comments/line-directive filenames; getdate.h matches bytewise. Evidence and
+repeatable checks: /usr/obj/usr/src/bazel-kadmin-common-reference-20261029.
+
+This establishes the selected parser cases and archive/generator contracts;
+interactive commands, authenticated administration, timezone/DST edge cases and
+all date grammar forms remain unqualified. Prepared SDK and host dependencies
+remain. Reviewed frontend explicit-label support: build-bsd.c and format-5
+source_graph.py need no input-contract change. Make stays production/default;
+no host installation, publication or reboot. Whole-system gates remain open.

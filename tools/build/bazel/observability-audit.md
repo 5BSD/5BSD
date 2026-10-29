@@ -6831,3 +6831,11 @@ The migrated ss C sources contain no explicit DTrace provider or audit calls.
 Review command dispatch and errors at kadmin/ktutil consumer boundaries; avoid
 recording command text containing secrets. Archive/generator checks do not prove
 interactive terminal, pager, signal or authoritative administrative audit behavior.
+
+### Common kadmin command implementation (2026-10-29)
+
+The migrated kadmin.c and ss_wrapper.c contain no explicit DTrace provider or
+audit submission calls. Review command failure/dispatch observability together
+with kadmind's authoritative audit trail; do not log secret command arguments.
+Parser tests and artifact comparisons do not establish interactive or remote
+administrative operation auditing.

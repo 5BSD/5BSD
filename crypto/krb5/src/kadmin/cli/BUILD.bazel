@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["kadmin.c", "ss_wrapper.c", "getdate.y", "kadmin_ct.ct"])
+cc_library(name = "headers", hdrs = ["kadmin.h"], includes = ["."], deps = ["//crypto/krb5/src/include:internal_headers"], visibility = ["//krb5:__subpackages__"])
