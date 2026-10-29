@@ -6912,3 +6912,10 @@ Native DB2 loading, creation/stash, local principal add/query/delete, dump and
 restore pass in an isolated Bazel test. Restored principal survives deletion
 from the source database. This test does not inspect audit events or exercise
 authentication lockout callbacks; those observability gates remain open.
+
+### krb5kdc (2026-10-29)
+
+Native target retains kdc_audit.c and kdc_log.c plus authentication/request sources.
+The KDC audit-plugin interface header is now a declared build input. Artifact
+parity does not prove plugins are loaded or OS audit events are emitted; no
+daemon or authentication/audit runtime was exercised in this batch.

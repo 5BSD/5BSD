@@ -2,13 +2,16 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 # INTERNALLIB: linked into Kerberos servers, not installed independently.
-cc_library(
-    name = "apputils",
+[cc_library(
+    name = "apputils" + suffix,
     srcs = ["//crypto/krb5/src/lib/apputils:net-server.c", "//crypto/krb5/src/lib/apputils:udppktinfo.c"],
     hdrs = ["//crypto/krb5/src/lib/apputils:udppktinfo.h"],
     deps = ["//crypto/krb5/src/include:server_headers"],
+    copts = flags, local_defines = defines,
     linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//krb5:__subpackages__"],
-)
+) for suffix, flags, defines in [("", [], []), ("_pie", ["-fpie"], ["PIC"])]]
 bsd_component_archive(name = "static_archive", groups = [":apputils"], visibility = ["//visibility:public"])
+
+bsd_component_archive(name = "pie_archive", groups = [":apputils_pie"], visibility = ["//visibility:public"])

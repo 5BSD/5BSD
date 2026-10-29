@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['authind.c', 'cammac.c', 'dispatch.c', 'do_as_req.c', 'do_tgs_req.c', 'extern.c', 'fast_util.c', 'kdc_audit.c', 'kdc_authdata.c', 'kdc_log.c', 'kdc_preauth.c', 'kdc_preauth_ec.c', 'kdc_preauth_encts.c', 'kdc_transit.c', 'kdc_util.c', 'main.c', 'ndr.c', 'policy.c', 'replay.c', 'tgs_policy.c', 'kdc_audit.h', 'extern.h', 'realm_data.h', 'reqstate.h', 'policy.h', 'kdc_util.h'])

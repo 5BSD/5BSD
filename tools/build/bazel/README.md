@@ -39606,3 +39606,27 @@ the lifecycle without contract changes. Make stays production/default; complete
 world/kernel/pkgbase/bootstrap/sandbox/cache/performance gates remain open. No
 host installation or host database was changed; all database mutations use the
 private test configuration and paths.
+
+### Native Kerberos KDC artifact qualification (2026-10-29)
+
+Added krb5kdc with all twenty maintained C sources and local headers, native
+Kerberos/admin/database/event-loop/math dependencies, PIE linkage, and the
+maintained LIBDIR=/usr/lib compile definition. Added an explicit apputils PIE
+variant while retaining the ordinary archive. First compilation exposed missing
+internal kdcauthdata/audit plugin headers; these now have a direct declared
+header target without changing public header installation.
+
+Run bazel-kdc-runtime-20261029-r2 matches fresh Make reference:
+5 install records; 307 symbols for /usr/libexec/krb5kdc, 434 symbols for /usr/lib/debug/usr/libexec/krb5kdc.debug.
+Dynamic dependencies/PIE flags, debuglink CRC, byte-identical manual and full
+installation metadata pass. apputils PIE also matches Make's two ordered members
+and 86 global/weak symbol records. Evidence/verifiers:
+/usr/obj/usr/src/bazel-kdc-reference-20261029.
+
+No runtime tests were selected despite the run-directory name; no KDC daemon
+was started. Network ticket acquisition, preauthentication, policy/audit plugin
+loading, replay handling and service performance remain qualification work.
+Reviewed build-bsd.c/source_graph.py: explicit targets cover this component
+without contract changes. SDK bootstrap and whole-world/kernel/pkgbase/sandbox/
+cache/performance gates remain open. Make stays production/default; no host
+installation, publication or service configuration change.
