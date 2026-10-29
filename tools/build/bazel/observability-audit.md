@@ -6919,3 +6919,10 @@ Native target retains kdc_audit.c and kdc_log.c plus authentication/request sour
 The KDC audit-plugin interface header is now a declared build input. Artifact
 parity does not prove plugins are loaded or OS audit events are emitted; no
 daemon or authentication/audit runtime was exercised in this batch.
+
+### KDC TCP authentication runtime (2026-10-29)
+
+The native KDC now passes a loopback keytab AS/TGS lifecycle with native clients,
+service-ticket listing and cache destruction. KDC log paths are test-local.
+This does not assert audit-plugin delivery or OS audit events; negative
+authentication, lockout and observability checks remain outstanding.

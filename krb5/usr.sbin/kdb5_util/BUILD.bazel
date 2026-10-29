@@ -38,3 +38,10 @@ cc_test(name = "database_test", srcs = ["database_test.c"],
     data = [":kdb5_util", "//krb5/usr.sbin/kadmin.local:kadmin.local", "//krb5/plugins/kdb/db2:db2_shared"] + _RUNTIME,
     args = ["$(location :kdb5_util)", "$(location //krb5/usr.sbin/kadmin.local:kadmin.local)", "$(location //krb5/plugins/kdb/db2:db2_shared)"] + ["$(location " + lib + ")" for lib in _RUNTIME],
     linkstatic = True, linkopts = ["-static"], size = "small")
+
+_KDC_PROGRAMS = ["//krb5/libexec/kdc:krb5kdc", "//krb5/usr.bin/kinit:kinit", "//krb5/usr.bin/kvno:kvno", "//krb5/usr.bin/klist:klist", "//krb5/usr.bin/kdestroy:kdestroy"]
+_KDC_RUNTIME = ["//krb5/util/verto:verto_shared", "//lib/msun:m_shared"] + _RUNTIME
+cc_test(name = "kdc_test", srcs = ["database_test.c"],
+    data = [":kdb5_util", "//krb5/usr.sbin/kadmin.local:kadmin.local", "//krb5/plugins/kdb/db2:db2_shared"] + _KDC_PROGRAMS + _KDC_RUNTIME,
+    args = ["$(location :kdb5_util)", "$(location //krb5/usr.sbin/kadmin.local:kadmin.local)", "$(location //krb5/plugins/kdb/db2:db2_shared)", "--kdc"] + ["$(location " + p + ")" for p in _KDC_PROGRAMS + _KDC_RUNTIME],
+    linkstatic = True, linkopts = ["-static"], size = "medium")

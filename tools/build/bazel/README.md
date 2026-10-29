@@ -39630,3 +39630,37 @@ Reviewed build-bsd.c/source_graph.py: explicit targets cover this component
 without contract changes. SDK bootstrap and whole-world/kernel/pkgbase/sandbox/
 cache/performance gates remain open. Make stays production/default; no host
 installation, publication or service configuration change.
+
+### Native loopback KDC authentication lifecycle (2026-10-29)
+
+Extended the database harness with an explicitly selected KDC mode and added
+//krb5/usr.sbin/kdb5_util:kdc_test. Both ordinary database and KDC modes run through
+Bazel. The new test declares native KDC, kinit, kvno, klist, kdestroy, verto and
+math runtime inputs alongside existing native administration/DB2 dependencies.
+
+After the database lifecycle, it creates disposable client/service principals
+and a client keytab. It asks the kernel for an available loopback TCP port,
+disables UDP, configures an explicit 127.0.0.1 listener and realm endpoint, and
+starts the native KDC in foreground mode. There is a close-before-bind window;
+startup fails if another process takes the port. Readiness requires the child
+KDC's startup message, with bounded polling and early-exit detection. The child
+has an alarm and the harness registers exit cleanup; it kills and reaps its KDC.
+
+Run bazel-kdc-test-20261029 reports two passing tests. Native kinit acquires a
+TGT using the test keytab, kvno obtains the service ticket, klist confirms that
+ticket, and kdestroy removes the explicitly selected FILE cache. Temporary
+files are removed and a post-run process check found no matching test KDC.
+Inputs: /usr/obj/usr/src/bazel-kdc-test-reference-20261029; saved receipts/reports
+under the run directory. No installed service was started or reconfigured.
+
+This qualifies selected TCP/keytab AS/TGS and cache lifecycles. It does not cover
+UDP, password/PKINIT/OTP/SPAKE variants, remote administration, denial cases,
+audit-event delivery, graceful daemon shutdown or performance. The DB plugin
+uses a unique test name, preventing installed DB2 fallback. Other vendor plugin
+search defaults have not been comprehensively isolated or audited by this test;
+SDK libc/thr and host kernel/rtld dependencies remain. This is not a whole-system
+or hermetic-runtime qualification.
+
+Reviewed build-bsd.c/source_graph.py: existing target/test inputs support both
+cases without contract changes. Make stays production/default; full world/kernel,
+pkgbase/bootstrap/sandbox/cache/performance gates remain open.
