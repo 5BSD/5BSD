@@ -4,6 +4,8 @@
 # exactly like Make's LIBADD; their headers come from declared source trees.
 load("//toolchain:bsd_component.bzl", "bsd_program")
 
+package(default_visibility = ["//visibility:public"])
+
 # Keep in the order of Makefile SRCS.
 BSDINSTRUMENTS_SRCS = [
     "main.c",
@@ -31,10 +33,23 @@ bsd_program(
     deps = [
         "//:dtrace_userland_headers",
         "//lib/libotelexport:headers",
+        "//cddl/lib/libdtotel:headers",
         "//:libtracecmp_headers",
+        "//cddl/lib/libdtotel:dtotel_pie",
         "//lib/libotelexport:otelexport_pie",
     ],
-    # LIBADD tracecmp dtrace ctf elf proc spl xo pthread otelexport m
+    # LIBADD dtotel tracecmp dtrace ctf elf proc spl xo pthread otelexport
+    # jail m
     linkopts = ["-ltracecmp", "-ldtrace", "-lctf", "-lelf", "-lproc", "-lspl",
-                "-lxo", "-lm", "-lpthread"],
+                "-lxo", "-lm", "-lpthread", "-ljail"],
+)
+
+# The unit test (tests/Makefile) compiles profile.c and filter.c again.
+exports_files(["profile.c", "filter.c"])
+
+cc_library(
+    name = "headers",
+    testonly = True,
+    hdrs = BSDINSTRUMENTS_PRIVATE_HDRS,
+    includes = ["."],
 )

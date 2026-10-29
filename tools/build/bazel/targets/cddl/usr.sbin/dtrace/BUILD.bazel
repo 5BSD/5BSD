@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: cddl/usr.sbin/dtrace/Makefile (PROG, WARNS 1, .PATH
+# cddl/contrib/opensolaris/cmd/dtrace).  Linked against the Bazel
+# libdtrace.so.2 (//cddl/lib/libdtrace:dtrace); Make in buildenv links the
+# staged SDK's libdtrace built from the same tree.
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+bsd_program(
+    name = "dtrace",
+    srcs = ["//:cddl/contrib/opensolaris/cmd/dtrace/dtrace.c",
+            "//:cddl/contrib/opensolaris/cmd/dtrace/dtrace_identifiers.h",
+            "//:cddl/contrib/opensolaris/cmd/dtrace/hypertrace_frame.h"],
+    warns = 1,
+    local_cflags = [
+        "-DIN_BASE",
+        "-DSKIP_SPL_SYS_CONDVAR_H",
+        "-DHAVE_ISSETUGID",
+        # cddl/Makefile.inc
+        "-DNEED_SOLARIS_BOOLEAN",
+        "-DHAVE_STRLCAT",
+        "-DHAVE_STRLCPY",
+    ],
+    deps = [
+        "//:dtrace_userland_headers",
+        "//:dtraced_headers",
+        "//cddl/lib/libdtotel:headers",
+        "//lib/libotelexport:headers",
+        "//cddl/lib/libdtotel:dtotel_pie",
+        "//lib/libotelexport:otelexport_pie",
+        "//cddl/lib/libdtrace:dtrace",
+    ],
+    # LIBADD dtotel dtrace ctf elf proc spl xo pthread crypto otelexport jail
+    # z ssl
+    linkopts = ["-lctf", "-lelf", "-lproc", "-lspl", "-lxo", "-lpthread", "-lcrypto",
+                "-ljail", "-lz", "-lssl"],
+)

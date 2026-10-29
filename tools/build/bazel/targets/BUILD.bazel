@@ -35,3 +35,80 @@ cc_library(
     hdrs = glob(["lib/libtracecmp/*.h"]),
     includes = ["lib/libtracecmp"],
 )
+
+# lib/libotelexport and otlp_json_validate add
+# CFLAGS+=-I${SRCTOP}/contrib/libucl/include for their own objects only (the
+# SDK installs ucl.h under include/private/ucl).  Consumers list these files
+# in srcs and pass "-Icontrib/libucl/include" in copts so the directory is
+# not propagated to their dependents, matching Make.
+filegroup(
+    name = "libucl_hdrs",
+    srcs = glob(["contrib/libucl/include/*.h"]),
+)
+
+# cddl/lib/libdtrace CFLAGS order, split where Make inserts -I${.OBJDIR}
+# -I${.CURDIR} (the generated dt_grammar.h and libproc_compat.h, declared in
+# //cddl/lib/libdtrace:objdir_headers between these two bundles).
+cc_library(
+    name = "libdtrace_spl_headers",
+    hdrs = glob(["sys/**/*.h"]),
+    includes = [
+        "sys/contrib/openzfs/include",
+        "sys/contrib/openzfs/lib/libspl/include",
+        "sys/contrib/openzfs/lib/libspl/include/os/freebsd",
+        "sys",
+    ],
+)
+
+cc_library(
+    name = "libdtrace_headers",
+    hdrs = glob([
+        "sys/**/*.h",
+        "cddl/compat/opensolaris/include/**/*.h",
+        "cddl/contrib/opensolaris/head/**/*.h",
+        "cddl/contrib/opensolaris/lib/libctf/common/*.h",
+        "cddl/contrib/opensolaris/lib/libdtrace/common/*.h",
+        "cddl/contrib/opensolaris/lib/libdtrace/common/*.hh",
+        "usr.sbin/dtraced/*.h",
+    ]),
+    includes = [
+        "sys/cddl/dev/dtrace/amd64",
+        "sys/cddl/dev/kinst",
+        "sys/cddl/compat/opensolaris",
+        "cddl/compat/opensolaris/include",
+        "cddl/contrib/opensolaris/head",
+        "cddl/contrib/opensolaris/lib/libctf/common",
+        "cddl/contrib/opensolaris/lib/libdtrace/common",
+        "sys/cddl/contrib/opensolaris/uts/common",
+        "usr.sbin/dtraced",
+        "sys/cddl/dev/dtrace/x86",
+        "sys/cddl/contrib/opensolaris/uts/intel",
+    ],
+)
+
+# dtrace(1): CFLAGS+=-I${SRCTOP}/usr.sbin/dtraced after the bsdinstruments
+# order of dtrace_userland_headers.
+cc_library(
+    name = "dtraced_headers",
+    hdrs = glob(["usr.sbin/dtraced/*.h"]),
+    includes = ["usr.sbin/dtraced"],
+)
+
+# libdtrace sources outside its Make directory (.PATH); the probe copies
+# them into the workspace with the source trees.
+exports_files(glob([
+    "cddl/contrib/opensolaris/lib/libdtrace/common/*.c",
+    "cddl/contrib/opensolaris/lib/libdtrace/common/*.cc",
+    "cddl/contrib/opensolaris/lib/libdtrace/common/*.y",
+    "cddl/contrib/opensolaris/lib/libdtrace/common/*.l",
+    "cddl/contrib/opensolaris/lib/libdtrace/common/*.sh",
+    "cddl/contrib/opensolaris/lib/libdtrace/i386/*.c",
+    "cddl/contrib/opensolaris/lib/libgen/common/*.c",
+    "sys/cddl/dev/dtrace/x86/*.c",
+    "cddl/contrib/opensolaris/cmd/dtrace/*.c",
+    "cddl/contrib/opensolaris/cmd/dtrace/*.h",
+    "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h",
+    "sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h",
+    "cddl/contrib/opensolaris/lib/libdtrace/common/dt_errtags.h",
+    "sys/sys/priv.h",
+]))

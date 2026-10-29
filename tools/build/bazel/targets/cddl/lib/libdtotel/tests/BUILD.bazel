@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: cddl/lib/libdtotel/tests/Makefile (ATF_TESTS_C dtotel_test;
+# .PATH lib/libotelexport/tests for otlp_validate.c and otel_testutil.c).
+load("//toolchain:bsd_component.bzl", "bsd_atf_test_c")
+
+bsd_atf_test_c(
+    name = "dtotel_test",
+    # Keep in the order of SRCS.dtotel_test.
+    srcs = [
+        "dtotel_test.c",
+        "dtrace_stub.c",
+        "//lib/libotelexport/tests:otlp_validate.c",
+        "//lib/libotelexport/tests:otel_testutil.c",
+        "dtrace_stub.h",
+    ],
+    local_cflags = [
+        "-DIN_BASE",
+        "-DSKIP_SPL_SYS_CONDVAR_H",
+        "-DHAVE_ISSETUGID",
+        "-DNEED_SOLARIS_BOOLEAN",
+        "-DHAVE_STRLCAT",
+        "-DHAVE_STRLCPY",
+    ],
+    deps = [
+        "//:dtrace_userland_headers",
+        "//lib/libotelexport:headers",
+        "//lib/libotelexport/tests:test_headers",
+        "//cddl/lib/libdtotel:headers",
+        "//cddl/lib/libdtotel:dtotel_pie",
+        "//lib/libotelexport:otelexport_pie",
+    ],
+    # LIBADD.dtotel_test+= dtotel otelexport z ssl crypto pthread m
+    linkopts = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc",
+                "-Wl,--wrap=strdup", "-Wl,--wrap=strndup",
+                "-lz", "-lssl", "-lcrypto", "-lpthread", "-lm"],
+)

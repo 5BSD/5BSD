@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelconf/Makefile (PROG, WARNS 6, LIBADD otelexport).
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+bsd_program(
+    name = "otelconf",
+    srcs = ["otelconf.c"],
+    deps = [
+        "//lib/libotelexport:headers",
+        "//lib/libotelexport:otelexport_pie",
+    ],
+)

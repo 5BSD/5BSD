@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Declared Bazel targets for lib/libotelexport (experimental pilot).
 # Make reference: lib/libotelexport/Makefile (INTERNALLIB, WARNS 6,
-# LIBADD z ssl crypto pthread).  otel-probe.py fails if SRCS differ.
+# CFLAGS+=-I${SRCTOP}/contrib/libucl/include, LIBADD z ssl crypto pthread
+# ucl).  otel-probe.py fails if SRCS differ.
 load("//toolchain:bsd_component.bzl", "bsd_internal_library")
 
 package(default_visibility = ["//visibility:public"])
@@ -9,29 +10,38 @@ package(default_visibility = ["//visibility:public"])
 # Keep in the order of Makefile SRCS.
 OTELEXPORT_SRCS = [
     "oe_util.c",
+    "oe_id.c",
+    "oe_sink.c",
     "oe_text.c",
     "oe_jsonl.c",
     "oe_collapsed.c",
     "oe_http.c",
+    "oe_otlpenc.c",
     "oe_otlp.c",
+    "oe_otlpfile.c",
+    "oe_sysconf.c",
+    "oe_service.c",
 ]
 
 # Private headers included only by the library sources.
 OTELEXPORT_PRIVATE_HDRS = [
-    "oe_http.h",
+    "oe_otlpenc.h",
 ]
 
-# Makefile INCS (not installed for an INTERNALLIB).
-OTELEXPORT_HDRS = ["otelexport.h"]
+# Makefile INCS plus the headers base-system consumers include through
+# CFLAGS+=-I${SRCTOP}/lib/libotelexport (otelconf uses oe_http.h; the
+# services and tests use oe_sysconf.h).  Not installed for an INTERNALLIB.
+OTELEXPORT_HDRS = ["otelexport.h", "oe_sysconf.h", "oe_http.h"]
 
 # libotelexport.a and libotelexport_pie.a.
 bsd_internal_library(
     name = "otelexport",
-    srcs = OTELEXPORT_SRCS + OTELEXPORT_PRIVATE_HDRS,
+    srcs = OTELEXPORT_SRCS + OTELEXPORT_PRIVATE_HDRS + ["//:libucl_hdrs"],
     hdrs = OTELEXPORT_HDRS,
     warns = 6,
-    # src.libnames.mk _DP_otelexport
-    linkopts = ["-lz", "-lssl", "-lcrypto", "-lpthread"],
+    local_cflags = ["-Icontrib/libucl/include"],
+    # src.libnames.mk _DP_otelexport (ucl is a private library)
+    linkopts = ["-lz", "-lssl", "-lcrypto", "-lpthread", "-lprivateucl"],
 )
 
 # Consumers' CFLAGS+=-I${SRCTOP}/lib/libotelexport.

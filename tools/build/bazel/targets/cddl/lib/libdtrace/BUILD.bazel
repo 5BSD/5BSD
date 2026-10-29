@@ -1,0 +1,149 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: cddl/lib/libdtrace/Makefile (LIB_CXX dtrace, SHLIB_MAJOR 2,
+# WARNS 1, CXXSTD c++20, YFLAGS -d, LIBADD ctf elf proc pthread rtld_db
+# crypto xo).  amd64 only; MK_CTF, DTRACE_OPTIMIZED, DTRACE_ASAN and
+# DTRACE_BENCHMARKS are "no" in this configuration (dtrace-probe.py checks).
+load("//toolchain:bsd_component.bzl", "bsd_cflags", "bsd_cxxflags")
+load("//toolchain:bsd_generate.bzl", "bsd_generate", "bsd_lex", "bsd_mixed_shared_library", "bsd_yacc")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON = "//:cddl/contrib/opensolaris/lib/libdtrace/common/"
+
+GEN_TOOLS = ["//gentools:files"]
+
+GEN_DIR = "gentools"
+
+# YFLAGS+=-d plus the -d bsd.lib.mk adds for a .y in SRCS.
+bsd_yacc(
+    name = "dt_grammar",
+    src = COMMON + "dt_grammar.y",
+    out = "dt_grammar.c",
+    yflags = ["-d", "-d"],
+    yacc = "//gentools:yacc",
+)
+
+bsd_lex(
+    name = "dt_lex",
+    src = COMMON + "dt_lex.l",
+    out = "dt_lex.c",
+    lex = "//gentools:lex",
+    path_tools = GEN_TOOLS,
+    tool_dir = GEN_DIR,
+)
+
+# sh mkerrtags.sh < dt_errtags.h > dt_errtags.c
+bsd_generate(
+    name = "dt_errtags",
+    out = "dt_errtags.c",
+    interpreter = "//gentools:sh",
+    arguments = ["$(location " + COMMON + "mkerrtags.sh)"],
+    data = [COMMON + "mkerrtags.sh"],
+    stdin = COMMON + "dt_errtags.h",
+    redirect_stdout = True,
+    redirect = "//gentools:stdout_redirect",
+    path_tools = GEN_TOOLS,
+    tool_dir = GEN_DIR,
+)
+
+# sh mknames.sh < sys/dtrace.h > dt_names.c
+bsd_generate(
+    name = "dt_names",
+    out = "dt_names.c",
+    interpreter = "//gentools:sh",
+    arguments = ["$(location " + COMMON + "mknames.sh)"],
+    data = [COMMON + "mknames.sh"],
+    stdin = "//:sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h",
+    redirect_stdout = True,
+    redirect = "//gentools:stdout_redirect",
+    path_tools = GEN_TOOLS,
+    tool_dir = GEN_DIR,
+)
+
+# sh mkpriv -o priv.d sys/sys/priv.h (DSRCS data, not linked).
+bsd_generate(
+    name = "priv_d",
+    out = "priv.d",
+    interpreter = "//gentools:sh",
+    arguments = ["$(location mkpriv)", "-o", "$(OUT)", "$(location //:sys/sys/priv.h)"],
+    data = ["mkpriv", "//:sys/sys/priv.h"],
+    path_tools = GEN_TOOLS,
+    tool_dir = GEN_DIR,
+)
+
+# -I${.OBJDIR} -I${.CURDIR}: generated dt_grammar.h and libproc_compat.h.
+cc_library(
+    name = "objdir_headers",
+    hdrs = [":dt_grammar", "libproc_compat.h"],
+    includes = ["."],
+)
+
+# Keep in the order of Makefile SRCS (amd64: dis_tables.c instr_size.c last).
+LIBDTRACE_SRCS = [
+    "dt_aggregate.c", "dt_analysis.c", "dt_as.c", "dt_basic_block.cc", "dt_benchmark.c",
+    "dt_buf.c", "dt_cc.c", "dt_cg.c", "dt_consume.c", "dt_decl.c", "dt_dis.c", "dt_dof.c",
+    "dt_elf.cc", "dt_error.c", "dt_errtags.c", "dt_grammar.y", "dt_handle.c",
+    "dt_hashmap.c", "dt_hypertrace_linker.cc", "dt_ident.c", "dt_dfg.cc", "dt_isadep.c",
+    "dt_inttab.c", "dt_lex.l", "dt_link.c", "dt_linker_subr.cc", "dt_list.c", "dt_map.c",
+    "dt_module.c", "dt_names.c", "dt_open.c", "dt_options.c", "dt_parser.c", "dt_pcb.c",
+    "dt_pid.c", "dt_pq.c", "dt_pragma.c", "dt_print.c", "dt_printf.c", "dt_proc.c",
+    "dt_program.c", "dt_provider.c", "dt_regset.c", "dt_resolver.c", "dt_string.c",
+    "dt_strtab.c", "dt_subr.c", "dt_sugar.c", "dt_typefile.cc", "dt_typing.cc",
+    "dt_typing_helpers.cc", "dt_typing_reg.cc", "dt_typing_stack.cc", "dt_typing_subr.cc",
+    "dt_typing_var.cc", "dt_work.c", "dt_xlator.c", "gmatch.c", "dis_tables.c",
+    "instr_size.c",
+]
+
+GENERATED = ["dt_errtags.c", "dt_grammar.y", "dt_lex.l", "dt_names.c"]
+
+ELSEWHERE = {
+    "dt_isadep.c": "//:cddl/contrib/opensolaris/lib/libdtrace/i386/",
+    "gmatch.c": "//:cddl/contrib/opensolaris/lib/libgen/common/",
+    "dis_tables.c": "//:sys/cddl/dev/dtrace/x86/",
+    "instr_size.c": "//:sys/cddl/dev/dtrace/x86/",
+}
+
+LOCAL = [
+    "-DIN_BASE",
+    "-DSKIP_SPL_SYS_CONDVAR_H",
+    "-include",
+    "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h",
+    "-DHAVE_ISSETUGID",
+    "-DDIS_MEM",
+    # cddl/Makefile.inc
+    "-DNEED_SOLARIS_BOOLEAN",
+    "-DHAVE_STRLCAT",
+    "-DHAVE_STRLCPY",
+]
+
+# CXXFLAGS+= in the Makefile, then -fno-rtti.
+CXX_LOCAL = [
+    "-Werror", "-Wall", "-Wextra", "-Wpedantic", "-Wno-gnu-include-next",
+    "-Wno-nullability-extension", "-Wno-gcc-compat", "-Wno-unknown-pragmas",
+    "-Wno-c11-extensions", "-Wno-zero-length-array", "-Wno-gnu-anonymous-struct",
+    "-Wno-nested-anon-types", "-Wno-c99-extensions",
+    "-Wno-gnu-zero-variadic-macro-arguments", "-Wno-variadic-macros", "-fno-rtti",
+]
+
+bsd_mixed_shared_library(
+    name = "dtrace",
+    soname = "libdtrace.so.2",
+    srcs = [
+        (":" + s[:-2] if s in GENERATED else ELSEWHERE.get(s, COMMON) + s)
+        for s in LIBDTRACE_SRCS
+    ] + ["//:sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
+    order = LIBDTRACE_SRCS,
+    deps = [
+        "//:libdtrace_spl_headers",
+        ":objdir_headers",
+        "//:libdtrace_headers",
+    ],
+    copts = bsd_cflags(1, pico = True, local = LOCAL),
+    cxxopts = bsd_cxxflags(1, "c++20", pico = True, local = LOCAL, cxx_local = CXX_LOCAL),
+    # bsd.lib.mk SOLINKOPTS (with the -fstack-protector-strong it passes),
+    # LIBADD, and the C++ runtime the c++ link driver adds implicitly.
+    linkopts = ["-fstack-protector-strong", "-Wl,-x", "-Wl,--fatal-warnings",
+                "-Wl,--warn-shared-textrel", "-Wl,-soname,libdtrace.so.2",
+                "-lctf", "-lelf", "-lproc", "-lrtld_db", "-lcrypto", "-lxo", "-lpthread",
+                "-lc++", "-lm"],
+)

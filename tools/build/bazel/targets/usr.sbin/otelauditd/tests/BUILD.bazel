@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelauditd/tests/Makefile (ATF_TESTS_C
+# auditrec_test, PROGS mkaudittrail; .PATH ..;
+# CFLAGS+=-I.. -I. -I${SRCTOP}/lib/libotelexport).
+load("//toolchain:bsd_component.bzl", "bsd_atf_test_c", "bsd_program")
+
+cc_library(
+    name = "headers",
+    testonly = True,
+    hdrs = ["bsmgen.h"],
+    includes = ["."],
+)
+
+DEPS = [
+    "//usr.sbin/otelauditd:headers",
+    ":headers",
+    "//lib/libotelexport:headers",
+]
+
+bsd_atf_test_c(
+    name = "auditrec_test",
+    srcs = ["auditrec_test.c", "//usr.sbin/otelauditd:auditrec.c", "bsmgen.c"],
+    deps = DEPS + ["//lib/libotelexport:otelexport_pie"],
+    linkopts = ["-lbsm"],
+)
+
+bsd_program(
+    name = "mkaudittrail",
+    srcs = ["mkaudittrail.c", "bsmgen.c"],
+    deps = DEPS,
+    testonly = True,
+    linkopts = ["-lbsm"],
+)

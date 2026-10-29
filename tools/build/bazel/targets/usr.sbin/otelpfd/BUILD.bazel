@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelpfd/Makefile (PROG, WARNS 6, LIBADD otelexport).
+# net/pfvar.h is the tree's OpenBSD pf ABI installed into the staged SDK.
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["pfstat.c"])
+
+cc_library(
+    name = "headers",
+    testonly = True,
+    hdrs = ["pfstat.h"],
+    includes = ["."],
+)
+
+bsd_program(
+    name = "otelpfd",
+    srcs = ["otelpfd.c", "pfstat.c", "pfstat.h"],
+    deps = [
+        "//lib/libotelexport:headers",
+        "//lib/libotelexport:otelexport_pie",
+    ],
+)

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelconf/tests/Makefile (PROGS otlp_fake_receiver,
+# otlp_json_validate; the ATF shell tests need no compilation).
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+bsd_program(
+    name = "otlp_fake_receiver",
+    srcs = ["otlp_fake_receiver.c"],
+    testonly = True,
+    linkopts = ["-lz"],
+)
+
+# CFLAGS.otlp_json_validate.c+=-I${SRCTOP}/contrib/libucl/include: the
+# program's only object, so the program copts carry it.
+bsd_program(
+    name = "otlp_json_validate",
+    srcs = ["otlp_json_validate.c", "//:libucl_hdrs"],
+    local_cflags = ["-Icontrib/libucl/include"],
+    testonly = True,
+    linkopts = ["-lprivateucl"],
+)

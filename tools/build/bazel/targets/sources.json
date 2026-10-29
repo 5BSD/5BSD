@@ -1,48 +1,341 @@
 {
-  "comment": "otel-probe.py inputs. Component directories are copied whole at their tree paths; header_trees contribute only *.h files. Source file lists live in the BUILD.bazel files and are checked against Make SRCS.",
+  "comment": "otel-probe.py inputs. Component directories are copied whole at their tree paths; header_trees contribute only *.h files. Source file lists live in the BUILD.bazel files and are checked against Make SRCS (srcs_var; default_src when bsd.progs.mk falls back to <prog>.c). Private INTERNALLIB directories are passed to consumers through private_libraries.",
   "components": [
     {
       "name": "libotelexport",
       "path": "lib/libotelexport",
-      "make_targets": ["libotelexport.a", "libotelexport_pie.a"],
       "artifacts": [
-        {"kind": "archive", "label": "//lib/libotelexport:otelexport",
-         "bazel": "lib/libotelexport/libotelexport.a", "make": "libotelexport.a",
-         "make_object_suffix": ".o"},
-        {"kind": "archive", "label": "//lib/libotelexport:otelexport_pie",
-         "bazel": "lib/libotelexport/libotelexport_pie.a", "make": "libotelexport_pie.a",
-         "make_object_suffix": ".pieo"}
+        {
+          "kind": "archive",
+          "label": "//lib/libotelexport:otelexport",
+          "bazel": "lib/libotelexport/libotelexport.a",
+          "make": "libotelexport.a",
+          "make_object_suffix": ".o",
+          "srcs_var": "SRCS"
+        },
+        {
+          "kind": "archive",
+          "label": "//lib/libotelexport:otelexport_pie",
+          "bazel": "lib/libotelexport/libotelexport_pie.a",
+          "make": "libotelexport_pie.a",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS"
+        }
+      ],
+      "make_targets": [
+        "libotelexport.a",
+        "libotelexport_pie.a"
       ]
     },
     {
       "name": "otelexport_test",
       "path": "lib/libotelexport/tests",
-      "make_targets": ["otelexport_test"],
       "artifacts": [
-        {"kind": "program", "label": "//lib/libotelexport/tests:otelexport_test",
-         "bazel": "lib/libotelexport/tests/otelexport_test", "make": "otelexport_test.full",
-         "make_object_suffix": ".pieo"}
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:otelexport_test",
+          "bazel": "lib/libotelexport/tests/otelexport_test",
+          "make": "otelexport_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otelexport_test",
+          "atf": true
+        },
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:otlp_validate",
+          "bazel": "lib/libotelexport/tests/otlp_validate",
+          "make": "otlp_validate.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otlp_validate",
+          "atf": false
+        },
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:otlp_collector",
+          "bazel": "lib/libotelexport/tests/otlp_collector",
+          "make": "otlp_collector.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otlp_collector",
+          "atf": false
+        },
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:sysconf_test",
+          "bazel": "lib/libotelexport/tests/sysconf_test",
+          "make": "sysconf_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.sysconf_test",
+          "atf": true,
+          "default_src": "sysconf_test.c"
+        },
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:sysconf_oom_test",
+          "bazel": "lib/libotelexport/tests/sysconf_oom_test",
+          "make": "sysconf_oom_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.sysconf_oom_test",
+          "atf": true
+        }
+      ],
+      "make_targets": [
+        "otelexport_test",
+        "otlp_validate",
+        "otlp_collector",
+        "sysconf_test",
+        "sysconf_oom_test"
+      ]
+    },
+    {
+      "name": "libdtotel",
+      "path": "cddl/lib/libdtotel",
+      "artifacts": [
+        {
+          "kind": "archive",
+          "label": "//cddl/lib/libdtotel:dtotel",
+          "bazel": "cddl/lib/libdtotel/libdtotel.a",
+          "make": "libdtotel.a",
+          "make_object_suffix": ".o",
+          "srcs_var": "SRCS"
+        },
+        {
+          "kind": "archive",
+          "label": "//cddl/lib/libdtotel:dtotel_pie",
+          "bazel": "cddl/lib/libdtotel/libdtotel_pie.a",
+          "make": "libdtotel_pie.a",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS"
+        }
+      ],
+      "make_targets": [
+        "libdtotel.a",
+        "libdtotel_pie.a"
+      ]
+    },
+    {
+      "name": "dtotel_test",
+      "path": "cddl/lib/libdtotel/tests",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//cddl/lib/libdtotel/tests:dtotel_test",
+          "bazel": "cddl/lib/libdtotel/tests/dtotel_test",
+          "make": "dtotel_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.dtotel_test",
+          "atf": true
+        }
+      ],
+      "make_targets": [
+        "dtotel_test"
       ]
     },
     {
       "name": "hwstat",
       "path": "usr.sbin/hwstat",
-      "make_targets": ["hwstat"],
       "artifacts": [
-        {"kind": "program", "label": "//usr.sbin/hwstat:hwstat",
-         "bazel": "usr.sbin/hwstat/hwstat", "make": "hwstat.full",
-         "make_object_suffix": ".pieo"}
+        {
+          "kind": "program",
+          "label": "//usr.sbin/hwstat:hwstat",
+          "bazel": "usr.sbin/hwstat/hwstat",
+          "make": "hwstat.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "hwstat"
       ]
     },
     {
       "name": "bsdinstruments",
       "path": "cddl/usr.sbin/bsdinstruments",
-      "make_targets": ["bsdinstruments"],
       "artifacts": [
-        {"kind": "program", "label": "//cddl/usr.sbin/bsdinstruments:bsdinstruments",
-         "bazel": "cddl/usr.sbin/bsdinstruments/bsdinstruments", "make": "bsdinstruments.full",
-         "make_object_suffix": ".pieo"}
+        {
+          "kind": "program",
+          "label": "//cddl/usr.sbin/bsdinstruments:bsdinstruments",
+          "bazel": "cddl/usr.sbin/bsdinstruments/bsdinstruments",
+          "make": "bsdinstruments.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "bsdinstruments"
       ]
+    },
+    {
+      "name": "bsdinstruments_tests",
+      "path": "cddl/usr.sbin/bsdinstruments/tests",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//cddl/usr.sbin/bsdinstruments/tests:bsdinstruments_unit_test",
+          "bazel": "cddl/usr.sbin/bsdinstruments/tests/bsdinstruments_unit_test",
+          "make": "bsdinstruments_unit_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.bsdinstruments_unit_test",
+          "atf": true
+        }
+      ],
+      "make_targets": [
+        "bsdinstruments_unit_test"
+      ]
+    },
+    {
+      "name": "otelconf",
+      "path": "usr.sbin/otelconf",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelconf:otelconf",
+          "bazel": "usr.sbin/otelconf/otelconf",
+          "make": "otelconf.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "otelconf"
+      ]
+    },
+    {
+      "name": "otelconf_tests",
+      "path": "usr.sbin/otelconf/tests",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelconf/tests:otlp_fake_receiver",
+          "bazel": "usr.sbin/otelconf/tests/otlp_fake_receiver",
+          "make": "otlp_fake_receiver.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otlp_fake_receiver",
+          "atf": false,
+          "default_src": "otlp_fake_receiver.c"
+        },
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelconf/tests:otlp_json_validate",
+          "bazel": "usr.sbin/otelconf/tests/otlp_json_validate",
+          "make": "otlp_json_validate.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otlp_json_validate",
+          "atf": false,
+          "default_src": "otlp_json_validate.c"
+        }
+      ],
+      "make_targets": [
+        "otlp_fake_receiver",
+        "otlp_json_validate"
+      ]
+    },
+    {
+      "name": "otelpfd",
+      "path": "usr.sbin/otelpfd",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelpfd:otelpfd",
+          "bazel": "usr.sbin/otelpfd/otelpfd",
+          "make": "otelpfd.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "otelpfd"
+      ]
+    },
+    {
+      "name": "otelpfd_tests",
+      "path": "usr.sbin/otelpfd/tests",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelpfd/tests:pfstat_test",
+          "bazel": "usr.sbin/otelpfd/tests/pfstat_test",
+          "make": "pfstat_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.pfstat_test",
+          "atf": true
+        },
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelpfd/tests:mkpfstatus",
+          "bazel": "usr.sbin/otelpfd/tests/mkpfstatus",
+          "make": "mkpfstatus.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.mkpfstatus",
+          "atf": false,
+          "default_src": "mkpfstatus.c"
+        }
+      ],
+      "make_targets": [
+        "pfstat_test",
+        "mkpfstatus"
+      ]
+    },
+    {
+      "name": "otelauditd",
+      "path": "usr.sbin/otelauditd",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelauditd:otelauditd",
+          "bazel": "usr.sbin/otelauditd/otelauditd",
+          "make": "otelauditd.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "otelauditd"
+      ]
+    },
+    {
+      "name": "otelauditd_tests",
+      "path": "usr.sbin/otelauditd/tests",
+      "artifacts": [
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelauditd/tests:auditrec_test",
+          "bazel": "usr.sbin/otelauditd/tests/auditrec_test",
+          "make": "auditrec_test.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.auditrec_test",
+          "atf": true
+        },
+        {
+          "kind": "program",
+          "label": "//usr.sbin/otelauditd/tests:mkaudittrail",
+          "bazel": "usr.sbin/otelauditd/tests/mkaudittrail",
+          "make": "mkaudittrail.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.mkaudittrail",
+          "atf": false
+        }
+      ],
+      "make_targets": [
+        "auditrec_test",
+        "mkaudittrail"
+      ]
+    }
+  ],
+  "private_libraries": [
+    {
+      "component": "libotelexport",
+      "make_var": "LIBOTELEXPORTDIR",
+      "bazel_dir": "lib/libotelexport"
+    },
+    {
+      "component": "libdtotel",
+      "make_var": "LIBDTOTELDIR",
+      "bazel_dir": "cddl/lib/libdtotel"
     }
   ],
   "header_trees": [
@@ -50,23 +343,131 @@
     "cddl/compat/opensolaris/include",
     "cddl/contrib/opensolaris/head",
     "cddl/contrib/opensolaris/lib/libdtrace/common",
-    "lib/libtracecmp"
+    "lib/libtracecmp",
+    "contrib/libucl/include"
   ],
   "dependency_probes": [
-    {"path": "lib/libotelexport/oe_util.c", "kind": "library source"},
-    {"path": "lib/libotelexport/otelexport.h", "kind": "public header used across packages"},
-    {"path": "lib/libotelexport/oe_http.h", "kind": "private library header"},
-    {"path": "lib/libotelexport/tests/otelexport_test.c", "kind": "test source"},
-    {"path": "usr.sbin/hwstat/hwstat.h", "kind": "private program header"},
-    {"path": "cddl/usr.sbin/bsdinstruments/bsdinstruments.h", "kind": "private program header"},
-    {"path": "cddl/contrib/opensolaris/lib/libdtrace/common/dtrace.h", "kind": "source-tree header shadowing the SDK copy"},
-    {"path": "sys/contrib/openzfs/lib/libspl/include/sys/types.h", "kind": "libspl header ordered before sys/ and the SDK"},
-    {"path": "lib/libtracecmp/tracecmp.h", "kind": "source-tree consumer header"},
-    {"path": "toolchain/sysroot/usr/include/zlib.h", "kind": "SDK header"},
-    {"path": "toolchain/sysroot/usr/include/atf-c.h", "kind": "SDK ATF header"}
+    {
+      "path": "lib/libotelexport/oe_util.c",
+      "kind": "library source"
+    },
+    {
+      "path": "lib/libotelexport/otelexport.h",
+      "kind": "public header used across packages"
+    },
+    {
+      "path": "lib/libotelexport/oe_http.h",
+      "kind": "library header used by otelconf"
+    },
+    {
+      "path": "lib/libotelexport/oe_otlpenc.h",
+      "kind": "private library header"
+    },
+    {
+      "path": "lib/libotelexport/oe_sysconf.h",
+      "kind": "library header used by the services and tests"
+    },
+    {
+      "path": "lib/libotelexport/oe_sysconf.c",
+      "kind": "library source (otel.conf layer)"
+    },
+    {
+      "path": "lib/libotelexport/tests/otelexport_test.c",
+      "kind": "test source"
+    },
+    {
+      "path": "lib/libotelexport/tests/otlp_validate.h",
+      "kind": "test header shared with libdtotel tests"
+    },
+    {
+      "path": "lib/libotelexport/tests/failalloc.h",
+      "kind": "test header"
+    },
+    {
+      "path": "contrib/libucl/include/ucl.h",
+      "kind": "source-tree header reached only by per-file/library -I"
+    },
+    {
+      "path": "cddl/lib/libdtotel/dtotel_impl.h",
+      "kind": "private library header used by its test"
+    },
+    {
+      "path": "cddl/lib/libdtotel/dtotel.h",
+      "kind": "library header used by consumers"
+    },
+    {
+      "path": "cddl/lib/libdtotel/tests/dtrace_stub.h",
+      "kind": "test header"
+    },
+    {
+      "path": "usr.sbin/hwstat/hwstat.h",
+      "kind": "private program header"
+    },
+    {
+      "path": "cddl/usr.sbin/bsdinstruments/bsdinstruments.h",
+      "kind": "private program header (also the unit test)"
+    },
+    {
+      "path": "usr.sbin/otelpfd/pfstat.h",
+      "kind": "program header shared with its tests"
+    },
+    {
+      "path": "usr.sbin/otelauditd/auditrec.h",
+      "kind": "program header shared with its tests"
+    },
+    {
+      "path": "usr.sbin/otelauditd/tests/bsmgen.h",
+      "kind": "test header"
+    },
+    {
+      "path": "cddl/contrib/opensolaris/lib/libdtrace/common/dtrace.h",
+      "kind": "source-tree header shadowing the SDK copy"
+    },
+    {
+      "path": "sys/contrib/openzfs/lib/libspl/include/sys/types.h",
+      "kind": "libspl header ordered before sys/ and the SDK"
+    },
+    {
+      "path": "lib/libtracecmp/tracecmp.h",
+      "kind": "source-tree consumer header"
+    },
+    {
+      "path": "toolchain/sysroot/usr/include/zlib.h",
+      "kind": "SDK header"
+    },
+    {
+      "path": "toolchain/sysroot/usr/include/atf-c.h",
+      "kind": "SDK ATF header"
+    },
+    {
+      "path": "toolchain/sysroot/usr/include/net/pfvar.h",
+      "kind": "SDK header (tree OpenBSD pf ABI)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/include/bsm/libbsm.h",
+      "kind": "SDK header (libbsm)"
+    }
   ],
   "link_probes": [
-    {"path": "toolchain/sysroot/usr/lib/libxo.so", "kind": "SDK link input (bsdinstruments)"},
-    {"path": "toolchain/sysroot/usr/lib/libprivateatf-c.so", "kind": "SDK link input (ATF test)"}
+    {
+      "path": "toolchain/sysroot/usr/lib/libxo.so",
+      "kind": "SDK link input (bsdinstruments)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/lib/libprivateatf-c.so",
+      "kind": "SDK link input (ATF tests)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/lib/libprivateucl.so",
+      "kind": "SDK link input (libotelexport consumers)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/lib/libbsm.so",
+      "kind": "SDK link input (otelauditd)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/lib/libjail.so",
+      "kind": "SDK link input (libdtotel consumers)"
+    }
   ]
 }

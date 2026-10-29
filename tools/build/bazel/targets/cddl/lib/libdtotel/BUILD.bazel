@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: cddl/lib/libdtotel/Makefile (INTERNALLIB, WARNS 3,
+# LIBADD/_DP_dtotel dtrace jail otelexport).  libdtrace is linked from the
+# staged SDK by name; its headers come from the declared source trees.
+load("//toolchain:bsd_component.bzl", "bsd_internal_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+DTOTEL_SRCS = [
+    "dtotel.c",
+    "dtotel_agg.c",
+    "dtotel_session.c",
+]
+
+DTOTEL_PRIVATE_HDRS = ["dtotel_impl.h"]
+
+DTOTEL_HDRS = ["dtotel.h", "dtotel_session.h"]
+
+DTRACE_CFLAGS = [
+    "-DIN_BASE",
+    "-DSKIP_SPL_SYS_CONDVAR_H",
+    "-DHAVE_ISSETUGID",
+    # cddl/Makefile.inc
+    "-DNEED_SOLARIS_BOOLEAN",
+    "-DHAVE_STRLCAT",
+    "-DHAVE_STRLCPY",
+]
+
+bsd_internal_library(
+    name = "dtotel",
+    srcs = DTOTEL_SRCS + DTOTEL_PRIVATE_HDRS,
+    hdrs = DTOTEL_HDRS,
+    warns = 3,
+    local_cflags = DTRACE_CFLAGS,
+    deps = [
+        "//:dtrace_userland_headers",
+        "//lib/libotelexport:headers",
+    ],
+    internal_libs = ["//lib/libotelexport:otelexport"],
+    linkopts = ["-ldtrace", "-ljail"],
+)
+
+# Consumers' CFLAGS+=-I${SRCTOP}/cddl/lib/libdtotel; the unit test also
+# includes dtotel_impl.h.
+cc_library(
+    name = "headers",
+    hdrs = DTOTEL_HDRS + DTOTEL_PRIVATE_HDRS,
+    includes = ["."],
+)

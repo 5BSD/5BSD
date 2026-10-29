@@ -27,7 +27,7 @@ def run(argv):
                           text=True, check=True, env=ENV).stdout
 
 
-def parse_program(text):
+def parse_program(text, program=True):
     def field(label):
         values = re.findall(r'^\s*' + re.escape(label) + r':\s*(.+)$', text, re.M)
         if len(values) != 1:
@@ -38,8 +38,13 @@ def parse_program(text):
     needed = re.findall(r'\(NEEDED\)[^\n]*\[([^\]]+)\]', text)
     stack = [line.split() for line in text.splitlines() if line.strip().startswith('GNU_STACK ')]
     loads = [line.split() for line in text.splitlines() if line.strip().startswith('LOAD ')]
-    if len(interp) != 1 or len(stack) != 1 or not loads or len(needed) != len(set(needed)):
-        raise ValueError('program interpreter, stack, LOAD or NEEDED metadata ambiguous')
+    sonames = re.findall(r'\(SONAME\)[^\n]*\[([^\]]+)\]', text)
+    if program and len(interp) != 1:
+        raise ValueError('program interpreter metadata ambiguous')
+    if not program and (interp or len(sonames) != 1):
+        raise ValueError('shared object needs one SONAME and no interpreter')
+    if len(stack) != 1 or not loads or len(needed) != len(set(needed)):
+        raise ValueError('stack, LOAD or NEEDED metadata ambiguous')
     flags1 = re.findall(r'\(FLAGS_1\)\s+(.*)$', text, re.M)
     imports, exports = set(), set()
     for line in text.splitlines():
@@ -62,9 +67,14 @@ def parse_program(text):
                 raise ValueError('version requirement without provider file')
             requirements.add((provider, match.group(1)))
     requirements = sorted(requirements)
+    # Version definitions (a versioned library exports name@VERSION).
+    definitions = sorted(set(re.findall(r'^\s*0x[0-9a-f]+:\s+Rev:\s+\d+\s+Flags:\s+\S+\s+'
+                                        r'Index:\s+\d+\s+Cnt:\s+\d+\s+Name:\s+(\S+)', text, re.M)))
     return {'class': field('Class'), 'data': field('Data'), 'osabi': field('OS/ABI'),
             'machine': field('Machine'), 'type': field('Type').split()[0],
-            'interpreter': interp[0], 'needed_order': needed, 'needed': sorted(needed),
+            'interpreter': interp[0] if interp else None, 'soname': sonames[0] if sonames else None,
+            'version_definitions': definitions,
+            'needed_order': needed, 'needed': sorted(needed),
             'pie': bool(flags1 and 'PIE' in flags1[0].split()),
             'relro': bool(re.search(r'^\s*GNU_RELRO\s', text, re.M)),
             'now': bool(re.search(r'\(FLAGS(?:_1)?\)[^\n]*\b(?:BIND_NOW|NOW)\b', text)),
@@ -116,6 +126,40 @@ def compare_program(readelf, objcopy, candidate, reference, scratch):
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
     return {'scope': 'program-metadata-comparison', 'readelf_sha256': sha(readelf),
             **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
+            'byte_identical': sha(candidate) == sha(reference),
+            'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
+            'runtime_qualified': False, 'full_abi_parity': False}
+
+
+def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
+    """Shared library: SONAME, NEEDED, hardening, dynamic imports/exports with
+    their symbol versions, version definitions and requirements, sections."""
+    records = {}
+    for key, path in (('candidate', candidate), ('make_reference', reference)):
+        text = run([readelf, '-h', '-l', '-d', '-W', '--dyn-syms', '--version-info', path])
+        records[key] = {'path': str(path), 'sha256': sha(path),
+                        'metadata': parse_program(text, program=False),
+                        'sections': sections(objcopy, readelf, path, scratch)}
+    a, b = records['candidate']['metadata'], records['make_reference']['metadata']
+    for label, record in (('candidate', a), ('reference', b)):
+        if record['type'] != 'DYN' or record['soname'] != soname:
+            raise ValueError(label + ': incorrect shared-object type or SONAME')
+        if not record['relro'] or not record['now']:
+            raise ValueError(label + ': RELRO and immediate binding required')
+        if any(record[k] for k in ('textrel', 'search_path', 'executable_stack',
+                                   'writable_executable_load')):
+            raise ValueError(label + ': unsafe or installation-specific ELF metadata')
+    for key in ('class', 'data', 'osabi', 'machine', 'soname', 'needed', 'imports', 'exports',
+                'version_definitions', 'version_requirements'):
+        if a[key] != b[key]:
+            raise ValueError('Make shared library metadata mismatch: ' + key + ': ' +
+                             json.dumps({'bazel_only': sorted(set(map(str, a[key])) - set(map(str, b[key])))[:20],
+                                         'make_only': sorted(set(map(str, b[key])) - set(map(str, a[key])))[:20]}))
+    sa, sb = records['candidate']['sections'], records['make_reference']['sections']
+    differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
+    return {'scope': 'shared-library-metadata-comparison', 'readelf_sha256': sha(readelf),
+            **records, 'needed_order_equal': a['needed_order'] == b['needed_order'],
+            'exports_versioned': any('@' in x[0] for x in a['exports']),
             'byte_identical': sha(candidate) == sha(reference),
             'section_names_equal': sorted(sa) == sorted(sb), 'differing_sections': differing,
             'runtime_qualified': False, 'full_abi_parity': False}

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: cddl/usr.sbin/bsdinstruments/tests/Makefile
+# (ATF_TESTS_C bsdinstruments_unit_test; .PATH ..; CFLAGS.<prog>+=-I..;
+# WARNS default 6).  The ATF shell test needs no compilation.
+load("//toolchain:bsd_component.bzl", "bsd_atf_test_c")
+
+bsd_atf_test_c(
+    name = "bsdinstruments_unit_test",
+    # Keep in the order of SRCS.bsdinstruments_unit_test.
+    srcs = [
+        "bsdinstruments_unit_test.c",
+        "//cddl/usr.sbin/bsdinstruments:profile.c",
+        "//cddl/usr.sbin/bsdinstruments:filter.c",
+    ],
+    deps = ["//cddl/usr.sbin/bsdinstruments:headers"],
+    linkopts = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc",
+                "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"],
+)

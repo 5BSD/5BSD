@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelpfd/tests/Makefile (ATF_TESTS_C pfstat_test,
+# PROGS mkpfstatus; .PATH ..; CFLAGS+=-I.. -I${SRCTOP}/lib/libotelexport).
+load("//toolchain:bsd_component.bzl", "bsd_atf_test_c", "bsd_program")
+
+DEPS = [
+    "//usr.sbin/otelpfd:headers",
+    "//lib/libotelexport:headers",
+]
+
+bsd_atf_test_c(
+    name = "pfstat_test",
+    srcs = ["pfstat_test.c", "//usr.sbin/otelpfd:pfstat.c"],
+    deps = DEPS + ["//lib/libotelexport:otelexport_pie"],
+)
+
+bsd_program(
+    name = "mkpfstatus",
+    srcs = ["mkpfstatus.c"],
+    deps = DEPS,
+    testonly = True,
+)

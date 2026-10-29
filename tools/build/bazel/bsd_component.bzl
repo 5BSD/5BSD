@@ -44,35 +44,78 @@ BSD_WARNS = {
         "-Wno-address-of-packed-member"],
 }
 
-def bsd_cflags(warns, pieo = False, prog = False, local = []):
+# WARNS 1 (cddl/lib/libdtrace, dtrace(1)): bsd.sys.mk's C list, and the
+# C++ list, which drops -Wno-pointer-sign.
+_WARNS1_TAIL = ["-Wno-tautological-compare", "-Wno-unused-value", "-Wno-parentheses-equality",
+                "-Wno-unused-function", "-Wno-enum-conversion", "-Wno-unused-local-typedef",
+                "-Wno-address-of-packed-member", "-Wno-switch", "-Wno-switch-enum",
+                "-Wno-knr-promoted-parameter", "-Wno-parentheses"]
+BSD_WARNS[1] = (["-Wsystem-headers", "-Werror", "-Wno-pointer-sign", "-Wdate-time",
+                 "-Wno-unknown-pragmas"] + _CLANG_TAIL + _WARNS1_TAIL)
+BSD_CXX_WARNS = {
+    1: ["-Wsystem-headers", "-Werror", "-Wdate-time", "-Wno-unknown-pragmas"] + _CLANG_TAIL +
+       _WARNS1_TAIL,
+}
+
+# bsd.lib.mk PICFLAG for *.pico objects of a shared library.
+BSD_PICO_CFLAGS = ["-fpic", "-DPIC"]
+
+# bsd.sys.mk CXXFLAGS tail after the component's own CXXFLAGS: the debug
+# flags again, the C++ standard and clang's C++ warning adjustments.
+BSD_CXX_STD_TAIL = ["-Wno-c++20-extensions", "-Wno-c++23-lambda-attributes",
+                    "-Wno-nullability-completeness"]
+
+def bsd_cxxflags(warns, cxxstd, pico = False, local = [], cxx_local = []):
+    """Make's CXXFLAGS for a .cc object: CFLAGS without the C-only flags, then
+    the component CXXFLAGS, debug flags, -std and the C++ warning tail."""
+    if warns not in BSD_CXX_WARNS:
+        fail("unsupported C++ WARNS level for this pilot: %d" % warns)
+    return ((BSD_PICO_CFLAGS if pico else []) + BSD_CFLAGS + local + BSD_DEBUG_CFLAGS +
+            ["-Wno-format-zero-length"] + BSD_SSP_CFLAGS + BSD_CXX_WARNS[warns] +
+            BSD_TAIL_CFLAGS + cxx_local + BSD_DEBUG_CFLAGS + ["-std=" + cxxstd] +
+            BSD_CXX_STD_TAIL)
+
+def bsd_cflags(warns, pieo = False, prog = False, local = [], pico = False):
     """Make's CFLAGS order: PIEFLAG, base, component CFLAGS, PIE, debug, std, SSP, WARNS."""
     if warns not in BSD_WARNS:
         fail("unsupported WARNS level for this pilot: %d" % warns)
-    return ((BSD_PIEO_CFLAGS if pieo else []) + BSD_CFLAGS + local +
+    return ((BSD_PIEO_CFLAGS if pieo else []) + (BSD_PICO_CFLAGS if pico else []) +
+            BSD_CFLAGS + local +
             (BSD_PROG_PIE_CFLAGS if prog else []) + BSD_DEBUG_CFLAGS + BSD_CSTD +
             BSD_SSP_CFLAGS + BSD_WARNS[warns] + BSD_TAIL_CFLAGS)
 
 def bsd_internal_library(name, srcs, hdrs = [], warns = 6, deps = [], local_cflags = [],
-                         linkopts = []):
+                         linkopts = [], internal_libs = []):
     """INTERNALLIB: lib<name>.a and lib<name>_pie.a, as bsd.lib.mk builds them.
 
     `linkopts` carries the library's _DP_<name> system libraries so that
     consumers link them the way src.libnames.mk adds them to LDADD.
     No shared object exists for an INTERNALLIB; none is created here.
     Consumers add the header directory separately (Make: CFLAGS+=-I...),
-    normally through a sibling header-only target.
+    normally through a sibling header-only target.  `internal_libs` are
+    other INTERNALLIBs in _DP_<name>; the PIE variant links their _pie
+    archives, as src.libnames.mk selects ${PIE_SUFFIX}.
     """
-    native.cc_library(name = name, srcs = srcs, hdrs = hdrs, deps = deps,
+    native.cc_library(name = name, srcs = srcs, hdrs = hdrs,
+                      deps = deps + internal_libs,
                       copts = bsd_cflags(warns, local = local_cflags),
                       linkopts = linkopts, linkstatic = True)
-    native.cc_library(name = name + "_pie", srcs = srcs, hdrs = hdrs, deps = deps,
+    native.cc_library(name = name + "_pie", srcs = srcs, hdrs = hdrs,
+                      deps = deps + [x + "_pie" for x in internal_libs],
                       copts = bsd_cflags(warns, pieo = True, local = local_cflags),
                       linkopts = linkopts, linkstatic = True)
 
 def bsd_program(name, srcs, warns = 6, deps = [], local_cflags = [], linkopts = [],
                 testonly = False):
-    """Dynamic PIE program equivalent to bsd.prog.mk's PROG.full (before debug split)."""
+    """Dynamic PIE program equivalent to bsd.prog.mk's PROG.full (before debug split).
+
+    A program that links a shared library built in the workspace (dtrace(1)
+    and libdtrace.so.2) gets Bazel's PIC compile mode, whose toolchain flags
+    are -fPIC -DPIC; Make compiles program objects with -fpie -DPIC only
+    (bsd_cflags), so the toolchain "pic" flags are disabled for programs.
+    """
     native.cc_binary(name = name, srcs = srcs, deps = deps, testonly = testonly,
+                     features = ["-pic"],
                      copts = bsd_cflags(warns, pieo = True, prog = True, local = local_cflags),
                      linkstatic = True,
                      linkopts = BSD_DEBUG_LINKOPTS + BSD_PROG_PIE_LINKOPTS + linkopts)

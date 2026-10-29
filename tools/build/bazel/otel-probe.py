@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Declared Bazel targets for the OTel components, compared with independent Make builds.
 
-Builds lib/libotelexport (static and PIE archives), its ATF test program,
-usr.sbin/hwstat and cddl/usr.sbin/bsdinstruments with the declared staged
-toolchain, and the same components through maintained Make buildenv against
-the same staged SDK.  Not a system build backend; build-bsd selects Make.
+Builds the OpenTelemetry components listed in targets/sources.json (the
+lib/libotelexport and cddl/lib/libdtotel INTERNALLIB archives, hwstat,
+bsdinstruments, otelconf, otelpfd, otelauditd and their test programs) with
+the declared staged toolchain, and the same components through maintained
+Make buildenv against the same staged SDK.  Not a system build backend;
+build-bsd selects Make.
 """
 import argparse
 import hashlib
@@ -35,7 +37,9 @@ EXPLAINED_BAZEL_TOKENS = {
                      'object/section comparison).',
     '-iquote': 'Bazel workspace quote-include roots (".", bazel-out/<cfg>/bin, external/bazel_tools); '
                'Make relies on the including file\'s directory, which clang searches first in both.',
-    '-isystem bazel-out': 'generated-file twin of each declared include directory; empty for these targets.',
+    '-isystem bazel-out': 'generated-file twin of each declared include directory; empty for the OTel '
+                          'targets; for libdtrace it holds dt_grammar.h, where Make has -I${.OBJDIR} '
+                          '(recorded as outside the source tree and also left out of the comparison).',
     '-nostdinc/-isystem SDK': 'explicit staged clang resource and sysroot include directories; '
                               'Make reaches the same directories through --sysroot defaults.',
     '-I vs -isystem': 'Bazel `includes` produces -isystem; with Make policy -Wsystem-headers the '
@@ -91,13 +95,58 @@ class Recorder:
         return status, out, err
 
 
+def path_string_check(objcopy, make_object, bazel_object, src, scratch, ms, bs, differing):
+    """Explain object differences confined to string data and its users.
+
+    Make passes absolute source paths, Bazel workspace-relative ones, and
+    __FILE__ (assert(), ATF macros) embeds them.  'explained' is true when
+    every differing merged-string section holds the same strings once the
+    source-root prefix is removed, and every other differing non-debug
+    section (relocations, .symtab) keeps its size, i.e. only offsets moved.
+    """
+    import subprocess
+    report = {'string_sections_equal_after_prefix': {}, 'other_sections_same_size': {}}
+    explained = True
+    prefix = (str(src) + '/').encode()
+    for name in differing:
+        if name.startswith('.debug_'):
+            continue
+        if name.startswith('.rodata.str'):
+            texts = []
+            for obj in (make_object, bazel_object):
+                dump = scratch / 'strings.bin'
+                subprocess.run([str(objcopy), '--dump-section=%s=%s' % (name, dump), str(obj),
+                                str(scratch / 'discard')], check=True,
+                               env={'PATH': '/bin:/usr/bin', 'LC_ALL': 'C'})
+                texts.append(dump.read_bytes())
+                dump.unlink()
+                (scratch / 'discard').unlink()
+            same = (sorted(x.replace(prefix, b'') for x in texts[0].split(b'\0')) ==
+                    sorted(texts[1].split(b'\0')))
+            report['string_sections_equal_after_prefix'][name] = same
+            explained &= same
+        else:
+            same = name in ms and name in bs and ms[name]['size'] == bs[name]['size']
+            report['other_sections_same_size'][name] = same
+            explained &= same
+    report['explained'] = explained
+    return report
+
+
 def make_compile_command(dry_run, obj):
     matches = []
     for line in dry_run.splitlines():
         tokens = shlex.split(line) if ' -c ' in line else []
         if '-o' in tokens and tokens[tokens.index('-o') + 1] == obj:
             matches.append(tokens)
-    if len(matches) != 1:
+    # bsd.progs.mk runs one sub-make per program, so an object shared by
+    # several programs of a directory appears once per program; it is the
+    # same file and must be compiled the same way each time.
+    # Only the dependency-file options (-MD -MF -MT) may differ.
+    def key(tokens):
+        return tuple(t for t in tokens if not (t == '-MD' or t.startswith('-MF') or
+                                               t.startswith('-MT')))
+    if len({key(m) for m in matches}) != 1:
         raise ValueError('expected one Make compile command for ' + obj)
     return matches[0]
 
@@ -117,6 +166,11 @@ def normalize_make_compile(tokens, src):
         if t in ('-target', '-o', '-c'):
             i += 2
             continue
+        if t == '-include':
+            # Forced include: compare the workspace-relative header path.
+            flags += [t, os.path.relpath(os.path.normpath(tokens[i + 1]), src)]
+            i += 2
+            continue
         if t.startswith('-I'):
             includes.append(os.path.normpath(t[2:]))
         elif not (t.startswith('--sysroot=') or t.startswith('-B') or t == '-MD' or
@@ -126,7 +180,12 @@ def normalize_make_compile(tokens, src):
     relative, missing = [], []
     for path in includes:
         rel = os.path.relpath(path, src)
-        if not (src / rel).is_dir():
+        if rel.startswith('..'):
+            # -I${.OBJDIR}: Make's generated headers; Bazel reaches its
+            # generated files through the bazel-out twin of an `includes`
+            # directory, which normalize_bazel_compile drops.
+            missing.append(path)
+        elif not (src / rel).is_dir():
             missing.append(rel)
         elif rel not in relative:
             relative.append(rel)
@@ -150,7 +209,15 @@ def normalize_bazel_compile(tokens):
                 includes.append(path)
             i += 2
             continue
-        if t.startswith('-frandom-seed=') or t in ('-MD', '-nostdinc', '-fdebug-compilation-dir=.'):
+        if t == '-I':
+            includes.append(tokens[i + 1])
+            i += 2
+            continue
+        if t.startswith('-I'):
+            # copts -I: a component's own include directory that Make adds
+            # for its objects only (not propagated to dependents).
+            includes.append(t[2:])
+        elif t.startswith('-frandom-seed=') or t in ('-MD', '-nostdinc', '-fdebug-compilation-dir=.'):
             dropped.append(t)
         elif not (t.startswith('--target=') or t.startswith('--sysroot=')):
             flags.append(t)
@@ -239,6 +306,7 @@ def main():
     checker = load('elf_artifact_check', 'elf-artifact-check.py')
     probe_inputs = sorted([Path(__file__).resolve(), HERE / 'bsd_toolchain.py',
                            HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
+                           HERE / 'bsd_generate.bzl',
                            HERE / 'elf-artifact-check.py', HERE / 'elf-artifact-check-test.py',
                            manifest_path,
                            *sorted((HERE / 'targets').rglob('BUILD.bazel'))])
@@ -255,6 +323,13 @@ def main():
     def save():
         (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
 
+    # Source inputs are hashed before the Make reference is built and
+    # rechecked at the end: an edit between the two builds would make the
+    # comparison meaningless (found when a test source changed mid-run).
+    source_files = sorted({f for c in manifest['components'] for f in (src / c['path']).rglob('*')
+                           if f.is_file()} |
+                          {f for t in manifest['header_trees'] for f in (src / t).rglob('*.h')})
+    source_digest = {str(f): sha(f) for f in source_files}
     try:
         # ---- Independent Make references through maintained buildenv. ----
         make_env = {'PATH': '/bin:/usr/bin:/usr/local/bin', 'HOME': os.environ.get('HOME', '/nonexistent'),
@@ -274,26 +349,36 @@ def main():
                 not any(x.startswith('CC=') and '--sysroot=' + str(sysroot) in x and
                         '-target ' + a.target in x for x in env_lines)):
             raise ValueError('Make buildenv does not use the explicit staged sysroot/target')
+        private_libs = {x['component']: x for x in manifest['private_libraries']}
         library_dir = out / 'make/libotelexport'
         make_info = {}
         for component in manifest['components']:
             objdir = out / 'make' / component['name']
             objdir.mkdir(exist_ok=True)
-            # src.libnames.mk insists LIBOTELEXPORTDIR is .OBJDIR inside the library itself.
-            common_vars = [] if objdir == library_dir else ['LIBOTELEXPORTDIR=' + str(library_dir)]
+            # src.libnames.mk insists LIB<NAME>DIR is .OBJDIR inside the library itself;
+            # every consumer uses the private library builds made before it.
+            common_vars = [lib['make_var'] + '=' + str(out / 'make' / name)
+                           for name, lib in private_libs.items() if name != component['name']]
             base = ['/usr/bin/env', 'MAKEOBJDIR=' + str(objdir), make, '-C', src / component['path']]
-            # bsd.progs.mk (ATF_TESTS_C) keeps per-program sources in SRCS.<prog>.
-            _, values, _ = buildenv(base + ['-V', 'SRCS', '-V', 'CFLAGS', '-V', 'LDFLAGS',
-                                            '-V', 'WARNS', '-V', 'SRCS.' + component['make_targets'][0]] +
-                                    common_vars)
+            # bsd.progs.mk (ATF_TESTS_C, PROGS) keeps per-program sources in SRCS.<prog>.
+            srcs_vars = [x['srcs_var'] for x in component['artifacts']]
+            query = ['-V', 'CFLAGS', '-V', 'LDFLAGS', '-V', 'WARNS']
+            for var in srcs_vars:
+                query += ['-V', var]
+            _, values, _ = buildenv(base + query + common_vars)
             values = values.splitlines()[1:]
+            artifact_srcs = {}
+            for item, value in zip(component['artifacts'], values[3:]):
+                listed = value.split() or ([item['default_src']] if 'default_src' in item else [])
+                if not listed:
+                    raise ValueError('no Make sources for ' + item['label'])
+                artifact_srcs[item['label']] = listed
             _, dry, _ = buildenv(base + ['-n'] + component['make_targets'] + common_vars)
             (out / 'make' / (component['name'] + '.dry-run.txt')).write_text(dry)
             buildenv(base + ['-j' + str(a.jobs)] + component['make_targets'] + common_vars)
-            make_info[component['name']] = {'objdir': str(objdir),
-                                            'srcs': (values[0] or values[4]).split(),
-                                            'cflags': values[1], 'ldflags': values[2],
-                                            'warns': values[3], 'dry_run': dry}
+            make_info[component['name']] = {'objdir': str(objdir), 'srcs': artifact_srcs,
+                                            'cflags': values[0], 'ldflags': values[1],
+                                            'warns': values[2], 'dry_run': dry}
         result['make_reference'] = {k: {x: y for x, y in v.items() if x != 'dry_run'}
                                     for k, v in make_info.items()}
         result['make_configuration'] = {k: make_env[k] for k in ('SRCCONF', '__MAKE_CONF', 'MAKEOBJDIRPREFIX')}
@@ -344,7 +429,8 @@ def main():
             for item in artifacts:
                 _, listed, _ = rec.run(prefix + ['query', 'labels(srcs, %s)' % item['label']], cwd=ws)
                 bazel_srcs = [x.rsplit(':', 1)[1] for x in listed.split() if x.endswith('.c')]
-                make_srcs = [x for x in make_info[item['component']]['srcs'] if x.endswith('.c')]
+                make_srcs = [x for x in make_info[item['component']]['srcs'][item['label']]
+                             if x.endswith('.c')]
                 if sorted(bazel_srcs) != sorted(make_srcs):
                     raise ValueError('BUILD srcs differ from Make SRCS for ' + item['label'])
                 # Query output is sorted; source order is checked through archive
@@ -401,8 +487,14 @@ def main():
                 ms = checker.sections(tools['llvm-objcopy'], readelf, make_object, scratch)
                 bs = checker.sections(tools['llvm-objcopy'], readelf, ws / obj, scratch)
                 differing = sorted(n for n in set(ms) | set(bs) if ms.get(n) != bs.get(n))
+                strings = path_string_check(tools['llvm-objcopy'], make_object, ws / obj, src,
+                                            scratch, ms, bs, differing)
+                if not strings['explained']:
+                    raise ValueError('object differs from Make beyond source-path strings: %s %s' %
+                                     (obj, strings))
                 per_object[stem] = {'make_object': str(make_object),
                                     'differing_sections': differing,
+                                    'path_string_explanation': strings,
                                     'non_debug_differing_sections':
                                         [n for n in differing if '.debug_' not in n],
                                     'make_argv': make_tokens, 'bazel_argv': bazel_tokens,
@@ -447,12 +539,15 @@ def main():
                 relinked = scratch / (Path(item['bazel']).name + '.make-order')
                 argv = list(mlink)
                 argv[argv.index('-o') + 1] = str(relinked)
+                bazel_objects = {re.sub(r'(\.pic)?\.o$', '', Path(x).name): ws / x
+                                 for x in params_file(bazel_bin, item['bazel']) if x.endswith('.o')}
+                lib_dirs = {'-L' + str(out / 'make' / name): '-L' + str(bazel_bin / lib['bazel_dir'])
+                            for name, lib in private_libs.items()}
                 for index, token in enumerate(argv):
                     if token.endswith('.pieo'):
-                        argv[index] = str(bazel_bin / Path(item['bazel']).parent / '_objs' /
-                                          Path(item['bazel']).name / (token[:-5] + '.o'))
-                    elif token == '-L' + str(library_dir):
-                        argv[index] = '-L' + str(bazel_bin / 'lib/libotelexport')
+                        argv[index] = str(bazel_objects[Path(token).name[:-5]])
+                    elif token in lib_dirs:
+                        argv[index] = lib_dirs[token]
                 buildenv(argv)
                 relink_sections = checker.sections(tools['llvm-objcopy'], readelf, relinked, scratch)
                 make_sections = comparison['make_reference']['sections']
@@ -552,12 +647,16 @@ def main():
         if a.skip_host_runtime:
             result['host_runtime'] = 'not-performed'
         else:
-            result['host_runtime'] = host_runtime(rec, out, fixture, src)
+            result['host_runtime'] = host_runtime(rec, out, fixture, src, artifacts)
         result['host_runtime_scope'] = ('host kernel ' + platform.release() + ' with host '
                                         'rtld/libraries; not the staged SDK runtime')
         for path, digest in result['probe_input_sha256'].items():
             if sha(path) != digest:
                 raise RuntimeError('probe input changed during qualification: ' + path)
+        changed = [p for p, d in source_digest.items() if not Path(p).is_file() or sha(p) != d]
+        if changed:
+            raise RuntimeError('source inputs changed during qualification: ' + ', '.join(changed[:10]))
+        result['source_inputs_rechecked'] = len(source_digest)
         result['status'] = 'passed'
     except Exception as error:
         result.update(status='failed', error=str(error))
@@ -568,7 +667,7 @@ def main():
     print(out / 'result.json')
 
 
-def host_runtime(rec, out, fixture, src):
+def host_runtime(rec, out, fixture, src, artifacts):
     report = {'status': 'passed', 'abi_blocked': []}
     work = out / 'host-runtime'
     work.mkdir()
@@ -579,25 +678,52 @@ def host_runtime(rec, out, fixture, src):
             report['abi_blocked'].append({'argv': [str(x) for x in argv], 'stderr': stderr})
         return status, stdout, stderr
 
-    # ATF test program: same case list, every case passes in both builds.
+    # ATF test programs: same case list and the same result in both builds;
+    # every case passes, or is skipped identically (for example cases that
+    # require root).  Source directories supply golden files (-s).
     cases = {}
-    for name in ('otelexport_test', 'make-otelexport_test'):
-        program = fixture / name
-        status, listing, _ = execute([program, '-l'])
-        if status != 0:
-            raise RuntimeError(name + ' could not list its test cases')
-        idents = re.findall(r'^ident:\s+(\S+)$', listing, re.M)
-        results = {}
-        for case in idents:
-            directory = work / name / case
-            directory.mkdir(parents=True)
-            execute([program, '-r', directory / 'result', case], cwd=directory)
-            results[case] = ((directory / 'result').read_text().strip()
-                             if (directory / 'result').exists() else 'no result file')
-        cases[name] = results
-    if list(cases['otelexport_test']) != list(cases['make-otelexport_test']) or \
-            any(v != 'passed' for r in cases.values() for v in r.values()):
-        raise RuntimeError('ATF results differ or failed: ' + json.dumps(cases))
+    for item in artifacts:
+        if not item.get('atf'):
+            continue
+        base = Path(item['bazel']).name
+        srcdir = src / Path(item['bazel']).parent
+        for name in (base, 'make-' + base):
+            # ATF requires the program inside the source directory given
+            # with -s: stage a copy of that directory with the program in it.
+            staged = work / 'src' / name
+            shutil.copytree(srcdir, staged, symlinks=False)
+            shutil.copy2(fixture / name, staged / name)
+            program = staged / name
+            status, listing, _ = execute([program, '-l'])
+            if status != 0:
+                raise RuntimeError(name + ' could not list its test cases')
+            idents = re.findall(r'^ident:\s+(\S+)$', listing, re.M)
+            # require.user is honored as kyua does (ATF itself ignores it).
+            needs = {}
+            for block in listing.split('\n\n'):
+                ident = re.search(r'^ident:\s+(\S+)$', block, re.M)
+                user = re.search(r'^require\.user:\s+(\S+)$', block, re.M)
+                if ident and user:
+                    needs[ident.group(1)] = user.group(1)
+            results = {}
+            for case in idents:
+                need = needs.get(case)
+                if (need == 'root') != (os.getuid() == 0) and need in ('root', 'unprivileged'):
+                    results[case] = 'skipped: requires %s user (kyua semantics)' % need
+                    continue
+                directory = work / name / case
+                directory.mkdir(parents=True)
+                execute([program, '-s', staged, '-r', directory / 'result', case], cwd=directory)
+                results[case] = ((directory / 'result').read_text().strip()
+                                 if (directory / 'result').exists() else 'no result file')
+            # Failure messages carry __FILE__: absolute in Make, relative in Bazel.
+            cases[name] = {k: v.replace(str(src) + '/', '') for k, v in results.items()}
+        b, m = cases[base], cases['make-' + base]
+        # expected_exit/expected_failure/... are ATF's passing outcomes.
+        if b != m or any(not (v == 'passed' or v.startswith(('skipped:', 'expected_')))
+                         for v in b.values()):
+            raise RuntimeError('ATF results differ or failed for %s: %s' %
+                               (base, json.dumps({base: b, 'make-' + base: m})))
     report['atf'] = cases
 
     def pair(name, args):
@@ -609,13 +735,18 @@ def host_runtime(rec, out, fixture, src):
 
     checks = []
     for name, args in (('hwstat', []), ('hwstat', ['-h']), ('hwstat', ['bogus']),
-                       ('bsdinstruments', []), ('bsdinstruments', ['-h'])):
+                       ('bsdinstruments', []), ('bsdinstruments', ['-h']),
+                       ('otelconf', []), ('otelconf', ['bogus']), ('otelpfd', ['extra']),
+                       ('otelauditd', ['extra'])):
         b, m = pair(name, args)
         if b['exit_code'] != 2 or b != m:
             raise RuntimeError('usage behavior differs: %s %s' % (name, args))
         checks.append({'program': name, 'args': args, 'exit_code': 2, 'identical_output': True})
+    otelconf_defaults = str(src / 'usr.sbin/otelconf/otel.conf.defaults')
     for name, args in (('bsdinstruments', ['list']), ('bsdinstruments', ['list', '--json']),
-                       ('bsdinstruments', ['generate', 'accept-latency'])):
+                       ('bsdinstruments', ['generate', 'accept-latency']),
+                       ('otelconf', ['-d', otelconf_defaults, '-f', '', 'show']),
+                       ('otelconf', ['-d', otelconf_defaults, '-f', '', 'get', 'endpoint'])):
         b, m = pair(name, args)
         if b['exit_code'] != 0 or b != m:
             raise RuntimeError('deterministic output differs: %s %s' % (name, args))

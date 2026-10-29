@@ -1,12 +1,66 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Make reference: lib/libotelexport/tests/Makefile (ATF_TESTS_C, LIBADD otelexport).
-load("//toolchain:bsd_component.bzl", "bsd_atf_test_c")
+# Make reference: lib/libotelexport/tests/Makefile (ATF_TESTS_C otelexport_test,
+# sysconf_test, sysconf_oom_test; PROGS otlp_validate, otlp_collector;
+# CFLAGS+=-I${.CURDIR:H}; WARNS default 6).
+load("//toolchain:bsd_component.bzl", "bsd_atf_test_c", "bsd_program")
 
+package(default_visibility = ["//visibility:public"])
+
+# Shared with cddl/lib/libdtotel/tests (.PATH and -I this directory).
+exports_files(["otlp_validate.c", "otel_testutil.c"])
+
+cc_library(
+    name = "test_headers",
+    testonly = True,
+    hdrs = ["otlp_validate.h", "otel_testutil.h"],
+    includes = ["."],
+)
+
+# Allocation-failure injection: LDFLAGS.<prog>+=${WRAP_ALLOC}.
+WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc",
+              "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"]
+
+LIB = [
+    "//lib/libotelexport:headers",
+    "//lib/libotelexport:otelexport_pie",
+]
+
+# Keep in the order of SRCS.<prog>.
 bsd_atf_test_c(
     name = "otelexport_test",
-    srcs = ["otelexport_test.c"],
-    deps = [
-        "//lib/libotelexport:headers",
-        "//lib/libotelexport:otelexport_pie",
-    ],
+    srcs = ["otelexport_test.c", "otlp_validate.c", "otel_testutil.c",
+            "otlp_validate.h", "otel_testutil.h"],
+    deps = LIB,
+    # LIBADD.otelexport_test+= otelexport z ssl crypto pthread ucl
+    linkopts = WRAP_ALLOC + ["-lz", "-lssl", "-lcrypto", "-lpthread", "-lprivateucl"],
+)
+
+bsd_program(
+    name = "otlp_validate",
+    srcs = ["otlp_validate.c", "otlp_validate_main.c", "otlp_validate.h"],
+    deps = ["//lib/libotelexport:headers"],
+    testonly = True,
+)
+
+bsd_program(
+    name = "otlp_collector",
+    srcs = ["otlp_collector_main.c", "otel_testutil.c", "otel_testutil.h"],
+    deps = ["//lib/libotelexport:headers"],
+    # LIBADD.otlp_collector+= z ssl crypto pthread
+    linkopts = WRAP_ALLOC + ["-lz", "-lssl", "-lcrypto", "-lpthread"],
+    testonly = True,
+)
+
+bsd_atf_test_c(
+    name = "sysconf_test",
+    srcs = ["sysconf_test.c"],
+    deps = LIB,
+)
+
+bsd_atf_test_c(
+    name = "sysconf_oom_test",
+    srcs = ["sysconf_oom_test.c", "failalloc.c", "failalloc.h"],
+    deps = LIB,
+    # LIBADD.sysconf_oom_test+= otelexport ucl
+    linkopts = WRAP_ALLOC + ["-Wl,--wrap=reallocarray", "-lprivateucl"],
 )

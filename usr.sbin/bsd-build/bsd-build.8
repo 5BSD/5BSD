@@ -360,15 +360,26 @@ selects parallelism (all logical CPUs by default);
 selects a fresh directory below /usr/obj.
 It builds fresh Make reference libraries and compares Bazel artifacts,
 including versioned exports and generated-input invalidation.
-It also builds the declared Bazel targets for
+It also builds the declared Bazel targets of the OpenTelemetry
+components
+.Po
 .Pa lib/libotelexport ,
-its ATF test program,
-.Pa usr.sbin/hwstat
-and
-.Pa cddl/usr.sbin/bsdinstruments
+.Pa cddl/lib/libdtotel ,
+.Pa cddl/usr.sbin/bsdinstruments ,
+.Pa usr.sbin/hwstat ,
+.Pa usr.sbin/otelconf ,
+.Pa usr.sbin/otelpfd ,
+.Pa usr.sbin/otelauditd
+and their test programs
+.Pc
 and compares their compile and link flags, archive members, symbols
 and program ELF metadata with independent Make builds of the same sources.
 These programs are not executed by this action.
+The separate libdtrace and
+.Xr dtrace 1
+probe
+.Pa tools/build/bazel/dtrace-probe.py
+is not part of this action.
 The action also builds and stages a Make-only libmd installation reference
 under its private output directory, preserving the selected world profile,
 source layout, debug splitting and METALOG package metadata.

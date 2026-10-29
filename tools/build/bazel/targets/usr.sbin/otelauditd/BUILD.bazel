@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.sbin/otelauditd/Makefile (PROG, WARNS 6,
+# LIBADD otelexport bsm).
+load("//toolchain:bsd_component.bzl", "bsd_program")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["auditrec.c"])
+
+cc_library(
+    name = "headers",
+    testonly = True,
+    hdrs = ["auditrec.h"],
+    includes = ["."],
+)
+
+bsd_program(
+    name = "otelauditd",
+    srcs = ["otelauditd.c", "auditrec.c", "auditrec.h"],
+    deps = [
+        "//lib/libotelexport:headers",
+        "//lib/libotelexport:otelexport_pie",
+    ],
+    linkopts = ["-lbsm"],
+)

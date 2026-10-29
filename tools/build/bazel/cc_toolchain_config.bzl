@@ -29,6 +29,11 @@ def _impl(ctx):
         feature(name = "bsd_debug_compilation_dir", enabled = True, flag_sets = [flag_set(
             actions = _COMPILE, flag_groups = [flag_group(flags = ["-fdebug-compilation-dir=."])],
         )]),
+        # Replaces Bazel's legacy feature of the same name, which links a
+        # RUNPATH into the _solib tree when a program uses a shared library
+        # built in the workspace (dtrace(1) and libdtrace.so.2).  Make
+        # programs carry no RPATH/RUNPATH; libraries come from the system.
+        feature(name = "runtime_library_search_directories", enabled = True),
         feature(name = "bsd_cpp_headers", enabled = True, flag_sets = [flag_set(
             actions = ["c++-compile", "c++-header-parsing", "c++-module-compile", "c++-module-codegen"],
             flag_groups = [flag_group(flags = ["-isystem", headers[0]])],
