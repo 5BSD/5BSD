@@ -6233,3 +6233,10 @@ unqualified. Evidence: bazel-clang-analysis[-minimal]-qualification-20261029.
 clang_full=false rejects explicit component requests. No source/probe/audit changes.
 Checker diagnostics, analyzer runtime and Z3 support remain unqualified. Evidence:
 bazel-clang-static-analyzer-qualification-20261029.
+
+### 2026-10-29 Clang Tooling
+
+21 maintained sources match Make object symbols and archive inventory. No source,
+probe or audit changes. Dependency scanning, compilation-database handling and
+refactoring runtime remain unqualified. Evidence:
+bazel-clang-tooling-qualification-20261029.

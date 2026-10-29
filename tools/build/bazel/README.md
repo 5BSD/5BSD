@@ -36819,3 +36819,25 @@ Eleven qualified default Clang components now cover 763 sources. Remaining Clang
 LLVM components, compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/
 performance gates remain open. Make stays production/default. No host installation
 or publication occurred.
+
+### 2026-10-29 native Clang Tooling
+
+Added all 21 maintained SRCS_MIN Tooling sources, including dependency scanning,
+compilation databases, refactoring and inclusion handling, as a native component.
+Sources outside the maintained base selection are not silently added. Public
+headers and generated dependencies are declared; this directory has no private
+.h inputs. No compiler sources or sandbox restrictions were changed.
+
+Maintained frontend bazel-clang-tooling-20261029 (16 jobs) succeeds. All 21 PIC
+object global/undefined symbol inventories match fresh isolated Make objects;
+archive member multiplicities match. Evidence/scripts:
+/usr/obj/usr/src/bazel-clang-tooling-qualification-20261029.
+Reference uses existing bootstrap generators and staged SDK headers. This qualifies
+compilation structure, not dependency-scanner runtime, compilation-database parsing,
+refactoring behavior, instruction identity or performance.
+
+Frontend review: existing format-5 inputs, generated providers and object/archive
+backend suffice; no build-bsd.c/manual interface change needed. Twelve qualified
+default Clang components now cover 784 sources. Remaining Clang/LLVM components,
+compiler linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates
+remain open. Make stays production/default. No host installation/publication.
