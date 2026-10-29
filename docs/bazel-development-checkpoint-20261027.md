@@ -11425,3 +11425,31 @@ tree files. No subnet-manager execution, device operations, traffic or performan
 checks occurred. Frontend review: current format-5 library targets/archive helpers
 cover this batch; no build-bsd.c/backend/manual interface change needed. Make
 remains production/default and full-system qualification remains incomplete.
+
+### 2026-10-29 OpenSM executable and native generators
+
+Added OpenSM executable with all 84 maintained C sources and two generated C
+sources. Native bsd_lex/bsd_yacc actions use native lex/m4/yacc execution tools,
+declared grammar inputs, parser header/source output groups and source header
+providers. Preserves native opensm/osmvendor/osmcomp/wrap/pthread dependencies,
+HAVE_CONFIG_H, PIE, utilities package and section-eight manual.
+
+Maintained frontend bazel-opensm-program-20261029-r3 (16 jobs) matches fresh Make
+reference on five metadata records, exact manual payload and one valid ELF/debug
+pair with matching global/undefined symbols and dynamic fields. Generated lexer
+C, parser C and parser header all match after only source-root and generated-
+output-directory path normalization; raw snapshots/hashes and normalization scope
+are saved under bazel-opensm-program-qualification-20261029/generated.
+
+Initial build linked unsuccessfully because one-time source transcription omitted
+the digit-containing osm_vl15intf.c. Corrected complete source inventory against
+Make. Follow-up edit temporarily malformed a filegroup; corrected declaration.
+Both failed runs remain recorded, with unchanged qualification criteria. No
+upstream program sources or generator expectations were changed.
+
+No subnet manager was started and no device/network/port changes occurred.
+Runtime QoS parsing, subnet behavior and performance remain unqualified. Frontend
+review: existing native generator rules and format-5 staging cover this build;
+no build-bsd.c/backend/manual interface change required. Top-level OFED aggregation
+and remaining library coverage still need completion. Make remains production/
+default and full world/kernel/pkgbase/runtime/performance gates remain open.

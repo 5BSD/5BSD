@@ -6056,3 +6056,10 @@ No explicit SDT/DTrace or direct audit calls found in reviewed libvendor and
 osm_log/osm_mad_pool/osm_helper sources. Native declarations preserve logging.
 Management-datagram lifecycle and permission failures remain runtime/audit-review
 candidates. No subnet-manager or privileged network operation was executed.
+
+### 2026-10-29 OpenSM executable
+
+No explicit SDT/DTrace or direct audit calls found in reviewed OpenSM C/lexer/
+parser sources. Native declaration preserves logging and source inventory.
+Subnet changes, QoS configuration, console commands and permission/error paths
+remain runtime and audit-review candidates. No daemon or hardware operation ran.
