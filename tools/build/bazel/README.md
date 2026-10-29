@@ -36905,3 +36905,39 @@ components now cover 838 qualified sources, plus one separately integrated minim
 Support source; optional Format adds one more. Complete aggregate inventory/linkage,
 LLVM completion and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates
 remain open. Make stays production/default; no host installation/publication.
+
+### 2026-10-29 complete default libclang PIC object aggregate
+
+Added //lib/clang/libclang:pic_archive selecting all maintained native components,
+including both Basic source groups. StaticAnalyzer and CrossTU dependencies are
+selected only with clang_full. Added a distinct Support/support compilation target
+for libclang's -UPIC/full-component contract; bootstrap clangminimal retains its
+existing contract. Basic target_selection visibility is restricted to the libclang
+package. The archive is not the installed shared library and supplies no claim of
+resolved LLVM linkage or executable compiler behavior.
+
+Added bsd_component_sources using an analysis aspect over each explicitly selected
+group's resolved srcs. It emits source_inventory.json without parsing BUILD/Make
+text and rejects empty groups/duplicate source paths. Normal format-5 artifacts
+export it through build-bsd. Default frontend runs bazel-clang-aggregate-20261029
+and bazel-clang-aggregate-inventory-20261029 succeed with 16 jobs. All 839 unique
+native source paths match independently expanded Make ${SRCS}; archive member-name
+multiplicities and aggregate global/undefined symbol multiplicities match all 839
+Make reference objects. References reuse retained fresh component compilations;
+Support was freshly compiled for this batch. Existing bootstrap generators/staged
+SDK headers remain reference inputs. Evidence/scripts/reference list:
+/usr/obj/usr/src/bazel-clang-aggregate-qualification-20261029.
+
+Reduced inventory run bazel-clang-aggregate-reduced-inventory-20261029 sets
+clang_full=false, lldb=false, clang_extras=true. All 640 resolved source paths match
+expanded Make for those choices. This run qualifies source selection only, not a
+compiled reduced aggregate. Default total is now 839 including Support; enabling
+Format/extras adds MatchFilePath.cpp. Complete source coverage here means the
+maintained libclang selection, not all vendor-tree sources or LLVM libraries.
+
+Frontend review: updated native aggregation/inventory backend; current build-bsd.c
+format-5 artifacts and documented settings suffice, no new CLI/manual interface.
+Remaining work includes LLVM libraries/backends, shared/static linkage/install,
+compiler execution and world/kernel/pkgbase/bootstrap/runtime/cache/performance
+qualification. No instruction equivalence or full compiler claim. Make remains
+production/default; no host installation/publication occurred.

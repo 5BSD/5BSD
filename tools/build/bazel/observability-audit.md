@@ -6254,3 +6254,10 @@ unqualified. Evidence: bazel-clang-support-components-qualification-20261029.
 Default and both optional selectors pass object/archive checks; formatter runtime
 and diagnostics remain unqualified. Retained evidence:
 bazel-clang-format[-enabled|-extras]-qualification-20261029.
+
+### 2026-10-29 libclang aggregate
+
+Default 839-source inventory/archive/symbol multiplicities match Make references;
+reduced 640-source selection matches expanded Make. No compiler/probe/audit source
+changes. This is an object aggregate; compiler execution, emitted code and runtime
+observability remain unqualified. Evidence: bazel-clang-aggregate-qualification-20261029.

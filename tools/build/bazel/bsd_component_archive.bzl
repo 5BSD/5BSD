@@ -107,3 +107,34 @@ bsd_component_objects = rule(implementation = _all_objects, attrs = {
     "group": attr.label(providers = [CcInfo], mandatory = True),
     "pic": attr.bool(default = False),
 })
+
+
+_ComponentSources = provider(fields = ["sources"])
+
+def _sources_aspect_impl(target, ctx):
+    if not hasattr(ctx.rule.files, "srcs"):
+        fail("component has no declared srcs: " + str(target.label))
+    return [_ComponentSources(sources = ctx.rule.files.srcs)]
+
+_sources_aspect = aspect(implementation = _sources_aspect_impl)
+
+def _sources_impl(ctx):
+    rows = []
+    seen = {}
+    for group in ctx.attr.groups:
+        sources = group[_ComponentSources].sources
+        if not sources:
+            fail("component has no selected sources: " + str(group.label))
+        for source in sources:
+            if source.path in seen:
+                fail("duplicate component source: " + source.path)
+            seen[source.path] = True
+        rows.append({"label": str(group.label), "sources": sorted([f.short_path for f in sources])})
+    output = ctx.actions.declare_file(ctx.label.name + ".json")
+    ctx.actions.write(output, json.encode_indent({"components": rows}) + "\n")
+    return [DefaultInfo(files = depset([output]))]
+
+# Resolve source selections in Bazel analysis; no parsing of BUILD or Make files.
+bsd_component_sources = rule(implementation = _sources_impl, attrs = {
+    "groups": attr.label_list(aspects = [_sources_aspect], mandatory = True),
+})
