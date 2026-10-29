@@ -3,10 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * JSONL exporter — one JSON object per event or span on its own
- * line, so output pipes cleanly into jq, Loki, Vector, Splunk,
- * fluentd.  Spans carry "type":"span"; events have no "type" (the
- * original shape) so existing consumers keep working.  Both carry an
+ * JSONL exporter — one JSON object per event, span or aggregation
+ * snapshot on its own line, so output pipes cleanly into jq, Loki,
+ * Vector, Splunk, fluentd.  Spans carry "type":"span" and snapshots
+ * "type":"metric"; events have no "type" (the original shape) so
+ * existing consumers keep working.  Events and spans carry an
  * "attributes" object with the semantic-convention context.
  */
 
@@ -147,9 +148,16 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 	oe_buf_appendstr(&b, "\",\"body\":\"");
 	oe_buf_appendjson(&b, ev->body);
 	oe_buf_appendstr(&b, "\"");
+	if (ev->severity != OE_SEV_UNSPECIFIED) {
+		char sev[16];
+
+		oe_buf_appendf(&b, ",\"severity\":\"%s\"",
+		    oe_severity_text(ev->severity, sev, sizeof(sev)));
+	}
 	jsonl_stack_array(&b, "stack", ev->stack, ev->nstack);
 	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
-	jsonl_context(&b, ev->pid, ev->execname, &ev->ctx, NULL, 0);
+	jsonl_context(&b, ev->pid, ev->execname, &ev->ctx, ev->attrs,
+	    ev->nattrs);
 	if (j->resource != NULL)
 		oe_buf_appendstr(&b, j->resource);
 	oe_buf_appendstr(&b, "}\n");
@@ -213,12 +221,75 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 	return (ret);
 }
 
+/*
+ * One aggregation snapshot as a "type":"metric" line: the snapshot time
+ * (and the start of a cumulative window), profile, name (the kind for an
+ * anonymous aggregation), kind, and one entry per data point with its
+ * key dimensions and either a value or histogram buckets.
+ */
 static int
-jsonl_snapshot(struct oe_exporter *e __unused,
-    const struct oe_snapshot *sn __unused)
+jsonl_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 {
+	static const char *const kindnames[] = {
+		"count", "sum", "min", "max", "avg", "stddev",
+		"quantize", "lquantize", "llquantize"
+	};
+	struct oe_jsonl *j = (struct oe_jsonl *)e;
+	const struct oe_datapoint *dp;
+	struct oe_buf b;
+	char ts[64];
+	size_t i, k;
+	int ret;
 
-	return (0);
+	if (sn->npoints == 0)
+		return (0);
+	oe_iso8601(&sn->ts, ts, sizeof(ts));
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "{\"type\":\"metric\",\"time\":\"");
+	oe_buf_appendjson(&b, ts);
+	if (sn->start.tv_sec != 0) {
+		oe_iso8601(&sn->start, ts, sizeof(ts));
+		oe_buf_appendstr(&b, "\",\"start\":\"");
+		oe_buf_appendjson(&b, ts);
+	}
+	oe_buf_appendstr(&b, "\",\"profile\":\"");
+	oe_buf_appendjson(&b, sn->profile != NULL ? sn->profile : j->profile);
+	oe_buf_appendstr(&b, "\",\"name\":\"");
+	oe_buf_appendjson(&b, sn->name != NULL && sn->name[0] != '\0' ?
+	    sn->name : kindnames[sn->kind]);
+	oe_buf_appendf(&b, "\",\"kind\":\"%s\",\"points\":[",
+	    kindnames[sn->kind]);
+	for (i = 0; i < sn->npoints; i++) {
+		dp = &sn->points[i];
+		oe_buf_appendstr(&b, i > 0 ? ",{\"attributes\":{" :
+		    "{\"attributes\":{");
+		for (k = 0; k < dp->nattrs; k++) {
+			oe_buf_appendstr(&b, k > 0 ? ",\"" : "\"");
+			oe_buf_appendjson(&b, dp->attrs[k].name);
+			oe_buf_appendstr(&b, "\":\"");
+			oe_buf_appendjson(&b, dp->attrs[k].value);
+			oe_buf_appendstr(&b, "\"");
+		}
+		oe_buf_appendstr(&b, "}");
+		if (dp->is_histogram) {
+			oe_buf_appendstr(&b, ",\"buckets\":[");
+			for (k = 0; k < dp->nbuckets; k++)
+				oe_buf_appendf(&b, "%s{\"le\":%jd,\"count\":%jd}",
+				    k > 0 ? "," : "",
+				    (intmax_t)dp->buckets[k].upper,
+				    (intmax_t)dp->buckets[k].count);
+			oe_buf_appendstr(&b, "]}");
+		} else
+			oe_buf_appendf(&b, ",\"value\":%jd}",
+			    (intmax_t)dp->scalar);
+	}
+	oe_buf_appendstr(&b, "]");
+	if (j->resource != NULL)
+		oe_buf_appendstr(&b, j->resource);
+	oe_buf_appendstr(&b, "}\n");
+	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
+	oe_buf_free(&b);
+	return (ret);
 }
 
 static int

@@ -270,10 +270,17 @@ BSDTrace daemon.
 
 ## Export: libotelexport and OTLP
 
-bsdinstruments and hwstat share `libotelexport(3)`, which renders a stream of
-events or snapshots as text, JSONL, collapsed stacks, or OTLP/HTTP JSON (logs
-and metrics, gzip-compressed) and accounts for dropped records. The OTLP
-exporter is configured by the standard environment:
+dtrace(1) (`-x otel`), bsdinstruments, hwstat, otelpfd and otelauditd share
+`libotelexport(3)`, which renders a stream of events, snapshots and spans as
+text, JSONL, collapsed stacks, OTLP JSON Lines files, or OTLP/HTTP JSON (logs,
+metrics and traces, gzip-compressed), spools batches through collector
+outages and accounts for dropped records. Log records carry an OTel
+severity (`severityNumber`/`severityText`; INFO unless the emitter sets
+one, as otelauditd does for failures). Metric names are
+`<scope>.<profile>.<name>` with the tool as the instrumentation scope
+(`bsdinstruments.system-metrics.io_bytes`, `otelpfd.pf.packets`), whatever
+`service.name` says. The OTLP exporter is configured by the standard
+environment:
 
 | Variable | Use |
 |---|---|
@@ -285,7 +292,8 @@ exporter is configured by the standard environment:
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes |
 
 The C entry points are `oe_text_new()`, `oe_jsonl_new()`,
-`oe_collapsed_new()`, `oe_otlp_new()`, `oe_env_load()` and
+`oe_collapsed_new()`, `oe_otlpjson_new()`, `oe_otlp_new()`,
+`oe_config_load()`, `oe_resource_init()`, `oe_otlp_config_env()` and
 `oe_report_drops()` in `<otelexport.h>`. Log records from BSDLog are not
 exported over OTLP; only DTrace and telemetry data are.
 
@@ -300,9 +308,13 @@ resource attributes (`service.namespace`, `deployment.environment.name`,
 `host.id` from `/etc/hostid`), the spool directory `/var/spool/otel` and
 the local agent's settings. `otelconf(8)` validates it with the library's
 own loader, prints values for rc.d scripts and renders the agent
-configuration. hwstat, bsdinstruments, otelpfd and otelauditd all read it
-through `oe_sysconf(3)`; credentials from it are only sent to the endpoint
-it names.
+configuration. Every OTLP/HTTP exporter (dtrace `-x otel=otlp`,
+bsdinstruments `--format otel`, hwstat, otelpfd, otelauditd) reads it through
+one function, `oe_config_load(3)`; credentials from it are only sent to the
+endpoint it names. Without a command-line spool, an exporter that may write
+the spool directory keeps undeliverable batches in
+`/var/spool/otel/<tool>.spool` (bounded by `spool.max_bytes`, one owner at a
+time) and resends them when the collector is back.
 
 `sysrc otel_enable=YES` starts the services; each `*_enable` left empty
 follows the master switch:
@@ -313,10 +325,17 @@ follows the master switch:
 | `otel_hwstat` | hardware metrics | `hwstat watch --format otel` |
 | `otelpfd` | pf status counters and gauges | `DIOCGETSTATUS` on `/dev/pf` |
 | `otelauditd` | audit records as log records | `auditpipe(4)` + libbsm |
-| `otel_dtrace` | block I/O latency and bytes by device, exec/exit churn, signals | bsdinstruments `system-metrics` profile, one export per window |
+| `otel_dtrace` | block I/O latency and bytes by `system.device` and `disk.io.direction`, exec/exit churn, signals | bsdinstruments `system-metrics` profile, one long-running trace exporting cumulative snapshots every `otel_dtrace_window` seconds (`--interval`) |
 
 otelpfd and otelauditd open their device as root, limit its capability
-rights, and run as `_otel` (uid 830); the agent runs as `_otel` too.
+rights, read the configuration and credentials, and then run as `_otel`
+(uid 830) before their exporter and spool exist; the agent runs as `_otel`
+too. otelpfd uses `network.type` (`ipv4`/`ipv6`) and `network.io.direction`
+for pf's address families and directions and starts its cumulative sums at
+pf's own enable time. otelauditd exports a successful event as INFO, a
+failed one as WARN, and a failed login or authentication (`lo`, `aa`
+classes) as ERROR, with the subject as `process.*`/`user.id`, the outcome
+as `otelauditd.result`/`otelauditd.return` and the path as `file.path`.
 
 ## BSDTrace: tracing without root
 

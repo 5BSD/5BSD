@@ -956,7 +956,8 @@ dtotel_guest(struct dtotel *d, uint16_t vmid, uint64_t epoch,
 	g = guest_find(d, vmid);
 	if (g == NULL)
 		return (guest_add(d, vmid, epoch, name) != NULL ? 0 : -1);
-	if (g->epoch == epoch && name != NULL && strcmp(g->name, name) == 0)
+	/* Same lifetime, and the same (or no news of the) name. */
+	if (g->epoch == epoch && (name == NULL || strcmp(g->name, name) == 0))
 		return (0);
 	/* A new lifetime (or name) of the VMID: a new resource. */
 	ret = guest_retire(d, g);

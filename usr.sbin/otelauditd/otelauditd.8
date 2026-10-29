@@ -72,9 +72,12 @@ see
 .Xr audit_control 5 ,
 instead of the system preselection.
 .It Fl u Ar user
-After opening the audit pipe and reading the configuration, switch
-permanently to
-.Ar user .
+After opening the audit pipe and reading the configuration and
+credentials, switch permanently to
+.Ar user ,
+before the exporter and its spool
+.Pq Pa <spool.directory>/otelauditd.spool , see Xr otel.conf 5
+are created.
 .El
 .Sh LOG RECORDS
 Each record becomes one log record whose timestamp is the record time.
@@ -105,6 +108,48 @@ AUE_EXECVE execve(2) auid=1001 euid=0 egid=0 ruid=1001 pid=4242
 .Pp
 Exec environment tokens are never exported.
 Records that cannot be parsed are skipped with a warning.
+.Pp
+The outcome sets the record's severity
+.Pq Va severityNumber No and Va severityText :
+.Bl -tag -width "ERROR (17)" -compact
+.It INFO (9)
+a successful event, or a record without a return token;
+.It WARN (13)
+a failed event;
+.It ERROR (17)
+a failed event of the login and logout
+.Pq Li lo
+or authentication and authorization
+.Pq Li aa
+classes of
+.Xr audit_class 5 .
+.El
+.Pp
+The subject also becomes the attributes
+.Va process.user.id
+.Pq euid ,
+.Va process.real_user.id ,
+.Va process.group.id
+.Pq egid ,
+.Va process.real_group.id
+and, when set,
+.Va user.id
+.Pq the audit user ;
+the outcome becomes
+.Va otelauditd.result
+.Pq Li success , failure
+and
+.Va otelauditd.return
+.Pq the return value, or the error number of a failure ;
+the first path token becomes
+.Va file.path .
+The instrumentation scope, and the prefix of the tool's own attributes,
+is
+.Ql otelauditd
+whatever
+.Va service.name
+.Ev ( OTEL_SERVICE_NAME )
+the resource reports.
 .Sh SECURITY
 The audit pipe is opened and configured as root; its capability rights
 are then limited to reading, event notification and the drop counter

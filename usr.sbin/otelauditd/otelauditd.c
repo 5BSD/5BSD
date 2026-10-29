@@ -94,6 +94,7 @@ main(int argc, char **argv)
 	struct auditrec_events events;
 	struct sigaction sa;
 	struct oe_event ev;
+	struct auditrec_attrs at;
 	const char *endpoint, *file, *flags, *user;
 	char errbuf[512], body[AUDITREC_BODY_MAX], probe[64], *end;
 	u_char *rec, *pipebuf;
@@ -102,7 +103,7 @@ main(int argc, char **argv)
 	FILE *trail;
 	off_t pos;
 	ssize_t r;
-	int ch, fd, len;
+	int ch, fd, len, pipelen, pipeoff;
 
 	endpoint = file = flags = user = NULL;
 	count = 0;
@@ -132,6 +133,18 @@ main(int argc, char **argv)
 	if (optind != argc || (file != NULL && flags != NULL))
 		usage();
 
+	/*
+	 * Handlers first: a stop request during the (possibly slow)
+	 * setup ends the run cleanly instead of killing it.
+	 */
+	/* No SA_RESTART: a signal interrupts the blocking read. */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+
 	/* Privileged setup: the source, the event table, the exporter. */
 	trail = NULL;
 	fd = -1;
@@ -143,29 +156,18 @@ main(int argc, char **argv)
 		fd = open_pipe(flags);
 	if (auditrec_events_load(&events) != 0)
 		errx(1, "cannot load the audit event table");
-	if (oe_service_open(&svc, "otelauditd", OTELAUDITD_VERSION,
-	    AUDITREC_PROFILE, endpoint, 1.0, errbuf, sizeof(errbuf)) != 0) {
-		oe_service_close(&svc);
-		errx(1, "%s", errbuf);
-	}
-	if (user != NULL && oe_drop_privileges(user, errbuf,
+	if (oe_service_open(&svc, AUDITREC_SCOPE, OTELAUDITD_VERSION,
+	    AUDITREC_PROFILE, endpoint, 1.0, user, errbuf,
 	    sizeof(errbuf)) != 0) {
 		oe_service_close(&svc);
 		errx(1, "%s", errbuf);
 	}
 
-	/* No SA_RESTART: a signal interrupts the blocking read. */
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = on_signal;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGHUP, &sa, NULL);
-
 	pipebuf = trail == NULL ? malloc(PIPE_RECORD_MAX) : NULL;
 	if (trail == NULL && pipebuf == NULL)
 		err(1, "malloc");
 	lastdrops = 0;
+	pipeoff = pipelen = 0;
 	for (n = 0; !done && (count == 0 || n < count);) {
 		if (trail != NULL) {
 			pos = ftello(trail);
@@ -180,24 +182,36 @@ main(int argc, char **argv)
 				break;
 			}
 		} else {
-			r = read(fd, pipebuf, PIPE_RECORD_MAX);
-			if (r == -1 && errno == EINTR)
+			/* One read returns as many whole records as fit. */
+			if (pipeoff >= pipelen) {
+				r = read(fd, pipebuf, PIPE_RECORD_MAX);
+				if (r == -1 && errno == EINTR)
+					continue;
+				if (r <= 0) {
+					warn("/dev/auditpipe");
+					break;
+				}
+				pipeoff = 0;
+				pipelen = (int)r;
+				if (ioctl(fd, AUDITPIPE_GET_DROPS, &drops) == 0 &&
+				    drops > lastdrops) {
+					oe_report_drops(svc.exporter,
+					    drops - lastdrops);
+					lastdrops = drops;
+				}
+			}
+			rec = pipebuf + pipeoff;
+			len = auditrec_record_len(rec, pipelen - pipeoff);
+			if (len <= 0) {
+				warnx("skipping the rest of a malformed audit "
+				    "pipe read");
+				pipeoff = pipelen;
 				continue;
-			if (r <= 0) {
-				warn("/dev/auditpipe");
-				break;
 			}
-			rec = pipebuf;
-			len = (int)r;
-			if (ioctl(fd, AUDITPIPE_GET_DROPS, &drops) == 0 &&
-			    drops > lastdrops) {
-				oe_report_drops(svc.exporter,
-				    drops - lastdrops);
-				lastdrops = drops;
-			}
+			pipeoff += len;
 		}
 		switch (auditrec_convert(&events, rec, len, &ev, body,
-		    sizeof(body), probe, sizeof(probe))) {
+		    sizeof(body), probe, sizeof(probe), &at)) {
 		case 1:
 			if (oe_event(svc.exporter, &ev) != 0)
 				warnx("cannot queue an audit record");

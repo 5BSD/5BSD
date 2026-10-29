@@ -16,11 +16,14 @@
 .Nm
 configures how base system programs export telemetry with the
 OpenTelemetry protocol (OTLP), and how the local agent forwards it.
-It is read by every program built on the base exporter library
-.Pq Xr oe_sysconf 3 ,
-including
+It is read through one configuration path of the base exporter library
+.Pq Xr oe_config_load 3
+by every program exporting with OTLP/HTTP:
+.Xr dtrace 1
+.Pq Fl x Cm otel=otlp ,
+.Xr bsdinstruments 8
+.Pq Fl -format Cm otel ,
 .Xr hwstat 8 ,
-.Xr bsdinstruments 8 ,
 .Xr otelpfd 8
 and
 .Xr otelauditd 8 ,
@@ -136,11 +139,35 @@ to
 .Qq production .
 At most 32 attributes are accepted.
 .It Ic spool Pq object
-Persistent buffering:
+Persistent buffering of OTLP batches the collector could not take:
 .Bl -tag -width "max_bytes"
 .It Ic directory Pq path, default Pa /var/spool/otel
+Every program exporting with OTLP/HTTP
+.Po
+.Xr dtrace 1
+.Fl x Cm otel=otlp ,
+.Xr bsdinstruments 8
+.Fl -format Cm otel ,
+.Xr hwstat 8 ,
+.Xr otelpfd 8 ,
+.Xr otelauditd 8
+.Pc
+that is not given a spool on its command line spools to
+.Pa <directory>/<program>.spool
+when it may write this directory (the services, which run as root or
+switch to
+.Ql _otel ,
+and root may; other users export without a spool).
+Each spool file has one owner at a time, held with a lock on
+.Pa <program>.spool.lock ;
+a second instance of the same program exports without a spool.
+.Xr fluent-bit 8
+buffers under
+.Pa <directory>/fluent-bit .
 .It Ic max_bytes Pq integer, default 268435456
-Bound on buffered data, 1 MiB to 1 TiB.
+Bound on buffered data, 1 MiB to 1 TiB, applied to each spool file and
+to a command-line spool given without its own bound; batches beyond it
+are dropped and counted.
 UCL size suffixes such as
 .Qq 256mb
 are accepted.
@@ -277,6 +304,8 @@ agent {
 # sysrc otel_enable=YES
 .Ed
 .Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr libotelexport 3 ,
 .Xr libucl 3 ,
 .Xr oe_sysconf 3 ,
 .Xr rc.conf 5 ,

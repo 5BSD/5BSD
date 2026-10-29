@@ -116,6 +116,9 @@ def runtime_env(objtop, profile_dir):
                                       ('cddl/lib/libdtrace', 'cddl/lib/libctf', 'lib/libproc',
                                        'lib/librtld_db'))
     env['LLVM_PROFILE_FILE'] = str(profile_dir/'%p-%m.profraw')
+    # Keep -x otel=otlp cases independent of the host's otel.conf(5).
+    env['OTELCONF_DEFAULTS'] = ''
+    env['OTELCONF_FILE'] = ''
     return env
 
 

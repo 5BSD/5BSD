@@ -8,8 +8,12 @@
  * parsed from text.
  *
  * Current values (states, source nodes, fragments, running) are gauges;
- * event counters are cumulative monotonic sums.  Names are relative to
- * the "<service>.pf." prefix that libotelexport adds.
+ * event counters are cumulative monotonic sums starting when pf was
+ * enabled or its counters were cleared (pf_status.since).  Metric names
+ * follow the "<scope>.<profile>.<name>" scheme of libotelexport, so
+ * they read otelpfd.pf.<name>; address family and direction use the
+ * semantic-convention attributes network.type (ipv4, ipv6) and
+ * network.io.direction (receive for pf "in", transmit for "out").
  */
 
 #include <stdint.h>
@@ -20,8 +24,8 @@
 static const char *const reason_names[] = PFRES_NAMES;
 static const char *const limit_names[] = LCNT_NAMES;
 static const char *const op_names[] = { "search", "insert", "removal" };
-static const char *const af_names[] = { "inet", "inet6" };
-static const char *const dir_names[] = { "in", "out" };
+static const char *const af_names[] = { "ipv4", "ipv6" };
+static const char *const dir_names[] = { "receive", "transmit" };
 
 _Static_assert(nitems(reason_names) == PFRES_MAX + 1, "PFRES_NAMES");
 _Static_assert(nitems(limit_names) == LCNT_MAX + 1, "LCNT_NAMES");
@@ -34,6 +38,7 @@ _Static_assert(FCNT_MAX == 3 && SCNT_MAX == 3 && NCNT_MAX == 3,
 struct sample {
 	struct oe_exporter	*e;
 	const struct timespec	*ts;
+	struct timespec		 start;
 	struct oe_datapoint	 dp[MAXPOINTS];
 	struct oe_attr		 attrs[MAXPOINTS][MAXATTRS];
 	size_t			 n;
@@ -81,6 +86,8 @@ flush(struct sample *s, const char *name, enum oe_agg_kind kind)
 	sn.kind = kind;
 	sn.points = s->dp;
 	sn.npoints = s->n;
+	if (kind == OE_AGG_COUNT)
+		sn.start = s->start;
 	if (oe_snapshot(s->e, &sn) != 0)
 		s->failed = 1;
 	s->emitted++;
@@ -97,7 +104,7 @@ gauge(struct sample *s, const char *name, uint64_t value)
 
 int
 pfstat_emit(struct oe_exporter *e, const struct pf_status *st,
-    const struct timespec *ts)
+    const struct timespec *ts, time_t uptime)
 {
 	struct sample s;
 	int af, dir, i;
@@ -105,6 +112,15 @@ pfstat_emit(struct oe_exporter *e, const struct pf_status *st,
 	memset(&s, 0, sizeof(s));
 	s.e = e;
 	s.ts = ts;
+	/*
+	 * since is in uptime seconds; it is zero, or ahead of the given
+	 * uptime for a replayed status, when the start is unknown.
+	 */
+	if (st->since > 0 && st->since <= uptime && ts->tv_sec > uptime -
+	    st->since) {
+		s.start.tv_sec = ts->tv_sec - (uptime - st->since);
+		s.start.tv_nsec = 0;
+	}
 
 	gauge(&s, "running", st->running != 0);
 	gauge(&s, "states", st->states);
@@ -138,18 +154,20 @@ pfstat_emit(struct oe_exporter *e, const struct pf_status *st,
 	for (af = 0; af < 2; af++)
 		for (dir = 0; dir < 2; dir++) {
 			point(&s, st->pcounters[af][dir][PF_PASS],
-			    "network.type", af_names[af], "direction",
-			    dir_names[dir], "action", "pass");
+			    "network.type", af_names[af],
+			    "network.io.direction", dir_names[dir], "action",
+			    "pass");
 			point(&s, st->pcounters[af][dir][PF_DROP],
-			    "network.type", af_names[af], "direction",
-			    dir_names[dir], "action", "block");
+			    "network.type", af_names[af],
+			    "network.io.direction", dir_names[dir], "action",
+			    "block");
 		}
 	flush(&s, "packets", OE_AGG_COUNT);
 	for (af = 0; af < 2; af++)
 		for (dir = 0; dir < 2; dir++)
 			point(&s, st->bcounters[af][dir], "network.type",
-			    af_names[af], "direction", dir_names[dir], NULL,
-			    NULL);
+			    af_names[af], "network.io.direction",
+			    dir_names[dir], NULL, NULL);
 	flush(&s, "bytes", OE_AGG_COUNT);
 
 	return (s.failed ? -1 : s.emitted);

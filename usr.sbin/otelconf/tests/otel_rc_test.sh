@@ -224,7 +224,7 @@ emitters_start_stop_body()
 	    'otel_endpoint="http://e:3"'
 	if kldstat -q -m dtrace; then
 		emitter_cycle otel_dtrace bsdinstruments \
-		    "watch system-metrics --format otel --duration 60\nendpoint=http://e:4\n" \
+		    "watch system-metrics --format otel --interval 60\nendpoint=http://e:4\n" \
 		    'otel_endpoint="http://e:4"'
 	fi
 }

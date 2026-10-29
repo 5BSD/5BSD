@@ -6,11 +6,19 @@
  * I/O, an exec, an exit, a signal) — never per
  * instruction, per syscall, per context switch or per page fault — and
  * only bounded aggregation keys (devices, directions, signals), never
- * processes.  Everything is aggregated in the kernel;
- * user space reads one snapshot per window.
+ * processes.  Everything is aggregated in the kernel; the service reads
+ * one cumulative snapshot per otel_dtrace_window (bsdinstruments
+ * --interval) without restarting, so sums never reset.  The profile
+ * prints nothing: no log records, spans or context markers, only the
+ * probe clock's once-a-second anchor besides these probes.
  *
- *   io_latency_us      block I/O service time histogram by device
- *   io_bytes           block I/O bytes by device and direction
+ * Exported as bsdinstruments.system-metrics.<name>; "__" in a
+ * clause-local key name stands for "." so the dimensions carry
+ * OpenTelemetry semantic-convention names:
+ *
+ *   io_latency_us      block I/O service time histogram by system.device
+ *   io_bytes           block I/O bytes by system.device and
+ *                      disk.io.direction (read, write)
  *   exec / exec_failure / exits   process churn
  *   signals            signals sent, by signal number (crash signals)
  *
@@ -27,11 +35,14 @@ io:::start
 io:::done
 /io_ts[arg0]/
 {
-    this->device = strjoin(stringof(args[1]->device_name),
+    this->system__device = strjoin(stringof(args[1]->device_name),
         lltostr(args[1]->unit_number));
-    this->direction = args[0]->bio_cmd == BIO_READ ? "read" : "write";
-    @io_latency_us[this->device] = quantize((timestamp - io_ts[arg0]) / 1000);
-    @io_bytes[this->device, this->direction] = sum(args[0]->bio_bcount);
+    this->disk__io__direction = args[0]->bio_cmd == BIO_READ ? "read" :
+        "write";
+    @io_latency_us[this->system__device] =
+        quantize((timestamp - io_ts[arg0]) / 1000);
+    @io_bytes[this->system__device, this->disk__io__direction] =
+        sum(args[0]->bio_bcount);
     io_ts[arg0] = 0;
 }
 

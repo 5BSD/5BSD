@@ -1322,7 +1322,10 @@ Collector's file exporter writes them and its
 .Ql otlpjsonfile
 receiver reads them.
 .It Cm json
-One JSON object per record.
+One JSON object per record, and one
+.Ql \&"type\&":\&"metric\&"
+object per aggregation snapshot; see
+.Xr libotelexport 3 .
 .El
 .Pp
 The file formats are written to standard output, or to the file named by
@@ -1459,6 +1462,19 @@ and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT
 environment variables are honored as described in
 .Xr libotelexport 3 .
+With
+.Cm otlp ,
+settings given neither as
+.Fl x
+options nor in the environment come from
+.Xr otel.conf 5
+.Po
+endpoint, credentials, compression, timeout, resource attributes and the
+spool
+.Pc ,
+and an invalid
+.Xr otel.conf 5
+is an error.
 .Pp
 With
 .Fl E ,
@@ -1492,8 +1508,10 @@ options are:
 collector base URL for
 .Cm otlp ;
 it takes precedence over
-.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
-whose default is
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+and the
+.Xr otel.conf 5
+endpoint; the built-in default is
 .Ql http://localhost:4318 .
 .It Cm otelspool Ns = Ns Ar file
 for
@@ -1503,9 +1521,23 @@ keep batches the collector could not take after the retries in
 as OTLP JSON Lines and resend them, oldest first, once it accepts a
 request again, in this run or a later one; guests use
 .Ar file Ns Li .vm Ns Ar vmid .
+Without it, the system spool
+.Pa <spool.directory>/dtrace.spool
+of
+.Xr otel.conf 5
+is used when it is writable.
+A spool belongs to one running consumer; a second one fails with
+.Cm otelspool
+and runs without a spool otherwise.
 .It Cm otelspoolmax Ns = Ns Ar size
 spool size limit, with an optional k, m or g suffix
-.Pq default 64m .
+.Po
+default
+.Ic spool.max_bytes
+of
+.Xr otel.conf 5 ,
+else 64m
+.Pc .
 .It Cm otelrotatesize Ns = Ns Ar size , Cm otelrotatetime Ns = Ns Ar time , Cm otelrotatekeep Ns = Ns Ar n
 rotate the
 .Fl o
@@ -1612,6 +1644,7 @@ in
 .Xr dtrace_udplite 4 ,
 .Xr dtrace_vfs 4 ,
 .Xr elf 5 ,
+.Xr otel.conf 5 ,
 .Xr d 7 ,
 .Xr tracing 7 ,
 .Xr SDT 9

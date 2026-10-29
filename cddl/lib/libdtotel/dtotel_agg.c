@@ -64,9 +64,26 @@ builtin_key_name(const char *expr, int idx, char *buf, size_t len)
 			return (names[i].name);
 	if (expr[0] == '"')
 		return ("label");
-	/* this->name keys export their variable name. */
-	if (strncmp(expr, "this->", 6) == 0 && expr[6] != '\0')
-		return (expr + 6);
+	/*
+	 * this->name keys export their variable name, with "__" standing
+	 * for the "." D identifiers cannot hold: this->network__io__direction
+	 * is exported as network.io.direction.
+	 */
+	if (strncmp(expr, "this->", 6) == 0 && expr[6] != '\0') {
+		char *r, *w;
+
+		/* Compacting in place never lengthens the copy. */
+		strlcpy(buf, expr + 6, len);
+		for (r = w = buf; *r != '\0'; r++) {
+			if (r[0] == '_' && r[1] == '_') {
+				*w++ = '.';
+				r++;
+			} else
+				*w++ = *r;
+		}
+		*w = '\0';
+		return (buf);
+	}
 	snprintf(buf, len, "key.%d", idx);
 	return (buf);
 }
@@ -81,7 +98,7 @@ dtotel_parse_keynames(const char *source)
 {
 	struct dtotel_keynames *head, *ak;
 	const char *p, *namestart, *keystart, *keyend, *close;
-	char aggname[128], expr[256], fallback[24];
+	char aggname[128], expr[256], fallback[256];
 	size_t len;
 	int idx;
 

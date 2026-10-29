@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Allocation-failure sweep over the otel.conf(5) loader: every
- * allocation made by oe_sysconf.c is failed in turn, and each failure
- * must surface as a clean "out of memory" error with no leak or crash.
- * This program links a second copy of oe_sysconf.c compiled with
- * failalloc.h force-included.
+ * Allocation-failure sweep over the otel.conf(5) loader and the
+ * configuration path built on it: every allocation made by the library
+ * is failed in turn, and each failure must surface as a clean "out of
+ * memory" error with no leak or crash.  failalloc.c wraps the
+ * allocators at link time, so the library is tested as built.
  */
 
 #include <sys/stat.h>
@@ -22,10 +22,29 @@
 #include "otelexport.h"
 #include "oe_sysconf.h"
 
-extern long failalloc_countdown;
-extern long failalloc_failures;
+#include "failalloc.h"
 
 #define	SWEEP_MAX	10000
+#define	COUNT_START	1000000
+
+/*
+ * Allocations made by oe_env_load() for the current environment.  A
+ * failure among them drops the variable with a warning (the documented
+ * treatment of an unusable OTEL_* value), so the load still succeeds.
+ */
+static long
+env_allocations(void)
+{
+	struct oe_env env;
+	long used;
+
+	failalloc_countdown = COUNT_START;
+	oe_env_load(&env);
+	used = COUNT_START - failalloc_countdown;
+	failalloc_countdown = -1;
+	oe_env_free(&env);
+	return (used);
+}
 
 static void
 write_file(const char *path, const char *text, mode_t mode)
@@ -127,7 +146,7 @@ ATF_TC_BODY(env_sweep, tc)
 {
 	struct oe_sysconf sc;
 	struct oe_env env;
-	long n;
+	long k, n;
 	int r;
 
 	write_config();
@@ -136,6 +155,8 @@ ATF_TC_BODY(env_sweep, tc)
 	unsetenv("OTEL_EXPORTER_OTLP_HEADERS");
 	ATF_REQUIRE_EQ_MSG(oe_sysconf_load(&sc, "", "local.conf"), 0, "%s",
 	    sc.error);
+	k = env_allocations();
+	ATF_REQUIRE(k > 0);
 	for (n = 0; n < SWEEP_MAX; n++) {
 		failalloc_failures = 0;
 		failalloc_countdown = n;
@@ -148,11 +169,73 @@ ATF_TC_BODY(env_sweep, tc)
 			oe_env_free(&env);
 			break;
 		}
-		ATF_CHECK_EQ(r, -1);
+		/* The environment layer degrades; the merge must fail. */
+		ATF_CHECK_EQ(r, n < k ? 0 : -1);
 		oe_env_free(&env);
 	}
 	ATF_REQUIRE(n > 4);
 	oe_sysconf_free(&sc);
+}
+
+/* oe_config_load(): the one configuration path of every tool. */
+ATF_TC_WITHOUT_HEAD(config_sweep);
+ATF_TC_BODY(config_sweep, tc)
+{
+	struct oe_config_request req;
+	struct oe_env env;
+	struct oe_sysconf sc;
+	char conf[512], cwd[256], err[600];
+	long k, m, n;
+	int r;
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE(mkdir("spool", 0700) == 0);
+	write_file("creds", "Authorization: Bearer x\n", 0600);
+	snprintf(conf, sizeof(conf), "endpoint = \"http://collector:4318\";\n"
+	    "headers_file = \"%s/creds\";\nhost_id_file = \"\";\n"
+	    "resource { a = \"1\"; }\n"
+	    "spool { directory = \"%s/spool\"; }\n", cwd, cwd);
+	write_file("local.conf", conf, 0644);
+	setenv("OTELCONF_DEFAULTS", "", 1);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+	setenv("OTEL_RESOURCE_ATTRIBUTES", "b=2", 1);
+	memset(&req, 0, sizeof(req));
+	req.scope = "tool";
+	req.system = 1;
+	/* Allocation order: the object, otel.conf (m), environment (k). */
+	failalloc_countdown = COUNT_START;
+	ATF_REQUIRE_EQ(oe_sysconf_load(&sc, NULL, NULL), 0);
+	m = COUNT_START - failalloc_countdown;
+	failalloc_countdown = -1;
+	oe_sysconf_free(&sc);
+	k = env_allocations();
+	for (n = 0; n < SWEEP_MAX; n++) {
+		failalloc_failures = 0;
+		failalloc_countdown = n;
+		r = oe_config_load(&env, &req, err, sizeof(err));
+		failalloc_countdown = -1;
+		if (failalloc_failures == 0) {
+			ATF_REQUIRE_EQ_MSG(r, 0, "%s", err);
+			ATF_CHECK(env.spool_path != NULL);
+			ATF_CHECK_EQ(env.nresource_attrs, 2);
+			ATF_CHECK_EQ(env.nheaders, 1);
+			oe_env_free(&env);
+			break;
+		}
+		if (n > m && n <= m + k) {
+			ATF_CHECK_EQ(r, 0);	/* environment degraded */
+			oe_env_free(&env);
+			continue;
+		}
+		ATF_CHECK_EQ(r, -1);
+		ATF_CHECK_MSG(strstr(err, "out of memory") != NULL,
+		    "allocation %ld: \"%s\"", n, err);
+		/* A failed load leaves env empty and safe to free. */
+		ATF_CHECK(env.sysconf == NULL && env.spool_buf == NULL);
+		oe_env_free(&env);
+	}
+	ATF_REQUIRE_MSG(n > 10 && n < SWEEP_MAX, "sweep ended at %ld", n);
+	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -161,5 +244,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, load_sweep);
 	ATF_TP_ADD_TC(tp, init_sweep);
 	ATF_TP_ADD_TC(tp, env_sweep);
+	ATF_TP_ADD_TC(tp, config_sweep);
 	return (atf_no_error());
 }

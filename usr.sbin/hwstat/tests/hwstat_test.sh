@@ -169,6 +169,25 @@ exec_text_snapshot_body()
 	atf_check -o match:'Energy status:' cat out
 }
 
+atf_test_case watch_percore
+watch_percore_head()
+{
+	atf_set descr "watch --per-core prints one row per logical CPU (text and JSON)"
+	atf_set timeout 30
+}
+watch_percore_body()
+{
+	ncpu=$(sysctl -n hw.ncpu)
+	atf_check -s exit:0 -o save:out.txt -e ignore \
+	    hwstat watch --per-core --interval 0.3 --duration 1
+	atf_check -o not-empty cat out.txt
+	atf_check -s exit:0 -o save:out.json -e ignore \
+	    hwstat watch --per-core --interval 0.3 --duration 1 --format json
+	atf_check -o match:'"cpu":0' head -${ncpu} out.json
+	atf_check -s exit:2 -e match:'--format must be' \
+	    hwstat watch --format bogus
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case short_duration
@@ -180,6 +199,7 @@ atf_init_test_cases()
 	atf_add_test_case list_rejects_otel
 	atf_add_test_case watch_duration_terminates
 	atf_add_test_case watch_json_lines
+	atf_add_test_case watch_percore
 	atf_add_test_case watch_validates_args
 	atf_add_test_case exec_propagates_exit
 	atf_add_test_case exec_json_fields

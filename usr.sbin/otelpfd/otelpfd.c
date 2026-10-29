@@ -84,7 +84,7 @@ main(int argc, char **argv)
 	struct oe_service svc;
 	struct sigaction sa;
 	struct pf_status st;
-	struct timespec ts, next;
+	struct timespec ts, up, next;
 	cap_rights_t rights;
 	const unsigned long cmds[] = { DIOCGETSTATUS };
 	const char *endpoint, *file, *user;
@@ -125,6 +125,17 @@ main(int argc, char **argv)
 	if (optind != argc)
 		usage();
 
+	/*
+	 * Handlers first: a stop request during the (possibly slow)
+	 * setup ends the run cleanly instead of killing it.
+	 */
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = on_signal;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+
 	/* Privileged setup: the device, then the configuration. */
 	if (file != NULL)
 		fd = open(file, O_RDONLY | O_CLOEXEC);
@@ -139,29 +150,18 @@ main(int argc, char **argv)
 			err(1, "cannot limit /dev/pf");
 	}
 	if (oe_service_open(&svc, "otelpfd", OTELPFD_VERSION, PFSTAT_PROFILE,
-	    endpoint, interval, errbuf, sizeof(errbuf)) != 0) {
+	    endpoint, interval, user, errbuf, sizeof(errbuf)) != 0) {
 		oe_service_close(&svc);
 		errx(1, "%s", errbuf);
 	}
-	if (user != NULL && oe_drop_privileges(user, errbuf,
-	    sizeof(errbuf)) != 0) {
-		oe_service_close(&svc);
-		errx(1, "%s", errbuf);
-	}
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = on_signal;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGHUP, &sa, NULL);
 
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (n = 0; !done && (count == 0 || n < count); n++) {
 		if (!read_status(fd, file != NULL, &st))
 			break;
 		clock_gettime(CLOCK_REALTIME, &ts);
-		if (pfstat_emit(svc.exporter, &st, &ts) < 0)
+		clock_gettime(CLOCK_UPTIME, &up);
+		if (pfstat_emit(svc.exporter, &st, &ts, up.tv_sec) < 0)
 			warnx("cannot queue the pf metrics");
 		if (count != 0 && n + 1 == count)
 			break;

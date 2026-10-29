@@ -23,7 +23,6 @@
 #include <unistd.h>
 
 #include "otelexport.h"
-#include "oe_sysconf.h"
 #include "hwstat.h"
 
 static volatile sig_atomic_t got_signal;
@@ -112,7 +111,6 @@ struct otel_ctx {
 	struct oe_exporter *exporter;
 	struct oe_env	 env;
 	struct oe_host_info host;
-	struct oe_sysconf sysconf;	/* otel.conf(5); outlives env */
 };
 
 static struct oe_exporter *
@@ -120,54 +118,33 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 {
 	struct oe_resource resource;
 	struct oe_otlp_config ocfg;
-	const char *endpoint;
+	struct oe_config_request req;
+	char errbuf[600];
 
 	/*
-	 * The same resource conventions as bsdinstruments(8); settings:
-	 * command line > OTEL_* environment > otel.conf(5) > default.
+	 * The same resource conventions and configuration layers as
+	 * bsdinstruments(8): --endpoint > OTEL_* environment >
+	 * otel.conf(5) > default.
 	 */
-	if (oe_sysconf_load(&ctx->sysconf, NULL, NULL) != 0) {
-		warnx("%s", ctx->sysconf.error);
-		return (NULL);
-	}
-	if (oe_env_load_system(&ctx->env, &ctx->sysconf,
-	    strcmp(cli_endpoint, "http://localhost:4318") == 0 ? NULL :
-	    cli_endpoint) != 0) {
-		warnx("out of memory");
+	memset(&req, 0, sizeof(req));
+	req.scope = "hwstat";
+	req.endpoint = cli_endpoint;
+	req.system = 1;
+	if (oe_config_load(&ctx->env, &req, errbuf, sizeof(errbuf)) != 0) {
+		warnx("%s", errbuf);
 		return (NULL);
 	}
 	oe_host_detect(&ctx->host);
-	memset(&resource, 0, sizeof(resource));
-	oe_resource_host(&resource, &ctx->host);
-	resource.service_name = "hwstat";
-	for (size_t i = 0; i < ctx->env.nresource_attrs; i++)
-		if (strcmp(ctx->env.resource_attrs[i].name,
-		    "service.name") == 0)
-			resource.service_name =
-			    ctx->env.resource_attrs[i].value;
-	if (ctx->env.service_name != NULL)
-		resource.service_name = ctx->env.service_name;
-	resource.service_version = HWSTAT_VERSION;
-	resource.custom = ctx->env.resource_attrs;
-	resource.ncustom = ctx->env.nresource_attrs;
-
-	endpoint = cli_endpoint;
-	if (strcmp(endpoint, "http://localhost:4318") == 0 &&
-	    ctx->env.endpoint != NULL)
-		endpoint = ctx->env.endpoint;
+	oe_resource_init(&resource, &ctx->env, &ctx->host, "hwstat",
+	    HWSTAT_VERSION);
 
 	memset(&ocfg, 0, sizeof(ocfg));
-	ocfg.endpoint = endpoint;
+	oe_otlp_config_env(&ocfg, &ctx->env);
 	ocfg.profile = "hardware";
 	ocfg.resource = &resource;
 	ocfg.batch_size = 50;
 	ocfg.flush_interval = interval;
 	ocfg.max_retries = -1;
-	ocfg.timeout = ctx->env.timeout_ms > 0 ?
-	    (double)ctx->env.timeout_ms / 1000.0 : 0;
-	ocfg.headers = ctx->env.headers;
-	ocfg.nheaders = ctx->env.nheaders;
-	ocfg.compression = ctx->env.compression;
 	ocfg.scope_name = "hwstat";
 	ctx->exporter = oe_otlp_new(&ocfg);
 	if (ctx->exporter != NULL && oe_start(ctx->exporter) != 0) {
@@ -175,7 +152,7 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 		ctx->exporter = NULL;
 	}
 	if (ctx->exporter != NULL)
-		fprintf(stderr, "Exporting to %s/v1/metrics\n", endpoint);
+		fprintf(stderr, "Exporting to %s/v1/metrics\n", ocfg.endpoint);
 	return (ctx->exporter);
 }
 
@@ -189,7 +166,6 @@ otel_close(struct otel_ctx *ctx)
 		ctx->exporter = NULL;
 	}
 	oe_env_free(&ctx->env);
-	oe_sysconf_free(&ctx->sysconf);
 }
 
 static void
@@ -644,7 +620,7 @@ cmd_hw_watch(int argc, char **argv)
 	percore = 0;
 	rapl_failed = 0;
 	format = HW_FORMAT_TEXT;
-	endpoint = "http://localhost:4318";
+	endpoint = NULL;
 	while ((ch = getopt_long(argc, argv, "h", opts, NULL)) != -1) {
 		switch (ch) {
 		case 'i':

@@ -33,7 +33,6 @@
 
 #include "otelexport.h"
 #include "dtotel.h"
-#include "oe_sysconf.h"
 #include "bsdinstruments.h"
 
 /* File outputs are flushed (and fsynced) at least this often. */
@@ -144,7 +143,6 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 {
 	struct oe_otlp_config ocfg;
 	struct oe_otlpjson_config jcfg;
-	const char *endpoint;
 
 	switch (wo->format) {
 	case FORMAT_TEXT:
@@ -164,24 +162,14 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 		break;
 	}
 	/*
-	 * Precedence: --endpoint, then the environment (and any lower
-	 * configuration layer oe_env_load() folds in), then the
-	 * built-in default.
+	 * Endpoint, credentials and spool as oe_config_load() resolved
+	 * them: --endpoint/--spool > OTEL_* > otel.conf(5) > default.
 	 */
-	endpoint = wo->endpoint != NULL ? wo->endpoint :
-	    env->endpoint != NULL ? env->endpoint : WATCH_DEFAULT_ENDPOINT;
 	memset(&ocfg, 0, sizeof(ocfg));
-	ocfg.endpoint = endpoint;
+	oe_otlp_config_env(&ocfg, env);
 	ocfg.profile = p->name;
 	ocfg.resource = resource;
 	ocfg.max_retries = -1;
-	ocfg.timeout = env->timeout_ms > 0 ?
-	    (double)env->timeout_ms / 1000.0 : 0;
-	ocfg.headers = env->headers;
-	ocfg.nheaders = env->nheaders;
-	ocfg.compression = env->compression;
-	ocfg.spool_path = wo->spool;
-	ocfg.spool_max = wo->spool_max;
 	ocfg.scope_name = "bsdinstruments";
 	return (oe_otlp_new(&ocfg));
 }
@@ -196,15 +184,14 @@ watch_run(const struct profile *p, const char *rendered,
 	struct oe_sink_config sc;
 	struct oe_sink *sink;
 	struct oe_env env;
-	struct oe_sysconf sysconf;	/* otel.conf(5); outlives env */
+	struct oe_config_request req;
 	struct dtotel_config dcfg;
 	struct dtotel *dt;
-	struct timespec now, last_flush;
+	struct timespec now, last_flush, last_snap;
 	dtrace_hdl_t *dtp;
 	dtrace_workstatus_t status;
 	FILE *out;
-	size_t i;
-	int done, err_ret, is_text, use_color;
+	int done, err_ret, is_text, snap_failed, use_color;
 
 	err_ret = 1;
 	exporter = NULL;
@@ -220,36 +207,26 @@ watch_run(const struct profile *p, const char *rendered,
 	 * OTEL_RESOURCE_ATTRIBUTES, else the program name.  Other
 	 * OTEL_RESOURCE_ATTRIBUTES entries override detected values.
 	 *
-	 * OTLP settings: --endpoint > OTEL_* environment > otel.conf(5) >
-	 * default.  The other formats do not read otel.conf.
+	 * Exporter settings: --endpoint/--spool > OTEL_* environment >
+	 * otel.conf(5) > default.  Only --format otel reads otel.conf.
 	 */
-	memset(&sysconf, 0, sizeof(sysconf));
-	if (wo->format == FORMAT_OTEL) {
-		if (oe_sysconf_load(&sysconf, NULL, NULL) != 0) {
-			fprintf(stderr, "bsdinstruments: %s\n", sysconf.error);
-			oe_sysconf_free(&sysconf);
+	memset(&req, 0, sizeof(req));
+	req.scope = "bsdinstruments";
+	req.endpoint = wo->endpoint;
+	req.spool = wo->spool;
+	req.spool_max = wo->spool_max;
+	req.system = wo->format == FORMAT_OTEL;
+	{
+		char cerr[600];
+
+		if (oe_config_load(&env, &req, cerr, sizeof(cerr)) != 0) {
+			fprintf(stderr, "bsdinstruments: %s\n", cerr);
 			return (1);
 		}
-		if (oe_env_load_system(&env, &sysconf, wo->endpoint) != 0) {
-			fprintf(stderr, "bsdinstruments: out of memory\n");
-			oe_env_free(&env);
-			oe_sysconf_free(&sysconf);
-			return (1);
-		}
-	} else
-		oe_env_load(&env);
+	}
 	oe_host_detect(&host);
-	memset(&resource, 0, sizeof(resource));
-	oe_resource_host(&resource, &host);
-	resource.service_name = "bsdinstruments";
-	for (i = 0; i < env.nresource_attrs; i++)
-		if (strcmp(env.resource_attrs[i].name, "service.name") == 0)
-			resource.service_name = env.resource_attrs[i].value;
-	if (env.service_name != NULL)
-		resource.service_name = env.service_name;
-	resource.service_version = BSDINSTRUMENTS_VERSION;
-	resource.custom = env.resource_attrs;
-	resource.ncustom = env.nresource_attrs;
+	oe_resource_init(&resource, &env, &host, "bsdinstruments",
+	    BSDINSTRUMENTS_VERSION);
 
 	/*
 	 * Every format but otel writes to a sink: standard output by
@@ -362,6 +339,8 @@ watch_run(const struct profile *p, const char *rendered,
 	if (dt != NULL)
 		dtotel_started(dt);
 	clock_gettime(CLOCK_MONOTONIC, &last_flush);
+	last_snap = last_flush;
+	snap_failed = 0;
 
 	done = 0;
 	while (!done && !got_signal) {
@@ -401,6 +380,21 @@ watch_run(const struct profile *p, const char *rendered,
 			if ((is_text && oe_sink_poll(sink) != 0) ||
 			    (wo->output != NULL && oe_flush(exporter) != 0))
 				break;
+		}
+		/*
+		 * --interval: export the aggregations as they stand.  They
+		 * are not cleared, so sums stay cumulative from the start
+		 * of the run (one startTimeUnixNano) and a long-running
+		 * service needs no restarts to report.
+		 */
+		if (dt != NULL && wo->interval > 0 &&
+		    now.tv_sec - last_snap.tv_sec >= wo->interval) {
+			last_snap = now;
+			dtotel_flush(dt);
+			if (dtotel_aggregate(dt) != 0 || dtotel_error(dt)) {
+				snap_failed = 1;
+				break;
+			}
 		}
 	}
 
@@ -446,7 +440,7 @@ watch_run(const struct profile *p, const char *rendered,
 	err_ret = 0;
 	if (oe_flush(exporter) != 0 || oe_shutdown(exporter) != 0)
 		err_ret = 1;
-	if (dt != NULL && dtotel_error(dt))
+	if ((dt != NULL && dtotel_error(dt)) || snap_failed)
 		err_ret = 1;
 
 out:
@@ -458,6 +452,5 @@ out:
 	if (sink != NULL && oe_sink_close(sink) != 0)
 		err_ret = 1;
 	oe_env_free(&env);
-	oe_sysconf_free(&sysconf);
 	return (err_ret);
 }

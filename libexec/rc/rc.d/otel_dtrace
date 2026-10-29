@@ -6,10 +6,10 @@
 # KEYWORD: shutdown
 #
 # DTrace-derived system metrics: bsdinstruments(8) runs the conservative
-# "system-metrics" profile in windows of otel_dtrace_window seconds and
-# exports each window's aggregations with OTLP; daemon(8) starts the next
-# window.  Each window's sums start again from zero (backends see a
-# counter reset per window).
+# "system-metrics" profile continuously and exports a snapshot of its
+# kernel aggregations with OTLP every otel_dtrace_window seconds
+# (--interval).  The probes are enabled once; sums are cumulative from
+# the service start.  daemon(8) restarts it if it exits.
 
 . /etc/rc.subr
 
@@ -49,9 +49,9 @@ otel_dtrace_prestart()
 		return 1
 	fi
 	install -d -m 0755 "${otel_rundir}" || return 1
-	command_args="-f -S -T ${name} -P ${pidfile} -r -R 1 \
+	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \
 ${otel_dtrace_bin} watch ${otel_dtrace_profile} --format otel \
---duration ${otel_dtrace_window} ${rc_flags}"
+--interval ${otel_dtrace_window} ${rc_flags}"
 	rc_flags=""
 }
 

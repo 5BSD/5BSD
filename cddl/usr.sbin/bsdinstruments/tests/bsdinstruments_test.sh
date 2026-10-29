@@ -8,6 +8,10 @@
 # duration), and the list/generate surfaces.
 #
 
+# --format otel reads otel.conf(5); keep the cases independent of the
+# system's (otelconf's otel_emitters_test covers the system layer).
+export OTELCONF_DEFAULTS= OTELCONF_FILE=
+
 make_profile()
 {
 	# $1 = directory, $2 = name
@@ -308,6 +312,9 @@ mock_setup()
 	fi
 	export BI_MOCK="$PWD/script"
 	export BI_MOCK_LOG="$PWD/mock.log"
+	# Built-in otel.conf defaults, but never the system spool.
+	echo "spool { directory = \"$PWD/no-spool\"; }" > otel-test.conf
+	export OTELCONF_FILE="$PWD/otel-test.conf"
 	: > script
 	export HOME="$PWD/home"
 	mkdir -p "$HOME/.bsdinstruments/profiles"
@@ -369,7 +376,18 @@ watch_json_probe_time_body()
 	    -o match:'"body":"nginx\[42\]: read"' \
 	    -o match:'"probe":"syscall:freebsd:read:entry"' \
 	    -o match:'"stack":\["kernel`vn_read\+0x10"\]' cat out.json
-	atf_check -o inline:"2\n" sh -c 'wc -l < out.json | tr -d " "'
+	# Two events and the aggregation, as a "type":"metric" line.
+	atf_check -o inline:"3\n" sh -c 'wc -l < out.json | tr -d " "'
+	atf_check -o match:'^\{"type":"metric",.*"name":"reads","kind":"count","points":\[\{"attributes":\{"[^"]*":"k"\},"value":3\}\]\}$' \
+	    tail -1 out.json
+	# An aggregation-only trace still exports its aggregation.
+	cat > script <<'EOF'
+chunk 0 1000 1 \037otel.clock\037wall=1700000000000000000\037ts=1000\n
+work
+agg reads 5
+EOF
+	atf_check -s exit:0 -o match:'"type":"metric".*"value":5' -e empty \
+	    bsdinstruments watch mock-prof --format json
 	# The clock program is compiled first, then the profile.
 	atf_check -o match:'otel.clock' awk '/^compile/ { n++ } n == 1' mock.log
 	atf_check -o match:'execname, pid' awk '/^compile/ { n++ } n == 2' \
@@ -483,6 +501,54 @@ watch_otel_spool_body()
 	done
 	atf_check -o match:'v1/metrics' cat coll/1.path coll/2.path \
 	    coll/3.path coll/4.path
+}
+
+atf_test_case watch_interval
+watch_interval_head()
+{
+	atf_set descr "--interval exports cumulative aggregation snapshots while running"
+	atf_set require.progs cc
+	atf_set timeout 120
+}
+watch_interval_body()
+{
+	mock_setup
+	anchored_script
+	cat >> script <<'EOF'
+sleep 1100
+work
+sleep 1100
+work
+done
+EOF
+	v=$(validator)
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --output out.jsonl --interval 1
+	# At least two snapshots while running, plus the final one, all
+	# starting at the same time (cumulative, never reset).
+	atf_check -o match:'metrics=[3-9]' "$v" out.jsonl
+	atf_check -o inline:"1\n" -x \
+	    "grep -o '\"startTimeUnixNano\":\"[0-9]*\"' out.jsonl | sort -u | wc -l | tr -d ' '"
+	# A failing snapshot ends the run with an error.
+	echo "fail snap" >> script
+	atf_check -s exit:1 -o empty -e match:'aggregation snapshot failed' \
+	    bsdinstruments watch mock-prof --format otlp-json \
+	    --output out2.jsonl --interval 1
+	# An invalid otel.conf stops --format otel before tracing starts.
+	echo 'endpoint = 5;' > bad.conf
+	atf_check -s exit:1 -o empty -e match:'bsdinstruments: .*bad.conf' \
+	    env OTELCONF_FILE="$PWD/bad.conf" bsdinstruments watch mock-prof \
+	    --format otel
+	# Text and collapsed output have no snapshots to export.
+	atf_check -s exit:2 -e match:'--interval needs --format' \
+	    bsdinstruments watch mock-prof --interval 1
+	atf_check -s exit:2 -e match:'--interval needs --format' \
+	    bsdinstruments watch mock-prof --with-stack --format collapsed \
+	    --interval 1
+	atf_check -s exit:2 -e match:'--interval' \
+	    bsdinstruments watch mock-prof --format json --interval 0
+	atf_check -s exit:2 -e match:'usage' \
+	    bsdinstruments generate mock-prof --interval 5
 }
 
 atf_test_case watch_output_errors
@@ -1111,6 +1177,7 @@ atf_init_test_cases()
 	atf_add_test_case watch_otlpjson_file
 	atf_add_test_case watch_collapsed_file
 	atf_add_test_case watch_otel_spool
+	atf_add_test_case watch_interval
 	atf_add_test_case watch_output_errors
 	atf_add_test_case watch_usage_errors
 	atf_add_test_case watch_libdtrace_failures

@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 #include <dtrace.h>
@@ -25,6 +26,7 @@
 
 #include "dtotel.h"
 #include "dtotel_session.h"
+#include "dtotel_impl.h"
 #include "otlp_validate.h"
 #include "otel_testutil.h"
 #include "dtrace_stub.h"
@@ -627,9 +629,10 @@ fake_free(struct fake_agg *f)
 static void
 run_aggs(struct dtotel *d, struct fake_agg **fa, size_t n)
 {
-	const dtrace_aggdata_t *ads[16];
+	const dtrace_aggdata_t *ads[24];
 	size_t i;
 
+	ATF_REQUIRE(n <= nitems(ads));
 	for (i = 0; i < n; i++)
 		ads[i] = &fa[i]->ad;
 	stub.aggs = ads;
@@ -800,6 +803,27 @@ ATF_TC_BODY(agg_key_actions, tc)
 	    "key.7=0x9999;"
 	    "key.8=0x4abc;"
 	    "key.9=200;key.10=60000;key.11=-5;",
+	    cap.snaps[0].points[0].attrs);
+	fake_free(fa);
+	dtotel_close(d);
+
+	/*
+	 * Stacks with every frame slot in use (no terminating zero), and
+	 * a ustack whose frame limit exceeds the record.
+	 */
+	d = open_bridge(NULL);
+	fa = fake_new("k", 2);
+	frames[0] = 0x9000;
+	frames[1] = 0x9001;
+	fake_rec(fa, DTRACEACT_STACK, 2, frames, 2 * sizeof(frames[0]));
+	ustk[0] = 77;
+	ustk[1] = 0x4000;
+	ustk[2] = 0x5000;
+	fake_rec(fa, DTRACEACT_USTACK, 9, ustk, 3 * sizeof(ustk[0]));
+	fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	run_aggs(d, &fa, 1);
+	ATF_REQUIRE_EQ(1, cap.nsnaps);
+	ATF_CHECK_STREQ("key.0=0x9000;0x9001;key.1=pid77;0x4000;0x5000;",
 	    cap.snaps[0].points[0].attrs);
 	fake_free(fa);
 	dtotel_close(d);
@@ -1151,6 +1175,11 @@ ATF_TC_BODY(context_malformed, tc)
 		"\037otel.ctx\037pid=x\n",
 		"\037otel.ctx\037pid=1\037uid=y\n",
 		"\037otel.ctx\037pid=1\037junk\n",
+		/* Out of range numbers. */
+		"\037otel.ctx\037pid=99999999999999999999\n",
+		"\037otel.ctx\037pid=1\037uid=99999999999999999999\n",
+		/* Process identity without the rest of the context. */
+		"\037otel.ctx\037pid=1\037execname=x\037ppid=1\n",
 	};
 	struct dtotel *d;
 	size_t i;
@@ -1312,7 +1341,11 @@ ATF_TC_BODY(guest_routing, tc)
 	ATF_REQUIRE_STREQ("guest line", guests[0]->lastbody);
 	ATF_REQUIRE_STREQ("7/0/vm7", guests[1]->ident);
 	ATF_REQUIRE_EQ(1, guests[1]->events);
-	/* A new epoch is a new resource; the old one is shut down. */
+	/*
+	 * A new epoch is a new resource; the old one is shut down.  A line
+	 * still pending for another guest stays pending.
+	 */
+	deliver_vm(d, "pending7\n", 19, 7, 0, "vm7");
 	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 10, "vm1"));
 	ATF_REQUIRE(guests[0]->freed && guests[0]->shutdown == 1);
 	deliver_vm(d, "after restart\n", 20, 3, 0, "vm1");
@@ -1328,6 +1361,10 @@ ATF_TC_BODY(guest_routing, tc)
 	ATF_REQUIRE_STREQ("3/11/vm1", guests[3]->ident);
 	ATF_REQUIRE_STREQ("x", guests[3]->lastbody);
 	ATF_REQUIRE_STREQ("3/11/renamed", guests[4]->ident);
+	/* No name and the same lifetime: nothing changes. */
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 11, NULL));
+	ATF_REQUIRE(!guests[4]->freed);
+	ATF_REQUIRE_EQ(5, nguests);
 	ATF_REQUIRE_EQ(0, dtotel_shutdown(d));
 	ATF_REQUIRE(guests[1]->freed && guests[4]->freed);
 	dtotel_close(d);
@@ -1556,6 +1593,25 @@ ATF_TC_BODY(session_options_check, tc)
 	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, "f", err, sizeof(err)));
 }
 
+/*
+ * OTLP sessions read otel.conf(5): keep its defaults but never the
+ * system spool (the tests run as root in a VM).
+ */
+static void
+no_system_spool(void)
+{
+	FILE *fp;
+	char cwd[256], conf[300];
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	snprintf(conf, sizeof(conf), "%s/otel-test.conf", cwd);
+	fp = fopen(conf, "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "spool { directory = \"%s/no-spool\"; }\n", cwd);
+	fclose(fp);
+	setenv("OTELCONF_FILE", conf, 1);
+}
+
 static struct dtotel_session *
 session_on(enum dtotel_format fmt, const char *output, int hypertrace,
     const char *spool)
@@ -1570,6 +1626,8 @@ session_on(enum dtotel_format fmt, const char *output, int hypertrace,
 	o.format = fmt;
 	o.endpoint = "http://127.0.0.1:9";
 	o.spool = spool;
+	if (fmt == DTOTEL_OTLP)
+		no_system_spool();
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.options = &o;
 	cfg.dtp = (dtrace_hdl_t *)&stub;
@@ -1771,6 +1829,7 @@ ATF_TC_BODY(session_open_errors, tc)
 	ATF_REQUIRE(strstr(err, "cannot open the OpenTelemetry output") !=
 	    NULL);
 	cfg.output = NULL;
+	no_system_spool();
 	o.format = DTOTEL_OTLP;
 	o.endpoint = "gopher://x";
 	ATF_REQUIRE(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
@@ -2180,8 +2239,200 @@ ATF_TC_BODY(session_edges, tc)
 	}
 }
 
+/* Clause-local key names: the variable name, "__" exported as ".". */
+ATF_TC_WITHOUT_HEAD(keynames_clause_local);
+ATF_TC_BODY(keynames_clause_local, tc)
+{
+	struct dtotel_keynames *k;
+
+	k = dtotel_parse_keynames("io:::done { @io_bytes[this->device, "
+	    "this->disk__io__direction, execname, this->, this->dev_unit] = "
+	    "sum(1); }");
+	ATF_REQUIRE(k != NULL);
+	ATF_CHECK_STREQ(k->aggname, "io_bytes");
+	ATF_REQUIRE_EQ(k->n, 5);
+	ATF_CHECK_STREQ(k->names[0], "device");
+	ATF_CHECK_STREQ(k->names[1], "disk.io.direction");
+	ATF_CHECK_STREQ(k->names[2], "process.executable.name");
+	/* A bare "this->" is not a variable. */
+	ATF_CHECK_STREQ(k->names[3], "key.3");
+	/* A single underscore stays. */
+	ATF_CHECK_STREQ(k->names[4], "dev_unit");
+	dtotel_free_keynames(k);
+
+	/*
+	 * Blank keys, and an unbalanced ")" that keeps the scan going past
+	 * the "]" it would otherwise stop at (the key then ends at the next
+	 * top-level comma or bracket).
+	 */
+	k = dtotel_parse_keynames("@e[ ] = count(); @u[f(x)), pid] = count();");
+	ATF_REQUIRE(k != NULL);
+	ATF_CHECK_STREQ(k->aggname, "u");
+	ATF_REQUIRE(k->next != NULL);
+	ATF_CHECK_STREQ(k->next->aggname, "e");
+	ATF_REQUIRE_EQ(k->next->n, 1);
+	ATF_CHECK_STREQ(k->next->names[0], "key.0");
+	dtotel_free_keynames(k);
+}
+
+/*
+ * An OTLP session resolves its settings through otel.conf(5): the
+ * system endpoint, and the system spool for the host and each guest.
+ * An invalid otel.conf fails the session.
+ */
+ATF_TC_WITHOUT_HEAD(session_system_config);
+ATF_TC_BODY(session_system_config, tc)
+{
+	struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	struct dtotel_session *s;
+	FILE *fp;
+	char err[600], cwd[256];
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE(mkdir("spool", 0700) == 0);
+	fp = fopen("local.conf", "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "endpoint = \"http://127.0.0.1:9\";\nhost_id_file = \"\";\n"
+	    "spool { directory = \"%s/spool\"; }\n", cwd);
+	fclose(fp);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+
+	memset(&stub, 0, sizeof(stub));
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "Sun D 1.13";
+	cfg.scope_name = "dtrace";
+	cfg.profile = "script";
+	cfg.hypertrace = 1;
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	ATF_CHECK(access("spool/dtrace.spool.lock", F_OK) == 0);
+	ATF_REQUIRE_EQ(0, dtotel_guest(dtotel_session_bridge(s), 3, 9, "vm3"));
+	deliver_vm(NULL, "guest line\n", 12, 3, 0, "vm3");
+	ATF_CHECK(access("spool/dtrace.spool.vm3.lock", F_OK) == 0);
+	(void)dtotel_session_close(s, 0);
+
+	/* An invalid otel.conf is an error naming the file. */
+	fp = fopen("local.conf", "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "endpoint = 5;\n");
+	fclose(fp);
+	ATF_CHECK(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
+	ATF_CHECK_MSG(strstr(err, "local.conf") != NULL, "%s", err);
+	/* File formats do not read it. */
+	o.format = DTOTEL_JSON;
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	(void)dtotel_session_close(s, 0);
+	setenv("OTELCONF_FILE", "", 1);
+}
+
+/* More data points and buckets than the first allocations hold. */
+ATF_TC_WITHOUT_HEAD(agg_growth);
+ATF_TC_BODY(agg_growth, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[18];
+	int64_t v, q[DTRACE_QUANTIZE_NBUCKETS], llq[6];
+	uint64_t pid;
+	size_t i;
+
+	d = open_bridge("x { @c[pid] = count(); @q = quantize(x); }");
+	for (i = 0; i < 17; i++) {
+		fa[i] = fake_new("c", 1);
+		pid = 100 + i;
+		fake_rec(fa[i], DTRACEACT_DIFEXPR, 0, &pid, sizeof(pid));
+		v = (int64_t)i + 1;
+		fake_rec(fa[i], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	}
+	fa[17] = fake_new("q", 0);
+	for (i = 0; i < nitems(q); i++)
+		q[i] = 1;
+	fake_rec(fa[17], DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+	run_aggs(d, fa, 18);
+	ATF_REQUIRE_EQ(cap.nsnaps, 2);
+	ATF_CHECK_EQ(cap.snaps[0].npoints + cap.snaps[1].npoints, 18);
+	for (i = 0; i < 2; i++)
+		if (strcmp(cap.snaps[i].name, "q") == 0)
+			ATF_CHECK(strlen(cap.snaps[i].points[0].buckets) > 0);
+	for (i = 0; i < nitems(fa); i++)
+		fake_free(fa[i]);
+	dtotel_close(d);
+
+	/* Empty llquantize bins (and empty under/overflow) are skipped. */
+	d = open_bridge("x { @llq = llquantize(x, 2, 0, 2, 2); }");
+	memset(llq, 0, sizeof(llq));
+	llq[0] = (int64_t)LLQ_ARG(2, 0, 2, 2);
+	llq[2] = 2;
+	fa[0] = fake_new("llq", 0);
+	fake_rec(fa[0], DTRACEAGG_LLQUANTIZE, 0, llq, 6 * sizeof(int64_t));
+	run_aggs(d, fa, 1);
+	ATF_REQUIRE_EQ(1, cap.nsnaps);
+	ATF_CHECK_STREQ("1:2;", cap.snaps[0].points[0].buckets);
+	fake_free(fa[0]);
+	dtotel_close(d);
+}
+
+/*
+ * Which output belongs to which firing: a firing without probe data
+ * never continues or owns another one's line, and firings that differ
+ * only in EPID are distinct.  A frame line too long for
+ * the frame buffer keeps its (cut) text as the symbol.
+ */
+ATF_TC_WITHOUT_HEAD(firing_identity);
+ATF_TC_BODY(firing_identity, tc)
+{
+	struct dtotel *d;
+	char frame[600];
+
+	d = open_bridge(NULL);
+	/* A line left open by output without probe data. */
+	deliver(d, "abc", -1, 0, 0, 0);
+	deliver(d, "def\n", 0, 5, 1, 0);
+	/* Same CPU and time, another enabled probe. */
+	deliver(d, "ghi", 0, 6, 1, 0);
+	deliver(d, "jkl\n", 0, 6, 2, 0);
+	/*
+	 * A frame after a line without probe data stays with that line
+	 * (the firing cannot be told apart from it).
+	 */
+	deliver(d, "mno\n", -1, 0, 0, 0);
+	deliver(d, "              kernel`f+0x1\n", 0, 7, 1, 0);
+	/* An overlong frame line: the backtick falls past the buffer. */
+	deliver(d, "pqr\n", 0, 8, 1, 0);
+	memset(frame, 'm', sizeof(frame));
+	memcpy(frame, "   ", 3);
+	strcpy(frame + 560, "`sym+0x1\n");
+	deliver(d, frame, 0, 8, 1, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(6, cap.nevents);
+	ATF_CHECK_STREQ("abc", cap.events[0].body);
+	ATF_CHECK_STREQ("def", cap.events[1].body);
+	ATF_CHECK_STREQ("ghi", cap.events[2].body);
+	ATF_CHECK_STREQ("jkl", cap.events[3].body);
+	ATF_CHECK_STREQ("mno", cap.events[4].body);
+	ATF_CHECK_EQ(1, (int)cap.events[4].nstack);
+	ATF_CHECK_STREQ("pqr", cap.events[5].body);
+	ATF_REQUIRE_EQ(1, (int)cap.events[5].nstack);
+	ATF_CHECK(strncmp(cap.events[5].frame0, "mmmm", 4) == 0);
+	ATF_CHECK(strchr(cap.events[5].frame0, '`') == NULL);
+	dtotel_close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+
+	/*
+	 * OTLP sessions read otel.conf(5); keep them independent of the
+	 * system's (the system_config case supplies its own).
+	 */
+	setenv("OTELCONF_DEFAULTS", "", 1);
+	setenv("OTELCONF_FILE", "", 1);
 
 	ATF_TP_ADD_TC(tp, clock_program_shape);
 	ATF_TP_ADD_TC(tp, probe_time_anchor);
@@ -2222,5 +2473,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, histogram_edges);
 	ATF_TP_ADD_TC(tp, bridge_alloc_failure);
 	ATF_TP_ADD_TC(tp, session_edges);
+	ATF_TP_ADD_TC(tp, keynames_clause_local);
+	ATF_TP_ADD_TC(tp, agg_growth);
+	ATF_TP_ADD_TC(tp, firing_identity);
+	ATF_TP_ADD_TC(tp, session_system_config);
 	return (atf_no_error());
 }

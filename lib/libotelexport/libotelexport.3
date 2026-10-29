@@ -30,6 +30,10 @@
 .Nm oe_report_drops ,
 .Nm oe_env_load ,
 .Nm oe_env_free ,
+.Nm oe_config_load ,
+.Nm oe_resource_init ,
+.Nm oe_otlp_config_env ,
+.Nm oe_severity_text ,
 .Nm oe_host_detect ,
 .Nm oe_host_arch_semconv ,
 .Nm oe_resource_host ,
@@ -115,6 +119,21 @@ It is not installed as a shared library.
 .Fn oe_env_load "struct oe_env *env"
 .Ft void
 .Fn oe_env_free "struct oe_env *env"
+.Ft int
+.Fo oe_config_load
+.Fa "struct oe_env *env" "const struct oe_config_request *req"
+.Fa "char *err" "size_t errlen"
+.Fc
+.Ft void
+.Fo oe_resource_init
+.Fa "struct oe_resource *r" "const struct oe_env *env"
+.Fa "const struct oe_host_info *hi" "const char *service"
+.Fa "const char *version"
+.Fc
+.Ft void
+.Fn oe_otlp_config_env "struct oe_otlp_config *cfg" "const struct oe_env *env"
+.Ft "const char *"
+.Fn oe_severity_text "int severity" "char *buf" "size_t len"
 .Ft void
 .Fn oe_host_detect "struct oe_host_info *hi"
 .Ft void
@@ -238,6 +257,46 @@ Events with a
 or empty
 .Va body
 are silently ignored by the text, JSONL and OTLP exporters.
+.Va severity
+is the record's
+.Ql severityNumber
+in the OpenTelemetry log data model
+.Po
+.Dv OE_SEV_TRACE
+1,
+.Dv OE_SEV_DEBUG
+5,
+.Dv OE_SEV_INFO
+9,
+.Dv OE_SEV_WARN
+13,
+.Dv OE_SEV_ERROR
+17,
+.Dv OE_SEV_FATAL
+21, and the values in between
+.Pc ;
+.Dv OE_SEV_UNSPECIFIED
+.Pq 0
+and out-of-range values export as INFO.
+.Va attrs
+and
+.Va nattrs
+add typed log record attributes after the context attributes.
+Both are used by the OTLP exporters; JSONL lines carry the attributes
+in their
+.Va attributes
+object and a specified severity as
+.Va severity
+.Pq the severityText .
+.Fn oe_severity_text
+writes the
+.Ql severityText
+for a severity number: the range's short name
+.Pq Ql TRACE , Ql DEBUG , Ql INFO , Ql WARN , Ql ERROR , Ql FATAL
+followed by the offset within the range when it is not the first value
+.Pq Ql WARN2 ,
+and returns
+.Fa buf .
 .Fn oe_snapshot
 delivers one aggregation snapshot; its
 .Va kind
@@ -531,7 +590,31 @@ The
 argument is copied at construction; a
 .Dv NULL
 profile is treated as the empty string.
-Snapshots are ignored.
+Snapshots become objects with
+.Ql \&"type\&":\&"metric\&"
+carrying
+.Va time ,
+.Va start
+.Pq the start of a cumulative window, when set ,
+.Va profile ,
+.Va name
+.Pq the kind for an anonymous aggregation ,
+.Va kind
+and a
+.Va points
+array whose entries hold the key dimensions in
+.Va attributes
+.Pq string values
+and either a
+.Va value
+or, for the quantize family, a
+.Va buckets
+array of
+.Va le
+.Pq inclusive upper bound
+and
+.Va count
+pairs; snapshots without data points are skipped.
 .Fn oe_jsonl_resource_new
 also names a resource in every line: a
 .Va resource
@@ -734,6 +817,13 @@ The file is created
 or adopted at construction, so an unusable path fails there.
 .It Va spool_max
 Spool size limit in bytes; 0 selects 64 MiB.
+.It Va spool_optional
+When non-zero, a spool that cannot be opened, or that another exporter
+holds, is reported on standard error and left unused instead of
+failing construction.
+.Fn oe_config_load
+sets it for the system spool of
+.Xr otel.conf 5 .
 .El
 .Pp
 .Fn oe_start
@@ -777,8 +867,8 @@ and
 .Ql <scope>.probe
 attributes, the context attributes described in
 .Sx Semantic conventions ,
-and severity number 9
-.Pq INFO .
+then the event's own attributes, and the event's severity
+.Pq INFO when unspecified .
 Spans carry the same, followed by their own attributes.
 .Pp
 Failed POSTs are retried with exponential backoff starting at 100 ms plus
@@ -803,6 +893,18 @@ Each request uses a fresh connection with
 stops the sender thread, waits for queued posts to complete, then drains
 whatever is still batched synchronously.
 .Ss Spooling
+Each spool belongs to one exporter: construction takes an exclusive,
+non-blocking
+.Xr flock 2
+lock on a sibling file
+.Pa <spool>.lock ,
+kept until
+.Fn oe_exporter_free .
+A spool another exporter holds fails construction
+.Pq or is skipped with Va spool_optional ,
+because replay rewrites the file and two writers would lose each other's
+batches.
+.Pp
 With a spool configured, a request that fails with a transport error or
 a retryable status after
 .Va max_retries
@@ -876,30 +978,80 @@ compression other than
 or
 .Ql none
 are reported and ignored; empty variables count as unset.
-The library only parses the environment; applying it is the caller's
-business.
-Both
-.Xr bsdinstruments 8
-and
-.Xr hwstat 8
-resolve the resource service name as
-.Va service_name ,
-else a
-.Ql service.name
-entry of
-.Va resource_attrs ,
-else the program name, as the specification orders them, pass
-.Va resource_attrs
-as the resource's custom attributes, use
-.Va endpoint
-when no endpoint was given on the command line, falling back to their
-built-in default, and pass
-.Va headers ,
-.Va compression
-and a converted
-.Va timeout_ms
-straight into
-.Vt struct oe_otlp_config .
+.Fn oe_env_load
+only parses the environment.
+.Ss Configuration layers
+.Fn oe_config_load
+is the one configuration path of every exporting tool
+.Po
+.Xr dtrace 1 ,
+.Xr bsdinstruments 8 ,
+.Xr hwstat 8 ,
+.Xr otelpfd 8 ,
+.Xr otelauditd 8
+.Pc .
+It resolves the exporter settings across all layers, highest first:
+command line, the
+.Ev OTEL_*
+environment
+.Pq Fn oe_env_load ,
+the system configuration
+.Xr otel.conf 5
+when
+.Va req->system
+is set and the file's
+.Ic enable
+key is true, and the built-in defaults:
+.Bd -literal -offset indent
+struct oe_config_request {
+	const char	*scope;		/* tool; names the spool file */
+	const char	*endpoint;	/* command line, or NULL */
+	const char	*spool;		/* command line, or NULL */
+	uint64_t	 spool_max;	/* command line, or 0 */
+	int		 system;	/* read otel.conf(5) */
+};
+.Ed
+.Pp
+On success
+.Va env->endpoint
+is always set
+.Pq Dv OE_DEFAULT_ENDPOINT , Ql http://localhost:4318 , at the bottom ;
+environment resource attributes and headers win over system ones with
+the same name, and credentials from the
+.Xr otel.conf 5
+headers file are added only when the resolved endpoint is the system
+endpoint.
+.Va env->spool_path
+is the command line spool, else the system spool
+.Pa <spool.directory>/<scope>.spool
+when this process may write that directory, else
+.Dv NULL ;
+.Va env->spool_max
+is the command line bound, else
+.Ic spool.max_bytes .
+.Va env
+owns the loaded system layer; release it with
+.Fn oe_env_free .
+An invalid
+.Xr otel.conf 5
+or an allocation failure returns \-1 with a description in
+.Fa err
+and leaves
+.Fa env
+empty.
+.Pp
+.Fn oe_resource_init
+builds a tool's resource from the detected host
+.Pq Fn oe_host_detect ,
+the service name
+.Pq Ev OTEL_SERVICE_NAME , else a Ql service.name resource attribute, else Fa service ,
+.Fa version ,
+and the remaining resource attributes as custom attributes.
+.Fn oe_otlp_config_env
+copies the resolved endpoint, timeout, headers, compression and spool
+settings into a
+.Vt struct oe_otlp_config ,
+leaving its other members alone.
 .Ss Host detection
 .Fn oe_host_detect
 fills a

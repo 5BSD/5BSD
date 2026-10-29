@@ -117,26 +117,28 @@ int	oe_env_load_system(struct oe_env *, const struct oe_sysconf *,
 
 /*
  * Base system telemetry services (otelpfd(8), otelauditd(8)): one OTLP
- * exporter configured through all layers, refusing to run when the
- * system configuration is disabled.
+ * exporter configured through all layers by oe_config_load(), refusing
+ * to run when the system configuration is disabled.  The service name
+ * is also the instrumentation scope (the metric and attribute prefix)
+ * and names the system spool file.
  */
 struct oe_service {
-	struct oe_sysconf	 sc;
-	struct oe_env		 env;
+	struct oe_env		 env;	/* owns the otel.conf layer */
+	struct oe_host_info	 host;
 	struct oe_resource	 resource;
 	struct oe_exporter	*exporter;
-	char			 host[256];
-	char			 arch[64];
-	char			 osver[64];
 };
 
 /*
  * Open svc.  service_name is the default service.name (OTEL_SERVICE_NAME
- * wins); cli_endpoint may be NULL.  Returns 0, or -1 with err filled in.
+ * wins) and the scope; cli_endpoint may be NULL.  With a user, the
+ * process switches to it (oe_drop_privileges()) after reading the
+ * configuration and credentials and before creating the exporter, so the
+ * spool belongs to that user.  Returns 0, or -1 with err filled in.
  */
 int	oe_service_open(struct oe_service *, const char *service_name,
 	    const char *version, const char *profile, const char *cli_endpoint,
-	    double flush_interval, char *err, size_t errlen);
+	    double flush_interval, const char *user, char *err, size_t errlen);
 /* Flush, stop and release svc (safe on a zeroed or failed svc). */
 void	oe_service_close(struct oe_service *);
 

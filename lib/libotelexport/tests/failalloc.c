@@ -10,16 +10,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern long failalloc_countdown;
-extern long failalloc_failures;
+#include "failalloc.h"
+
 long failalloc_countdown = -1;
 long failalloc_failures;
 
-void	*failalloc_malloc(size_t);
-void	*failalloc_calloc(size_t, size_t);
-void	*failalloc_realloc(void *, size_t);
-void	*failalloc_reallocarray(void *, size_t, size_t);
-char	*failalloc_strdup(const char *);
+void	*__real_malloc(size_t);
+void	*__real_calloc(size_t, size_t);
+void	*__real_realloc(void *, size_t);
+void	*__real_reallocarray(void *, size_t, size_t);
+char	*__real_strdup(const char *);
+char	*__real_strndup(const char *, size_t);
+void	*__wrap_malloc(size_t);
+void	*__wrap_calloc(size_t, size_t);
+void	*__wrap_realloc(void *, size_t);
+void	*__wrap_reallocarray(void *, size_t, size_t);
+char	*__wrap_strdup(const char *);
+char	*__wrap_strndup(const char *, size_t);
 
 static int
 should_fail(void)
@@ -36,36 +43,43 @@ should_fail(void)
 }
 
 void *
-failalloc_malloc(size_t n)
+__wrap_malloc(size_t n)
 {
 
-	return (should_fail() ? NULL : malloc(n));
+	return (should_fail() ? NULL : __real_malloc(n));
 }
 
 void *
-failalloc_calloc(size_t n, size_t s)
+__wrap_calloc(size_t n, size_t s)
 {
 
-	return (should_fail() ? NULL : calloc(n, s));
+	return (should_fail() ? NULL : __real_calloc(n, s));
 }
 
 void *
-failalloc_realloc(void *p, size_t n)
+__wrap_realloc(void *p, size_t n)
 {
 
-	return (should_fail() ? NULL : realloc(p, n));
+	return (should_fail() ? NULL : __real_realloc(p, n));
 }
 
 void *
-failalloc_reallocarray(void *p, size_t n, size_t s)
+__wrap_reallocarray(void *p, size_t n, size_t s)
 {
 
-	return (should_fail() ? NULL : reallocarray(p, n, s));
+	return (should_fail() ? NULL : __real_reallocarray(p, n, s));
 }
 
 char *
-failalloc_strdup(const char *s)
+__wrap_strdup(const char *s)
 {
 
-	return (should_fail() ? NULL : strdup(s));
+	return (should_fail() ? NULL : __real_strdup(s));
+}
+
+char *
+__wrap_strndup(const char *s, size_t n)
+{
+
+	return (should_fail() ? NULL : __real_strndup(s, n));
 }

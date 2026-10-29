@@ -337,9 +337,15 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	struct oe_buf b;
 	struct timespec now;
 	uint64_t tnano, onano;
-	int first;
+	size_t i;
+	char sevtext[16];
+	int first, sev;
 
 	tnano = ts_unix_nano(&ev->ts);
+	/* Unspecified (and invalid) severities export as INFO. */
+	sev = ev->severity >= OE_SEV_TRACE && ev->severity <= OE_SEV_FATAL + 3 ?
+	    (int)ev->severity : OE_SEV_INFO;
+	oe_severity_text(sev, sevtext, sizeof(sevtext));
 	if (ev->observed.tv_sec != 0 || ev->observed.tv_nsec != 0)
 		onano = ts_unix_nano(&ev->observed);
 	else {
@@ -348,9 +354,9 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	}
 	oe_buf_init(&b);
 	oe_buf_appendf(&b, "{\"timeUnixNano\":\"%ju\","
-	    "\"observedTimeUnixNano\":\"%ju\",\"severityNumber\":9,"
-	    "\"severityText\":\"INFO\",\"body\":{\"stringValue\":\"",
-	    (uintmax_t)tnano, (uintmax_t)onano);
+	    "\"observedTimeUnixNano\":\"%ju\",\"severityNumber\":%d,"
+	    "\"severityText\":\"%s\",\"body\":{\"stringValue\":\"",
+	    (uintmax_t)tnano, (uintmax_t)onano, sev, sevtext);
 	oe_buf_appendjson(&b, ev->body);
 	oe_buf_appendstr(&b, "\"},\"attributes\":[{\"key\":\"");
 	oe_buf_appendjson(&b, enc->scope);
@@ -363,6 +369,8 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	oe_buf_appendstr(&b, "\"}}");
 	first = 0;
 	oe_enc_context(&b, ev->pid, ev->execname, &ev->ctx, &first);
+	for (i = 0; i < ev->nattrs; i++)
+		oe_enc_kv(&b, &ev->attrs[i], &first);
 	oe_buf_appendstr(&b, "]}");
 	if (b.error) {
 		oe_buf_free(&b);

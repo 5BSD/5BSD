@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include "otelexport.h"
+#include "oe_sysconf.h"
 
 void
 oe_buf_init(struct oe_buf *b)
@@ -400,7 +401,66 @@ oe_env_free(struct oe_env *env)
 
 	free_kvlist(env->resource_attrs, env->nresource_attrs);
 	free_kvlist(env->headers, env->nheaders);
+	if (env->sysconf != NULL) {
+		oe_sysconf_free(env->sysconf);
+		free(env->sysconf);
+	}
+	free(env->spool_buf);
 	memset(env, 0, sizeof(*env));
+}
+
+void
+oe_resource_init(struct oe_resource *r, const struct oe_env *env,
+    const struct oe_host_info *hi, const char *service, const char *version)
+{
+	size_t i;
+
+	memset(r, 0, sizeof(*r));
+	oe_resource_host(r, hi);
+	/* OTEL_SERVICE_NAME > service.name in the attributes > default. */
+	r->service_name = service;
+	for (i = 0; i < env->nresource_attrs; i++)
+		if (strcmp(env->resource_attrs[i].name, "service.name") == 0)
+			r->service_name = env->resource_attrs[i].value;
+	if (env->service_name != NULL)
+		r->service_name = env->service_name;
+	r->service_version = version;
+	r->custom = env->resource_attrs;
+	r->ncustom = env->nresource_attrs;
+}
+
+void
+oe_otlp_config_env(struct oe_otlp_config *cfg, const struct oe_env *env)
+{
+
+	cfg->endpoint = env->endpoint != NULL ? env->endpoint :
+	    OE_DEFAULT_ENDPOINT;
+	cfg->timeout = env->timeout_ms > 0 ?
+	    (double)env->timeout_ms / 1000.0 : 0;
+	cfg->headers = env->headers;
+	cfg->nheaders = env->nheaders;
+	cfg->compression = env->compression;
+	cfg->spool_path = env->spool_path;
+	cfg->spool_max = env->spool_max;
+	cfg->spool_optional = env->spool_optional;
+}
+
+const char *
+oe_severity_text(int severity, char *buf, size_t len)
+{
+	static const char *const names[] = { "TRACE", "DEBUG", "INFO",
+	    "WARN", "ERROR", "FATAL" };
+	int range;
+
+	if (severity < OE_SEV_TRACE || severity > OE_SEV_FATAL + 3)
+		severity = OE_SEV_INFO;
+	range = (severity - 1) / 4;
+	if ((severity - 1) % 4 == 0)
+		snprintf(buf, len, "%s", names[range]);
+	else
+		snprintf(buf, len, "%s%d", names[range],
+		    (severity - 1) % 4 + 1);
+	return (buf);
 }
 
 void

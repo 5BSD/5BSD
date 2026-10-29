@@ -5,7 +5,8 @@
  *
  * A complete OpenTelemetry export session for a DTrace consumer:
  * the "-x otel*" options, the exporter and output sink they select,
- * the OTel resource (detected host, OTEL_* environment), one
+ * the OTel resource (detected host, OTEL_* environment, otel.conf(5)
+ * for OTLP/HTTP through oe_config_load()), one
  * exporter per HyperTrace guest with the guest's own resource, the
  * probe clock program, and orderly shutdown.  dtrace(1) uses it so
  * its own source carries only the hooks.
@@ -25,8 +26,6 @@
 
 #include "dtotel_impl.h"
 #include "dtotel_session.h"
-
-#define	DEFAULT_ENDPOINT	"http://localhost:4318"
 
 struct dtotel_session {
 	struct dtotel_options opts;
@@ -198,19 +197,12 @@ make_exporter(struct dtotel_session *s, const struct oe_resource *r,
 		break;
 	}
 	memset(&ocfg, 0, sizeof(ocfg));
-	/* --endpoint, then OTEL_EXPORTER_OTLP_ENDPOINT, then the default. */
-	ocfg.endpoint = s->opts.endpoint != NULL ? s->opts.endpoint :
-	    s->env.endpoint != NULL ? s->env.endpoint : DEFAULT_ENDPOINT;
+	/* -x otelendpoint > OTEL_* > otel.conf(5) > default, resolved. */
+	oe_otlp_config_env(&ocfg, &s->env);
 	ocfg.profile = s->profile;
 	ocfg.resource = r;
 	ocfg.max_retries = -1;
-	ocfg.timeout = s->env.timeout_ms > 0 ?
-	    (double)s->env.timeout_ms / 1000.0 : 0;
-	ocfg.headers = s->env.headers;
-	ocfg.nheaders = s->env.nheaders;
-	ocfg.compression = s->env.compression;
 	ocfg.spool_path = spool;
-	ocfg.spool_max = s->opts.spool_max;
 	ocfg.scope_name = s->scope;
 	return (oe_otlp_new(&ocfg));
 }
@@ -261,10 +253,10 @@ guest_exporter(void *arg, const struct dtotel_guest *g)
 		attrs[n++] = g->attrs[i];
 	r.custom = attrs;
 	r.ncustom = n;
-	if (s->opts.spool != NULL)
-		snprintf(spool, sizeof(spool), "%s.vm%u", s->opts.spool,
+	if (s->env.spool_path != NULL)
+		snprintf(spool, sizeof(spool), "%s.vm%u", s->env.spool_path,
 		    (unsigned)g->vmid);
-	return (make_exporter(s, &r, s->opts.spool != NULL ? spool : NULL,
+	return (make_exporter(s, &r, s->env.spool_path != NULL ? spool : NULL,
 	    attrs + (n - g->nattrs - 4), g->nattrs + 4));
 }
 
@@ -275,7 +267,7 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 	struct dtotel_session *s;
 	struct oe_sink_config sc;
 	struct dtotel_config dcfg;
-	size_t i;
+	struct oe_config_request req;
 
 	s = calloc(1, sizeof(*s));
 	if (s == NULL) {
@@ -283,17 +275,19 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 		return (NULL);
 	}
 	s->opts = *cfg->options;
-	oe_env_load(&s->env);
+	memset(&req, 0, sizeof(req));
+	req.scope = cfg->scope_name;
+	req.endpoint = s->opts.endpoint;
+	req.spool = s->opts.spool;
+	req.spool_max = s->opts.spool_max;
+	req.system = s->opts.format == DTOTEL_OTLP;
+	if (oe_config_load(&s->env, &req, err, errlen) != 0) {
+		free(s);
+		return (NULL);
+	}
 	oe_host_detect(&s->host);
-	oe_resource_host(&s->resource, &s->host);
-	/* OTEL_SERVICE_NAME > service.name in the attributes > default. */
-	s->resource.service_name = cfg->service_name;
-	for (i = 0; i < s->env.nresource_attrs; i++)
-		if (strcmp(s->env.resource_attrs[i].name, "service.name") == 0)
-			s->resource.service_name =
-			    s->env.resource_attrs[i].value;
-	if (s->env.service_name != NULL)
-		s->resource.service_name = s->env.service_name;
+	oe_resource_init(&s->resource, &s->env, &s->host, cfg->service_name,
+	    cfg->service_version);
 	s->service_name = strdup(s->resource.service_name);
 	s->service_version = strdup(cfg->service_version);
 	s->scope = strdup(cfg->scope_name);
@@ -305,8 +299,6 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 	}
 	s->resource.service_name = s->service_name;
 	s->resource.service_version = s->service_version;
-	s->resource.custom = s->env.resource_attrs;
-	s->resource.ncustom = s->env.nresource_attrs;
 	if (s->opts.format != DTOTEL_OTLP) {
 		memset(&sc, 0, sizeof(sc));
 		sc.path = cfg->output;
@@ -320,7 +312,8 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 			goto fail;
 		}
 	}
-	s->exporter = make_exporter(s, &s->resource, s->opts.spool, NULL, 0);
+	s->exporter = make_exporter(s, &s->resource, s->env.spool_path, NULL,
+	    0);
 	if (s->exporter == NULL) {
 		seterr(err, errlen, "cannot create the OpenTelemetry exporter");
 		goto fail;

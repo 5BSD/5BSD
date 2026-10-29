@@ -32,7 +32,7 @@
 .Ft int
 .Fn oe_env_load_system "struct oe_env *env" "const struct oe_sysconf *sc" "const char *cli_endpoint"
 .Ft int
-.Fn oe_service_open "struct oe_service *svc" "const char *service_name" "const char *version" "const char *profile" "const char *cli_endpoint" "double flush_interval" "char *err" "size_t errlen"
+.Fn oe_service_open "struct oe_service *svc" "const char *service_name" "const char *version" "const char *profile" "const char *cli_endpoint" "double flush_interval" "const char *user" "char *err" "size_t errlen"
 .Ft void
 .Fn oe_service_close "struct oe_service *svc"
 .Ft int
@@ -112,22 +112,49 @@ with
 before freeing
 .Fa sc .
 .Pp
+Programs normally use
+.Xr oe_config_load 3 ,
+the one configuration path built on these functions, rather than
+calling them directly.
+.Pp
 .Fn oe_service_open
 sets up the exporter of a base system telemetry service such as
 .Xr otelpfd 8 :
-it loads the system configuration, fails if it is invalid or has
+it resolves the settings with
+.Xr oe_config_load 3 ,
+fails if the system configuration is invalid or has
 .Ic enable
-set to false, resolves the settings with
-.Fn oe_env_load_system ,
+set to false, switches to
+.Fa user
+with
+.Fn oe_drop_privileges
+when
+.Fa user
+is not
+.Dv NULL
+.Po
+after the configuration and credentials files are read, before the
+exporter exists, so the system spool
+.Pa <spool.directory>/<service_name>.spool
+is created by and belongs to that user
+.Pc ,
 and creates and starts an OTLP exporter in
-.Va svc->exporter
-whose
+.Va svc->exporter .
+The resource comes from
+.Xr oe_resource_init 3 ;
+its
 .Va service.name
 is
 .Fa service_name
 unless
 .Ev OTEL_SERVICE_NAME
-is set.
+or a
+.Ql service.name
+resource attribute says otherwise, and
+.Fa service_name
+is also the instrumentation scope, so metric names read
+.Ql <service_name>.<profile>.<name>
+whatever the service name.
 .Fn oe_service_close
 flushes and releases everything; it may be called on a
 .Fa svc
@@ -157,6 +184,21 @@ if (oe_env_load_system(&env, &sc, cli_endpoint) != 0)
 \&...
 oe_env_free(&env);
 oe_sysconf_free(&sc);
+.Ed
+.Pp
+The same with the full layering, spool included:
+.Bd -literal -offset indent
+struct oe_config_request req = { .scope = "mytool",
+    .endpoint = cli_endpoint, .system = 1 };
+struct oe_otlp_config cfg = { 0 };
+struct oe_env env;
+char err[600];
+
+if (oe_config_load(&env, &req, err, sizeof(err)) != 0)
+	errx(1, "%s", err);
+oe_otlp_config_env(&cfg, &env);
+\&...
+oe_env_free(&env);
 .Ed
 .Sh SEE ALSO
 .Xr libotelexport 3 ,

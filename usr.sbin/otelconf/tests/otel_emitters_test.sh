@@ -44,8 +44,10 @@ resource {
 	"service.namespace" = "emitters";
 	"deployment.environment.name" = "ci";
 }
+spool { directory = "$(pwd)/spool"; }
 $1
 EOF
+	mkdir -p spool
 	echo "11111111-2222-3333-4444-555555555555" > hostid
 	OTELCONF_DEFAULTS=/nonexistent/otel.conf
 	OTELCONF_FILE="$(pwd)/otel.conf"
@@ -72,6 +74,59 @@ hwstat_system_config_body()
 	    -o match:"^resource deployment.environment.name=ci$" \
 	    -o match:"^resource host.id=11111111-2222-3333-4444-555555555555$" \
 	    -o match:"^metric hwstat\." \
+	    ${VALIDATE} out/0000.json
+}
+
+atf_test_case hwstat_system_spool
+hwstat_system_spool_head()
+{
+	atf_set "descr" "hwstat spools to the otel.conf spool directory and resends"
+	atf_set "timeout" "120"
+}
+hwstat_system_spool_body()
+{
+	[ -x "${HWSTAT}" ] || atf_skip "hwstat is not installed"
+	# Port 9 on loopback refuses: the batches go to spool/hwstat.spool.
+	PORT=9 config
+	atf_check -o ignore -e match:"spooled /v1/metrics batch to .*/spool/hwstat.spool" \
+	    "${HWSTAT}" watch --format otel --interval 0.5 --duration 1.2
+	atf_check test -s spool/hwstat.spool
+	atf_check test -f spool/hwstat.spool.lock
+	# The collector is back: the next run resends, oldest first.
+	receiver_start -n 0 -t 8
+	config
+	atf_check -o ignore -e match:"resent [0-9]+ spooled batch" \
+	    "${HWSTAT}" watch --format otel --interval 0.5 --duration 1.2
+	receiver_wait
+	atf_check -o empty cat spool/hwstat.spool
+	atf_check -o match:"^metric hwstat\." ${VALIDATE} out/0000.json
+	# A spool directory this user cannot write: no spool, no error.
+	chmod 0500 spool
+	if [ ! -w spool ]; then
+		rm -f port out/*
+		receiver_start -n 1 -t 30
+		config
+		atf_check -o ignore -e not-match:"spool" "${HWSTAT}" watch \
+		    --format otel --interval 0.5 --duration 0.6
+		receiver_wait
+	fi
+	chmod 0700 spool
+}
+
+atf_test_case hwstat_percore
+hwstat_percore_head()
+{
+	atf_set "descr" "hwstat --per-core exports per-CPU points with cpu.logical_number"
+}
+hwstat_percore_body()
+{
+	[ -x "${HWSTAT}" ] || atf_skip "hwstat is not installed"
+	receiver_start -n 1 -t 30
+	config
+	atf_check -o ignore -e ignore "${HWSTAT}" watch --format otel \
+	    --per-core --interval 0.5 --duration 1.2
+	receiver_wait
+	atf_check -o match:"^point hwstat\.cpu\.[a-z_]+ \[cpu.logical_number=0\]" \
 	    ${VALIDATE} out/0000.json
 }
 
@@ -158,23 +213,30 @@ dtrace_system_metrics_head()
 {
 	atf_set "descr" "system-metrics exports DTrace aggregations as OTLP"
 	atf_set "require.user" "root"
-	atf_set "timeout" "120"
+	atf_set "timeout" "300"
 }
 dtrace_system_metrics_body()
 {
 	[ -x "${BSDINSTRUMENTS}" ] || atf_skip "bsdinstruments is not installed"
 	kldstat -q -m dtrace || atf_skip "DTrace is not loaded"
-	receiver_start -n 1 -t 60
+	receiver_start -n 1 -t 120
 	config
-	"${BSDINSTRUMENTS}" watch system-metrics --format otel --duration 4 \
+	"${BSDINSTRUMENTS}" watch system-metrics --format otel --duration 15 \
 	    > bi.out 2>&1 &
 	pid=$!
-	sleep 1
-	# Process churn, a signal and some disk I/O inside the window.
-	for i in 1 2 3 4 5; do /usr/bin/true; done
-	sh -c 'kill -USR1 $$' || true
-	dd if=/dev/zero of=io.tmp bs=64k count=64 2>/dev/null
-	sync
+	# Process churn, a signal and disk I/O for the whole window: the
+	# profile may take a while to compile on a slow (emulated) host.
+	tmp=$(mktemp /var/tmp/otel-io.XXXXXX)
+	while kill -0 $pid 2>/dev/null; do
+		/usr/bin/true
+		sh -c 'kill -USR1 $$' 2>/dev/null || true
+		# conv=fsync: the writes complete (io:::done) before dd
+		# returns; /var/tmp is a disk file system, unlike a tmpfs
+		# work directory.
+		dd if=/dev/zero of="$tmp" bs=64k count=16 conv=fsync 2>/dev/null
+		sleep 1
+	done
+	rm -f "$tmp"
 	wait $pid || { cat bi.out; atf_fail "bsdinstruments failed"; }
 	receiver_wait
 	atf_check -o match:"^Authorization: Bearer from-otel-conf" \
@@ -184,12 +246,15 @@ dtrace_system_metrics_body()
 	    -o match:"^metric bsdinstruments.system-metrics.exec sum monotonic=1$" \
 	    -o match:"^metric bsdinstruments.system-metrics.exits sum" \
 	    -o match:"^point bsdinstruments.system-metrics.signals \[signal=" \
+	    -o match:"^point bsdinstruments.system-metrics.io_bytes \[system.device=[a-z]+[0-9]+,disk.io.direction=(read|write)\] [1-9]" \
 	    cat summary
 }
 
 atf_init_test_cases()
 {
 	atf_add_test_case hwstat_system_config
+	atf_add_test_case hwstat_system_spool
+	atf_add_test_case hwstat_percore
 	atf_add_test_case hwstat_precedence
 	atf_add_test_case hwstat_bad_config
 	atf_add_test_case dtrace_bad_config

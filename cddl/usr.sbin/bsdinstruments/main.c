@@ -166,6 +166,7 @@ struct common_args {
 	unsigned	 rotate_keep;
 	const char	*spool;
 	uint64_t	 spool_max;
+	time_t		 interval;
 };
 
 enum {
@@ -189,7 +190,8 @@ enum {
 	OPT_ROTATE_TIME,
 	OPT_ROTATE_KEEP,
 	OPT_SPOOL,
-	OPT_SPOOL_MAX
+	OPT_SPOOL_MAX,
+	OPT_INTERVAL
 };
 
 static const struct option watch_opts[] = {
@@ -214,6 +216,7 @@ static const struct option watch_opts[] = {
 	{ "rotate-keep", required_argument, NULL, OPT_ROTATE_KEEP },
 	{ "spool", required_argument, NULL, OPT_SPOOL },
 	{ "spool-max", required_argument, NULL, OPT_SPOOL_MAX },
+	{ "interval", required_argument, NULL, OPT_INTERVAL },
 	{ NULL, 0, NULL, 0 }
 };
 
@@ -411,10 +414,16 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 				    "--spool-max", "kmg", size_mults);
 			break;
 		case OPT_ROTATE_TIME:
+		case OPT_INTERVAL:
 			if (!is_watch)
 				usage_fn();
-			ca->rotate_interval = (time_t)parse_scaled(optarg,
-			    "--rotate-time", "smhd", time_mults);
+			if (ch == OPT_ROTATE_TIME)
+				ca->rotate_interval = (time_t)parse_scaled(
+				    optarg, "--rotate-time", "smhd",
+				    time_mults);
+			else
+				ca->interval = (time_t)parse_scaled(optarg,
+				    "--interval", "smhd", time_mults);
 			break;
 		case OPT_ROTATE_KEEP:
 			if (!is_watch)
@@ -500,6 +509,7 @@ watch_usage(void)
 	    "           [--duration seconds] [--with-stack] [--with-ustack]\n"
 	    "           [--broker]\n"
 	    "           [--format text|json|otel|otlp-json|collapsed]\n"
+	    "           [--interval time]\n"
 	    "           [--output file [--rotate-size size] "
 	    "[--rotate-time time]\n"
 	    "            [--rotate-keep n]]\n"
@@ -533,6 +543,9 @@ cmd_watch(int argc, char **argv)
 		errx(2, "--endpoint and --spool apply to --format otel only");
 	if (ca.spool == NULL && ca.spool_max != 0)
 		errx(2, "--spool-max needs --spool");
+	if (ca.interval != 0 && (ca.format == FORMAT_TEXT ||
+	    ca.format == FORMAT_COLLAPSED))
+		errx(2, "--interval needs --format json, otel or otlp-json");
 
 	rendered = render_from_args(&ca, &p);
 	if (rendered == NULL)
@@ -552,6 +565,7 @@ cmd_watch(int argc, char **argv)
 	wo.rotate_keep = ca.rotate_keep;
 	wo.spool = ca.spool;
 	wo.spool_max = ca.spool_max;
+	wo.interval = ca.interval;
 
 	ret = watch_run(p, rendered, &wo);
 	free(rendered);

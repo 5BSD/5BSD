@@ -99,7 +99,6 @@ enum watch_format {
 	FORMAT_OTLPJSON
 };
 
-#define	WATCH_DEFAULT_ENDPOINT	"http://localhost:4318"
 
 struct watch_opts {
 	int		 broker;
@@ -115,6 +114,7 @@ struct watch_opts {
 	unsigned	 rotate_keep;	/* 0: library default */
 	const char	*spool;		/* otel: spool file or NULL */
 	uint64_t	 spool_max;	/* bytes; 0: library default */
+	time_t		 interval;	/* aggregation snapshots; 0: at exit */
 };
 
 int	 watch_run(const struct profile *, const char *rendered,

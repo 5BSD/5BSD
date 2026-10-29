@@ -94,6 +94,7 @@ struct oe_otlp {
 	/* Spool; spool_lock serializes every spool file operation. */
 	pthread_mutex_t	 spool_lock;
 	char		*spool_path;
+	int		 spool_lockfd;	/* <spool>.lock, held exclusively */
 	uint64_t	 spool_max;
 	uint64_t	 spool_size;
 	uint64_t	 spool_dropped;
@@ -792,6 +793,8 @@ otlp_free(struct oe_exporter *e)
 	}
 	free(o->headers);
 	free(o->spool_path);
+	if (o->spool_lockfd >= 0)
+		close(o->spool_lockfd);
 	oe_enc_fini(&o->enc);
 	pthread_mutex_destroy(&o->lock);
 	pthread_mutex_destroy(&o->spool_lock);
@@ -826,13 +829,32 @@ static int
 spool_open(struct oe_otlp *o, const struct oe_otlp_config *cfg)
 {
 	struct stat st;
-	int fd;
+	char lock[PATH_MAX];
+	int fd, lfd;
 
 	o->spool_max = cfg->spool_max > 0 ? cfg->spool_max :
 	    OTLP_DEFAULT_SPOOL;
-	if (strlen(cfg->spool_path) + 5 > PATH_MAX) {
+	/* Room for the ".lock" and ".tmp" siblings. */
+	if (strlen(cfg->spool_path) + 6 > PATH_MAX) {
 		fprintf(stderr, "otlp: spool %s: path too long\n",
 		    cfg->spool_path);
+		return (-1);
+	}
+	/*
+	 * One exporter per spool: replay rewrites the file, so two
+	 * processes sharing it would lose each other's batches.  The
+	 * lock lives on a sibling because replay renames over the spool.
+	 */
+	snprintf(lock, sizeof(lock), "%s.lock", cfg->spool_path);
+	lfd = open(lock, O_RDWR | O_CREAT | O_CLOEXEC | O_EXLOCK | O_NONBLOCK,
+	    0600);
+	if (lfd < 0) {
+		if (errno == EWOULDBLOCK)
+			fprintf(stderr, "otlp: spool %s is in use by another "
+			    "exporter\n", cfg->spool_path);
+		else
+			fprintf(stderr, "otlp: spool %s: open failed: %s\n",
+			    lock, strerror(errno));
 		return (-1);
 	}
 	/*
@@ -845,18 +867,25 @@ spool_open(struct oe_otlp *o, const struct oe_otlp_config *cfg)
 	if (fd < 0) {
 		fprintf(stderr, "otlp: spool %s: open failed: %s\n",
 		    cfg->spool_path, strerror(errno));
+		close(lfd);
 		return (-1);
 	}
 	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
 		fprintf(stderr, "otlp: spool %s: not a regular file\n",
 		    cfg->spool_path);
 		close(fd);
+		close(lfd);
 		return (-1);
 	}
 	close(fd);
-	o->spool_size = (uint64_t)st.st_size;
 	o->spool_path = strdup(cfg->spool_path);
-	return (o->spool_path != NULL ? 0 : -1);
+	if (o->spool_path == NULL) {
+		close(lfd);
+		return (-1);
+	}
+	o->spool_size = (uint64_t)st.st_size;
+	o->spool_lockfd = lfd;
+	return (0);
 }
 
 struct oe_exporter *
@@ -870,6 +899,7 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 	if (o == NULL)
 		return (NULL);
 	o->e.ops = &otlp_ops;
+	o->spool_lockfd = -1;
 	pthread_mutex_init(&o->lock, NULL);
 	pthread_mutex_init(&o->spool_lock, NULL);
 	pthread_cond_init(&o->cv, NULL);
@@ -908,8 +938,11 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		}
 	}
 	if (cfg->spool_path != NULL && spool_open(o, cfg) != 0) {
-		otlp_free(&o->e);
-		return (NULL);
+		if (!cfg->spool_optional) {
+			otlp_free(&o->e);
+			return (NULL);
+		}
+		fprintf(stderr, "otlp: continuing without a spool\n");
 	}
 	return (&o->e);
 

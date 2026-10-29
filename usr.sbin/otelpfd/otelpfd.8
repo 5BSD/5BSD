@@ -69,19 +69,33 @@ Seconds between samples, 0.1 to 3600; the default is 15.
 .It Fl u Ar user
 After opening
 .Pa /dev/pf
-and reading the configuration, switch permanently to
-.Ar user .
+and reading the configuration and credentials, switch permanently to
+.Ar user ,
+before the exporter and its spool
+.Pq Pa <spool.directory>/otelpfd.spool , see Xr otel.conf 5
+are created.
 .El
 .Sh METRICS
-Names carry the
-.Dq Ar service . Ns Li pf.
-prefix of the exporter, where
-.Ar service
-is
-.Dq otelpfd
-unless
-.Ev OTEL_SERVICE_NAME
-says otherwise.
+Names follow the
+.Dq Ar scope . Ns Ar profile . Ns Ar name
+scheme of the base exporters: they carry the
+.Dq Li otelpfd.pf.\&
+prefix, whatever
+.Va service.name
+.Ev ( OTEL_SERVICE_NAME )
+the resource reports.
+The resource is the detected host as for the other emitters, plus the
+.Xr otel.conf 5
+resource attributes.
+Cumulative sums start when pf was enabled or its counters were cleared
+.Pq Va startTimeUnixNano from Va pf_status.since .
+Address family and direction use the OpenTelemetry semantic convention
+attributes
+.Va network.type
+.Pq Li ipv4 , ipv6
+and
+.Va network.io.direction
+.Pq Li receive No for pf Li in , transmit No for Li out .
 .Bl -tag -width "src_node_operations"
 .It Li running , states , states_halfopen , src_nodes , fragments , syncookies_active
 Gauges.
@@ -99,10 +113,8 @@ Cumulative sums by
 the limit counters.
 .It Li packets
 Cumulative sums by
-.Va network.type
-.Pq inet, inet6 ,
-.Va direction
-.Pq in, out
+.Va network.type ,
+.Va network.io.direction
 and
 .Va action
 .Pq pass, block .
@@ -110,8 +122,16 @@ and
 Cumulative sums by
 .Va network.type
 and
-.Va direction .
+.Va network.io.direction .
 .El
+.Pp
+As in
+.Ql pfctl -s info ,
+the packet and byte counters are those of the interface named by
+.Ic set loginterface
+in
+.Xr pf.conf 5 ;
+they stay zero without one.
 .Sh SECURITY
 .Pa /dev/pf
 is opened read-only and its capability rights are limited to the single

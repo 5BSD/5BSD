@@ -39,7 +39,13 @@ cap_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 			    sn->points[i].attrs[j].name,
 			    sn->points[i].attrs[j].value);
 		c->len += snprintf(c->text + c->len, sizeof(c->text) - c->len,
-		    " = %jd\n", (intmax_t)sn->points[i].scalar);
+		    " = %jd", (intmax_t)sn->points[i].scalar);
+		if (sn->start.tv_sec != 0)
+			c->len += snprintf(c->text + c->len,
+			    sizeof(c->text) - c->len, " since %jd",
+			    (intmax_t)sn->start.tv_sec);
+		c->len += snprintf(c->text + c->len, sizeof(c->text) - c->len,
+		    "\n");
 	}
 	return (c->fail ? -1 : 0);
 }
@@ -87,35 +93,46 @@ ATF_TC_BODY(conversion, tc)
 	st.pcounters[1][1][PF_DROP] = 40;
 	st.bcounters[0][1] = 123456;
 	st.bcounters[1][0] = UINT64_MAX;
+	/* Enabled at uptime 100; now is uptime 1100. */
+	st.since = 100;
 
-	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts), 13);
+	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts, 1100), 13);
 	has(&c, "pf.running gauge = 1\n");
 	has(&c, "pf.states gauge = 42\n");
 	has(&c, "pf.states_halfopen gauge = 2\n");
 	has(&c, "pf.src_nodes gauge = 3\n");
 	has(&c, "pf.fragments gauge = 4\n");
 	has(&c, "pf.syncookies_active gauge = 1\n");
-	has(&c, "pf.state_operations sum operation=search = 10\n");
-	has(&c, "pf.state_operations sum operation=insert = 11\n");
-	has(&c, "pf.state_operations sum operation=removal = 12\n");
-	has(&c, "pf.src_node_operations sum operation=insert = 21\n");
-	has(&c, "pf.fragment_operations sum operation=removal = 33\n");
-	has(&c, "pf.reasons sum reason=match = 500\n");
-	has(&c, "pf.reasons sum reason=no-route = 7\n");
-	has(&c, "pf.limits sum limit=max states per rule = 8\n");
-	has(&c, "pf.limits sum limit=syncookies validated = 9\n");
-	has(&c, "pf.packets sum network.type=inet direction=in action=pass "
-	    "= 1000\n");
-	has(&c, "pf.packets sum network.type=inet direction=in action=block "
-	    "= 20\n");
-	has(&c, "pf.packets sum network.type=inet6 direction=out action=pass "
-	    "= 3000\n");
-	has(&c, "pf.packets sum network.type=inet6 direction=out "
-	    "action=block = 40\n");
-	has(&c, "pf.bytes sum network.type=inet direction=out = 123456\n");
+	has(&c, "pf.state_operations sum operation=search = 10 since "
+	    "1699999000\n");
+	has(&c, "pf.state_operations sum operation=insert = 11 since 1699999000\n");
+	has(&c, "pf.state_operations sum operation=removal = 12 since 1699999000\n");
+	has(&c, "pf.src_node_operations sum operation=insert = 21 since 1699999000\n");
+	has(&c, "pf.fragment_operations sum operation=removal = 33 since 1699999000\n");
+	has(&c, "pf.reasons sum reason=match = 500 since 1699999000\n");
+	has(&c, "pf.reasons sum reason=no-route = 7 since 1699999000\n");
+	has(&c, "pf.limits sum limit=max states per rule = 8 since 1699999000\n");
+	has(&c, "pf.limits sum limit=syncookies validated = 9 since 1699999000\n");
+	has(&c, "pf.packets sum network.type=ipv4 "
+	    "network.io.direction=receive action=pass = 1000 since "
+	    "1699999000\n");
+	has(&c, "pf.packets sum network.type=ipv4 "
+	    "network.io.direction=receive action=block = 20 since "
+	    "1699999000\n");
+	has(&c, "pf.packets sum network.type=ipv6 "
+	    "network.io.direction=transmit action=pass = 3000 since "
+	    "1699999000\n");
+	has(&c, "pf.packets sum network.type=ipv6 "
+	    "network.io.direction=transmit action=block = 40 since "
+	    "1699999000\n");
+	has(&c, "pf.bytes sum network.type=ipv4 "
+	    "network.io.direction=transmit = 123456 since 1699999000\n");
 	/* Values beyond int64 saturate instead of turning negative. */
-	has(&c, "pf.bytes sum network.type=inet6 direction=in = "
-	    "9223372036854775807\n");
+	has(&c, "pf.bytes sum network.type=ipv6 "
+	    "network.io.direction=receive = 9223372036854775807 since "
+	    "1699999000\n");
+	/* Gauges carry no start time. */
+	has(&c, "pf.states gauge = 42\n");
 }
 
 ATF_TC_WITHOUT_HEAD(stopped);
@@ -129,9 +146,11 @@ ATF_TC_BODY(stopped, tc)
 	c.e.ops = &cap_ops;
 	memset(&st, 0, sizeof(st));
 	st.running = 0;
-	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts), 13);
+	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts, 50), 13);
 	has(&c, "pf.running gauge = 0\n");
 	has(&c, "pf.syncookies_active gauge = 0\n");
+	/* Never enabled: no start time. */
+	has(&c, "pf.reasons sum reason=match = 0\n");
 }
 
 ATF_TC_WITHOUT_HEAD(exporter_failure);
@@ -145,7 +164,28 @@ ATF_TC_BODY(exporter_failure, tc)
 	c.e.ops = &cap_ops;
 	c.fail = 1;
 	memset(&st, 0, sizeof(st));
-	ATF_CHECK_EQ(pfstat_emit(&c.e, &st, &ts), -1);
+	ATF_CHECK_EQ(pfstat_emit(&c.e, &st, &ts, 0), -1);
+}
+
+/* A replayed status from a longer-running system: start unknown. */
+ATF_TC_WITHOUT_HEAD(since_ahead);
+ATF_TC_BODY(since_ahead, tc)
+{
+	struct capture c;
+	struct pf_status st;
+	struct timespec ts = { 1000, 0 };
+
+	memset(&c, 0, sizeof(c));
+	c.e.ops = &cap_ops;
+	memset(&st, 0, sizeof(st));
+	st.since = 500;
+	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts, 400), 13);
+	has(&c, "pf.reasons sum reason=match = 0\n");
+	/* An uptime longer than the wall clock: start unknown too. */
+	memset(&c, 0, sizeof(c));
+	c.e.ops = &cap_ops;
+	ATF_REQUIRE_EQ(pfstat_emit(&c.e, &st, &ts, 5000), 13);
+	has(&c, "pf.reasons sum reason=match = 0\n");
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -154,5 +194,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, conversion);
 	ATF_TP_ADD_TC(tp, stopped);
 	ATF_TP_ADD_TC(tp, exporter_failure);
+	ATF_TP_ADD_TC(tp, since_ahead);
 	return (atf_no_error());
 }

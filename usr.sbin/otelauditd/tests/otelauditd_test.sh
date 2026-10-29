@@ -35,6 +35,9 @@ config()
 	cat > otel.conf <<EOF
 endpoint = "http://127.0.0.1:${PORT:-9}";
 host_id_file = "";
+# No spool: these cases do not test outages (and must not use the
+# system spool when run as root).
+spool { directory = "$(pwd)/no-spool"; }
 $1
 EOF
 	OTELCONF_DEFAULTS=/nonexistent/otel.conf
@@ -68,6 +71,16 @@ replay_logs_body()
 	    -o match:"pid=10 result=failure:2$" \
 	    cat summary
 	atf_check -o inline:"4\n" grep -c "^log " summary
+	# Severity follows the outcome; the subject, outcome and path are
+	# attributes, not only body text.
+	atf_check \
+	    -o match:"^log 9 \[.*probe=AUE_EXECVE,process.pid=4242,process.user.id=0,process.real_user.id=1001,process.group.id=0,process.real_group.id=[0-9]+,user.id=1001,otelauditd.result=success,otelauditd.return=0,file.path=/bin/ls\] " \
+	    -o match:"^log 13 \[.*probe=AUE_OPEN_R,.*otelauditd.result=failure,otelauditd.return=13,file.path=/etc/master.passwd\] " \
+	    -o match:"^log 9 \[.*probe=event_65000,.*otelauditd.return=7\] " \
+	    -o match:"^log 13 \[.*\] .*pid=10 result=failure:2$" \
+	    cat summary
+	atf_check -o match:'"severityText":"WARN"' \
+	    -o match:'"severityText":"INFO"' cat out/0000.json
 	atf_check -s exit:1 grep -q hunter2 out/0000.json
 }
 
@@ -126,7 +139,8 @@ signal_stop_body()
 	# Keep the writer open so the reader blocks after four records.
 	(cat trail.bin; sleep 30) > pipe &
 	writer=$!
-	sleep 1.5
+	# Long enough to take the four records even on a slow host.
+	sleep 4
 	kill -TERM $pid
 	wait $pid || atf_fail "otelauditd exited with $?"
 	kill $writer 2>/dev/null
@@ -195,12 +209,14 @@ live_pipe_body()
 	    "${OTELAUDITD}" -F no-such-class -c 1
 	receiver_start -n 1 -t 60
 	config
-	"${OTELAUDITD}" -F ex -c 1 -u nobody &
+	# Several records: a burst queues more than one record per pipe
+	# read, which otelauditd must split.
+	"${OTELAUDITD}" -F ex -c 8 -u nobody &
 	pid=$!
-	# Generate exec events until otelauditd has taken one.
+	# Generate exec events until otelauditd has taken them.
 	i=0
 	while kill -0 $pid 2>/dev/null && [ $i -lt 100 ]; do
-		/usr/bin/true
+		/usr/bin/true; /usr/bin/true; /usr/bin/true; /usr/bin/true
 		sleep 0.2
 		i=$((i + 1))
 	done
@@ -212,6 +228,15 @@ live_pipe_body()
 	receiver_wait
 	atf_check -o match:"^log .*AUE_(EXECVE|EXEC|FEXECVE)" \
 	    ${VALIDATE} out/0000.json
+	# One record per log record: no body carries a second subject.
+	atf_check -s exit:1 -x "${VALIDATE} out/0000.json | grep -q 'auid=.* auid='"
+	# The system preselection, stopped by a signal while it waits on
+	# the pipe: the interrupted read ends the loop cleanly.
+	"${OTELAUDITD}" -e "http://127.0.0.1:9" > stop.out 2>&1 &
+	pid=$!
+	sleep 2
+	kill -TERM $pid
+	wait $pid || atf_fail "otelauditd exited with $? after SIGTERM"
 }
 
 atf_init_test_cases()

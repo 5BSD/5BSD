@@ -270,6 +270,13 @@ an invalid
 makes
 .Fl -format Cm otel
 fail.
+When the
+.Xr otel.conf 5
+spool directory is writable (root and the
+.Pa otel_hwstat
+service), batches the collector could not take are kept in
+.Pa <spool.directory>/hwstat.spool
+and resent later.
 The
 .Pa otel_hwstat
 rc.d script runs

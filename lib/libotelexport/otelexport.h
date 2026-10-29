@@ -61,6 +61,31 @@ struct oe_context {
 };
 
 /*
+ * Log severity, numbered as SeverityNumber in the OpenTelemetry log
+ * data model (each range's first value; TRACE2..4 and so on are the
+ * values in between).  OE_SEV_UNSPECIFIED exports as INFO.
+ */
+enum oe_severity {
+	OE_SEV_UNSPECIFIED = 0,
+	OE_SEV_TRACE = 1,
+	OE_SEV_DEBUG = 5,
+	OE_SEV_INFO = 9,
+	OE_SEV_WARN = 13,
+	OE_SEV_ERROR = 17,
+	OE_SEV_FATAL = 21
+};
+
+/*
+ * The short name of a severity number's range (severityText): "TRACE",
+ * "DEBUG", "INFO", "WARN", "ERROR" or "FATAL", with the range offset
+ * appended as in the data model ("WARN2"); unspecified or out of range
+ * values are INFO.
+ */
+const char *oe_severity_text(int severity, char *buf, size_t len);
+
+struct oe_kv;
+
+/*
  * One probe firing or event, normalized before it reaches any
  * exporter.  Strings are borrowed for the duration of the emit call;
  * exporters must copy anything they keep.
@@ -82,6 +107,11 @@ struct oe_event {
 	 */
 	struct timespec	 observed;
 	struct oe_context ctx;
+	/* OE_SEV_UNSPECIFIED exports as INFO. */
+	enum oe_severity severity;
+	/* Additional log record attributes (OTLP and JSONL exporters). */
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
 };
 
 /* Which aggregating function a snapshot came from. */
@@ -354,6 +384,12 @@ struct oe_otlp_config {
 	const char	*spool_path;	/* NULL disables spooling */
 	uint64_t	 spool_max;	/* bytes; 0 = 64 MiB */
 	const char	*scope_name;	/* as in struct oe_otlpjson_config */
+	/*
+	 * A spool that cannot be opened, or that another exporter holds,
+	 * is reported and left unused instead of failing creation (the
+	 * system spool of otel.conf(5); see oe_config_load()).
+	 */
+	int		 spool_optional;
 };
 
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);
@@ -370,6 +406,8 @@ void	oe_report_drops(struct oe_exporter *, uint64_t);
  * OTEL_EXPORTER_OTLP_HEADERS, OTEL_EXPORTER_OTLP_COMPRESSION,
  * OTEL_EXPORTER_OTLP_TIMEOUT).
  */
+struct oe_sysconf;
+
 struct oe_env {
 	const char	*service_name;	/* NULL if unset */
 	const char	*endpoint;
@@ -379,6 +417,12 @@ struct oe_env {
 	size_t		 nresource_attrs;
 	struct oe_attr	*headers;
 	size_t		 nheaders;
+	/* Set by oe_config_load(); oe_env_load() leaves them empty. */
+	const char	*spool_path;	/* NULL: no spool */
+	uint64_t	 spool_max;	/* 0: the exporter's default */
+	int		 spool_optional; /* system spool: never fatal */
+	struct oe_sysconf *sysconf;	/* owned otel.conf(5) layer */
+	char		*spool_buf;	/* owned system spool path */
 };
 
 /*
@@ -388,6 +432,51 @@ struct oe_env {
  */
 void	oe_env_load(struct oe_env *);
 void	oe_env_free(struct oe_env *);
+
+/*
+ * The exporter settings every tool resolves the same way, across all
+ * configuration layers, highest first: command line > OTEL_*
+ * environment > otel.conf(5) (when "system" is set and its enable
+ * key is true) > built-in default.  On success env->endpoint is always
+ * set; env->spool_path is the command line spool, else the system
+ * spool <spool.directory>/<scope>.spool when that directory is
+ * writable, else NULL; env->spool_max is the command line bound, else
+ * spool.max_bytes for the system spool.  Credentials from the
+ * otel.conf headers file are added only when the resolved endpoint is
+ * the system endpoint.  Returns 0, or -1 with err filled in (an
+ * invalid otel.conf, allocation failure); env is then empty.  Release
+ * env with oe_env_free().
+ */
+struct oe_config_request {
+	const char	*scope;		/* tool name; names the spool file */
+	const char	*endpoint;	/* command line, or NULL */
+	const char	*spool;		/* command line, or NULL */
+	uint64_t	 spool_max;	/* command line, or 0 */
+	int		 system;	/* read otel.conf(5) */
+};
+
+#define	OE_DEFAULT_ENDPOINT	"http://localhost:4318"
+
+int	oe_config_load(struct oe_env *, const struct oe_config_request *,
+	    char *err, size_t errlen);
+
+/*
+ * A resource for the tool: the detected host (oe_host_detect()),
+ * service.name from OTEL_SERVICE_NAME, else a service.name among the
+ * resource attributes, else "service"; the remaining resource
+ * attributes (OTEL_RESOURCE_ATTRIBUTES, then otel.conf) as custom
+ * attributes.  Pointers refer into env, host and the arguments.
+ */
+void	oe_resource_init(struct oe_resource *, const struct oe_env *,
+	    const struct oe_host_info *, const char *service,
+	    const char *version);
+
+/*
+ * Fill the endpoint, timeout, headers, compression and spool members
+ * of an OTLP/HTTP configuration from resolved settings; other members
+ * are left alone.
+ */
+void	oe_otlp_config_env(struct oe_otlp_config *, const struct oe_env *);
 
 /*
  * Fill in host.name / host.arch / os.version from the running

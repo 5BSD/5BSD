@@ -102,6 +102,7 @@ parse_description(const char *source)
 static char *
 read_file(const char *path)
 {
+	struct stat st;
 	FILE *fp;
 	char *buf;
 	long size;
@@ -109,6 +110,15 @@ read_file(const char *path)
 	fp = fopen(path, "r");
 	if (fp == NULL)
 		return (NULL);
+	/*
+	 * Profiles are regular files.  A directory opens fine for reading
+	 * and, on some file systems (tmpfs), reads as an empty file.
+	 */
+	if (fstat(fileno(fp), &st) != 0 || !S_ISREG(st.st_mode)) {
+		fclose(fp);
+		errno = EFTYPE;
+		return (NULL);
+	}
 	if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) < 0 ||
 	    fseek(fp, 0, SEEK_SET) != 0) {
 		fclose(fp);

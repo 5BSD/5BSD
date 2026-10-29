@@ -692,6 +692,191 @@ ATF_TC_BODY(env_layering, tc)
 	oe_sysconf_free(&sc);
 }
 
+/* oe_config_load(): every layer, the system spool and its failures. */
+ATF_TC_WITHOUT_HEAD(config_load);
+ATF_TC_BODY(config_load, tc)
+{
+	struct oe_config_request req;
+	struct oe_env env;
+	struct oe_resource r;
+	struct oe_host_info hi;
+	struct oe_otlp_config cfg;
+	char conf[768], cwd[256], err[600], path[512];
+
+	clear_env();
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE(mkdir("spool", 0700) == 0);
+	snprintf(conf, sizeof(conf),
+	    "endpoint = \"http://collector:4318\";\n"
+	    "timeout_ms = 2500;\n"
+	    "host_id_file = \"\";\n"
+	    "resource { \"service.name\" = \"fromconf\"; \"a\" = \"1\"; }\n"
+	    "spool { directory = \"%s/spool\"; max_bytes = 2097152; }\n",
+	    cwd);
+	write_file("local.conf", conf, 0644);
+	setenv("OTELCONF_DEFAULTS", "", 1);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+
+	memset(&req, 0, sizeof(req));
+	req.scope = "tool";
+	req.system = 1;
+	ATF_REQUIRE_EQ_MSG(oe_config_load(&env, &req, err, sizeof(err)), 0,
+	    "%s", err);
+	ATF_REQUIRE(env.sysconf != NULL);
+	ATF_CHECK_STREQ(env.endpoint, "http://collector:4318");
+	ATF_CHECK_EQ(env.timeout_ms, 2500);
+	snprintf(path, sizeof(path), "%s/spool/tool.spool", cwd);
+	ATF_CHECK_STREQ(env.spool_path, path);
+	ATF_CHECK_EQ(env.spool_max, 2097152);
+	ATF_CHECK_EQ(env.spool_optional, 1);
+
+	/* The resource: service.name from the attributes, then defaults. */
+	memset(&hi, 0, sizeof(hi));
+	strlcpy(hi.host_name, "h", sizeof(hi.host_name));
+	oe_resource_init(&r, &env, &hi, "tool", "9.9");
+	ATF_CHECK_STREQ(r.service_name, "fromconf");
+	ATF_CHECK_STREQ(r.service_version, "9.9");
+	ATF_CHECK_STREQ(r.host_name, "h");
+	ATF_CHECK_EQ(r.ncustom, 2);
+	setenv("OTEL_SERVICE_NAME", "fromenv", 1);
+	oe_env_free(&env);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	oe_resource_init(&r, &env, &hi, "tool", "9.9");
+	ATF_CHECK_STREQ(r.service_name, "fromenv");
+
+	/* The OTLP configuration carries every resolved setting. */
+	memset(&cfg, 0, sizeof(cfg));
+	oe_otlp_config_env(&cfg, &env);
+	ATF_CHECK_STREQ(cfg.endpoint, "http://collector:4318");
+	ATF_CHECK(cfg.timeout == 2.5);
+	ATF_CHECK_STREQ(cfg.spool_path, path);
+	ATF_CHECK_EQ(cfg.spool_max, 2097152);
+	ATF_CHECK_EQ(cfg.spool_optional, 1);
+	oe_env_free(&env);
+	clear_env();
+
+	/* Command line endpoint and spool win; the bound still layers. */
+	req.endpoint = "http://cli:1";
+	req.spool = "mine.spool";
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.endpoint, "http://cli:1");
+	ATF_CHECK_STREQ(env.spool_path, "mine.spool");
+	ATF_CHECK_EQ(env.spool_max, 2097152);
+	ATF_CHECK_EQ(env.spool_optional, 0);
+	oe_env_free(&env);
+	req.spool_max = 4096;
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_EQ(env.spool_max, 4096);
+	oe_env_free(&env);
+	req.endpoint = NULL;
+	req.spool = NULL;
+	/* A command line bound applies to the system spool too. */
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.spool_path, path);
+	ATF_CHECK_EQ(env.spool_max, 4096);
+	oe_env_free(&env);
+	req.spool_max = 0;
+
+	/* An unwritable spool directory means no system spool. */
+	ATF_REQUIRE(chmod("spool", 0500) == 0);
+	if (access("spool", W_OK) != 0) {
+		ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)),
+		    0);
+		ATF_CHECK(env.spool_path == NULL);
+		oe_env_free(&env);
+	}
+	ATF_REQUIRE(chmod("spool", 0700) == 0);
+
+	/* Without the system layer: environment, then the default. */
+	req.system = 0;
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK(env.sysconf == NULL);
+	ATF_CHECK_STREQ(env.endpoint, OE_DEFAULT_ENDPOINT);
+	ATF_CHECK(env.spool_path == NULL);
+	memset(&cfg, 0, sizeof(cfg));
+	oe_otlp_config_env(&cfg, &env);
+	ATF_CHECK_STREQ(cfg.endpoint, OE_DEFAULT_ENDPOINT);
+	ATF_CHECK(cfg.timeout == 0);
+	oe_env_free(&env);
+	/* oe_otlp_config_env() on bare environment settings. */
+	oe_env_load(&env);
+	oe_otlp_config_env(&cfg, &env);
+	ATF_CHECK_STREQ(cfg.endpoint, OE_DEFAULT_ENDPOINT);
+	oe_env_free(&env);
+	req.spool = "cli.spool";
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_EQ(env.spool_max, 0);
+	oe_env_free(&env);
+	req.spool = NULL;
+	req.system = 1;
+
+	/* A disabled system layer contributes nothing, not even a spool. */
+	write_file("local.conf", "enable = false;\n"
+	    "endpoint = \"http://collector:4318\";\n", 0644);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.endpoint, OE_DEFAULT_ENDPOINT);
+	ATF_CHECK(env.spool_path == NULL);
+	ATF_CHECK(env.sysconf != NULL && !env.sysconf->enable);
+	oe_env_free(&env);
+
+	/* An invalid otel.conf is an error, and env is left empty. */
+	write_file("local.conf", "endpoint = 5;\n", 0644);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "local.conf") != NULL, "%s", err);
+	ATF_CHECK(env.endpoint == NULL && env.sysconf == NULL);
+	oe_env_free(&env);
+	unsetenv("OTELCONF_DEFAULTS");
+	unsetenv("OTELCONF_FILE");
+}
+
+/* oe_service_open(): the services' path through oe_config_load(). */
+ATF_TC_WITHOUT_HEAD(service_open);
+ATF_TC_BODY(service_open, tc)
+{
+	struct oe_service svc;
+	char err[600];
+
+	clear_env();
+	setenv("OTELCONF_DEFAULTS", "", 1);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+	write_file("local.conf", "host_id_file = \"\";\n"
+	    "spool { directory = \"/nonexistent/otel\"; }\n", 0644);
+	ATF_REQUIRE_EQ_MSG(oe_service_open(&svc, "svc", "1.0", "prof",
+	    "http://127.0.0.1:9", 1.0, NULL, err, sizeof(err)), 0, "%s", err);
+	ATF_CHECK_STREQ(svc.resource.service_name, "svc");
+	ATF_CHECK_STREQ(svc.env.endpoint, "http://127.0.0.1:9");
+	ATF_CHECK(svc.env.spool_path == NULL);
+	ATF_REQUIRE(svc.exporter != NULL);
+	oe_service_close(&svc);
+
+	/* An unknown user is refused before any exporter exists. */
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,
+	    "no-such-user-otel", err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "unknown user") != NULL, "%s", err);
+	ATF_CHECK(svc.exporter == NULL);
+	oe_service_close(&svc);
+
+	/* A bad endpoint fails exporter creation. */
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof",
+	    "notaurl", 1.0, NULL, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "cannot create") != NULL, "%s", err);
+	oe_service_close(&svc);
+
+	write_file("local.conf", "enable = false;\n", 0644);
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,
+	    NULL, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "disabled") != NULL, "%s", err);
+	oe_service_close(&svc);
+
+	write_file("local.conf", "bogus = 1;\n", 0644);
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,
+	    NULL, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "bogus") != NULL, "%s", err);
+	oe_service_close(&svc);
+	unsetenv("OTELCONF_DEFAULTS");
+	unsetenv("OTELCONF_FILE");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -710,5 +895,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, headers_faults);
 	ATF_TP_ADD_TC(tp, host_id);
 	ATF_TP_ADD_TC(tp, env_layering);
+	ATF_TP_ADD_TC(tp, config_load);
+	ATF_TP_ADD_TC(tp, service_open);
 	return (atf_no_error());
 }

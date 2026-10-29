@@ -18,25 +18,30 @@ BINDIR.otlp_collector=	${TESTSDIR}
 MAN.otlp_collector=
 LIBADD.otlp_collector+=	z ssl crypto pthread
 
-${PACKAGE}FILES+=	golden/otlpjson-basic.jsonl
-${PACKAGE}FILES+=	golden/otlpjson-spans.jsonl
-${PACKAGE}FILES+=	golden/otlpjson-semconv.jsonl
-${PACKAGE}FILESDIR=	${TESTSDIR}/golden
+# The golden files keep their golden/ subdirectory when installed (the
+# package FILES group always installs into TESTSDIR itself).
+FILESGROUPS+=	GOLDEN
+GOLDEN=		golden/otlpjson-basic.jsonl \
+		golden/otlpjson-spans.jsonl \
+		golden/otlpjson-semconv.jsonl
+GOLDENDIR=	${TESTSDIR}/golden
+GOLDENPACKAGE=	${PACKAGE}
 
 # otel.conf(5) system configuration layer.
 ATF_TESTS_C+=	sysconf_test
-# Allocation-failure sweep: links a failalloc-instrumented oe_sysconf.c.
+# Allocation-failure sweep over the library as built (failalloc.c
+# wraps the allocators of the statically linked objects).
 ATF_TESTS_C+=	sysconf_oom_test
-SRCS.sysconf_oom_test=	sysconf_oom_test.c sysconf_oom_unit.c failalloc.c
+SRCS.sysconf_oom_test=	sysconf_oom_test.c failalloc.c
 
 CFLAGS+=	-I${.CURDIR:H}
-CFLAGS.sysconf_oom_unit.c+=	-I${SRCTOP}/contrib/libucl/include
 
 # Allocation-failure injection (otel_testutil.c).
 WRAP_ALLOC=	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
 		-Wl,--wrap=strdup -Wl,--wrap=strndup
 LDFLAGS.otelexport_test+=	${WRAP_ALLOC}
 LDFLAGS.otlp_collector+=	${WRAP_ALLOC}
+LDFLAGS.sysconf_oom_test+=	${WRAP_ALLOC} -Wl,--wrap=reallocarray
 
 LIBADD.otelexport_test+=	otelexport z ssl crypto pthread ucl
 LIBADD.sysconf_test+=		otelexport

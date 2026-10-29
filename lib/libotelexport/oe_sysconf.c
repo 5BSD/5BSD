@@ -1048,3 +1048,76 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 		return (-1);
 	return (0);
 }
+
+/*
+ * The one configuration path of every exporting tool; see
+ * oe_config_load(3) in libotelexport.3.
+ */
+int
+oe_config_load(struct oe_env *env, const struct oe_config_request *req,
+    char *err, size_t errlen)
+{
+	struct oe_sysconf *sc;
+	const char *dir;
+	size_t len;
+	int r;
+
+	sc = NULL;
+	if (req->system) {
+		sc = malloc(sizeof(*sc));
+		if (sc == NULL) {
+			memset(env, 0, sizeof(*env));
+			snprintf(err, errlen, "out of memory");
+			return (-1);
+		}
+		if (oe_sysconf_load(sc, NULL, NULL) != 0) {
+			memset(env, 0, sizeof(*env));
+			snprintf(err, errlen, "%s", sc->error);
+			oe_sysconf_free(sc);
+			free(sc);
+			return (-1);
+		}
+	}
+	/*
+	 * oe_env_load_system() leaves env valid even when it fails; env
+	 * owns sc from here on.
+	 */
+	r = oe_env_load_system(env, sc, req->endpoint);
+	env->sysconf = sc;
+	if (r != 0)
+		goto nomem;
+	if (env->endpoint == NULL)
+		env->endpoint = OE_DEFAULT_ENDPOINT;
+	if (sc != NULL && !sc->enable)
+		sc = NULL;
+	if (req->spool != NULL) {
+		/* A command line spool takes its bound from the layers. */
+		env->spool_path = req->spool;
+		env->spool_max = req->spool_max != 0 ? req->spool_max :
+		    sc != NULL ? sc->spool_max_bytes : 0;
+		return (0);
+	}
+	if (sc == NULL)
+		return (0);
+	/*
+	 * The system spool, one file per tool, when this process may
+	 * write the spool directory (the services and root may; other
+	 * users run without one).
+	 */
+	dir = sc->spool_dir;
+	if (eaccess(dir, W_OK | X_OK) != 0)
+		return (0);
+	len = strlen(dir) + strlen(req->scope) + sizeof("/.spool");
+	if ((env->spool_buf = malloc(len)) == NULL)
+		goto nomem;
+	snprintf(env->spool_buf, len, "%s/%s.spool", dir, req->scope);
+	env->spool_path = env->spool_buf;
+	env->spool_max = req->spool_max != 0 ? req->spool_max :
+	    sc->spool_max_bytes;
+	env->spool_optional = 1;
+	return (0);
+nomem:
+	oe_env_free(env);
+	snprintf(err, errlen, "out of memory");
+	return (-1);
+}

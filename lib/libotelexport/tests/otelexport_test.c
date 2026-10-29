@@ -18,7 +18,13 @@
 
 #include <sys/param.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+
+#include <netinet/in.h>
+
+#include <arpa/inet.h>
+#include <pthread.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -667,7 +673,6 @@ ATF_TC_BODY(jsonl_observed_probe, tc)
 {
 	struct oe_exporter *e;
 	struct oe_event ev;
-	struct oe_snapshot sn;
 	FILE *fp;
 	char *out;
 	size_t outlen;
@@ -679,9 +684,6 @@ ATF_TC_BODY(jsonl_observed_probe, tc)
 	ev.observed.tv_sec = 1700000001;
 	ATF_REQUIRE_EQ(0, oe_start(e));
 	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
-	/* Snapshots are not part of the JSONL event stream. */
-	sn = make_snapshot(OE_AGG_SUM, "bytes");
-	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
 	ev.body = "";
 	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
 	oe_shutdown(e);
@@ -692,6 +694,8 @@ ATF_TC_BODY(jsonl_observed_probe, tc)
 	ATF_REQUIRE(strstr(out, "\"observed\":\"2023-11-14T22:13:21.000Z\"")
 	    != NULL);
 	ATF_REQUIRE(strstr(out, "\"probe\":\"syscall::open:entry\"") != NULL);
+	/* No severity member unless one is set. */
+	ATF_REQUIRE(strstr(out, "\"severity\"") == NULL);
 	ATF_REQUIRE_EQ('\n', out[outlen - 1]);
 	ATF_REQUIRE(strchr(out, '\n') == out + outlen - 1);
 	free(out);
@@ -901,10 +905,15 @@ ATF_TC_BODY(sink_open_errors, tc)
 		ATF_REQUIRE_EQ(0, oe_sink_write(s, "2\n", 2));
 		ATF_REQUIRE_EQ(0, oe_sink_close(s));
 		ATF_REQUIRE_EQ(1, count_lines("abs.log.1"));
-		/* "/" as the directory is accepted at open time. */
-		sc.path = "/nonexistent-otel-test-file";
-		sc.durable = 0;
-		ATF_REQUIRE(oe_sink_open(&sc) == NULL);
+		/*
+		 * "/" as the directory is accepted at open time; creating
+		 * the file there fails, except for root.
+		 */
+		if (geteuid() != 0) {
+			sc.path = "/nonexistent-otel-test-file";
+			sc.durable = 0;
+			ATF_REQUIRE(oe_sink_open(&sc) == NULL);
+		}
 	}
 	/* Allocation failures at open. */
 	sc.path = "m.log";
@@ -3198,6 +3207,363 @@ ATF_TC_BODY(otlp_batch_alloc, tc)
 	}
 }
 
+/* Each exporter holds its spool; a second one is refused or goes without. */
+ATF_TC_WITHOUT_HEAD(otlp_spool_lock);
+ATF_TC_BODY(otlp_spool_lock, tc)
+{
+	struct oe_otlp_config cfg;
+	struct oe_exporter *e1, *e2;
+	int port;
+
+	port = closed_port();
+	e1 = otlp_to(port, "http", "s.jsonl", 0, 0, NULL);
+	ATF_REQUIRE(e1 != NULL);
+	ATF_REQUIRE(access("s.jsonl.lock", F_OK) == 0);
+	/* An explicit spool another exporter holds fails creation. */
+	ATF_CHECK(otlp_to(port, "http", "s.jsonl", 0, 0, NULL) == NULL);
+	/* An optional (system) spool is reported and left unused. */
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.endpoint = "http://127.0.0.1:9";
+	cfg.profile = "test-prof";
+	cfg.resource = &test_resource;
+	cfg.spool_path = "s.jsonl";
+	cfg.spool_optional = 1;
+	e2 = oe_otlp_new(&cfg);
+	ATF_REQUIRE(e2 != NULL);
+	oe_exporter_free(e2);
+	cfg.spool_path = "nodir/s.jsonl";
+	e2 = oe_otlp_new(&cfg);
+	ATF_REQUIRE(e2 != NULL);
+	oe_exporter_free(e2);
+	/* A spool that is not a regular file is refused. */
+	ATF_REQUIRE(symlink("/dev/null", "null.jsonl") == 0);
+	ATF_CHECK(otlp_to(port, "http", "null.jsonl", 0, 0, NULL) == NULL);
+	/* Released with the exporter. */
+	oe_exporter_free(e1);
+	e2 = otlp_to(port, "http", "s.jsonl", 0, 0, NULL);
+	ATF_REQUIRE(e2 != NULL);
+	oe_exporter_free(e2);
+}
+
+/* severityText for every range and offset, invalid values as INFO. */
+ATF_TC_WITHOUT_HEAD(severity_text);
+ATF_TC_BODY(severity_text, tc)
+{
+	char buf[16];
+
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_TRACE, buf, sizeof(buf)),
+	    "TRACE");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_DEBUG, buf, sizeof(buf)),
+	    "DEBUG");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_INFO, buf, sizeof(buf)),
+	    "INFO");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_WARN, buf, sizeof(buf)),
+	    "WARN");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_ERROR, buf, sizeof(buf)),
+	    "ERROR");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_FATAL, buf, sizeof(buf)),
+	    "FATAL");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_WARN + 1, buf, sizeof(buf)),
+	    "WARN2");
+	ATF_CHECK_STREQ(oe_severity_text(OE_SEV_FATAL + 3, buf, sizeof(buf)),
+	    "FATAL4");
+	ATF_CHECK_STREQ(oe_severity_text(0, buf, sizeof(buf)), "INFO");
+	ATF_CHECK_STREQ(oe_severity_text(25, buf, sizeof(buf)), "INFO");
+	ATF_CHECK_STREQ(oe_severity_text(-3, buf, sizeof(buf)), "INFO");
+}
+
+/* Log records carry the event's severity and extra attributes. */
+ATF_TC_WITHOUT_HEAD(log_severity_attrs);
+ATF_TC_BODY(log_severity_attrs, tc)
+{
+	static const struct oe_kv kv[] = {
+		{ "user.id", OE_VAL_STRING, "1001", 0, 0 },
+		{ "test.return", OE_VAL_INT, NULL, -13, 0 },
+	};
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct otlp_counts c;
+	char *text;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "out.jsonl";
+	sink = oe_sink_open(&sc);
+	ATF_REQUIRE(sink != NULL);
+	e = otlpjson_on(sink, 0);
+	ATF_REQUIRE(e != NULL);
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	ev = make_event();
+	fixed_event_times(&ev);
+	ev.severity = OE_SEV_WARN;
+	ev.attrs = kv;
+	ev.nattrs = nitems(kv);
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ev.severity = OE_SEV_ERROR + 2;
+	ev.nattrs = 0;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ev.severity = (enum oe_severity)99;	/* invalid: INFO */
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	ATF_REQUIRE_EQ(0, oe_sink_close(sink));
+	text = slurp("out.jsonl", NULL);
+	c = check_otlp_lines(tc, text, NULL);
+	ATF_CHECK_EQ(3, c.logs);
+	ATF_CHECK(strstr(text, "\"severityNumber\":13,\"severityText\":"
+	    "\"WARN\"") != NULL);
+	ATF_CHECK(strstr(text, "\"severityNumber\":19,\"severityText\":"
+	    "\"ERROR3\"") != NULL);
+	ATF_CHECK(strstr(text, "\"severityNumber\":9,\"severityText\":"
+	    "\"INFO\"") != NULL);
+	ATF_CHECK(strstr(text, "{\"key\":\"user.id\",\"value\":"
+	    "{\"stringValue\":\"1001\"}}") != NULL);
+	ATF_CHECK(strstr(text, "{\"key\":\"test.return\",\"value\":"
+	    "{\"intValue\":\"-13\"}}") != NULL);
+	free(text);
+}
+
+/* ---------------------------------------------------------------- */
+/* Transport failures below the exporter (oe_http_post)		 	*/
+
+struct rst_peer {
+	int	 lfd;
+	int	 port;
+	pthread_t thread;
+};
+
+/* Accept one connection and reset it at once (SO_LINGER 0). */
+static void *
+rst_peer_main(void *arg)
+{
+	struct rst_peer *p = arg;
+	struct linger lg = { 1, 0 };
+	int fd;
+
+	fd = accept(p->lfd, NULL, NULL);
+	if (fd >= 0) {
+		(void)setsockopt(fd, SOL_SOCKET, SO_LINGER, &lg, sizeof(lg));
+		close(fd);
+	}
+	return (NULL);
+}
+
+static void
+rst_peer_start(struct rst_peer *p)
+{
+	struct sockaddr_in sin;
+	socklen_t len;
+
+	p->lfd = socket(AF_INET, SOCK_STREAM, 0);
+	ATF_REQUIRE(p->lfd >= 0);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_len = sizeof(sin);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	ATF_REQUIRE(bind(p->lfd, (struct sockaddr *)&sin, sizeof(sin)) == 0);
+	ATF_REQUIRE(listen(p->lfd, 1) == 0);
+	len = sizeof(sin);
+	ATF_REQUIRE(getsockname(p->lfd, (struct sockaddr *)&sin, &len) == 0);
+	p->port = ntohs(sin.sin_port);
+	ATF_REQUIRE(pthread_create(&p->thread, NULL, rst_peer_main, p) == 0);
+}
+
+static void
+rst_peer_stop(struct rst_peer *p)
+{
+
+	pthread_join(p->thread, NULL);
+	close(p->lfd);
+}
+
+ATF_TC_WITHOUT_HEAD(http_transport_errors);
+ATF_TC_BODY(http_transport_errors, tc)
+{
+	struct oe_http_response resp;
+	struct rst_peer peer;
+	struct oe_attr hdr;
+	struct oe_url u;
+	struct rlimit rl, saved;
+	char url[64], *big;
+	size_t biglen = 8 * 1024 * 1024;
+	int next;
+
+	/* A peer that resets during the TLS handshake: no TLS error. */
+	rst_peer_start(&peer);
+	snprintf(url, sizeof(url), "https://127.0.0.1:%d", peer.port);
+	ATF_REQUIRE_EQ(0, oe_url_parse(url, &u));
+	ATF_CHECK_EQ(-1, oe_http_post(&u, "v1/logs", NULL, 0, "t", "{}", 2, 0,
+	    2000, &resp));
+	ATF_CHECK_EQ(-1, resp.status);
+	ATF_CHECK_MSG(strstr(resp.errmsg, "TLS handshake") != NULL, "%s",
+	    resp.errmsg);
+	rst_peer_stop(&peer);
+
+	/* A peer that resets while the request is still being sent. */
+	rst_peer_start(&peer);
+	snprintf(url, sizeof(url), "http://127.0.0.1:%d", peer.port);
+	ATF_REQUIRE_EQ(0, oe_url_parse(url, &u));
+	big = malloc(biglen);
+	ATF_REQUIRE(big != NULL);
+	memset(big, 'x', biglen);
+	ATF_CHECK_EQ(-1, oe_http_post(&u, "v1/logs", NULL, 0, "t", big, biglen,
+	    0, 2000, &resp));
+	ATF_CHECK_EQ(-1, resp.status);
+	ATF_CHECK_MSG(strstr(resp.errmsg, "send to 127.0.0.1") != NULL ||
+	    strstr(resp.errmsg, "connect") != NULL, "%s", resp.errmsg);
+	rst_peer_stop(&peer);
+	/* ... or while its headers are (an oversized header value). */
+	big[biglen - 1] = '\0';
+	hdr.name = "X-Big";
+	hdr.value = big;
+	rst_peer_start(&peer);
+	snprintf(url, sizeof(url), "http://127.0.0.1:%d", peer.port);
+	ATF_REQUIRE_EQ(0, oe_url_parse(url, &u));
+	ATF_CHECK_EQ(-1, oe_http_post(&u, "v1/logs", &hdr, 1, "t", "{}", 2,
+	    0, 2000, &resp));
+	ATF_CHECK_EQ(-1, resp.status);
+	free(big);
+	rst_peer_stop(&peer);
+
+	/* No descriptor left for a socket. */
+	snprintf(url, sizeof(url), "http://127.0.0.1:%d", closed_port());
+	ATF_REQUIRE_EQ(0, oe_url_parse(url, &u));
+	next = dup(0);
+	ATF_REQUIRE(next >= 0);
+	close(next);
+	ATF_REQUIRE(getrlimit(RLIMIT_NOFILE, &saved) == 0);
+	rl = saved;
+	rl.rlim_cur = (rlim_t)next;
+	ATF_REQUIRE(setrlimit(RLIMIT_NOFILE, &rl) == 0);
+	ATF_CHECK_EQ(-1, oe_http_post(&u, "v1/logs", NULL, 0, "t", "{}", 2, 0,
+	    2000, &resp));
+	ATF_REQUIRE(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+	ATF_CHECK_EQ(-1, resp.status);
+
+	/* A name that can never resolve (RFC 6761 .invalid). */
+	setenv("RES_OPTIONS", "attempts:1 timeout:1", 1);
+	ATF_REQUIRE_EQ(0, oe_url_parse("http://otel-test.invalid:4318", &u));
+	ATF_CHECK_EQ(-1, oe_http_post(&u, "v1/logs", NULL, 0, "t", "{}", 2, 0,
+	    2000, &resp));
+	ATF_CHECK_EQ(-1, resp.status);
+	unsetenv("RES_OPTIONS");
+}
+
+/* A host name buffer too small for the name gets the fallback, cut. */
+ATF_TC_WITHOUT_HEAD(host_name_small);
+ATF_TC_BODY(host_name_small, tc)
+{
+	char buf[3], full[256];
+
+	oe_host_name(full, sizeof(full));
+	if (strlen(full) < sizeof(buf))
+		atf_tc_skip("host name \"%s\" fits", full);
+	oe_host_name(buf, sizeof(buf));
+	ATF_CHECK_STREQ(buf, "lo");
+}
+
+/* Ids wider than a SHA-256 digest cannot be derived: random instead. */
+ATF_TC_WITHOUT_HEAD(id_derive_wide);
+ATF_TC_BODY(id_derive_wide, tc)
+{
+	static const uint8_t salt[16] = { 1, 2, 3 };
+	const int64_t key[2] = { 7, 8 };
+	uint8_t a[40], b[40];
+
+	oe_id_derive(salt, "ns", key, 2, a, sizeof(a));
+	oe_id_derive(salt, "ns", key, 2, b, sizeof(b));
+	ATF_CHECK(!oe_id_is_zero(a, sizeof(a)));
+	ATF_CHECK(memcmp(a, b, sizeof(a)) != 0);
+	/* A span-sized id is stable. */
+	oe_id_derive(salt, "ns", key, 2, a, OE_SPAN_ID_LEN);
+	oe_id_derive(salt, "ns", key, 2, b, OE_SPAN_ID_LEN);
+	ATF_CHECK(memcmp(a, b, OE_SPAN_ID_LEN) == 0);
+}
+
+/* Aggregation snapshots, severity and event attributes in JSONL. */
+ATF_TC_WITHOUT_HEAD(jsonl_metrics);
+ATF_TC_BODY(jsonl_metrics, tc)
+{
+	static const struct oe_kv kv[] = {
+		{ "user.id", OE_VAL_STRING, "7", 0, 0 },
+	};
+	static const struct oe_attr res[] = { { "host.name", "vm1" } };
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_snapshot sn;
+	struct oe_event ev;
+	FILE *fp;
+	char *out;
+	size_t outlen;
+
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "test-prof");
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	sn = make_snapshot(OE_AGG_SUM, "bytes");
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn = make_snapshot(OE_AGG_QUANTIZE, "");	/* anonymous */
+	sn.start.tv_sec = 0;
+	sn.profile = NULL;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.npoints = 0;					/* skipped */
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	ev = make_event();
+	ev.severity = OE_SEV_ERROR;
+	ev.attrs = kv;
+	ev.nattrs = 1;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_CHECK(strstr(out, "{\"type\":\"metric\",\"time\":"
+	    "\"2023-11-14T22:13:30.000Z\",\"start\":\"2023-11-14T22:13:20.000Z\","
+	    "\"profile\":\"test-prof\",\"name\":\"bytes\",\"kind\":\"sum\","
+	    "\"points\":[{\"attributes\":{\"process.executable.name\":\"nginx\","
+	    "\"syscall\":\"read\"},\"value\":42},{\"attributes\":"
+	    "{\"process.executable.name\":\"nginx\"},\"buckets\":[{\"le\":7,"
+	    "\"count\":4},{\"le\":1,\"count\":2},{\"le\":9223372036854775807,"
+	    "\"count\":1}]}]}\n") != NULL);
+	ATF_CHECK(strstr(out, "\"time\":\"2023-11-14T22:13:30.000Z\","
+	    "\"profile\":\"test-prof\",\"name\":\"quantize\",\"kind\":"
+	    "\"quantize\"") != NULL);
+	ATF_CHECK(strstr(out, "\"severity\":\"ERROR\"") != NULL);
+	ATF_CHECK(strstr(out, "\"user.id\":\"7\"") != NULL);
+	free(out);
+
+	/* A NULL name is anonymous too; a failing allocation fails. */
+	fp = open_memstream(&out, &outlen);
+	e = oe_jsonl_new(fp, "test-prof");
+	sn = make_snapshot(OE_AGG_MAX, NULL);
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	failalloc_arm(1);
+	ATF_CHECK_EQ(-1, oe_snapshot(e, &sn));
+	failalloc_arm(0);
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	fclose(fp);
+	ATF_CHECK(strstr(out, "\"name\":\"max\",\"kind\":\"max\"") != NULL);
+	free(out);
+
+	/* A resource-tagged stream names it on metric lines too. */
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "res.jsonl";
+	sink = oe_sink_open(&sc);
+	ATF_REQUIRE(sink != NULL);
+	e = oe_jsonl_resource_new(sink, "p", res, 1);
+	ATF_REQUIRE(e != NULL);
+	sn = make_snapshot(OE_AGG_COUNT, "c");
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	oe_shutdown(e);
+	oe_exporter_free(e);
+	ATF_REQUIRE_EQ(0, oe_sink_close(sink));
+	out = slurp("res.jsonl", NULL);
+	ATF_CHECK(strstr(out, "\"kind\":\"count\"") != NULL);
+	ATF_CHECK(strstr(out, "\"resource\":{\"host.name\":\"vm1\"}") != NULL);
+	free(out);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3237,6 +3603,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, otlp_spool_idle_replay);
 	ATF_TP_ADD_TC(tp, otlp_spool_errors);
 	ATF_TP_ADD_TC(tp, otlp_spool_rewrite_fail);
+	ATF_TP_ADD_TC(tp, otlp_spool_lock);
+	ATF_TP_ADD_TC(tp, severity_text);
+	ATF_TP_ADD_TC(tp, log_severity_attrs);
+	ATF_TP_ADD_TC(tp, http_transport_errors);
+	ATF_TP_ADD_TC(tp, id_derive_wide);
+	ATF_TP_ADD_TC(tp, host_name_small);
+	ATF_TP_ADD_TC(tp, jsonl_metrics);
 	ATF_TP_ADD_TC(tp, otlp_tls);
 	ATF_TP_ADD_TC(tp, otlp_alloc_failure);
 	ATF_TP_ADD_TC(tp, span_ids);

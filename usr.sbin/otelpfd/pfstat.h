@@ -22,10 +22,11 @@
 #define	PFSTAT_PROFILE	"pf"
 
 /*
- * Emit one sample of st as metric snapshots on e.  Returns the number
- * of snapshots emitted, or -1 if the exporter failed.
+ * Emit one sample of st, read at wall time ts and uptime (CLOCK_UPTIME
+ * seconds), as metric snapshots on e.  Returns the number of snapshots
+ * emitted, or -1 if the exporter failed.
  */
 int	pfstat_emit(struct oe_exporter *e, const struct pf_status *st,
-	    const struct timespec *ts);
+	    const struct timespec *ts, time_t uptime);
 
 #endif /* !_PFSTAT_H_ */

@@ -3184,9 +3184,9 @@ profile
 .Va otel_dtrace_profile
 (default
 .Dq Li system-metrics ) ,
-exporting its aggregations once per
+exporting a cumulative snapshot of its aggregations every
 .Va otel_dtrace_window
-seconds (default 60).
+seconds (default 60) without restarting the trace.
 The DTrace modules must be loaded by
 .Xr loader.conf 5 .
 .It Va lpd_program

@@ -239,7 +239,9 @@ ATF_TC_BODY(load_dir_entries, tc)
 	profile_list_load(&list);
 	ATF_REQUIRE(profile_lookup(&list, "a-one") != NULL);
 	ATF_REQUIRE(profile_lookup(&list, "z-two") != NULL);
-	ATF_REQUIRE(profile_lookup(&list, "locked") == NULL);
+	/* Root reads a mode 0 file anyway. */
+	if (geteuid() != 0)
+		ATF_REQUIRE(profile_lookup(&list, "locked") == NULL);
 	ATF_REQUIRE(profile_lookup(&list, "subdir") == NULL);
 	ATF_REQUIRE(profile_lookup(&list, "notes") == NULL);
 	ATF_REQUIRE(profile_lookup(&list, "") == NULL);

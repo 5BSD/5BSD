@@ -35,6 +35,9 @@ config()
 endpoint = "http://127.0.0.1:${PORT:-9}";
 host_id_file = "";
 resource { "deployment.environment.name" = "test"; }
+# No spool: these cases do not test outages (and must not use the
+# system spool when run as root).
+spool { directory = "$(pwd)/no-spool"; }
 $1
 EOF
 	OTELCONF_DEFAULTS=/nonexistent/otel.conf
@@ -73,9 +76,9 @@ replay_metrics_body()
 	    -o match:"^point otelpfd.pf.reasons \[reason=no-route\] 17$" \
 	    -o match:"^point otelpfd.pf.limits \[limit=max states per rule\] 18$" \
 	    -o match:"^point otelpfd.pf.state_operations \[operation=search\] 28$" \
-	    -o match:"^point otelpfd.pf.packets \[network.type=inet,direction=in,action=pass\] 37$" \
-	    -o match:"^point otelpfd.pf.packets \[network.type=inet,direction=in,action=block\] 38$" \
-	    -o match:"^point otelpfd.pf.bytes \[network.type=inet6,direction=out\] 52$" \
+	    -o match:"^point otelpfd.pf.packets \[network.type=ipv4,network.io.direction=receive,action=pass\] 37$" \
+	    -o match:"^point otelpfd.pf.packets \[network.type=ipv4,network.io.direction=receive,action=block\] 38$" \
+	    -o match:"^point otelpfd.pf.bytes \[network.type=ipv6,network.io.direction=transmit\] 52$" \
 	    cat summary
 }
 
@@ -136,8 +139,12 @@ service_env_body()
 	atf_check env OTEL_SERVICE_NAME=edge-pf OTEL_EXPORTER_OTLP_TIMEOUT=0 \
 	    "${OTELPFD}" -f status.bin -c 1
 	receiver_wait
+	# The service name is a resource attribute; metric names keep the
+	# instrumentation scope, otelpfd.
 	atf_check -o match:"^resource service.name=edge-pf$" \
-	    -o match:"^point edge-pf.pf.states \[\] 100$" \
+	    -o match:"^scope otelpfd$" \
+	    -o match:"^point otelpfd.pf.states \[\] 100$" \
+	    -o not-match:"edge-pf.pf" \
 	    "${OTEL_HELPERS}/otlp_json_validate" out/0000.json
 }
 
@@ -209,7 +216,8 @@ signal_stop_body()
 	config
 	"${OTELPFD}" -f status.bin -i 60 &
 	pid=$!
-	sleep 1
+	# Long enough for the first sample even on a slow (emulated) host.
+	sleep 3
 	kill -TERM $pid
 	wait $pid || atf_fail "otelpfd exited with $?"
 	receiver_wait

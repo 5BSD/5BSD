@@ -28,6 +28,7 @@
 .Op Fl -with-stack
 .Op Fl -with-ustack
 .Op Fl -format Ar text | json | otel | otlp-json | collapsed
+.Op Fl -interval Ar time
 .Op Fl -output Ar file
 .Op Fl -rotate-size Ar size
 .Op Fl -rotate-time Ar time
@@ -223,7 +224,9 @@ directly to standard output, in color on a terminal.
 .It Cm json
 One JSON object per output line, pipe-friendly for
 .Xr jq 1 ,
-Loki, or Vector.
+Loki, or Vector; aggregations become
+.Ql \&"type\&":\&"metric\&"
+objects with their key dimensions and values or histogram buckets.
 .It Cm otel
 Batch events as OTLP LogRecords POSTed to the collector's
 .Pa /v1/logs
@@ -348,6 +351,20 @@ Records printed before the first anchor reaches
 .Nm
 fall back to the time they were read.
 Cumulative metrics carry the time tracing started as their start time.
+.Pp
+Aggregations are exported when tracing ends.
+With
+.Fl -interval Ar time
+.Pq a number with an optional s, m, h or d suffix
+and a structured format
+.Pq Cm json , otel No or Cm otlp-json
+they are also exported every
+.Ar time
+while tracing: the kernel aggregations are read, not cleared, so sums
+stay cumulative from the start of the run.
+This lets a long-running trace, such as the
+.Pa otel_dtrace
+service, report without restarting.
 .Ss Output files
 Every format except
 .Cm otel
@@ -386,9 +403,29 @@ a request again, either later in the same run or in a later run with
 the same spool.
 .Fl -spool-max Ar size
 bounds the spool
-.Pq default 64m ;
+.Po
+default
+.Ic spool.max_bytes
+of
+.Xr otel.conf 5 ,
+else 64m
+.Pc ;
 batches that do not fit are dropped and counted.
 Batches the collector rejects as malformed are never spooled.
+Without
+.Fl -spool ,
+the system spool
+.Pa <spool.directory>/bsdinstruments.spool
+of
+.Xr otel.conf 5
+is used when it is writable (root and the
+.Pa otel_dtrace
+service).
+A spool belongs to one running instance; another instance with the same
+spool fails
+.Pq Fl -spool
+or runs without one
+.Pq the system spool .
 .Ss DTrace buffer tuning
 .Fl -bufsize
 sets the per-CPU trace buffer size (default 4m for text output, 16m
@@ -470,13 +507,24 @@ Malformed values are reported and ignored as described in
 .Xr libotelexport 3 .
 Aggregation keys written as clause-local variables
 .Pq Li this->device
-are exported under the variable name.
+are exported under the variable name, with
+.Ql __
+standing for the
+.Ql \&.
+a D identifier cannot hold, so
+.Li this->disk__io__direction
+is exported as the semantic-convention attribute
+.Va disk.io.direction .
 .Pp
 The
 .Pa otel_dtrace
 rc.d script runs the
 .Cm system-metrics
-profile as a service, exporting its aggregations at the end of every
+profile as a service with
+.Fl -format Cm otel
+and
+.Fl -interval
+set to
 .Va otel_dtrace_window
 seconds; see
 .Xr rc.conf 5 .
