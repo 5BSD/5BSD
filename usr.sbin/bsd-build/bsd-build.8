@@ -3952,3 +3952,11 @@ candidate. The shared target declares native C++, C++ ABI and math dependencies;
 compression and terminal dependencies remain with compiler/tool executables.
 Artifact linkage does not select Bazel as the production backend or establish
 compiler runtime, installation, debug-package or pkgbase qualification.
+
+.Pp
+The native
+.Cm //lib/clang/libclang:clang_shared
+target links the selected Clang PIC aggregate with the native LLVM, C++, C++ ABI
+and math shared libraries to produce
+.Pa libprivateclang.so.21 .
+This candidate does not establish compiler execution or complete system builds.

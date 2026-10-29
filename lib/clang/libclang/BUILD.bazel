@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
 
 # Maintained Clang diagnostic families and modes; each output is its own action.
@@ -419,3 +419,14 @@ bsd_component_archive(name = "pic_archive", groups = _COMPONENTS, pic = True, vi
 
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
 bsd_component_sources(name = "source_inventory", groups = _COMPONENTS, visibility = ["//visibility:public"])
+
+# Installed Clang library owns its selected objects and links native LLVM.
+cc_import(name = "clang", pic_static_library = ":pic_archive",
+    deps = ["//lib/clang/libllvm:llvm", "//lib/libc++:cxx", "//lib/msun:m"],
+    visibility = ["//visibility:public"])
+cc_shared_library(name = "clang_shared", deps = [":clang"],
+    dynamic_deps = ["//lib/clang/libllvm:llvm_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    shared_lib_name = "libprivateclang.so.21",
+    user_link_flags = ["-Wl,-soname,libprivateclang.so.21", "-Wl,--gc-sections", "-Wl,-znow", "-Wl,-zrelro", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

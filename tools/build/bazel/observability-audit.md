@@ -6490,3 +6490,11 @@ dynamic symbols match pre-existing Make baseline; no new probe/audit instrumenta
 No compiler/library runtime executed in this batch. Runtime diagnostics, telemetry
 and generated-code tracing remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-shared-qualification-20261029`.
+
+### Clang shared linkage (2026-10-29)
+
+Native libprivateclang.so.21 links from the previously reconciled component
+aggregate. Global/weak dynamic symbol records match the pre-existing Make library;
+this does not test DTrace delivery, auditing or compiler runtime. No compiler
+source or probe changes were made. Evidence: bazel-clang-shared-qualification-20261029
+under /usr/obj/usr/src.

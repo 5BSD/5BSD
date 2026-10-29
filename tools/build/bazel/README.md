@@ -37749,3 +37749,22 @@ Frontend review: existing build-bsd.c/format-5 backend accepts archive/shared ta
 manual documents artifact scope. Full target-registration/selection policy, complete
 Clang linkage/execution and world/kernel/pkgbase/runtime/cache/CPU/memory/disk gates
 remain open. Make remains production/default; no installation/publication occurred.
+
+### Clang shared candidate linked (2026-10-29)
+
+Added clang/clang_shared providers in lib/clang/libclang using the selected native
+PIC aggregate and explicit native LLVM, C++, C++ ABI and math dependencies.
+Maintained frontend run /usr/obj/usr/src/bazel-clang-shared-20261029 passes
+with 16 jobs. The library is 245,541,016 bytes. Its ordered NEEDED entries
+(libprivatellvm.so.21, libc++.so.1, libcxxrt.so.1, libm.so.5, libc.so.7) and all
+global/weak dynamic symbol records (type, binding, visibility, defined state, name)
+match the PRE-EXISTING Make libprivateclang.so.21.full with zero differences.
+SONAME, BIND_NOW, GNU_RELRO, non-executable stack, absence of RPATH/RUNPATH and
+absence of TEXTREL were checked. Evidence and script:
+/usr/obj/usr/src/bazel-clang-shared-qualification-20261029/elf-inspection.json
+and inspect.py. This is diagnostic ELF parity, not a fresh complete Make link,
+compiler execution, independent bootstrap or package/runtime/performance proof.
+Frontend review: build-bsd.c and format-5 source_graph.py already accept the new
+explicit target; manual documents its scope. Make remains production/default.
+Target registration/selection, compiler executable, world/kernel/pkgbase and
+CPU/memory/disk/cache qualification remain open. No installation occurred.
