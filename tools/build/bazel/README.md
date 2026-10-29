@@ -35613,3 +35613,27 @@ changes occurred. Frontend review: format-5 explicit targets and existing
 staged generator tools cover this addition; no build-bsd C/backend/manual
 change is required. Make stays production/default; complete world/kernel/
 pkgbase/bootstrap/runtime/performance gates remain open.
+
+### 2026-10-29 gprof installation
+
+Added native gprof's nine maintained C sources and both local headers, the
+manual, and gprof.flat/gprof.callg explanatory data. Installation preserves
+package=toolchain, /usr/share/misc ownership, and debug metadata. Maintained
+frontend /usr/obj/usr/src/bazel-gprof-20261029 (16 jobs) matches fresh rootless
+Make reference bazel-gprof-reference-20261029: eight distinct metadata records,
+three exact nonbinary payloads and one valid ELF/debug pair with matching
+global/undefined symbols and dynamic properties. Evidence/scripts are retained
+under bazel-gprof-qualification-20261029; r2 report names are inherited from the
+comparator rather than repeated attempts.
+
+This does not qualify profile generation/collection, kernel profiling, malformed
+profile input, call-graph reconstruction, or output correctness on real profiles.
+No profiling workload or host installation occurred. Frontend review: existing
+format-5 targets/artifacts and staging cover the payload; no build-bsd C/backend/
+manual change is required. Make stays production/default and complete world/
+kernel/pkgbase/bootstrap/runtime/performance gates remain open.
+
+Next inspected component is truss: four maintained C sources, libsysdecode,
+source-tree kernel header precedence and an ATF shell syscall-filter suite.
+Its native rule/test migration remains outstanding; no completed truss claim
+is implied by this checkpoint.

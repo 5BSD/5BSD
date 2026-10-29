@@ -5919,3 +5919,11 @@ scan found no explicit DTrace/SDT or OS audit_submit/auditon integration.
 DNSSEC validation failures, resolver transport/timeouts and trust-anchor
 loading remain runtime/observability review items. No audit/probe hooks or
 security decisions were changed to obtain build parity.
+
+### 2026-10-29 gprof
+
+Native rules retain all maintained profiling-analysis sources and explanatory
+data. Focused C/header scan found no explicit DTrace/SDT or audit_submit/auditon
+sites. gprof profile analysis is distinct from DTrace probe integration; this
+build check does not establish producer instrumentation or profiling accuracy.
+Profile generation, kernel inputs and call-graph/output checks remain open.
