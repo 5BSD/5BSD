@@ -6561,3 +6561,12 @@ translation units. No instrumentation was removed or added. They are object/file
 inspection utilities; this check does not establish kernel audit delivery or decide
 whether future instrumentation is desirable. Maintained native execution smoke
 coverage and fresh Make source/options/install comparisons pass.
+
+### Native readobj and symbolizer (2026-10-29)
+
+All 14 Make sources retained; private headers and option-generation dependencies
+are declared. Source scan finds DTraceDOF/DF_1_GLOBAUDIT decoding in readobj, not
+instrumentation calls. No probe/audit code changed. Maintained smoke tests cover
+ELF inspection, linked source-line resolution and readelf/addr2line aliases; they
+do not establish kernel audit delivery or DTrace execution. Relocatable symbol
+lookup limitation reproduced with Make and recorded in the development checkpoint.

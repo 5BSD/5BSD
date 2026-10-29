@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-readobj",
+    srcs = ['//contrib/llvm-project/llvm/tools/llvm-readobj:ARMWinEHPrinter.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:COFFDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:COFFImportDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:ELFDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:MachODumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:ObjDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:WasmDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:Win64EHDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:WindowsResourceDumper.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:XCOFFDumper.cpp', 'llvm-readobj-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-readobj:llvm-readobj.cpp'],
+    options = "//contrib/llvm-project/llvm/tools/llvm-readobj:Opts.td", manual = "llvm-readobj.1",
+    deps = ['//contrib/llvm-project/llvm/tools/llvm-readobj:headers'], aliases = {"llvm-readelf": "llvm-readelf.1"})

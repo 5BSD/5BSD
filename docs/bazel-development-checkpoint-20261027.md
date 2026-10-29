@@ -13483,3 +13483,35 @@ Frontend review: build-bsd.c and format-5 source_graph.py already support these
 explicit target/test selections; manual updated. No host installation/publication.
 Independent bootstrap, remaining tools/system targets, static/cross configuration,
 cache and performance qualification remain open. Make stays production/default.
+
+### Native readobj/readelf and symbolizer/addr2line (2026-10-29)
+
+Added native llvm-readobj (12 sources) and llvm-symbolizer (2 sources), extending
+the common LLVM utility macro with declared private-header dependencies and
+binary aliases with distinct manual payloads. Source inventories match expanded
+Make; generated Opts.inc tables match fresh Make (36,749 and 22,590 bytes), and
+Make TableGen depfiles confirm the explicit OptParser.td include. Build run:
+/usr/obj/usr/src/bazel-llvm-inspect-20261029, including the previous utilities test.
+Both installed candidates match fresh Make global/weak ELF symbol records with
+zero differences. All ten installation records, four compressed manuals and both
+debuglink CRCs match. Reference builds reuse the existing SDK/private LLVM library;
+this is not independent bootstrap. Reports and scripts are under
+/usr/obj/usr/src/bazel-llvm-inspect-reference-qualification-20261029.
+
+Extended //lib/clang:utilities_test exercises ELF headers/symbols, linked debug-line
+lookup and readelf/addr2line argv0 dispatch, alongside the prior four utilities.
+The first extended run (bazel-llvm-inspect-test-20261029) failed symbol-name lookup
+on a relocatable object with overlapping section addresses. Diagnostics retained
+under symbolizer-diagnostic show exactly the same behavior in the fresh Make
+symbolizer: name lookup is unknown and address zero selects the data symbol.
+Native LLD now links the fixture to give sections distinct addresses; symbol and
+source-line assertions remain strict. Corrected r2 passes, and final r3 adds both
+alias dispatch checks and passes (one reported case, none skipped). Relocatable
+symbol-name lookup remains a recorded upstream/reference limitation, not a claimed
+supported case. These tests do not execute the freestanding linked fixture.
+
+Frontend review: build-bsd.c/format-5 source_graph.py already carry explicit targets
+and tests; manual updated. Native amd64/default shared LLVM remains the qualified
+configuration; static LLVM, cross-host, independent bootstrap, full system/package,
+cache and performance gates remain open. Make stays production/default. No host
+installation, upgrade or publication.

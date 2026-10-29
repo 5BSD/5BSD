@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['llvm-symbolizer.cpp', 'Opts.td'], visibility = ["//usr.bin/clang/llvm-symbolizer:__pkg__"])

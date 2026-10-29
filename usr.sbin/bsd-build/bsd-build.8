@@ -4069,3 +4069,12 @@ LLVM configuration on native amd64 FreeBSD.
 uses native Clang output to exercise symbol reporting, demangling, section
 reporting and string extraction. Select this label in both targets and tests.
 It does not qualify exhaustive options, cross-host execution or bootstrap.
+
+.Pp
+The llvm-readobj and llvm-symbolizer packages also provide native runtime,
+_installed, options, source_inventory and install_archive targets.
+Their archives preserve the llvm-readelf and llvm-addr2line binary hardlinks and
+each alias's distinct manual. The maintained
+.Cm //lib/clang:utilities_test
+covers ELF inspection, linked debug-line lookup and both argv0 dispatch modes.
+Symbol-name lookup in relocatable objects is not qualified by this test.
