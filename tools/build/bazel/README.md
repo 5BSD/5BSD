@@ -40353,3 +40353,29 @@ Reviewed build-bsd.c and source_graph.py: existing explicit target inputs suppor
 these binaries without frontend/backend contract changes. Complete world/kernel/
 pkgbase, independent bootstrap, sandbox/cache and performance gates remain open.
 Make remains production/default; no host installation or network changes.
+
+### libalias test installation and discovery (2026-10-29)
+
+Added native installation/debug transformations for all five existing test and
+benchmark programs, plus the generated Kyuafile: three ATF programs and the
+plain smedia regression. perf is installed but correctly excluded from automatic
+test discovery, matching bsd.test.mk. Shared utility/install rules provide the
+transformations; no production C sources or test behavior were changed.
+
+Run bazel-libalias-tests-install-20261029-r2 passes via build-bsd with 16 jobs.
+The independent fresh Make reference has 16 changed installation records; all
+16 match with no missing/extra destinations or attribute/package-tag mismatches.
+All 11 regular payloads pass symbol/dynamic comparisons or, for Kyuafile, exact
+byte comparison. All five debug-link names and CRCs are valid. The initial
+comparison caught a redundant test-directory declaration already supplied by
+BSD.tests.dist; the declaration was removed, preserving maintained mtree layout.
+Evidence/scripts: /usr/obj/usr/src/bazel-libalias-reference-20261029/
+tests-install-audit.py,json and tests-payload-audit.py,json.
+
+This completes the component's installation candidate, not runtime NAT validation.
+An isolated filesystem with native modules/configuration is still required before
+executing LibAliasInit-based tests; perf remains unmeasured. Test-directory parent
+aggregation and complete pkgbase composition remain system-level work.
+Reviewed build-bsd.c/source_graph.py: existing explicit target and metadata output
+groups cover this addition without interface changes. Make stays production/default;
+full-system/bootstrap/cache/sandbox/performance gates remain open.
