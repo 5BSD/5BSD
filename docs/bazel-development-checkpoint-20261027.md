@@ -9912,3 +9912,33 @@ parent and full recursive comparison remain pending. The frontend's existing
 format-5 target selection and typed options were exercised; no C/protocol or
 production-backend change required. This does not complete world/pkgbase,
 full runtime qualification, cross-compilation or performance gates.
+
+### 2026-10-29 /sbin audit: md5 archive and Casper option
+
+Added //sbin/md5:install_archive around its existing native installation
+inventory. Corrected unconditional Casper dependencies/defines in both dynamic
+md5 and its static consumption candidate to follow the maintained casper setting.
+The dynamic target selects Casper shared libraries only when enabled. No utility
+source changed; Make remains the default production backend.
+
+Both maintained frontend runs (16 jobs) passed:
+`/usr/obj/usr/src/bazel-md5-install-20261029` and
+`/usr/obj/usr/src/bazel-md5-no-casper-20261029`.
+Fresh Make stages: bazel-md5-install-reference-20261029 and
+bazel-md5-no-casper-reference-20261029 under the same object root.
+Scripts: bazel-md5-install-qualification-20261029; reports in each run's
+qualification/md5. Each variant matches 50 metadata records and 24 non-ELF
+manual payloads, with all 46 binary/manual hardlink relationships checked against
+Make stage inode identity. Installed debug linkage, global/undefined symbols,
+and NEEDED/RPATH/RUNPATH/SONAME match. Disabled output needs only libc/libmd;
+enabled output also needs libcasper/libcap_fileargs. Static candidate's option
+selection changed consistently but was not separately rebuilt in this batch.
+No runtime or full instruction equivalence claimed.
+
+Parent audit: reroot_seed is an INTERNALPROG, consumed by init's declared payload
+edge, and should not receive a standalone installation archive. nvmecontrol's
+archive already includes all four modules. Existing program archives that
+include tests must not be combined with duplicate standalone test archives.
+/sbin parent integration and full recursive comparison remain pending.
+Frontend review: format-5 target handling and the existing typed casper option
+cover this work; no frontend C/protocol change required.

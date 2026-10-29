@@ -5675,3 +5675,9 @@ probe rewriting and provider linkage. Provider attributes, argument mappings,
 function/probe schemas and site counts match fresh Make output: nine ordinary
 and twelve enabled sites validated against function bounds and instruction bytes.
 DTrace-disabled output has no DOF. No live probe firing or audit runtime claim.
+
+### 2026-10-29 md5 archive/Casper selection
+
+No production source or probe/audit declaration changed. Casper selection now
+matches Make's optional capability-service integration. ELF parity verifies the
+selected dependency interface, not live capability-service or audit behavior.
