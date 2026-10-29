@@ -40579,3 +40579,29 @@ host configuration changed. SDK execution tools still require full bootstrap
 qualification. Reviewed build-bsd.c/source_graph.py: existing explicit targets
 cover the work without frontend interface changes. Make remains production/default;
 whole-system/pkgbase/cache/sandbox/performance gates are not complete.
+
+### Native bsnmpd installation/configuration payload (2026-10-29)
+
+Added daemon/debug/manual installation, snmpd.config with mode 0600 and config
+package tag, filtered snmpmod manual plus maintained aliases, three MIB files,
+and tree.def. Native template substitutions preserve the source Make MANFILTER
+values for the qualified default layout; these are installation layout declarations,
+not discovered host paths. Manual aliases are explicit Starlark inventory. The
+aggregate retains package directory metadata for /etc and SNMP data directories.
+
+Run bazel-bsnmpd-install-20261029 passes through build-bsd with 16 jobs. Fresh
+Make reference bazel-bsnmpd-config-make-20261029 runs all/install/installconfig.
+All 111 changed installation records match with no missing/extra destinations or
+ownership/mode/non-directory package-tag mismatches. All nine regular payloads
+pass configuration/MIB/definition/filtered-manual byte comparisons or binary/debug
+symbol and dynamic metadata comparisons. The debug link name/CRC passes. Manual
+hardlinks resolve to matching bytes and shared Make-stage inodes.
+Evidence: /usr/obj/usr/src/bazel-bsnmpd-reference-20261029/
+install-audit.py,json and payload-audit.py,json.
+
+No daemon was started and no host configuration changed. Modules, runtime service
+behavior, configuration reload, disabled-feature variants, nondefault installation
+layout and full-system package composition remain unqualified. Reviewed build-bsd.c
+and source_graph.py: existing target/metadata input contracts support this without
+frontend changes. Make remains production/default; bootstrap/cache/sandbox and
+comparative CPU/memory/disk performance gates remain open.

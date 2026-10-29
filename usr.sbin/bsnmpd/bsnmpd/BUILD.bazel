@@ -16,3 +16,6 @@ cc_binary(name = "bsnmpd", srcs = [":tree_source"] + ["//contrib/bsnmp/snmpd:" +
     local_defines = ["USE_LIBBEGEMOT", "HAVE_STDINT_H", "HAVE_INTTYPES_H", "HAVE_ERR_H", "HAVE_STRLCPY"] + select({"//tools/build/bazel/config:openssl_enabled": ["HAVE_LIBCRYPTO"], "//conditions:default": []}) + select({_WRAP: ["USE_TCPWRAPPERS"], "//conditions:default": []}),
     copts = ["-fPIE"], linkopts = ["-pie", "-Wl,-export-dynamic"], linkstatic = True,
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "daemon_installation")
+daemon_installation()
