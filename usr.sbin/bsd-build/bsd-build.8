@@ -4122,3 +4122,13 @@ LLVM formatting, formatting idempotence and dry-run validation. Enable
 clang_format or clang_extras and select this label in targets and tests.
 These checks do not qualify compilation-database/module/PCH variants or Bazel
 cache invalidation.
+
+.Pp
+.Cm //usr.bin/clang/toolchain:install_archive
+composes the native LLVM utility installations and their default-name aliases.
+The format-5 build setting
+.Cm //tools/build/bazel/config:llvm_binutils
+(default true) controls eleven executable symlinks and eleven manual hardlinks.
+False retains the LLVM-named utilities and omits their default-name aliases.
+This archive is not a complete compiler, sysroot or package repository; building
+it does not install it on the host.

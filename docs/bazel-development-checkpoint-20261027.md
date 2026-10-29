@@ -13743,3 +13743,32 @@ bazel-clang-tools-test-20261029. Frontend review: no input/schema or backend cha
 needed; manual removes obsolete pending-parity wording. Complete world/kernel,
 SDK/bootstrap, pkgbase/publication, cache-invalidation and performance gates remain
 open. Make stays production/default; no host installation or publication.
+
+### Native LLVM utility installation composition and aliases (2026-10-29)
+
+Added //usr.bin/clang/toolchain:install_archive, composing ten native LLVM utility
+installation manifests and optional default-name aliases. The llvm_binutils bool
+(default true, matching native src.opts.mk) controls eleven executable symlinks
+and eleven manual hardlinks. Alias package tags remain toolchain; original utility
+payloads retain their original tags. Disabled aliases do not remove the LLVM-named
+utilities. This artifact is not a complete compiler/sysroot or package repository.
+
+bsd_install_manifest can now import other manifests. Their records/payload depsets
+are preserved, duplicate destination checks apply to imported and new records,
+and the existing hardlink validator checks the composed namespace. No external
+or dangling hardlink exception was introduced.
+
+Maintained runs bazel-binutils-install-20261029 and bazel-binutils-disabled-20261029
+pass under /usr/obj/usr/src. Enabled archive contains 59 records, disabled contains
+37. All 22 alias records match an isolated normal Make toolchain install, including
+owner/group/mode/package tags, symlink targets, hardlink inodes and manual bytes.
+The reference supplies previously qualified Make manual payloads for the normal
+MLINKS install. Disabling aliases removes exactly those 22 records; remaining
+metadata and file bytes are identical. Evidence/scripts/reports:
+/usr/obj/usr/src/bazel-binutils-reference-20261029.
+
+Frontend review: build-bsd.c/format-5 source_graph.py already transports the new
+boolean and target; manual updated. No host installation/publication. Cross-arch,
+split-manpage variant, complete toolchain/system composition, native SDK/bootstrap,
+cache invalidation, pkgbase/publication and performance gates remain open. Make
+stays production/default.

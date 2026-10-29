@@ -76,6 +76,17 @@ def resolve_hardlinks(records):
 
 def _install_manifest(ctx):
     entries, payload, seen = [], [], {}
+    inherited_payloads = []
+    for target in ctx.attr.manifests:
+        info = target[BsdInstallManifestInfo]
+        inherited_payloads.append(info.payload)
+        for original in info.records:
+            record = dict(original)
+            path = record["destination"]
+            if path in seen:
+                fail("duplicate installation destination: " + path)
+            seen[path] = record
+            entries.append(record)
     for target in ctx.attr.entries:
         item = target[BsdInstallFileInfo]
         record = dict(item.metadata)
@@ -91,7 +102,7 @@ def _install_manifest(ctx):
     resolve_hardlinks(seen)
     manifest = ctx.actions.declare_file(ctx.label.name + ".json")
     ctx.actions.write(manifest, json.encode({"format": 1, "files": entries}) + "\n")
-    inputs = depset(payload)
+    inputs = depset(payload, transitive = inherited_payloads)
     # Building an installation target must materialize its declared payloads.
     # Consumers needing only metadata can select the manifest output group.
     return [DefaultInfo(files = depset([manifest], transitive = [inputs])),
@@ -100,7 +111,10 @@ def _install_manifest(ctx):
 
 bsd_install_manifest = rule(
     implementation = _install_manifest,
-    attrs = {"entries": attr.label_list(providers = [BsdInstallFileInfo], mandatory = True)},
+    attrs = {
+        "entries": attr.label_list(providers = [BsdInstallFileInfo]),
+        "manifests": attr.label_list(providers = [BsdInstallManifestInfo]),
+    },
 )
 
 def _kyuafile(ctx):

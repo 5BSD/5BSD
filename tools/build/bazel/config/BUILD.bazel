@@ -441,3 +441,7 @@ config_setting(name = "llvm_target_loongarch_enabled", flag_values = {":llvm_tar
 # Opt-in resource headers that may conflict with the operating system headers.
 bool_flag(name = "install_conflicting_clang_headers", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "install_conflicting_clang_headers_enabled", flag_values = {":install_conflicting_clang_headers": "true"}, visibility = ["//visibility:public"])
+
+# Native LLVM tool default-name aliases (MK_LLVM_BINUTILS).
+bool_flag(name = "llvm_binutils", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_binutils_enabled", flag_values = {":llvm_binutils": "true"}, visibility = ["//visibility:public"])
