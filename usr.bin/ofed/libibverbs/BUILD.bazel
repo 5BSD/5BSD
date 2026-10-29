@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = ['//usr.bin/ofed/libibverbs/asyncwatch:install_archive', '//usr.bin/ofed/libibverbs/devinfo:install_archive', '//usr.bin/ofed/libibverbs/devices:install_archive', '//usr.bin/ofed/libibverbs/rc_pingpong:install_archive', '//usr.bin/ofed/libibverbs/srq_pingpong:install_archive', '//usr.bin/ofed/libibverbs/uc_pingpong:install_archive', '//usr.bin/ofed/libibverbs/ud_pingpong:install_archive'], visibility = ["//visibility:public"])

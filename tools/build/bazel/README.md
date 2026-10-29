@@ -35952,3 +35952,28 @@ RDMA traffic, hardware/provider loading or performance tests were performed.
 Frontend review: existing format-5 targets/artifact staging and installation
 helpers cover these libraries; no build-bsd.c/backend/manual interface change.
 No host installation. Make remains production/default; full system unqualified.
+
+### 2026-10-29 seven libibverbs utilities
+
+Added native ibv_asyncwatch, ibv_devinfo, ibv_devices, ibv_rc_pingpong,
+ibv_srq_pingpong, ibv_uc_pingpong and ibv_ud_pingpong. Parent archive set covers
+all maintained libibverbs utility subdirectories. Explicit sources include the
+shared pingpong.c where Make selects it, with declared config/pingpong headers.
+All consumers retain ibverbs, mlx4, mlx5, bnxtre, cxgb4, irdma and pthread native
+link dependencies. Upstream sources/manuals were not modified.
+
+Maintained frontend /usr/obj/usr/src/bazel-ibverbs-clients-20261029 (16 jobs)
+matches fresh recursive Make reference bazel-ibverbs-clients-reference-20261029:
+23 distinct installation metadata records, seven exact compressed manuals and
+seven valid executable/debug pairs with matching global/undefined symbols and
+dynamic fields. Evidence/scripts in bazel-ibverbs-clients-qualification-20261029.
+Reference consumer builds reuse staged dependency libraries; this does not claim
+all Make dependencies were freshly rebuilt. Comparison is structural, not
+instruction identity or RDMA runtime equivalence.
+
+No device discovery, queue setup, RDMA traffic, provider hardware operations or
+performance tests were performed. Remaining OFED groups include librdmacm,
+infiniband diagnostics and optional opensm. Frontend review: existing format-5
+archive sets and target staging cover these consumers, requiring no build-bsd.c/
+backend/manual interface change. Make remains production/default; complete
+world/kernel/pkgbase/runtime/performance qualification remains open.

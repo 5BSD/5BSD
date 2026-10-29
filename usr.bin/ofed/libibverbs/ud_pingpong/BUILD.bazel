@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = 'ibv_ud_pingpong',
+    srcs = ['//contrib/ofed/libibverbs:examples/ud_pingpong.c', '//contrib/ofed/libibverbs:examples/pingpong.c'],
+    deps = ['//lib/ofed/libibverbs:ibverbs', '//lib/ofed/libmlx4:mlx4', '//lib/ofed/libmlx5:mlx5', '//lib/ofed/libbnxtre:bnxtre', '//lib/ofed/libcxgb4:cxgb4', '//lib/ofed/libirdma:irdma', '//lib/libthr:thr', '//contrib/ofed/libibverbs:example_headers'],
+    dynamic_deps = ['//lib/ofed/libibverbs:ibverbs_shared', '//lib/ofed/libmlx4:mlx4_shared', '//lib/ofed/libmlx5:mlx5_shared', '//lib/ofed/libbnxtre:bnxtre_shared', '//lib/ofed/libcxgb4:cxgb4_shared', '//lib/ofed/libirdma:irdma_shared', '//lib/libthr:thr_shared'],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'ibv_ud_pingpong', manual = '//contrib/ofed/libibverbs:man/ibv_ud_pingpong.1', package = "rdma")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin/ofed/libibverbs:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=rdma","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

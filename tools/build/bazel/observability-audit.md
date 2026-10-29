@@ -6010,3 +6010,11 @@ No explicit DTrace/SDT or direct audit calls found in the reviewed provider
 sources/build files. Native targets retain all maintained sources. Queue and
 completion errors, memory registration and device lifecycle observability need
 hardware/runtime review; no RDMA operation was exercised by build parity checks.
+
+### 2026-10-29 libibverbs utilities
+
+No explicit DTrace/SDT or direct audit calls found in reviewed libibverbs example
+sources or utility build files. Native source inventory preserves diagnostics.
+Device opening, memory registration and queue lifecycle remain observability
+review candidates; no claim about kernel-side auditing or probes follows from
+this userland source scan. Hardware behavior remains unqualified.
