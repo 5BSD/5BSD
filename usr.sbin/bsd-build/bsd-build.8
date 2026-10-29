@@ -2229,7 +2229,11 @@ entry in
 .Dq additional_execution_tools .
 The staging helper fingerprints that executable and records its runtime
 closure; it does not search the host PATH as a fallback.
-This bootstrap tool does not replace the Bazel-built programs under test.
+The bc/dc source generators similarly require an explicitly selected
+.Dq dirname
+entry in
+.Dq additional_execution_tools .
+These bootstrap tools do not replace the Bazel-built programs under test.
 The reference directory contains the verified Make installation and METALOG.
 The selected module lock is copied explicitly; repository downloads remain
 disabled during qualification.

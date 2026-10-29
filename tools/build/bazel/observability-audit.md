@@ -5947,3 +5947,12 @@ found in focused source scanning. Filemon records are distinct from DTrace/OS
 audit integration. 398 selected maintained unit-output comparisons and Lua
 expectation check pass; /dev/filemon-dependent cases are excluded by the suite
 and remain open, along with real ports/meta-mode dependency monitoring.
+
+### 2026-10-29 bc/dc
+
+Native targets preserve arithmetic/runtime sources, generated libraries/help,
+error handling, NLS catalogs and libedit. Focused C/header scanning found no
+explicit DTrace/SDT or audit_submit/auditon sites. Maintained selected bc/dc
+suites pass with saved native binaries; generated/problematic cases, interactive
+history/terminal and locale coverage remain open. No runtime/security logic or
+expected test outputs changed to obtain build or suite parity.

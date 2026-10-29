@@ -35715,3 +35715,50 @@ No host installation or /dev/filemon activation occurred. Frontend review:
 format-5 targets/artifacts and existing generator staging cover the default
 program; no build-bsd C/backend/manual change is required for this batch. Make
 remains production/default; native world/kernel/pkgbase completion is unproven.
+
+### 2026-10-29 bc/dc generators, NLS and runtime suites
+
+Added native bc/dc with 21 maintained C sources, four generated C inputs,
+source headers and native libedit. Preserved maintained compiler defaults,
+amd64 LTO, bc/dc executable alias and distinct manuals. VERSION.txt is a declared
+version-header input. Native source-generator action invokes unmodified
+strgen.sh/functions.sh with original gen/ relative input names and arguments,
+explicit execution tools, deterministic locale and action-output temporary
+storage. All four generated C files match Make byte-for-byte; copies/hashes
+are in bazel-bc-qualification-20261029/generated-source-parity.json.
+
+NLS catalogue inventory/relative aliases are explicit package declarations.
+Existing nls_catalogs selection controls catalog installation, compiler define
+and A/N manual variants. Maintained frontend final default run
+/usr/obj/usr/src/bazel-bc-20261029-r4 matches fresh Make reference
+bazel-bc-reference-20261029: 102 metadata records, 27 exact nonbinary payloads
+(including generated catalogs), links and one valid ELF/debug pair with matching
+global/undefined symbols/dynamic fields. Independent no-NLS run
+bazel-bc-no-nls-20261029 matches MK_NLS_CATALOGS=no on seven records, two manual
+payloads and ELF/debug parity. Builds use all 16 CPUs.
+
+Earlier failures are retained: incorrect staged rm label; generator attributes
+initially disallowing staged file tools; incorrect one-time alias inventory
+retaining '+' from Make += syntax; missing /usr/share/nls directory ownership.
+Corrected declarations/attributes rather than changing verifiers. Build graphs
+do not parse Make. Original failure report is retained beside final r4 reports.
+
+Execution SDK bazel-bc-exec-sdk-20261029 adds explicitly selected /usr/bin/dirname
+via maintained additional_execution_tools staging, including hashes/runtime
+closure. Existing staged rm is used. Frontend review: format-5 target/settings
+and maintained staging helper already support these inputs; bsd-build(8) now
+documents the dirname requirement. No build-bsd C/backend replacement needed.
+
+Disposable copies of the maintained bc test tree and saved native executable
+pass both tests/all.sh suites with installed-wrapper options bc/dc 1 1 0 0,
+plus -n for serial execution per suite. bc and dc suites ran independently.
+Both return zero and report all tests passed; runtime/summary.json/logs retain
+evidence. This covers selected arithmetic, script, stdin/error and extra-math/
+stack cases through host libraries/tools. Generated/problematic tests are off
+as in maintained wrappers; locale/history/terminal behavior is not qualified.
+No host installation or source fixture modifications occurred.
+
+Recursive test installation and Bazel-native test registration remain to be
+migrated, as do cross-target LTO behavior, bootstrap and performance gates.
+The passing host suites do not complete those tasks. Make remains production/
+default; complete world/kernel/pkgbase/runtime qualification remains open.
