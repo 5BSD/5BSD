@@ -325,7 +325,7 @@ follows the master switch:
 | `otel_hwstat` | hardware metrics | `hwstat watch --format otel` |
 | `otelpfd` | pf status counters and gauges | `DIOCGETSTATUS` on `/dev/pf` |
 | `otelauditd` | audit records as log records | `auditpipe(4)` + libbsm |
-| `otel_dtrace` | block I/O latency and bytes by `system.device` and `disk.io.direction`, exec/exit churn, signals | bsdinstruments `system-metrics` profile, one long-running trace exporting cumulative snapshots every `otel_dtrace_window` seconds (`--interval`) |
+| `otel_dtrace` | block I/O latency and bytes by `system.device` and `disk.io.direction`, exec/exit churn, signals, TCP state transitions by the new state as `network.connection.state` (`established`, `time_wait`, ...) | bsdinstruments `system-metrics` profile, one long-running trace exporting cumulative snapshots every `otel_dtrace_window` seconds (`--interval`) |
 
 otelpfd and otelauditd open their device as root, limit its capability
 rights, read the configuration and credentials, and then run as `_otel`

@@ -203,6 +203,8 @@ dtrace_profile_renders_body()
 {
 	[ -x "${BSDINSTRUMENTS}" ] || atf_skip "bsdinstruments is not installed"
 	atf_check -o match:"io:::done" -o match:"proc:::exit" \
+	    -o match:"tcp:::state-change" \
+	    -o match:"this->network__connection__state" \
 	    -o not-match:"syscall::" -o not-match:"fbt::" \
 	    -o not-match:"sched:::" -o not-match:"profile-" \
 	    "${BSDINSTRUMENTS}" generate system-metrics
@@ -227,6 +229,8 @@ dtrace_system_metrics_body()
 	# Process churn, a signal and disk I/O for the whole window: the
 	# profile may take a while to compile on a slow (emulated) host.
 	tmp=$(mktemp /var/tmp/otel-io.XXXXXX)
+	nc=$(command -v nc) || nc=
+	port=$((20000 + $$ % 20000))
 	while kill -0 $pid 2>/dev/null; do
 		/usr/bin/true
 		sh -c 'kill -USR1 $$' 2>/dev/null || true
@@ -234,6 +238,18 @@ dtrace_system_metrics_body()
 		# returns; /var/tmp is a disk file system, unlike a tmpfs
 		# work directory.
 		dd if=/dev/zero of="$tmp" bs=64k count=16 conv=fsync 2>/dev/null
+		# A loopback TCP connection: listen, established and, for
+		# the closing side, time_wait (tcp:::state-change).
+		if [ -n "$nc" ]; then
+			port=$((port + 1))
+			$nc -l 127.0.0.1 $port > /dev/null 2>&1 &
+			lpid=$!
+			sleep 0.3
+			echo x | $nc -N 127.0.0.1 $port > /dev/null 2>&1
+			sleep 0.3
+			kill $lpid 2>/dev/null
+			wait $lpid 2>/dev/null
+		fi
 		sleep 1
 	done
 	rm -f "$tmp"
@@ -247,6 +263,11 @@ dtrace_system_metrics_body()
 	    -o match:"^metric bsdinstruments.system-metrics.exits sum" \
 	    -o match:"^point bsdinstruments.system-metrics.signals \[signal=" \
 	    -o match:"^point bsdinstruments.system-metrics.io_bytes \[system.device=[a-z]+[0-9]+,disk.io.direction=(read|write)\] [1-9]" \
+	    cat summary
+	[ -n "$nc" ] || return 0
+	atf_check -o match:"^point bsdinstruments.system-metrics.tcp_state_changes \[network.connection.state=established\] [1-9]" \
+	    -o match:"^point bsdinstruments.system-metrics.tcp_state_changes \[network.connection.state=time_wait\] [1-9]" \
+	    -o not-match:"network.connection.state=state-" \
 	    cat summary
 }
 
