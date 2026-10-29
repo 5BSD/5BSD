@@ -101,3 +101,13 @@ _X86_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-wr
 ) for stem, flags in _X86_TABLES]
 cc_library(name = "x86_generated_headers", hdrs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "x86_generated_outputs", srcs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], visibility = ["//visibility:public"])
+
+_ARM_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget']), ('SystemRegister', ['-gen-searchable-tables'])]
+[bsd_tablegen(name = "arm_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/ARM:ARM.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/ARM:definitions", "//contrib/llvm-project/llvm/include:arm_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/ARM"],
+    flags = flags, output = "ARMGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _ARM_TABLES]
+cc_library(name = "arm_generated_headers", hdrs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "arm_generated_outputs", srcs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], visibility = ["//visibility:public"])

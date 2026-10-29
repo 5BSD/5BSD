@@ -12812,3 +12812,41 @@ no installation/publication occurred.
 The separate `bazel-llvm-x86-default-20261029` inventory-only run resolves 86
 sources matching expanded Make with clang_extras disabled. It is not a separate
 default compiled/runtime qualification.
+
+### Native ARM backend tables (2026-10-29)
+
+14 native TableGen outputs now match fresh Make bytes (20,767,577 bytes), including
+ARM assembly/disassembly, instruction selection, register, emitter and system-register
+tables. Existing declared inventories cover 29 ARM and 39 shared .td files; source
+include closure matches Make depfiles plus primary ARM.td (68 total inputs).
+Evidence: `/usr/obj/usr/src/bazel-llvm-arm-tables-qualification-20261029`; maintained
+frontend run `bazel-llvm-arm-tables-20261029`, 16 jobs. Make reference uses existing
+bootstrap generator; native generator still depends on staged SDK/runtime.
+
+This does not establish ARM backend compilation/runtime, cross-building a system,
+independent bootstrap or comparative performance. Backend compilation is in progress
+separately. Existing build-bsd.c/format-5 backend accepts generator targets without
+parser/staging changes; Make remains production/default.
+
+### ARM backend component compilation qualified (2026-10-29)
+
+Continuation of the preceding table entry: native ARM backend now compiles all
+66 installed-world sources with hidden visibility, declared private headers and
+qualified generated tables. Maintained frontend `bazel-llvm-arm-backend-20261029`
+completed with 16 jobs. All 66 PIC objects match fresh Make ELF global/weak symbol
+type, binding, visibility, defined/undefined state and name. Source inventory and
+archive member multiplicities match expanded Make. Evidence/scripts:
+`/usr/obj/usr/src/bazel-llvm-arm-backend-qualification-20261029`. No compiler source
+or sandbox modifications. Reference uses staged SDK and existing bootstrap generators.
+
+Added llvm_target_arm boolean (default true for current native AMD64 world target-all
+selection); disabling makes explicit component incompatible. Full aggregate target-all
+semantics/registration and cross-platform defaults remain unfinished. This builds
+an AMD64-hosted compiler component, not an ARM system. Hidden visibility is applied
+from the start following the X86 correction.
+
+No instruction identity, ARM code execution, full compiler linkage, independent
+bootstrap or performance claim. Other backends and world/kernel/pkgbase/runtime/
+CPU/memory/disk gates remain open. Frontend review: existing build-bsd.c and format-5
+backend transport the setting; manual updated, no staging/publication change.
+Make remains production/default; no host installation/publication occurred.

@@ -6411,3 +6411,12 @@ probe/audit changes. ELF type/binding/visibility parity is checked; initial miss
 hidden-visibility build is rejected. Runtime mitigation correctness, unwind behavior
 and generated-code tracing remain unqualified. Evidence:
 `/usr/obj/usr/src/bazel-llvm-x86-backend-qualification-20261029`.
+
+### ARM backend (2026-10-29)
+
+14 generated tables match Make bytes; 66 backend objects match ELF symbol type,
+binding, visibility and defined state. Upstream sources unchanged, no new probes/
+audit hooks. Target diagnostics, unwind/debug behavior and execution/tracing of
+generated ARM code still require runtime qualification. Evidence under
+`/usr/obj/usr/src/bazel-llvm-arm-tables-qualification-20261029` and
+`/usr/obj/usr/src/bazel-llvm-arm-backend-qualification-20261029`.

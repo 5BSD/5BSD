@@ -31,3 +31,87 @@ filegroup(name = "definitions", srcs = [
     "ARMScheduleV6.td",
     "ARMSystemRegister.td"
 ], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libllvm; not an additional installed library.
+cc_library(name = "arm", srcs = [
+    "A15SDOptimizer.cpp",
+    "ARMAsmPrinter.cpp",
+    "ARMBaseInstrInfo.cpp",
+    "ARMBaseRegisterInfo.cpp",
+    "ARMBasicBlockInfo.cpp",
+    "ARMBlockPlacement.cpp",
+    "ARMBranchTargets.cpp",
+    "ARMCallLowering.cpp",
+    "ARMCallingConv.cpp",
+    "ARMConstantIslandPass.cpp",
+    "ARMConstantPoolValue.cpp",
+    "ARMExpandPseudoInsts.cpp",
+    "ARMFastISel.cpp",
+    "ARMFixCortexA57AES1742098Pass.cpp",
+    "ARMFrameLowering.cpp",
+    "ARMHazardRecognizer.cpp",
+    "ARMISelDAGToDAG.cpp",
+    "ARMISelLowering.cpp",
+    "ARMInstrInfo.cpp",
+    "ARMInstructionSelector.cpp",
+    "ARMLatencyMutations.cpp",
+    "ARMLegalizerInfo.cpp",
+    "ARMLoadStoreOptimizer.cpp",
+    "ARMLowOverheadLoops.cpp",
+    "ARMMCInstLower.cpp",
+    "ARMMachineFunctionInfo.cpp",
+    "ARMMacroFusion.cpp",
+    "ARMOptimizeBarriersPass.cpp",
+    "ARMParallelDSP.cpp",
+    "ARMRegisterBankInfo.cpp",
+    "ARMRegisterInfo.cpp",
+    "ARMSLSHardening.cpp",
+    "ARMSelectionDAGInfo.cpp",
+    "ARMSubtarget.cpp",
+    "ARMTargetMachine.cpp",
+    "ARMTargetObjectFile.cpp",
+    "ARMTargetTransformInfo.cpp",
+    "AsmParser/ARMAsmParser.cpp",
+    "Disassembler/ARMDisassembler.cpp",
+    "MCTargetDesc/ARMAsmBackend.cpp",
+    "MCTargetDesc/ARMELFObjectWriter.cpp",
+    "MCTargetDesc/ARMELFStreamer.cpp",
+    "MCTargetDesc/ARMInstPrinter.cpp",
+    "MCTargetDesc/ARMMCAsmInfo.cpp",
+    "MCTargetDesc/ARMMCCodeEmitter.cpp",
+    "MCTargetDesc/ARMMCTargetDesc.cpp",
+    "MCTargetDesc/ARMMachORelocationInfo.cpp",
+    "MCTargetDesc/ARMMachObjectWriter.cpp",
+    "MCTargetDesc/ARMTargetStreamer.cpp",
+    "MCTargetDesc/ARMUnwindOpAsm.cpp",
+    "MCTargetDesc/ARMWinCOFFObjectWriter.cpp",
+    "MCTargetDesc/ARMWinCOFFStreamer.cpp",
+    "MLxExpansionPass.cpp",
+    "MVEGatherScatterLowering.cpp",
+    "MVELaneInterleavingPass.cpp",
+    "MVETPAndVPTOptimisationsPass.cpp",
+    "MVETailPredication.cpp",
+    "MVEVPTBlockPass.cpp",
+    "TargetInfo/ARMTargetInfo.cpp",
+    "Thumb1FrameLowering.cpp",
+    "Thumb1InstrInfo.cpp",
+    "Thumb2ITBlockPass.cpp",
+    "Thumb2InstrInfo.cpp",
+    "Thumb2SizeReduction.cpp",
+    "ThumbRegisterInfo.cpp",
+    "Utils/ARMBaseInfo.cpp"
+], hdrs = glob(["**/*.h"]), includes = ["."],
+    deps = ["//lib/clang/libllvm:arm_generated_headers","//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-fvisibility=hidden", "-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC", "LLVM_BUILD_LLVM_DYLIB"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:llvm_target_arm_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":arm"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":arm", pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_component_sources(name = "source_inventory", groups = [":arm"], visibility = ["//visibility:public"])

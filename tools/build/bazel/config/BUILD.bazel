@@ -413,3 +413,7 @@ selects.config_setting_group(name = "clang_extras_or_lldb_enabled", match_any = 
 # Native AMD64 compiler backend; cross-platform defaults remain unqualified.
 bool_flag(name = "llvm_target_x86", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "llvm_target_x86_enabled", flag_values = {":llvm_target_x86": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_arm", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_arm_enabled", flag_values = {":llvm_target_arm": "true"}, visibility = ["//visibility:public"])

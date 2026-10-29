@@ -3888,3 +3888,11 @@ integration requirement. Its installed-world source selection includes the
 disassembler and adds the MCA extension when
 .Cm clang_extras
 is enabled. Cross-platform defaults and bootstrap selection remain unqualified.
+
+.Pp
+The native AMD64-hosted LLVM ARM component uses the boolean
+.Cm //tools/build/bazel/config:llvm_target_arm ,
+which defaults to true to match the current world target-all selection.
+Disabling it makes the explicit ARM component incompatible. This selects a compiler
+backend; it does not select the host architecture or qualify an ARM system build.
+Aggregate target-all and cross-platform defaults remain unfinished.
