@@ -10,7 +10,7 @@ bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_SCRIPTS), int
     owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for n in _SCRIPTS]
 bsd_install_file(name = "kyuafile_file", src = ":kyuafile", destination = "/usr/tests/libexec/rc/Kyuafile",
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
-bsd_install_manifest(name = "install_manifest", entries = [":" + n + "_file" for n in _SCRIPTS] + [":kyuafile_file"])
+bsd_install_manifest(name = "install_manifest", visibility = ["//libexec/rc:__pkg__"], entries = [":" + n + "_file" for n in _SCRIPTS] + [":kyuafile_file"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.

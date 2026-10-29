@@ -34414,3 +34414,11 @@ recursive installation comparisons. Linked text/read-only data match after
 normalizing Make's embedded absolute source paths to source-relative paths in
 the reference build. Original mismatch evidence is retained in the checkpoint.
 Runtime execution and whole-world assembly remain separate qualification gates.
+
+### Recursive rc installation (2026-10-29)
+
+Use `//libexec/rc:recursive_install_archive` for the core rc files, configured
+rc.d services and optional rc tests. The existing `:install_archive` is core-only.
+The recursive target uses the existing native feature settings; tests are selected
+by `//tools/build/bazel/config:tests`. Default, tests-enabled and Heimdal recursive
+installation variants match Make. This does not qualify normal system startup.

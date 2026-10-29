@@ -9513,3 +9513,36 @@ tests bool selection, with declared child manifests and payload dependencies.
 No frontend C or backend protocol changes needed. This qualifies native ATF
 installation aggregation, not execution of its newly installed tests, a complete
 world, or repository publication. Make remains production/default.
+
+## 2026-10-29: recursive native rc installation
+
+Added //libexec/rc:recursive_install_archive, composing the existing core,
+unconditional/selected/compound service manifests and optional test manifest.
+The existing core-only install_archive remains available for component checks.
+rc.d directory policy is now shared by its own archive and the recursive target,
+so the conditional Heimdal directory is not independently duplicated. Narrow
+visibility permits the parent to consume the test manifest and Heimdal selector.
+
+Independent recursive rootless Make references match native installation exactly:
+
+| Configuration | Payload files | Metadata records |
+| --- | ---: | ---: |
+| default services, tests off | 165 | 169 |
+| default services, tests on | 177 | 182 |
+| Heimdal, tests on | 181 | 187 |
+
+Compared every payload byte, record path, owner/group, mode, flags, package/config
+tag and file/directory archive type. The Heimdal case includes /var/heimdal with
+root:wheel 0700 and the corresponding six service scripts. No live services or
+new tests were executed by these installation comparisons.
+
+Evidence: /usr/obj/usr/src/bazel-rc-aggregate-{default,tests,heimdal}-20261029/
+qualification/rc/parity.json. Scripts: bazel-rc-aggregate-qualification-20261029/
+make-<variant>.py and verify-<variant>.py; independent stages use corresponding
+-reference-20261029 directories. All used maintained build-bsd format-5 targets,
+typed tests/mitkrb5 settings and 16 jobs. Frontend/backends need no new protocol
+for this composition; documentation records the recursive target.
+
+Remaining libexec aggregation must include conditional test payloads for its
+other children and all parent option/architecture gates. This is not complete
+world/kernel/pkgbase or runtime qualification; Make stays production/default.

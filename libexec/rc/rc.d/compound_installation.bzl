@@ -17,3 +17,10 @@ def compound_installation(name):
             selected.append(":" + target)
         entries = entries + select({":" + condition: selected, "//conditions:default": []})
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])
+
+def service_directories():
+    """Directory policy shared by rc.d and recursive rc installation."""
+    return {"/etc/rc.d": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | select({
+        "//libexec/rc/rc.d:heimdal": {"/var/heimdal": '{"owner":"root","group":"wheel","mode":"0700","tags":["package=utilities"]}'},
+        "//conditions:default": {},
+    })
