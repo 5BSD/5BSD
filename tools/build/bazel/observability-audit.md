@@ -7009,3 +7009,6 @@ or OS audit integration is declared by this library Makefile. Native Casper
 dependencies retain their own existing probe targets. Review protocol operations
 and filesystem authorization observability separately; build parity is not proof
 of audit-event delivery or 9P runtime correctness.
+
+lib9p wire_test now covers Tversion serialization and malformed strings/short
+packets. It does not exercise backend authorization, logging delivery or OS audit.

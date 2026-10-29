@@ -15381,3 +15381,25 @@ do not count it as a working installed SDK interface. Native runtime and
 Casper-disabled qualification also remain open. Existing build-bsd/source_graph
 explicit targets and metadata output groups need no changes for this addition.
 Whole-system and performance gates remain open; Make stays production/default.
+
+### Native lib9p wire-format test (2026-10-29)
+
+Added cc_test //lib/lib9p:wire_test. It checks the fixed 19-byte 9P2000 Tversion
+wire representation, encoding/decoding across all 18 nonempty two-iovec splits,
+rejects all 19 shorter packet lengths, and rejects an embedded NUL in the version
+string. It frees decoded allocations on both success and failure. Native run
+bazel-lib9p-runtime-20261029-r2 passes through build-bsd (16 jobs), with explicit
+static project-library linkage. This covers serialization only, not server,
+filesystem authorization, transport concurrency or Casper-disabled behavior.
+
+Initial run bazel-lib9p-runtime-20261029 failed before execution because the
+loader could not find Bazel's generated liblib_Slibnv_Slibnv.so. Selecting static
+project-library linkage makes this unit test executable; it does not fix or
+qualify shared cc_test runtime resolution. Preserve that failure as an open
+integration issue, and do not infer dynamic test support from the passing test.
+
+The maintained bhyve Makefile explicitly includes contrib/lib9p headers, so it
+does not use the incomplete installed private header set. No public interface
+expansion was made merely to match that internal consumer. Existing frontend
+explicit targets/tests support this test without contract changes. Full-system,
+bootstrap, shared-test-runtime, sandbox/cache and performance gates remain open.
