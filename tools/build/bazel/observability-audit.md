@@ -6261,3 +6261,9 @@ Default 839-source inventory/archive/symbol multiplicities match Make references
 reduced 640-source selection matches expanded Make. No compiler/probe/audit source
 changes. This is an object aggregate; compiler execution, emitted code and runtime
 observability remain unqualified. Evidence: bazel-clang-aggregate-qualification-20261029.
+
+### 2026-10-29 LLVM IR
+
+All 77 maintained IR sources match Make object symbols/archive inventory. No source,
+probe or audit changes. IR verifier/runtime, optimization behavior and emitted-code
+observability remain unqualified. Evidence: bazel-llvm-ir-qualification-20261029.

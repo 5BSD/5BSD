@@ -36941,3 +36941,28 @@ Remaining work includes LLVM libraries/backends, shared/static linkage/install,
 compiler execution and world/kernel/pkgbase/bootstrap/runtime/cache/performance
 qualification. No instruction equivalence or full compiler claim. Make remains
 production/default; no host installation/publication occurred.
+
+### 2026-10-29 native LLVM IR component
+
+Added all 77 maintained IR sources as a native libllvm component with explicit
+private/public headers and native generated IR/intrinsic/runtime-call/value-type/
+directive/target definitions. Compilation uses libllvm's LLVM_BUILD_LLVM_DYLIB
+and -UPIC contract with existing assertion/debug settings. No LLVM sources or
+configuration headers changed, and no staged generated headers were imported into
+the native build.
+
+Maintained frontend bazel-llvm-ir-20261029 (16 jobs) succeeds. All 77 PIC object
+global/undefined symbol inventories match fresh isolated Make IR objects;
+archive member multiplicities also match. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-ir-qualification-20261029.
+Reference generated definitions use existing Make bootstrap tools; compilation
+uses the staged SDK. Results qualify compilation structure, not IR verifier
+behavior, optimization semantics, instruction identity, complete LLVM linkage or
+performance. Alternate shared/static compile contracts remain unqualified.
+
+Frontend review: existing typed settings, generated providers and format-5 artifact
+backend suffice; no build-bsd.c/manual interface change required. Default libclang
+object coverage remains 839; LLVM IR is a separate 77-source component and must not
+be counted as more Clang sources. Most LLVM libraries/backends and complete compiler/
+world/kernel/pkgbase/bootstrap/runtime/cache/performance qualification remain open.
+Make stays production/default; no host installation/publication occurred.
