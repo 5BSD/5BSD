@@ -7201,3 +7201,11 @@ randomness shim and symbol renames. No Make-declared DTrace provider exists.
 Artifact parity is not cryptographic validation; known-answer/negative signature
 checks and pkg failure diagnostics still require consumer runtime qualification.
 No signing keys, repository state, installation or audit policy were changed.
+
+### pkg bootstrap executable (2026-10-29)
+
+The native program preserves all six maintained sources and native dependency
+linkage. No local Make-declared DTrace provider is present; archive/fetch dependency
+probe generation is carried by their existing targets. Repository selection,
+signature rejection, download/extraction failure reporting and bootstrap authorization
+still require isolated runtime tests. No network fetch or package installation ran.

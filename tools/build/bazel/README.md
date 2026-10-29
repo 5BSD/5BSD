@@ -41047,3 +41047,28 @@ cryptographic runtime qualification. Signature known-answer/negative tests and
 consumer runtime remain open. Existing build-bsd/source_graph explicit inputs
 support these targets without interface changes. Complete world/kernel/pkgbase,
 bootstrap, sandbox/cache and performance gates remain open; Make stays default.
+
+### Native pkg bootstrap executable (2026-10-29)
+
+Added explicit native compilation for pkg.c, rsa.c, dns_utils.c, config.c, ecc.c
+and hash.c with their four local headers. Linkage uses native archive/fetch/ucl/
+crypto/ssl/util/md shared targets and native libder/libpkgecc PIE internal targets,
+preserving the maintained dependency order and PIE executable policy.
+
+Run bazel-pkg-bootstrap-20261029 passes through build-bsd with 16 jobs. Fresh Make
+reference matches all 915 global/weak symbols and ordered NEEDED/flags metadata.
+Evidence: /usr/obj/usr/src/bazel-pkg-bootstrap-reference-20261029/inputs.json,
+make.py, verify.py and comparison.json. The reference script's inherited final
+libder text is cosmetic; its actual commands and object/stage paths select usr.sbin/pkg.
+No pkg executable was run, no repository was contacted and no host package state
+was modified.
+
+This is the bootstrap executable candidate, not the full ports pkg implementation
+or a completed pkgbase publication workflow. Installation/manual/debug and repository
+configuration payloads remain next: preserve release-branch/architecture defaults,
+explicit PKGCONF override, configuration tags and all four repository files. Do not
+hardcode the current release branch to make that comparison pass. Signature and
+bootstrap network/runtime tests remain open. Reviewed build-bsd/source_graph explicit
+target inputs: no interface change is required for this executable. Whole-system,
+kernel/pkgbase/bootstrap and sandbox/cache/performance gates remain incomplete;
+Make remains production/default.

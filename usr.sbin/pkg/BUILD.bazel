@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "pkg", srcs = ["pkg.c", "rsa.c", "dns_utils.c", "config.c", "ecc.c", "hash.c",
+    "pkg.h", "dns_utils.h", "config.h", "hash.h"],
+    deps = ["//lib/libarchive:archive", "//lib/libder:der_pie", "//lib/libfetch:fetch",
+        "//secure/lib/libpkgecc:pkgecc_pie", "//lib/libucl:ucl", "//secure/lib/libcrypto:crypto",
+        "//secure/lib/libssl:ssl", "//lib/libutil:util", "//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libarchive:archive_shared", "//lib/libfetch:fetch_shared",
+        "//lib/libucl:ucl_shared", "//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared",
+        "//lib/libutil:util_shared", "//lib/libmd:md_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
