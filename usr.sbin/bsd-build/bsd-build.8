@@ -3813,3 +3813,12 @@ It currently controls LLD-dependent source selection in the native installed
 LLVM CodeGen component, together with
 .Cm clang_extras .
 This does not qualify the LLD executable or bootstrap library selection.
+
+.Pp
+In the native installed LLVM MC component, the disassembler entry source is
+selected when any of
+.Cm clang_extras ,
+.Cm lld ,
+or
+.Cm lldb
+is true. Bootstrap selection remains unqualified.

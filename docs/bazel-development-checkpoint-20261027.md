@@ -12373,3 +12373,29 @@ LLVM IR/Analysis/Transforms/CodeGen now cover 818 default component sources, sep
 from libclang's 839-source object aggregate. Remaining LLVM libraries/target backends,
 linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open.
 Make remains production/default; no host installation/publication occurred.
+
+### 2026-10-29 native installed LLVM MC component
+
+Added 81 core MC sources, two XDW sources always selected for installed libllvm,
+and the XDL disassembler entry source selected by clang_extras OR lld OR lldb:
+84 default sources. Uses native generated/public/private headers and the installed
+shared-library compile contract. Bootstrap TOOLS_PREFIX selection remains outside
+this component's qualification. No compiler source/sandbox changes were required.
+
+Maintained frontend bazel-llvm-mc-20261029 (16 jobs) succeeds. All 84 PIC object
+global/undefined symbol inventories and archive member multiplicities match fresh
+isolated Make references. Resolved native source inventories match expanded Make
+for default (84) and all three selectors disabled (83). The reduced run requests
+inventory only, not compiled alternate objects. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-mc-qualification-20261029.
+References use existing bootstrap generators/staged SDK headers. Streaming verifier
+reports 5.83 seconds and 57,056 KB maximum RSS; verifier-only measurements, not build
+performance. Results do not qualify assembler/disassembler behavior, instruction
+encoding, full linkage, runtime or performance.
+
+Frontend review: added a group of existing typed selectors and updated the maintained
+manual; current build-bsd.c format-5 backend/artifacts suffice. LLVM IR/Analysis/
+Transforms/CodeGen/MC now cover 902 default component sources, separately from
+libclang's 839-source aggregate. Remaining LLVM libraries/target backends and compiler/
+world/kernel/pkgbase/bootstrap/runtime/cache/performance gates stay open. Make stays
+production/default; no host installation/publication occurred.

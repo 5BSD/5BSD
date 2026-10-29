@@ -6287,3 +6287,10 @@ unqualified. Evidence: bazel-llvm-transforms[-extras]-qualification-20261029.
 checks cover default/no-LLD/extras variants. No compiler/probe/audit source changes.
 Machine-code generation, debug-location behavior and runtime observability remain
 unqualified. Evidence: bazel-llvm-codegen-qualification-20261029.
+
+### 2026-10-29 LLVM MC
+
+84 default source objects match Make symbols/archive inventories; default/reduced
+source selections match expanded Make. No compiler/probe/audit source changes.
+Assembler/disassembler and encoded instruction behavior remain unqualified.
+Evidence: bazel-llvm-mc-qualification-20261029.

@@ -405,3 +405,5 @@ selects.config_setting_group(name = "clang_format_or_extras_enabled", match_any 
 bool_flag(name = "lld", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "lld_enabled", flag_values = {":lld": "true"}, visibility = ["//visibility:public"])
 selects.config_setting_group(name = "clang_extras_or_lld_enabled", match_any = [":clang_extras_enabled", ":lld_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_extras_or_lld_or_lldb_enabled", match_any = [":clang_extras_enabled", ":lld_enabled", ":lldb_enabled"], visibility = ["//visibility:public"])
