@@ -34688,3 +34688,36 @@ veriexec policy input variants, matching-kernel runtime tests, complete world,
 kernel, pkgbase publication and performance gates remain. Existing format-5
 frontend target/metadata handling covered these corrections; no C/protocol change
 required. Make remains production/default; BIP remains excluded.
+
+### 2026-10-29 /sbin option selection and next parent audit
+
+Twelve configured archive-selection comparisons now match Make's evaluated
+SUBDIR: default, tests disabled, IPv4-only, IPv6-only, no IP, OpenSSL disabled,
+crypt disabled, CDDL disabled, HAST/DUMMYNET/PF/QUOTAS/ZFS disabled together,
+BearSSL enabled, explicit veriexec enabled, and BearSSL enabled with veriexec
+explicitly disabled. Internal reroot_seed and .WAIT are excluded from the
+installed-child comparison because init consumes the former and the latter is
+a Make ordering marker. This checks selected children, not installation or
+runtime behavior under every combination.
+
+Evidence: /usr/obj/usr/src/sbin-selection-20261029.py and
+/usr/obj/usr/src/bazel-sbin-selection-20261029/{selection.json,*.stdout,*.stderr}.
+Veriexec analyses explicitly selected libsecureboot/tests:trust-policy.json and
+bearssl-root.pem, both public test fixtures. No implicit trust was added and no
+production verified-boot qualification is implied. The no-policy analysis failure
+remains recorded in the earlier aggregate run.
+
+Next parent is /usr/bin. Make's default evaluated SUBDIR contains 242 direct
+components in this configuration. Audit evidence is
+/usr/obj/usr/src/bazel-usr-bin-audit-20261029.json. Fifty selected directories
+lack a local BUILD.bazel, including su/passwd/newgrp, netstat/sockstat, mkimg,
+mkuzip, bmake, clang, kyua and other programs or recursive groups. Some may have
+native implementations elsewhere; do not count them as converted until those
+edges and recursive installation contents are reconciled. Eight more BUILD files
+have no literal archive name; macros and aggregate structure need inspection.
+BUILD presence or a regex count alone is not conversion evidence.
+
+No implementation changed in this audit turn; existing frontend typed settings
+were exercised via the recorded configured-query commands. No new frontend
+protocol requirements identified. Make remains production/default. Full world,
+kernel, packaging, runtime and performance gates remain incomplete.
