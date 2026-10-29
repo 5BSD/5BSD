@@ -14867,3 +14867,25 @@ Reviewed build-bsd.c and source_graph.py; explicit targets support this componen
 without contract changes. Make-prepared SDK and host dependencies remain; full
 world/kernel/pkgbase/bootstrap/sandbox/cache/performance gates remain open.
 Make stays production/default; no host installation or database change occurred.
+
+### Native remote administration client and helper installation (2026-10-29)
+
+Added native kadmin linked with PIE common/ss support and native client/RPC/GSSAPI/
+Kerberos libraries. Installation includes the maintained k5srvutil script, both
+manuals, and the cross-section kadmin.local.8.gz hardlink owned by this package.
+No script source was rewritten. The first archive comparison caught missing
+package ownership on /usr/bin created by Make's script install; the archive now
+preserves that directory record instead of discarding the difference.
+
+Final run bazel-kadmin-runtime-20261029-r2 matches fresh Make installation:
+9 records, program/debug symbol and dynamic-link metadata, debuglink
+CRC, byte-identical script/manuals, and manual hardlink target/content. The
+verifier also confirms the Make reference's alias and target share an inode.
+Evidence: /usr/obj/usr/src/bazel-kadmin-reference-20261029.
+
+Despite the run-directory name, no runtime tests were requested. Authenticated
+remote administration and k5srvutil command workflows remain unqualified.
+Reviewed build-bsd.c/source_graph.py; existing explicit target inputs support the
+new component without frontend/schema changes. SDK bootstrap, whole-system
+composition, pkgbase/publication, sandbox/cache and performance gates remain
+open. Make stays production/default; no host install or administration mutation.

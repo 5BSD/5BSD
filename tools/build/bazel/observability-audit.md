@@ -6883,3 +6883,10 @@ not establish administration-command runtime or audit coverage.
 Artifact parity passes; scans of keytab.c/keytab_local.c found no DTrace/SDT or
 audit hooks. Existing common-library/server instrumentation is unchanged. Local
 keytab/database mutations need runtime and audit-policy review; none were run.
+
+### kadmin and k5srvutil (2026-10-29)
+
+Native binary/script/manual installation matches Make. The existing keytab.c
+source and helper script are preserved; no instrumentation added or removed.
+Remote keytab/principal operations and their audit behavior remain runtime
+qualification work. The earlier keytab source scan found no local probe hooks.
