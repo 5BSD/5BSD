@@ -15427,3 +15427,24 @@ and the existing native runtime-path feature support this. This selected loader
 audit does not establish all tests' dependency closure or runtime hermeticity.
 Protocol transport/backend authorization, full-system, cache/sandbox/bootstrap
 and performance qualification remain open. Make remains production/default.
+
+### Native libbegemot build and installation (2026-10-29)
+
+Added source-owned native rpoll.c library targets using maintained USE_SELECT
+and QUADFMT definitions, libbegemot.so.4, static archive, header, compressed
+manual, five manual hard links, symlink and debug split/archive. The Make manual
+recipe only copies rpoll.man to rpoll.3; the native compressor consumes that
+same source directly, without an unnecessary generated intermediate.
+
+Run bazel-libbegemot-20261029 passes through build-bsd with 16 jobs. Fresh Make
+reference compilation/installation under /usr/obj verifies all 12 installation
+records, header/manual bytes, manual inode relationships, ordered archive
+members and global/weak symbols, installed shared/debug symbols, dynamic
+metadata and debuglink CRC. Evidence: bazel-libbegemot-reference-20261029
+(verify.py, install-comparison.json), bazel-libbegemot-make-20261029. These are
+artifact checks; event dispatch/timer runtime and configuration variants remain
+unqualified. No host installation occurred.
+
+Existing frontend explicit target inputs and backend metadata groups support
+this addition without changes. Complete world/kernel/pkgbase, bootstrap,
+sandbox/cache and performance gates remain open; Make stays production/default.

@@ -7012,3 +7012,11 @@ of audit-event delivery or 9P runtime correctness.
 
 lib9p wire_test now covers Tversion serialization and malformed strings/short
 packets. It does not exercise backend authorization, logging delivery or OS audit.
+
+### libbegemot (2026-10-29)
+
+The native target preserves rpoll.c and its USE_SELECT configuration. The
+maintained Makefile declares no DTrace provider; the source has no DTrace/SDT,
+syslog or OS audit hooks. Event-dispatch/timer tracing could help diagnosis,
+but no new instrumentation is introduced by this build migration. Runtime
+behavior and event observability are not established by artifact parity.
