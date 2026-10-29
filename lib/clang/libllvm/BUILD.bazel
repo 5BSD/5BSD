@@ -111,3 +111,13 @@ _ARM_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-wr
 ) for stem, flags in _ARM_TABLES]
 cc_library(name = "arm_generated_headers", hdrs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
 filegroup(name = "arm_generated_outputs", srcs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], visibility = ["//visibility:public"])
+
+_POWERPC_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "powerpc_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/PowerPC:PPC.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/PowerPC:definitions", "//contrib/llvm-project/llvm/include:powerpc_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/PowerPC"],
+    flags = flags, output = "PPCGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _POWERPC_TABLES]
+cc_library(name = "powerpc_generated_headers", hdrs = [":powerpc_" + stem.lower() for stem, _ in _POWERPC_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "powerpc_generated_outputs", srcs = [":powerpc_" + stem.lower() for stem, _ in _POWERPC_TABLES], visibility = ["//visibility:public"])

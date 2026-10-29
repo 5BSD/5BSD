@@ -37513,3 +37513,25 @@ bootstrap or performance claim. Other backends and world/kernel/pkgbase/runtime/
 CPU/memory/disk gates remain open. Frontend review: existing build-bsd.c and format-5
 backend transport the setting; manual updated, no staging/publication change.
 Make remains production/default; no host installation/publication occurred.
+
+### Native PowerPC backend TableGen outputs (2026-10-29)
+
+Added 12 declared native TableGen actions for PowerPC backend assembly/disassembly,
+calling conventions, DAG/fast/global instruction selection, instruction/emitter tables,
+register banks/registers and subtargets. Existing inventories cover 36 target-specific
+and 38 shared .td inputs. Make depfiles plus primary PPC.td match the transitive
+source include closure (74 total inputs).
+
+Maintained frontend `/usr/obj/usr/src/bazel-llvm-powerpc-tables-20261029` succeeds
+with 16 jobs. All 12 tables match fresh Make outputs byte-for-byte: 16,694,167 bytes.
+Evidence/scripts: `/usr/obj/usr/src/bazel-llvm-powerpc-tables-qualification-20261029`.
+Make uses its existing bootstrap llvm-tblgen; native generator uses the declared
+Bazel target and staged SDK/runtime. No pre-generated table substitution or runtime
+Make source-metadata parsing.
+
+Backend C++ compilation, hidden-visibility ELF parity, target registration, linkage,
+PowerPC code execution, independent bootstrap and comparative performance remain
+open. Frontend review: build-bsd.c/format-5 source_graph.py already accepts these
+targets; no new input, staging, security or manual contract. Other backends and full
+world/kernel/pkgbase/runtime qualification remain open. Make stays production/default;
+no host installation/publication occurred.

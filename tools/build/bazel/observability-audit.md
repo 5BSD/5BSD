@@ -6420,3 +6420,9 @@ audit hooks. Target diagnostics, unwind/debug behavior and execution/tracing of
 generated ARM code still require runtime qualification. Evidence under
 `/usr/obj/usr/src/bazel-llvm-arm-tables-qualification-20261029` and
 `/usr/obj/usr/src/bazel-llvm-arm-backend-qualification-20261029`.
+
+### PowerPC backend generated tables (2026-10-29)
+
+12 generated tables match Make bytes. No source probes or audit hooks changed;
+backend diagnostics and generated-code execution/tracing remain unqualified.
+Evidence: `/usr/obj/usr/src/bazel-llvm-powerpc-tables-qualification-20261029`.
