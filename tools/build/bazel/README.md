@@ -38008,3 +38008,34 @@ execution, dynamic runtime, independent bootstrap and world/kernel/pkgbase/cache
 performance gates remain open. No host installation, upgrade or publication.
 Frontend review: existing build-bsd.c/format-5 backend accepts composed target;
 manual updated with artifact boundaries. Make remains production/default.
+
+### Execution from composed compiler layout (2026-10-29)
+
+Extracted the authenticated-by-receipt composed archive into an isolated /usr/obj
+stage using tar data filtering; no host installation or chroot. Executed its actual
+stripped driver and native private libraries. PATH is /nonexistent; explicit
+--sysroot/--ld-path inputs select the recorded SDK and linker. LD_LIBRARY_PATH
+selects staged compiler libraries and the SDK execution runtime. Host kernel and
+rtld remain in use; this is not a booted/installed-system qualification.
+
+Resource discovery automatically resolves the staged usr/lib/clang/21 directory,
+without -resource-dir. All six compiler aliases share the expected inode. clang,
+cc, clang++ and c++ compile, link and execute C/C++ probes in both static and
+dynamic modes (eight cases). C includes packaged xmmintrin.h; C++ uses vector,
+numeric and iostream. Both preprocessor aliases produce the expected major version.
+Compiler and all four generated dynamic programs' loader traces resolve libraries
+only from the stage or declared SDK runtime, apart from host rtld; the two private
+compiler libraries resolve specifically to the staged native artifacts. No host
+compiler/linker fallback. The CC shell script's absolute /usr/bin/c++ invocation
+was not run outside a matching root; its payload was previously byte-verified.
+
+Commands, archive/compiler context and outputs are retained at
+/usr/obj/usr/src/bazel-clang-staged-execution-qualification-20261029-r2/results.json;
+check.py reproduces the run in a fresh directory. The initial run without output-
+program loader checks remains separately retained. These are diagnostic staged-
+layout checks, not yet a maintained Bazel installed-layout test. Existing maintained
+SDK C/C++ tests cover direct action compilation/link/execution. Integrating this
+layout coverage, native linker/runtime composition, independent bootstrap and full
+world/kernel/pkgbase/cache/performance qualification remain open.
+Frontend review: no new build inputs/policy/publication semantics; existing composed
+artifact is exercised. Make remains production/default.

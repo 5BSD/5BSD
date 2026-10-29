@@ -6537,3 +6537,11 @@ compiler runtime libraries or an installed complete toolchain.
 277 installation records, 264 nonbinary payloads and three debuglink CRCs verified
 against scoped Make references. No source/probe changes; these packaging checks
 do not establish dynamic runtime audit/probe delivery or installed-system behavior.
+
+### Staged compiler execution (2026-10-29)
+
+Eight C/C++ static/dynamic link/run cases, automatic resource discovery and six
+aliases checked from the composed archive. Loader paths checked for compiler and
+dynamic outputs. SDK runtime/linker and host rtld/kernel remain dependencies.
+This diagnostic does not exercise audit/DTrace delivery or the CC script under a
+matching root; installed-system tests remain required.
