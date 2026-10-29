@@ -6315,3 +6315,10 @@ bazel-llvm-object-formats-qualification-20261029.
 39 default sources match Make source/object/archive inventories. No source/probe/
 audit changes. Profiling, coverage, optimization remarks and codegen-data runtime
 behavior remain unqualified. Evidence: bazel-llvm-profile-qualification-20261029.
+
+### 2026-10-29 LLVM DebugInfo
+
+93 default and 188 extras sources match Make source/object/archive inventories.
+No compiler/probe/audit source changes. Debug format parsing, symbolization and
+debugger behavior remain unqualified. Evidence:
+bazel-llvm-debug[-extras]-qualification-20261029.

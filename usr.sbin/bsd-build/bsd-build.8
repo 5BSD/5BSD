@@ -3836,3 +3836,9 @@ The BinaryFormat component selects ELF.cpp when either
 or
 .Cm lldb
 is enabled. Bootstrap selection remains unqualified.
+
+.Pp
+The installed LLVM DebugInfo component selects additional debug-format and
+symbolization sources with
+.Cm clang_extras .
+This does not establish debugger execution or bootstrap library qualification.

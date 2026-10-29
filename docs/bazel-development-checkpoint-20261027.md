@@ -12474,3 +12474,35 @@ backend/artifacts suffice; no build-bsd.c/manual interface change needed. Remain
 LLVM libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance gates remain open. Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native LLVM DebugInfo default and extras
+
+Added 93 default installed-world DebugInfo sources (77 MIN plus 16 MIW), with 95
+additional sources selected by clang_extras. Public/generated dependencies are
+native. First package load exposed an invalid copied private-header glob: this
+directory has no private .h files. Removed the declaration, retaining the failed
+bazel-llvm-debug-20261029 run; no empty-glob exception or sandbox/source patch.
+
+Corrected frontend bazel-llvm-debug-20261029-r2 (16 jobs) succeeds. All 93 PIC objects'
+global/undefined symbol inventories and archive member multiplicities match fresh
+isolated Make objects. Separate bazel-llvm-debug-extras-20261029 succeeds; all 188
+objects and archive members match a separate fresh Make MK_CLANG_EXTRAS=yes build.
+Both resolved inventories match expanded Make ${SRCS}. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-debug[-extras]-qualification-20261029.
+
+Extras verifier initially counted 189 historical output paths for 188 current
+artifacts: adding another EnumTables.cpp moved the previous unnumbered CodeView
+object into Bazel's collision layout. Corrected provenance selection to require a
+recorded source for every current manifest artifact, with complete source equality
+and count assertions. The unused historical EnumTables.pic.o path is retained in
+source-map-history.json. No object or symbol comparison was excluded; all 188 pass.
+References use existing bootstrap generators/staged SDK headers; execution-log
+parsing streams records. Results do not establish DWARF/PDB/CodeView parser behavior,
+symbolization, malformed-input handling, instruction identity, debugger runtime or
+performance. Bootstrap variants remain unqualified.
+
+Frontend review: existing clang_extras/format-5 backend covers this component;
+manual updated for the setting consumer, no build-bsd.c parser change. Remaining
+LLVM libraries/target backends, full compiler linkage and world/kernel/pkgbase/
+bootstrap/runtime/cache/performance gates stay open. Make stays production/default.
+No host installation/publication occurred.
