@@ -5643,3 +5643,11 @@ Existing test assertions and diagnostics are preserved. expr applies exactly
 Make's command/diagnostic substitutions; sleep's missing Make registration is
 restored. This change concerns test installation, not production dd/sleep probes
 or runtime audit coverage. No new instrumentation or runtime success claimed.
+
+### 2026-10-29 /bin aggregation
+
+No production sources or probe declarations changed. Chflags test installation
+preserves its existing assertions/diagnostics. Pkill's redundant direct libelf
+link was removed while retaining libkvm's declared dependency. Aggregate build
+and ELF interface checks do not establish live tracing, audit or process-control
+runtime behavior; those gates remain separate.

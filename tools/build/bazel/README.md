@@ -34475,3 +34475,12 @@ setting drives its shebang and Kyua required_programs metadata. Building the
 archive does not execute Perl or require that runtime path to exist on the host.
 `//bin/tests:install_archive` installs the maintained recursive discovery file.
 Default and alternate Perl paths match Make installation. Runtime remains open.
+
+### Native /bin aggregate (2026-10-29)
+
+`//bin:installation_archives` builds the configured /bin installation archive
+set with complete metadata output groups. Tests use the existing tests flag;
+tcsh defaults on and NIS/Sendmail use their effective selectors. Tests-enabled
+and disabled recursive installations match Make for file metadata/non-ELF
+payloads, with ELF/debug symbol and dependency checks passing. These are separate
+installation archives, not a published repository or complete world build.

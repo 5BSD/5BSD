@@ -350,3 +350,6 @@ selects.config_setting_group(name = "tests_support_enabled", match_any = [":test
 
 # Runtime Perl interpreter for installed TAP tests (tap.test.mk default).
 string_flag(name = "tap_perl_interpreter", build_setting_default = "/usr/local/bin/perl", visibility = ["//visibility:public"])
+
+bool_flag(name = "tcsh", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tcsh_enabled", flag_values = {":tcsh": "true"}, visibility = ["//visibility:public"])

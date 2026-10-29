@@ -11,7 +11,7 @@ bsd_compress(name = "manual", src = "freebsd-version.1", output = "freebsd-versi
 bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man1/freebsd-version.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_manual"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+bsd_install_archive(name = "install_archive", visibility = ["//bin:__pkg__"], manifests = [":install_manifest"],
     directories = {"/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'},
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,

@@ -31,7 +31,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 
 # Aggregate installation candidate; pkgbase subpackage construction is separate.
 bsd_install_archive(
-    name = "install_archive",
+    name = "install_archive", visibility = ["//bin:__pkg__"],
     manifests = [":install_manifest"],
     directories = {"/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
 

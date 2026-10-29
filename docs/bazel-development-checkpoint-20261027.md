@@ -9753,3 +9753,53 @@ transport handles the new flag; no frontend C/backend protocol change. Shared
 rules propagate declared settings into generated artifacts and cache keys.
 Runtime Perl/pytest execution, remaining test integration, /bin/world/kernel
 aggregation, pkgbase and performance gates remain open. Make stays default.
+
+## 2026-10-29: native /bin aggregation and recursive installation
+
+Added //bin:installation_archives using the native archive-set rule. It selects
+39 unconditional children plus tcsh by default, with NIS/Sendmail/test gates.
+Added the tcsh bool (default true, matching src.opts.mk), narrow child archive
+visibility and missing chflags test installation. Existing cat/echo/ed/pkill/
+pwait/timeout archives already include their test manifests; the parent does
+not redundantly select separate test archives for these. Other test suites and
+parent discovery are selected explicitly. No runtime Make interpretation.
+
+Both maintained frontend builds and fresh recursive Make references passed:
+
+| Variant | Native archives/artifacts | Metadata records | Non-ELF payloads | ELF/debug pairs |
+| --- | --- | ---: | ---: | ---: |
+| tests disabled | 40 / 120 | 1467 | 1318 | 39 |
+| tests enabled | 59 / 177 | 2168 | 1977 | 41 |
+
+Compared every metadata record and non-ELF byte, symlink target and hardlink
+inode relation. Every ELF/debug pair validates; global/undefined symbols and
+NEEDED/RPATH/RUNPATH/SONAME properties match Make. Declared hardlink aliases
+(e.g. /bin/[) resolve to the canonical debug pair with byte/inode assertions.
+Whole ELF/debug byte identity and runtime behavior are not claimed. Aggregate
+metadata groups are complete and non-directory payload destinations are unique.
+
+The audit caught an extra direct libelf NEEDED edge in native pkill. Removed
+libelf from pkill's dynamic_deps; libkvm retains ownership of that dependency,
+matching Make's LIBADD=kvm jail. Both rebuilt variants pass all comparisons.
+Original mismatched ELF report remains retained.
+
+Four Make SUBDIR/configured native selection comparisons passed: default 41
+direct children, tests disabled 40, tcsh disabled 40, NIS/Sendmail enabled 43.
+Selection evidence: /usr/obj/usr/src/bazel-bin-selection-20261029/selection.json
+(script bin-selection-20261029.py). This query preceded removing redundant test
+archive edges, which did not alter direct child coverage; final aggregate
+uniqueness was checked independently.
+
+Evidence: bazel-bin-aggregate-{no-tests,tests}-20261029-r2/aggregation-check.json
+and frontend artifacts/logs; bazel-bin-recursive-qualification-20261029/
+{r2-installation-parity.json,r2-elf-parity.json,tests-installation-parity.json,
+tests-elf-parity.json}. Reproducers in that directory include make.py,
+make-tests.py, verify-r2.py, verify-tests.py, elf-fixed.py and elf-tests.py.
+References: bazel-bin-recursive-reference-20261029 and
+bazel-bin-recursive-tests-reference-20261029. All compilation used 16 jobs.
+
+Frontend review: existing format-5 target/setting/output groups handle the parent;
+no C frontend or protocol change. No host installation or runtime tests performed.
+Remaining world subtrees/kernel/modules, option/cross-architecture coverage,
+pkgbase/publication, bootstrap independence and runtime/performance qualification
+remain open. Make stays production/default.
