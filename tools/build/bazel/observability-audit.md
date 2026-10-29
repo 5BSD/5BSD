@@ -6335,3 +6335,10 @@ Evidence: bazel-llvm-sandbox-textapi-qualification-20261029.
 tables match bytes. No compiler/probe/audit source changes. Tool-driver, OpenMP and
 offload runtime remains unqualified. Evidence:
 bazel-llvm-frontend-drivers-qualification-20261029.
+
+### 2026-10-29 LLVM TargetParser
+
+13 maintained sources match Make source/object/archive inventories after fixing
+reference-helper generation ordering. No compiler/probe/audit source changes.
+Runtime CPU detection and cross-target behavior remain unqualified. Evidence:
+bazel-llvm-targetparser-qualification-20261029.

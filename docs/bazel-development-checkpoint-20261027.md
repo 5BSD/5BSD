@@ -12555,3 +12555,32 @@ cover this addition; no build-bsd.c/manual interface change required. Remaining 
 libraries/target backends, compiler linkage and world/kernel/pkgbase/bootstrap/
 runtime/cache/performance gates stay open. Make stays production/default.
 No host installation/publication occurred.
+
+### 2026-10-29 native LLVM TargetParser
+
+Added all 13 maintained TargetParser sources with generated architecture definitions
+and explicit Unix/Host.inc input for the supported FreeBSD target. Host.cpp consumes
+the existing compiler-default CcInfo provider; no literal host triple or SDK sysroot
+is introduced. Updated the manual to include this provider consumer. No LLVM source
+or sandbox-policy changes.
+
+Maintained frontend bazel-llvm-targetparser-20261029 (16 jobs) succeeds. Initial
+isolated Make helper requested generated headers and PIC objects in one parallel
+invocation; objects raced generation and failed on missing target-parser definitions.
+Retained the failed reference directory and make-r1.py. Corrected the helper to
+complete generated-header targets before a separate parallel object invocation,
+using fresh bazel-llvm-targetparser-reference[-objects]-20261029-r2 directories.
+Future direct-object reference helpers should retain this ordering.
+
+All 13 PIC object global/undefined symbol inventories and archive member
+multiplicities match the corrected fresh Make references. Resolved native source
+inventory matches expanded Make ${SRCS}. Evidence/scripts:
+/usr/obj/usr/src/bazel-llvm-targetparser-qualification-20261029.
+Reference generation uses existing bootstrap tools; compilation uses staged SDK
+headers. These checks do not qualify runtime CPU/feature detection, cross triples,
+OS-version adaptation, instruction identity, full compiler linkage or performance.
+
+Frontend review: existing typed compiler-default settings/format-5 artifacts suffice;
+manual updated, no build-bsd.c parser change required. Remaining LLVM libraries/
+target backends, linkage and world/kernel/pkgbase/bootstrap/runtime/cache/performance
+gates remain open. Make stays production/default; no host installation/publication.
