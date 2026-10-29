@@ -10296,3 +10296,24 @@ and complete /usr/bin integration remain pending.
 Frontend review: existing format-5 native targets/settings and metadata capture
 cover both qualifications; no C/protocol changes needed. Make stays production/
 default, and world/kernel/pkgbase/runtime/performance gates remain open.
+
+### 2026-10-29 etdump shared CD9660 inputs
+
+Added //usr.bin/etdump:install_archive with local sources and explicit shared
+makefs cd9660_conversion.c. Narrow header providers expose makefs/CD9660 and
+El Torito include layouts without broad source include paths. New
+usr.sbin/makefs/BUILD.bazel exposes shared inputs only; makefs itself remains
+unmigrated and must not be counted as complete from BUILD-file presence.
+
+Maintained frontend run (16 jobs): /usr/obj/usr/src/bazel-etdump-20261029.
+Fresh Make reference: bazel-etdump-native-reference-20261029 under the object
+root. Scripts: bazel-etdump-qualification-20261029. qualification/etdump reports
+prove five equal metadata records, exact compressed manual bytes, valid debug
+pairing, global/undefined symbol equality and matching dynamic interfaces.
+No production source edits, host installation or image/device operations.
+
+Actual El Torito image parsing, malformed image handling and boot-media integration
+remain runtime gates. Existing format-5 target/artifact capture covers the new
+target; no build-bsd C/protocol change needed. /usr/bin parent, remaining world,
+kernel, pkgbase and performance qualification remain incomplete; Make remains
+production/default.

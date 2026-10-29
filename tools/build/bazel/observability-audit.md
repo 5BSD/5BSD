@@ -5759,3 +5759,9 @@ No explicit DTRACE/SDT/audit references found in local mkuzip C/header sources.
 No instrumentation or production sources changed. Compression/thread scheduling,
 image mounting, kernel tracing and audit behavior remain runtime qualification
 items; installation/ELF parity alone does not establish them.
+
+### 2026-10-29 etdump
+
+No explicit DTRACE/SDT/audit references found in local etdump C/header sources.
+No instrumentation/source modifications. Parsing real and malformed boot images,
+including shared conversion routines, remains a runtime qualification item.

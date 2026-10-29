@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Shared format inputs for etdump; this does not migrate makefs itself.
+cc_library(name = "cd9660_headers", hdrs = ["cd9660.h", "makefs.h", "cd9660/cd9660_eltorito.h"], strip_include_prefix = ".", deps = ["//sys/fs/cd9660:format_headers"], visibility = ["//usr.bin/etdump:__pkg__"])
+cc_library(name = "eltorito_headers", hdrs = ["cd9660/cd9660_eltorito.h"], strip_include_prefix = "cd9660", visibility = ["//usr.bin/etdump:__pkg__"])
+exports_files(["cd9660/cd9660_conversion.c"], visibility = ["//usr.bin/etdump:__pkg__"])
