@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(['lib/bl.c', 'lib/blocklist.c', 'port/vsyslog_r.c', 'include/blocklist.h', 'lib/libblocklist.3'], visibility = ["//lib/libblocklist:__pkg__"])
+exports_files(['lib/bl.c', 'lib/blocklist.c', 'include/blocklist.h', 'lib/libblocklist.3'], visibility = ["//lib/libblocklist:__pkg__"])
 cc_library(name = "headers", hdrs = ['include/bl.h', 'include/blocklist.h', 'port/config.h', 'port/port.h', 'port/_strtoi.h'], includes = ["include", "port"], visibility = ["//visibility:public"])
 
 exports_files(["libexec/blocklistd-helper"], visibility = ["//libexec/blocklistd-helper:__pkg__"])
+
+exports_files(["port/vsyslog_r.c"], visibility = ["//lib/libblocklist:__pkg__", "//lib/libblacklist:__pkg__"])
+exports_files(["lib/old_bl.c", "lib/blacklist.c", "include/blacklist.h", "lib/libblacklist.3"], visibility = ["//lib/libblacklist:__pkg__"])
+cc_library(name = "legacy_headers", hdrs = ["include/old_bl.h", "include/blacklist.h"],
+    includes = ["include"], deps = [":headers"], visibility = ["//lib/libblacklist:__pkg__"])

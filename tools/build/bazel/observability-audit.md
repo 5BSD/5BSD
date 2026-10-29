@@ -7024,3 +7024,11 @@ behavior and event observability are not established by artifact parity.
 libbegemot runtime_static/runtime_shared now exercise selected readiness and
 timer lifecycle behavior. No instrumentation was added; no DTrace or audit-event
 delivery claim follows from these tests.
+
+### Legacy libblacklist (2026-10-29)
+
+Native targets retain the old_bl.c logger callback and blacklist.c vsyslog_r
+registration, plus the maintained portability implementation. No dedicated
+DTrace provider or OS audit hook is declared by its Makefile. Socket exchange,
+error-log delivery and daemon policy effects still require runtime qualification;
+artifact parity does not establish those behaviors.

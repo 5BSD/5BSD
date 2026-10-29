@@ -40110,3 +40110,25 @@ Existing frontend explicit tests and bsd_test_runtime_paths support this without
 frontend/backend changes. The installation targets remain unchanged. Full-world,
 kernel/pkgbase, independent bootstrap, cache/sandbox and performance gates remain
 open. No host install; Make remains production/default.
+
+### Native legacy libblacklist (2026-10-29)
+
+Added explicit legacy old_bl.c/blacklist.c/vsyslog_r.c sources and headers,
+maintained platform definitions/config.h, native pthread dependency, static
+archive, libblacklist.so.0, public header, manual and six aliases, and debug split.
+Shared vsyslog_r.c export visibility permits both libblocklist and libblacklist;
+legacy headers have their own scoped target. Package ownership remains blocklist,
+including LIB_PACKAGE tags. No configure regeneration or invented symbol map
+was added; this library's maintained recipe uses the checked-in config.h.
+
+Run bazel-libblacklist-20261029 passes through build-bsd with 16 jobs. Against
+fresh Make staging, all 14 installation records match. Header/manual bytes,
+manual hard-link inode relationships, archive order/symbols, installed DSO/debug
+symbols, dynamic metadata and debuglink CRC pass. Evidence/verifier under
+/usr/obj/usr/src/bazel-libblacklist-reference-20261029. This is artifact and
+installation qualification; daemon socket exchange and runtime API checks remain
+open. No host installation or daemon interaction occurred.
+
+Existing build-bsd explicit inputs and metadata backend support this addition
+without contract changes. Full world/kernel/pkgbase/bootstrap, sandbox/cache and
+performance gates remain open. Make remains production/default.
