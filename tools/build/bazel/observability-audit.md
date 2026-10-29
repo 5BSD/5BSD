@@ -6192,3 +6192,9 @@ until compiler linkage and execution tests.
 All 86 maintained Sema sources are represented without source changes. DTRACE,
 SDT_PROBE and audit_submit scan found no matches. No probes/audit hooks were removed.
 Semantic/diagnostic runtime behavior awaits linked compiler tests.
+
+### 2026-10-29 LLVM intrinsic/runtime-call definitions
+
+Generation declarations only; no compiler, runtime-library, probe or audit source
+changes. Exact table parity does not establish runtime-call behavior or target
+instrumentation correctness.

@@ -184,3 +184,5 @@ filegroup(name = "powerpc_target_inputs", srcs = [
     "llvm/Target/TargetSchedule.td",
     "llvm/Target/TargetSelectionDAG.td"
 ], visibility = ["//lib/clang/libllvm:__pkg__"])
+
+exports_files(["llvm/IR/RuntimeLibcalls.td", "llvm/IR/RuntimeLibcallsImpl.td", "llvm/TableGen/SetTheory.td"], visibility = ["//lib/clang/libllvm:__pkg__"])

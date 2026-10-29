@@ -53,3 +53,41 @@ bsd_tablegen(name = "attributes", src = "//contrib/llvm-project/llvm/include:llv
 bsd_tablegen(name = "intrinsic_enums", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td", includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-intrinsic-enums"], output = "llvm/IR/IntrinsicEnums.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap", visibility = ["//visibility:public"])
 
 cc_library(name = "ir_generated_headers", hdrs = [":attributes", ":intrinsic_enums"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+
+_INTRINSIC_ARCHITECTURES = {
+    "AArch64": "aarch64",
+    "AMDGPU": "amdgcn",
+    "ARM": "arm",
+    "BPF": "bpf",
+    "DirectX": "dx",
+    "Hexagon": "hexagon",
+    "LoongArch": "loongarch",
+    "Mips": "mips",
+    "NVPTX": "nvvm",
+    "PowerPC": "ppc",
+    "R600": "r600",
+    "RISCV": "riscv",
+    "S390": "s390",
+    "SPIRV": "spv",
+    "VE": "ve",
+    "WebAssembly": "wasm",
+    "X86": "x86",
+    "XCore": "xcore"
+}
+[bsd_tablegen(name = "intrinsics_" + arch,
+    src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td",
+    includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"],
+    include_dirs = ["contrib/llvm-project/llvm/include"],
+    flags = ["-gen-intrinsic-enums", "-intrinsic-prefix=" + prefix],
+    output = "llvm/IR/Intrinsics" + arch + ".h", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for arch, prefix in _INTRINSIC_ARCHITECTURES.items()]
+bsd_tablegen(name = "intrinsic_implementation", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td",
+    includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"],
+    flags = ["-gen-intrinsic-impl"], output = "llvm/IR/IntrinsicImpl.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+bsd_tablegen(name = "runtime_libcalls", src = "//contrib/llvm-project/llvm/include:llvm/IR/RuntimeLibcalls.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/IR/RuntimeLibcallsImpl.td", "//contrib/llvm-project/llvm/include:llvm/TableGen/SetTheory.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-runtime-libcalls"],
+    output = "llvm/IR/RuntimeLibcalls.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+_INTRINSIC_OUTPUTS = [":intrinsics_" + arch for arch in _INTRINSIC_ARCHITECTURES] + [":intrinsic_implementation", ":runtime_libcalls"]
+cc_library(name = "intrinsic_headers", hdrs = _INTRINSIC_OUTPUTS, deps = [":ir_generated_headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "intrinsic_outputs", srcs = _INTRINSIC_OUTPUTS, visibility = ["//visibility:public"])

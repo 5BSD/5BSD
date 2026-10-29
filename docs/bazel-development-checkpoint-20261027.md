@@ -11975,3 +11975,25 @@ qualified structurally; this is not a whole-userland completion metric. Remainin
 compiler components/linkage and whole-system world/kernel/pkgbase/bootstrap/runtime/
 performance gates stay open. Make remains production/default; no host installation
 or publication occurred.
+
+### 2026-10-29 LLVM intrinsic and runtime-call generated definitions
+
+CodeGen dependency review identified architecture intrinsic headers. Added all 18
+maintained intrinsic-prefix header actions plus IntrinsicImpl.inc and
+RuntimeLibcalls.inc, with explicit Intrinsics family and RuntimeLibcalls/SetTheory
+input dependencies. intrinsic_headers exposes these and existing IR definitions
+for consuming compiler components. Architecture mappings are native Bazel metadata;
+Make parsing is confined to independent qualification inventory checks.
+
+Maintained frontend bazel-llvm-intrinsics-20261029 (16 jobs) succeeds. All 20 output
+names and 5,112,007 bytes match fresh invocations of existing Make llvm-tblgen
+exactly. Reference independently checks the architecture list against maintained
+Make recipes. Evidence/scripts/reference tool hash:
+/usr/obj/usr/src/bazel-llvm-intrinsics-qualification-20261029. Reference tool was not
+freshly rebuilt. This qualifies generated intrinsic definitions, not LLVM IR
+execution, target lowering or runtime-call ABI correctness.
+
+Frontend review: current format-5 inputs/artifacts and maintained TableGen backend
+suffice; no build-bsd.c/manual interface change. CodeGen compilation remains next;
+full compiler/world/kernel/pkgbase/bootstrap/runtime/performance qualification is
+open. Make stays production/default; no host installation/publication occurred.
