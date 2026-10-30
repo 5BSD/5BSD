@@ -7670,3 +7670,12 @@ credential changes. The scoped source scan found no explicit DTrace/audit hooks.
 Review audit coverage for rule changes, privilege failures and session cleanup
 in isolated runtime tests. Preserved logs and privileged metadata do not prove
 correct authorization or live firewall effects.
+
+### EFI utilities (2026-10-30)
+
+Native migration preserves five EFI utilities and their dependencies. A scoped
+scan of the five main C files found no explicit DTrace, audit_ or syslog calls.
+Review audit coverage for variable writes, boot-order changes and wake-setting
+changes; qualify authorization/error paths only in disposable firmware/VM state.
+Device-path parser/formatter correctness and table output also remain runtime
+tests. No firmware changes were made during artifact comparison.

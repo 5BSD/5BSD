@@ -42793,3 +42793,25 @@ runtime gates on an isolated matching system. Component compilation uses the
 existing staged SDK; full-world, independent bootstrap, cache and performance
 qualification remain open. Existing build-bsd explicit targets suffice; no
 frontend/signing/publication contract changed. Make remains production/default.
+
+### EFI utility group qualification completed (2026-10-30)
+
+Native efibootmgr, efidp, efivar, efiwake and efitable now pass fresh Make
+build/install comparison. Each matches five installation records and three
+regular payloads, including global/weak symbol inventories, ordered dynamic
+dependencies, exact manual bytes and debuglink CRC. No missing/extra destinations
+or metadata mismatches. Shared ancestor directories mean these component record
+counts must not be summed as distinct world paths.
+
+Native evidence: /usr/obj/usr/src/bazel-efi-tools-20261030.
+Make evidence: /usr/obj/usr/src/bazel-<program>-make-20261030 for the five programs.
+Comparison scripts/logs: /usr/obj/usr/src/bazel-efi-tools-reference-20261030,
+per-program subdirectories. The native efibootmgr pointer-sign warning at
+create_loadopt remains visible; Make suppresses it with -Wno-pointer-sign.
+The underlying source call was not changed as part of this build migration.
+
+Firmware-variable reads/writes, boot order, device-path parsing/translation,
+wake settings and EFI table output remain runtime gates. No firmware utility
+was executed. Independent bootstrap/world/pkgbase, cross-architecture and cache/
+performance qualification remain open. Existing build-bsd explicit targets cover
+this work; no frontend/signing/publication contract changed. Make remains default.

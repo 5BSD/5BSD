@@ -18214,3 +18214,49 @@ runtime gates on an isolated matching system. Component compilation uses the
 existing staged SDK; full-world, independent bootstrap, cache and performance
 qualification remain open. Existing build-bsd explicit targets suffice; no
 frontend/signing/publication contract changed. Make remains production/default.
+
+### EFI utilities migration in progress (2026-10-30)
+
+Native efibootmgr, efidp, efivar, efiwake and efitable install archives built
+successfully through build-bsd at /usr/obj/usr/src/bazel-efi-tools-20261030.
+Their graph uses explicit program sources, native efivar/geom/xo dependencies
+where selected by Make, and the existing source efichar interface; efibootmgr
+retains its own efichar.c compilation as in Make.
+
+Fresh Make references are running sequentially with 16 compilation jobs each,
+under bazel-<program>-make-20261030. Scripts and pending comparisons live in
+/usr/obj/usr/src/bazel-efi-tools-reference-20261030. Successful native builds
+alone do not establish parity: inspect the reference runner and execute each
+program's install-audit.py and payload-audit.py after it completes. No firmware
+variables, wake settings or boot entries were changed. Existing build-bsd explicit
+targets cover this work; no frontend/signing/publication contract changed.
+
+EFI follow-up: efibootmgr, efidp and efivar references have completed and each
+passes five installation records and three regular payload comparisons,
+including symbols, ordered dynamic dependencies, manual bytes and debuglink CRC.
+Efiwake and efitable references remain in progress. Efibootmgr emits a native
+pointer-sign warning at the create_loadopt call (efibootmgr.c:730); maintained
+Make passes -Wno-pointer-sign. The underlying call is unchanged and the native
+warning has not been suppressed. Review that API pointer type separately.
+
+### EFI utility group qualification completed (2026-10-30)
+
+Native efibootmgr, efidp, efivar, efiwake and efitable now pass fresh Make
+build/install comparison. Each matches five installation records and three
+regular payloads, including global/weak symbol inventories, ordered dynamic
+dependencies, exact manual bytes and debuglink CRC. No missing/extra destinations
+or metadata mismatches. Shared ancestor directories mean these component record
+counts must not be summed as distinct world paths.
+
+Native evidence: /usr/obj/usr/src/bazel-efi-tools-20261030.
+Make evidence: /usr/obj/usr/src/bazel-<program>-make-20261030 for the five programs.
+Comparison scripts/logs: /usr/obj/usr/src/bazel-efi-tools-reference-20261030,
+per-program subdirectories. The native efibootmgr pointer-sign warning at
+create_loadopt remains visible; Make suppresses it with -Wno-pointer-sign.
+The underlying source call was not changed as part of this build migration.
+
+Firmware-variable reads/writes, boot order, device-path parsing/translation,
+wake settings and EFI table output remain runtime gates. No firmware utility
+was executed. Independent bootstrap/world/pkgbase, cross-architecture and cache/
+performance qualification remain open. Existing build-bsd explicit targets cover
+this work; no frontend/signing/publication contract changed. Make remains default.
