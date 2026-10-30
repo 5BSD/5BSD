@@ -8441,3 +8441,11 @@ and console-child logic, but artifact checks do not qualify these operations.
 Disk changes/rollback and error attribution, archive paths, fetch integrity and
 child/terminal lifecycle require disposable installation/runtime tests. None of
 these operations was executed against the host.
+
+### 2026-10-30: installer scripts/data
+
+Native installation preserves every maintained tests-disabled installer script,
+repository/configuration input and verification helper byte-for-byte. This does
+not qualify script logging, failure propagation, storage/network changes, or
+security enforcement. Installed ATF fixtures and full installation/upgrade runtime
+remain pending; tests=true is explicitly rejected by the aggregate target.

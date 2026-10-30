@@ -44446,3 +44446,37 @@ disk editor, archive extraction, fetch or console child was executed. UI,
 filesystem/network behavior, other architectures, full installed test suite and
 performance remain open. No security/staging/signing/publication semantics were
 changed; Make remains production/default.
+
+### Native installer scripts/data and tests-disabled subtree (2026-10-30)
+
+Added the top-level installer/start script, manual, copied 5BSD repository input,
+32 helper scripts, and hostname/repository subroutines to native installation.
+The pkgbase Lua template uses the maintained bsd.compat.pre.mk constant list 32;
+that list describes supported suffixes, not enabled ABIs. verify-image installs
+the declared maintained verify-stage.sh bytes. The repository file comes directly
+from usr.sbin/pkg/5BSD.conf.in, as Make's copy does. No alternate scripts or
+hardcoded substitute configuration were introduced.
+
+The parent install_archive combines the four native binaries and these files.
+It explicitly rejects tests=true until installed test fixtures/generators are
+mapped. The existing build-bsd manual records this limitation. A frontend run
+bazel-installer-tests-required-20261030 verifies explicit incompatibility failure;
+the suite cannot silently disappear from a requested test build.
+
+Evidence: /usr/obj/usr/src/bazel-installer-subtree-reference-20261030; complete
+fresh Make subtree (MK_TESTS=no) bazel-bsdinstall-make-20261030; final native
+capture bazel-installer-subtree-20261030-r3. Archive construction first rejected
+missing /usr/share/bsdinstall policy; the next strict install comparison found
+script-owned /usr/sbin and /usr/libexec/bsdinstall records. Final explicit directory
+metadata follows Make. All 56 installation records now match without missing/
+extra entries or metadata differences. All 47 regular payloads pass: non-ELF
+scripts/data/manuals compare byte-for-byte; ELFs match symbol/ordered dependency
+inventories and four debuglink CRCs. partedit aliases remain checked.
+
+No installer/script/verification workflow was executed. Byte parity of the
+verification script does not establish verified boot or installed-image integrity.
+The ten installed ATF scripts and book/source inventory fixtures still need native
+mapping, followed by runtime and disposable-disk installation/upgrade tests.
+Existing build-bsd format-5 inputs cover this target with no new C frontend or
+signing/publication contract; manual documentation was updated in this change.
+Make remains production/default and full-system gates remain open.

@@ -4388,3 +4388,12 @@ and
 It must be nonempty and contain no control characters.
 The native partedit target currently selects the x86 implementation on amd64;
 this does not qualify an installation or disk-editing operation.
+
+.Ss Native installer installation candidate
+.Cm //usr.sbin/bsdinstall:install_archive
+assembles the installer helper binaries, scripts, generated pkgbase script,
+repository configuration and manuals.
+Its installed test fixture mapping remains unfinished, so the target rejects
+.Cm //tools/build/bazel/config:tests=true
+instead of silently dropping the requested test subtree.
+Artifact comparison does not qualify a disk installation or an upgrade.
