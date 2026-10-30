@@ -7940,3 +7940,13 @@ Build/install comparisons pass; no device operations were executed. Runtime
 qualification must cover authorization failures, malformed microcode inputs,
 update errors and diagnostics on supported hardware. This does not establish
 audit coverage or live probe behavior.
+
+
+### getpmac, gpioctl and cdcontrol (2026-10-30)
+
+Native rules preserve maintained program behavior. Source scan found no direct
+DTRACE/SDT_PROBE/audit_ references in these three utility directories. Artifact
+comparisons pass; runtime checks remain for MAC label selection/access failures,
+GPIO pin read/write/configuration and device failures, and CD commands/ioctls.
+Review relevant kernel audit/event coverage separately; absence of direct userland
+references does not prove absence of kernel auditing. No hardware was accessed.

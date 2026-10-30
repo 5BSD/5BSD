@@ -43135,3 +43135,24 @@ hardware update behavior remain runtime checks.
 Frontend review: existing build-bsd explicit target/SDK inputs cover this rule;
 no frontend/backend/signing/publication contract changed. Make remains production
 default. Full world/kernel/bootstrap/pkgbase and performance gates remain open.
+
+
+### getpmac, gpioctl and cdcontrol (2026-10-30)
+
+Added native rules with explicit sources and native libgpio/libedit dependencies
+where required by Make. No program behavior changed. cdcontrol retains its
+section-1 manual and /usr/sbin executable location; the first native build caught
+an incorrect section-8 assumption, corrected before qualification.
+
+Native run: /usr/obj/usr/src/bazel-device-tools-20261030-r2. Fresh Make references:
+/usr/obj/usr/src/bazel-{getpmac,gpioctl,cdcontrol}-make-20261030. Scripts/results:
+/usr/obj/usr/src/bazel-device-tools-reference-20261030, per-program subdirectories.
+Each matches five install records and three regular payloads with no missing,
+extra or mismatched entries. Symbol/dynamic dependency inventories, compressed
+manual bytes and debuglink CRC pass. No utility was executed. Device operations,
+MAC label queries and authorization behavior remain runtime qualification work.
+
+Frontend review: existing build-bsd explicit target/configuration and SDK inputs
+cover these additions; no frontend/backend/signing/publication contract changed.
+These results cover selected amd64 components only. Full world/kernel/bootstrap,
+pkgbase and performance gates remain open; Make remains production/default.
