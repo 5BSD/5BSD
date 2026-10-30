@@ -18111,3 +18111,29 @@ configuration reload, logging, sandbox/cache mutation and performance remain
 unqualified. No daemon or firewall helper was started. Existing build-bsd explicit
 targets suffice; no frontend input, signing or publication contract changed.
 These builds consume the existing staged SDK; Make remains production/default.
+
+### Audit distribution and session utility (2026-10-30)
+
+Native auditdistd and setaudit now build and install with explicit source/library
+inputs. Auditdistd uses native lex/m4 and yacc actions with declared token.c,
+parse.c, parse.h and parse.output; generated headers are declared compile inputs.
+Its vendor header closure, OPENSSL_API_COMPAT and thread-safety-analysis exception
+preserve maintained Make requirements. The initial comparison caught different
+DSO ordering: bsd.libnames.mk enforces pthread last, which the native graph now
+preserves. No authentication, sandbox or audit behavior was modified.
+
+Final native run: /usr/obj/usr/src/bazel-audit-programs-20261030-r2.
+Fresh Make references: /usr/obj/usr/src/bazel-{auditdistd,setaudit}-make-20261030.
+Comparison scripts/logs: /usr/obj/usr/src/bazel-audit-programs-reference-20261030,
+per-program subdirectories. Auditdistd matches six installation records and four
+regular payloads; setaudit matches five records and three payloads. Both pass
+symbol inventories, ordered dynamic dependencies, exact manuals and debuglink
+CRC checks, with no missing/extra destinations or metadata mismatches.
+
+This does not qualify TLS transfer, trail recovery, configuration rejection,
+privilege separation/Capsicum, or changing a process audit identity and executing
+a child. Neither program was run to mutate host audit state or start a service.
+These component builds use the existing staged SDK; independent bootstrap,
+world/pkgbase, sandbox/cache and comparative performance gates remain open.
+Existing build-bsd explicit targets suffice; no frontend, signing or publication
+contract changed. Make remains production/default.

@@ -63,3 +63,6 @@ exports_files(['bin/praudit/praudit.c', 'bin/praudit/praudit.1', 'bin/auditreduc
 exports_files(["libauditd/auditd_lib.c"], visibility = ["//lib/libauditd:__pkg__"])
 
 exports_files(['bin/auditd/auditd.c', 'bin/auditd/audit_warn.c', 'bin/auditd/auditd_fbsd.c', 'bin/auditd/auditd.h', 'bin/auditd/auditd.8', 'man/audit.log.5', 'man/audit_class.5', 'man/audit_control.5', 'man/audit_event.5', 'man/audit_user.5', 'man/audit_warn.5', 'etc/audit_class', 'etc/audit_control', 'etc/audit_event', 'etc/audit_user', 'etc/audit_warn'], visibility = ["//usr.sbin/auditd:__pkg__", "//usr.sbin/BSDAudit/tests:__pkg__"])
+
+exports_files(["bin/auditdistd/auditdistd.c", "bin/auditdistd/pjdlog.c", "bin/auditdistd/proto.c", "bin/auditdistd/proto_common.c", "bin/auditdistd/proto_socketpair.c", "bin/auditdistd/proto_tcp.c", "bin/auditdistd/proto_tls.c", "bin/auditdistd/receiver.c", "bin/auditdistd/sandbox.c", "bin/auditdistd/sender.c", "bin/auditdistd/subr.c", "bin/auditdistd/trail.c", "bin/auditdistd/parse.y", "bin/auditdistd/token.l", "bin/auditdistd/auditdistd.8", "bin/auditdistd/auditdistd.conf.5"], visibility = ["//usr.sbin/auditdistd:__pkg__"])
+cc_library(name = "auditdistd_headers", hdrs = glob(["bin/auditdistd/*.h"]), includes = ["bin/auditdistd"], deps = [":headers"], visibility = ["//usr.sbin/auditdistd:__pkg__"])

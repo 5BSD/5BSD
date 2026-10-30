@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_lex(name = "lexer", src = "//contrib/openbsm:bin/auditdistd/token.l", output = "token.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+bsd_yacc(name = "parser", src = "//contrib/openbsm:bin/auditdistd/parse.y", output = "parse.c", header = "parse.h", report = "parse.output", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+cc_library(name = "generated_headers", hdrs = [":parser_header"], includes = ["."])
+# bsd.libnames.mk puts pthread last, after other explicit libraries.
+cc_binary(name = "auditdistd", srcs = ["//contrib/openbsm:bin/auditdistd/auditdistd.c", "//contrib/openbsm:bin/auditdistd/pjdlog.c", "//contrib/openbsm:bin/auditdistd/proto.c", "//contrib/openbsm:bin/auditdistd/proto_common.c", "//contrib/openbsm:bin/auditdistd/proto_socketpair.c", "//contrib/openbsm:bin/auditdistd/proto_tcp.c", "//contrib/openbsm:bin/auditdistd/proto_tls.c", "//contrib/openbsm:bin/auditdistd/receiver.c", "//contrib/openbsm:bin/auditdistd/sandbox.c", "//contrib/openbsm:bin/auditdistd/sender.c", "//contrib/openbsm:bin/auditdistd/subr.c", "//contrib/openbsm:bin/auditdistd/trail.c", ":parser_source", ":lexer"],
+    deps = ["//lib/libutil:util", "//secure/lib/libcrypto:crypto", "//secure/lib/libssl:ssl", "//lib/libthr:thr", ":generated_headers", "//contrib/openbsm:auditdistd_headers"], dynamic_deps = ["//lib/libutil:util_shared", "//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared", "//lib/libthr:thr_shared"],
+    local_defines = ["OPENSSL_API_COMPAT=0x10100000L"], copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+bsd_compress(name = "config_manual_gz", src = "//contrib/openbsm:bin/auditdistd/auditdistd.conf.5", output = "auditdistd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/auditdistd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit"]}))
+utility_installation(name = "install_manifest", program = "auditdistd", manual = "//contrib/openbsm:bin/auditdistd/auditdistd.8", package = "audit", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config_manual"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=audit","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

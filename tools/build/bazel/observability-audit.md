@@ -7637,3 +7637,13 @@ vsyslog_r (or verbose logging) into bl_create. No new DTrace/audit integration w
 added. Review socket peer authorization, rejected messages, helper failures,
 state changes and reload diagnostics during live qualification. Artifact parity
 does not establish firewall effects, denial behavior or audit completeness.
+
+### auditdistd and setaudit (2026-10-30)
+
+The native graph carries auditdistd's sandbox and pjdlog sources unchanged;
+sandbox.c logs identity/group lookup failures, privilege changes and Capsicum
+failures. Setaudit retains getaudit_addr/setaudit_addr, mask parsing and execvp.
+No additional DTrace/audit hooks were introduced. Matching-kernel tests still
+need to verify child audit identity, failed transitions, TLS authorization,
+trail recovery and privilege-separated worker behavior. Artifact comparison
+alone establishes none of those security behaviors.
