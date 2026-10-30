@@ -18976,3 +18976,26 @@ existing explicit targets, SDK and typed IP options cover these additions; no
 frontend/backend/signing/publication contract changed. Selected amd64 artifact
 results do not establish whole-world/kernel/bootstrap/pkgbase or performance
 qualification. Make remains production/default.
+
+
+### flowctl protocol configuration qualification (2026-10-30)
+
+Qualified IPv4-only, IPv6-only and neither-protocol builds, in addition to the
+previous default dual-protocol build. Native runs:
+/usr/obj/usr/src/bazel-flowctl-{ipv4,ipv6,noip}-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-flowctl-{ipv4,ipv6,noip}-make-20261030. Comparison scripts,
+inputs and results are in corresponding -reference-20261030 directories.
+Each variant matches all five installation records and three regular payloads,
+including symbols/dynamic dependencies, manual bytes and debuglink CRC.
+
+protocol-audit.py/json under bazel-flowctl-noip-reference-20261030 also checks
+actual native execution-log compile arguments against fresh Make compile logs:
+only INET, only INET6, and neither respectively. Thus the configuration comparisons
+did not accidentally reuse identical compiler definitions. No protocol selector
+or program source changes were needed. No live netgraph operations were tested.
+
+Frontend review: existing typed inet_support/inet6_support settings and explicit
+target inputs work through build-bsd. No frontend/backend/signing/publication
+contract changed. These are component configuration results, not whole-system,
+runtime, bootstrap, package publication or performance qualification. Make
+remains production/default.
