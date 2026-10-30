@@ -17656,3 +17656,24 @@ log processing runtime, cross-architecture or performance qualification is claim
 Frontend review: maintained build-bsd explicit targets and typed inputs already
 build these archive targets. No new build option, staging/signing/verification,
 installation or publication contract is introduced; no frontend change required.
+
+### Explicit RISC-V PMC event generation (2026-10-30, qualification running)
+
+Added events_riscv64 using the maintained EVENT_ARCH=none semantics. jevents now
+recognizes none explicitly and invokes its existing empty-table writer before
+consulting the filesystem. This removes dependence on absence of an arch/none
+directory. Populated datasets still require a matching mapfile and declared data;
+the none mode rejects dataset inputs. No fabricated event definitions are added.
+
+The pre-change Make-built generator produced make-none.c as the reference under
+/usr/obj/usr/src/bazel-jevents-reference-20261030. Native build-bsd qualification
+is running in bazel-jevents-riscv-20261030, including x86/arm64 regression outputs.
+Comparison is pending. This is host-side code generation, not a RISC-V library,
+kernel or boot test. Existing build-bsd explicit targets/typed inputs suffice;
+no frontend/backend packaging, signing or publication contract change is needed.
+
+RISC-V generation qualification passes: saved native output is byte-identical
+to the pre-change Make generator's empty table; x86 and arm64 outputs also remain
+byte-identical to their fresh Make references. Evidence: riscv-generation-comparison.json
+under bazel-jevents-reference-20261030. This completes the empty-table generation
+case only; cross-architecture library/kernel/runtime qualification remains open.

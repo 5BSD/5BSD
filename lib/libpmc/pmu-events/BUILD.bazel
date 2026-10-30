@@ -13,3 +13,13 @@ cc_library(name = "headers", hdrs = ["pmu-events.h"], strip_include_prefix = "."
     jevents = ":jevents", output = arch + "/libpmc_events.c",
     visibility = ["//visibility:public"])
  for arch in ["x86", "arm64"]]
+
+# RISC-V has no event dataset; match Make's explicit EVENT_ARCH=none.
+bsd_pmu_events(
+    name = "events_riscv64",
+    architecture = "none",
+    jevents = ":jevents",
+    runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    output = "riscv64/libpmc_events.c",
+    visibility = ["//visibility:public"],
+)

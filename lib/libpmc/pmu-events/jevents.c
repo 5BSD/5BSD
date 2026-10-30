@@ -1394,6 +1394,12 @@ int main(int argc, char *argv[])
 	if (argc > 4)
 		verbose = atoi(argv[4]);
 
+	/* Make selects "none" for architectures without event definitions. */
+	if (strcmp(arch, "none") == 0) {
+		create_empty_mapping(output_file);
+		return 0;
+	}
+
 	eventsfp = fopen(output_file, "w");
 	if (!eventsfp) {
 		pr_err("%s Unable to create required file %s (%s)\n",
