@@ -41590,3 +41590,39 @@ extra direct NEEDED entry. Evidence: full-install-audit.json/full-payload-audit.
 under bazel-libmp-reference-20261030 and saved native test reports/artifacts.
 No production arithmetic code changed. Independent bootstrap, full-system and
 performance qualification gates remain open.
+
+### Configured libtelnet archive candidate (2026-10-30)
+
+Added explicit vendor sources/headers and ordinary/PIE internal archive targets.
+The existing openssl/crypt settings select the five encryption/authentication
+sources and ENCRYPTION/AUTHENTICATION/SRA/API-compat definitions; three common
+sources remain when OpenSSL is disabled. Current MIT Kerberos does not provide
+the old 3DES telnet path, matching Make. The non-MIT Kerberos configuration needs
+a separate native Heimdal graph and is explicitly incompatible for now, not
+silently built without kerberos5.c. That missing variant remains migration work.
+
+Default native run bazel-libtelnet-20261030 and fresh default/OpenSSL-disabled
+Make references are in progress. No runtime or artifact parity is claimed yet.
+Existing build-bsd/source_graph typed settings/targets support these declarations
+without frontend changes. Internal archives have no invented installed payload.
+Full-system/bootstrap/configuration/performance gates remain open.
+
+Libtelnet default archive result: bazel-libtelnet-20261030 builds both ordinary
+and PIE archives; member order/symbol inventories match fresh Make, and its
+installation delta is empty. Evidence: bazel-libtelnet-reference-20261030/comparison.json.
+The OpenSSL-only-disabled Make attempt failed compiling kerberos5.c: disabling
+OpenSSL also disables MIT selection while legacy Kerberos support remains enabled.
+The native compatibility checks now explicitly reject that unsupported legacy
+combination too. The minimal configuration must disable Kerberos support as an
+explicit input; qualification of that configuration follows. Default archive
+success does not qualify Heimdal or live telnet authentication/encryption.
+
+Libtelnet minimal result: bazel-libtelnet-minimal-20261030 passes ordinary and PIE
+archives with OpenSSL=false and kerberos_support=false. Both three-member archives
+match fresh Make member order and symbol inventories with zero installed records.
+The earlier default eight-member ordinary/PIE archives also match. Evidence:
+comparison.json and minimal-comparison.json under bazel-libtelnet-reference-20261030.
+This establishes those two selected archive configurations only; Heimdal is still
+explicitly incompatible and must be migrated before complete configuration coverage.
+The failed OpenSSL-only-disabled Make run remains available as evidence. No live
+authentication/encryption behavior or full-system completion is claimed.

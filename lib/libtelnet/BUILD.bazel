@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Non-MIT Kerberos needs the separate Heimdal graph; do not silently omit it.
+config_setting(name = "heimdal_requested", flag_values = {"//tools/build/bazel/config:kerberos_support": "true",
+    "//tools/build/bazel/config:mitkrb5": "false"})
+config_setting(name = "kerberos_without_openssl", flag_values = {"//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:openssl": "false"})
+config_setting(name = "kerberos_without_crypt", flag_values = {"//tools/build/bazel/config:kerberos_support": "true", "//tools/build/bazel/config:crypt": "false"})
+_COMPATIBLE = select({":heimdal_requested": ["@platforms//:incompatible"], ":kerberos_without_openssl": ["@platforms//:incompatible"], ":kerberos_without_crypt": ["@platforms//:incompatible"], "//conditions:default": []})
+_OPENSSL = "//tools/build/bazel/config:openssl_enabled"
+_SOURCES = ["//contrib/telnet/libtelnet:" + name for name in ["genget.c", "getent.c", "misc.c"]] + select({
+    _OPENSSL: ["//contrib/telnet/libtelnet:" + name for name in ["encrypt.c", "auth.c", "enc_des.c", "sra.c", "pk.c"]], "//conditions:default": []})
+_DEFINES = select({_OPENSSL: ["ENCRYPTION", "AUTHENTICATION", "SRA", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []})
+_DEPS = ["//contrib/telnet/libtelnet:headers"] + select({_OPENSSL: ["//lib/libmp:headers"], "//conditions:default": []})
+[cc_library(name = "telnet" + suffix, srcs = _SOURCES, deps = _DEPS, local_defines = _DEFINES,
+    copts = ["-fpie"] if suffix else [], linkstatic = True, target_compatible_with = _COMPATIBLE, visibility = ["//visibility:public"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":telnet"], target_compatible_with = _COMPATIBLE, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":telnet_pie"], target_compatible_with = _COMPATIBLE, visibility = ["//visibility:public"])

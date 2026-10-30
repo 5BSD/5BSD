@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['auth-proto.h', 'auth.h', 'enc-proto.h', 'encrypt.h', 'key-proto.h', 'misc-proto.h', 'misc.h', 'pk.h'], strip_include_prefix = ".", visibility = ["//lib/libtelnet:__pkg__"])
+exports_files(['genget.c', 'getent.c', 'misc.c', 'encrypt.c', 'auth.c', 'enc_des.c', 'sra.c', 'pk.c'], visibility = ["//lib/libtelnet:__pkg__"])

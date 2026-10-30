@@ -7368,3 +7368,11 @@ extra direct NEEDED entry. Evidence: full-install-audit.json/full-payload-audit.
 under bazel-libmp-reference-20261030 and saved native test reports/artifacts.
 No production arithmetic code changed. Independent bootstrap, full-system and
 performance qualification gates remain open.
+
+### libtelnet internal archives (2026-10-30)
+
+Default and explicitly OpenSSL/Kerberos-disabled archive variants match Make.
+Authentication/encryption source selection follows inputs; production code and
+instrumentation are unchanged. SRA/PAM authentication and live protocol/error-path
+audit behavior remain unqualified. Legacy Heimdal support is an explicit missing
+configuration, not a passing subset or a silently dropped source.
