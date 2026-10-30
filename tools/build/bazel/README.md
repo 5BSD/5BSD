@@ -44558,3 +44558,37 @@ Evidence: /usr/obj/usr/src/bazel-installer-fixtures-reference-20261030/tests/
 bazel-bsdinstall-tests-make-20261030-r2 under /usr/obj/usr/src.
 Frontend review: maintained format-5 targets handle these fixture targets;
 no new frontend option or bypass is needed. Manual describes the partial scope.
+
+### Fixture namespace scaling and inventory sizing (2026-10-30)
+
+Both bsd_fixture_tree.bzl and fixture_tree.py previously compared every fixture
+path with every preceding path, making conflict checks quadratic. Replaced
+those pairwise scans with complete-name membership and parent-prefix checks.
+Duplicates, ancestor conflicts in either input order, invalid paths, and
+existing-file overwrite protection remain tested by fixture-tree-test.py
+(four tests passed). Namespace validation now completes before materialization.
+The maintained build-bsd rebuild of installer fixtures succeeded; all 103
+captured outputs have unchanged SHA-256 hashes against the prior candidate.
+
+Sizing prototype selected the exact input classes scanned by check-book.sh:
+manual-name source files, Make metadata, and sys/ C/header files, excluding
+symlinks and .git as the existing find scans do. The 29615 regular files total
+422928046 logical bytes. Corrected materialization measured 3.44 s wall,
+1.35 s user, 1.41 s system, 33036 KiB maximum RSS, 5814 block input operations,
+30604 block output operations, and 272993 KiB allocated disk on this host.
+Maintained man/sysctl generators over that staged set took 0.681/2.717 s and
+matched the fresh Make inventories byte for byte. These are warm-host,
+one-run prototype measurements, not end-to-end Bazel performance qualification
+or a baseline speedup measurement. The source-discovery prototype is not wired
+into Bazel; tracked source membership, mutation tests, and cache behavior
+remain necessary before removing the installer tests=true restriction.
+
+Evidence: /usr/obj/usr/src/bazel-book-inventory-prototype-20261030/
+(discovery.json, materialize.time, comparison.json, unit-tests.log,
+native-output-parity.json); native rebuild:
+/usr/obj/usr/src/bazel-installer-fixtures-linear-20261030.
+Frontend review: fixture helper behavior and output contract are preserved;
+existing format-5 targets exercised the change, so no frontend option/manual
+change is required. Repository-design reference consulted:
+https://bazel.build/rules/lib/builtins/path (readdir membership watching) and
+https://bazel.build/rules/lib/builtins/repository_ctx (watch/watch_tree).

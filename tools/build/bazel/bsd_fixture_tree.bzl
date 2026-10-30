@@ -8,7 +8,7 @@ def _tree(ctx):
         parts = destination.split("/")
         if any([part in ["", ".", ".."] for part in parts]) or "\\" in destination:
             fail("fixture destination must be normalized and relative: " + destination)
-        if any([destination == other or destination.startswith(other + "/") or other.startswith(destination + "/") for other in destinations]):
+        if destination in destinations:
             fail("conflicting fixture destination: " + destination)
         files = target[DefaultInfo].files.to_list()
         if len(files) != 1 or files[0].is_directory:
@@ -16,6 +16,13 @@ def _tree(ctx):
         destinations[destination] = True
         inputs.append(files[0])
         records.append(dict(source = files[0].path, destination = destination))
+    # Check parent prefixes once the complete namespace is known. This catches
+    # both input orders without comparing every pair of fixture paths.
+    for destination in destinations:
+        parts = destination.split("/")
+        for index in range(1, len(parts)):
+            if "/".join(parts[:index]) in destinations:
+                fail("conflicting fixture destination: " + destination)
     output = ctx.actions.declare_directory(ctx.label.name)
     manifest = ctx.actions.declare_file(ctx.label.name + ".inputs.json")
     ctx.actions.write(manifest, json.encode(records) + "\n")
