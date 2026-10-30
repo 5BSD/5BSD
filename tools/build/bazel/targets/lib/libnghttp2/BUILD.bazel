@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: lib/libnghttp2/Makefile (PRIVATELIB nghttp2, SHLIB_MAJOR 14,
+# WARNS 3, the hand-written config.h and nghttp2/nghttp2ver.h here).
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+NGHTTP2_SRCS = [
+    "lib/nghttp2_alpn.c",
+    "lib/nghttp2_buf.c",
+    "lib/nghttp2_callbacks.c",
+    "lib/nghttp2_debug.c",
+    "lib/nghttp2_extpri.c",
+    "lib/nghttp2_frame.c",
+    "lib/nghttp2_hd.c",
+    "lib/nghttp2_hd_huffman.c",
+    "lib/nghttp2_hd_huffman_data.c",
+    "lib/nghttp2_helper.c",
+    "lib/nghttp2_http.c",
+    "lib/nghttp2_map.c",
+    "lib/nghttp2_mem.c",
+    "lib/nghttp2_option.c",
+    "lib/nghttp2_outbound_item.c",
+    "lib/nghttp2_pq.c",
+    "lib/nghttp2_priority_spec.c",
+    "lib/nghttp2_queue.c",
+    "lib/nghttp2_ratelim.c",
+    "lib/nghttp2_rcbuf.c",
+    "lib/nghttp2_session.c",
+    "lib/nghttp2_stream.c",
+    "lib/nghttp2_submit.c",
+    "lib/nghttp2_time.c",
+    "lib/nghttp2_version.c",
+    "lib/sfparse.c",
+]
+
+LOCAL = ["-DHAVE_CONFIG_H", "-DBUILDING_NGHTTP2", "-Ilib/libnghttp2", "-Icontrib/nghttp2/lib/includes", "-Icontrib/nghttp2/lib", "-fvisibility=hidden"]
+
+
+# Consumers' -I contrib/nghttp2/lib/includes -I lib/libnghttp2.
+filegroup(
+    name = "headers",
+    srcs = ["config.h", "nghttp2/nghttp2ver.h"],
+)
+
+bsd_cc_archive(
+    name = "nghttp2",
+    archive = "privatenghttp2",
+    copts = bsd_c_flags("o", 3, local = LOCAL),
+    srcs = ["//contrib/nghttp2:" + s for s in NGHTTP2_SRCS],
+    src_paths = NGHTTP2_SRCS,
+    hdrs = ["//contrib/nghttp2:headers", ":headers"],
+)
+
+bsd_cc_shared(
+    name = "nghttp2_so",
+    soname = "libprivatenghttp2.so.14",
+    copts = bsd_c_flags("pico", 3, local = LOCAL),
+    linkopts = ["-fstack-protector-strong", "-Wl,-x", "-Wl,--fatal-warnings", "-Wl,--warn-shared-textrel"] + ["-Wl,-soname,libprivatenghttp2.so.14"],
+    srcs = ["//contrib/nghttp2:" + s for s in NGHTTP2_SRCS],
+    src_paths = NGHTTP2_SRCS,
+    hdrs = ["//contrib/nghttp2:headers", ":headers"],
+)

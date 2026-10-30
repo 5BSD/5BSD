@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: lib/protobuf/libprotobuf-lite/Makefile (PRIVATELIB LIB_CXX protobuf-lite, SHLIB_MAJOR
+# 29, CXXSTD c++17, WARNS 1; lib/protobuf/Makefile.inc CFLAGS -I src -I
+# utf8_range, CXXFLAGS -I abseil-cpp; -DHAVE_ZLIB=1 -DPROTOBUF_USE_DLLS
+# -DLIBPROTOBUF_EXPORTS -fvisibility=hidden -fvisibility-inlines-hidden,
+# CXXWARNFLAGS -Wno-ignored-attributes, the upstream version script).
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+PROTOBUF_LITE_SRCS = [
+    "src/google/protobuf/any_lite.cc",
+    "src/google/protobuf/arena.cc",
+    "src/google/protobuf/arena_align.cc",
+    "src/google/protobuf/arenastring.cc",
+    "src/google/protobuf/arenaz_sampler.cc",
+    "src/google/protobuf/extension_set.cc",
+    "src/google/protobuf/generated_enum_util.cc",
+    "src/google/protobuf/generated_message_tctable_lite.cc",
+    "src/google/protobuf/generated_message_util.cc",
+    "src/google/protobuf/implicit_weak_message.cc",
+    "src/google/protobuf/inlined_string_field.cc",
+    "src/google/protobuf/io/coded_stream.cc",
+    "src/google/protobuf/io/io_win32.cc",
+    "src/google/protobuf/io/zero_copy_stream.cc",
+    "src/google/protobuf/io/zero_copy_stream_impl.cc",
+    "src/google/protobuf/io/zero_copy_stream_impl_lite.cc",
+    "src/google/protobuf/map.cc",
+    "src/google/protobuf/message_lite.cc",
+    "src/google/protobuf/parse_context.cc",
+    "src/google/protobuf/port.cc",
+    "src/google/protobuf/raw_ptr.cc",
+    "src/google/protobuf/repeated_field.cc",
+    "src/google/protobuf/repeated_ptr_field.cc",
+    "src/google/protobuf/stubs/common.cc",
+    "src/google/protobuf/wire_format_lite.cc",
+    "third_party/utf8_range/utf8_range.c",
+    "third_party/utf8_range/utf8_validity.cc",
+]
+
+
+LOCAL = ["-Icontrib/protobuf/src", "-Icontrib/protobuf/third_party/utf8_range"]
+
+CXX_LOCAL = ["-DHAVE_ZLIB=1", "-DPROTOBUF_USE_DLLS", "-DLIBPROTOBUF_EXPORTS", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-Icontrib/abseil-cpp"]
+
+bsd_cc_archive(
+    name = "protobuf_lite",
+    archive = "privateprotobuf-lite",
+    copts = bsd_c_flags("o", 1, local = LOCAL),
+    cxxopts = bsd_cxx_flags("o", 1, "c++17", local = LOCAL, cxx_local = CXX_LOCAL,
+                            cxxwarn = ["-Wno-ignored-attributes"]),
+    linkopts = ["-lprivateabsl", "-lpthread"],
+    srcs = ["//contrib/protobuf:" + s for s in PROTOBUF_LITE_SRCS],
+    src_paths = PROTOBUF_LITE_SRCS,
+    hdrs = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"],
+)
+
+bsd_cc_shared(
+    name = "protobuf_lite_so",
+    soname = "libprivateprotobuf-lite.so.29",
+    version_script = "//contrib/protobuf:src/libprotobuf-lite.map",
+    copts = bsd_c_flags("pico", 1, local = LOCAL),
+    cxxopts = bsd_cxx_flags("pico", 1, "c++17", local = LOCAL, cxx_local = CXX_LOCAL,
+                            cxxwarn = ["-Wno-ignored-attributes"]),
+    linkopts = ["-fstack-protector-strong", "-Wl,-x", "-Wl,--fatal-warnings", "-Wl,--warn-shared-textrel"] + ["-Wl,-soname,libprivateprotobuf-lite.so.29"] + ["-lprivateabsl", "-lpthread"] + ["-lc++", "-lm"],
+    srcs = ["//contrib/protobuf:" + s for s in PROTOBUF_LITE_SRCS],
+    src_paths = PROTOBUF_LITE_SRCS,
+    hdrs = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"],
+)

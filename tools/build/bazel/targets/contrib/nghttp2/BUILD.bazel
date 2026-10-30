@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# contrib/nghttp2 (library only).
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["lib/*.c"]))
+
+filegroup(
+    name = "headers",
+    srcs = glob(["lib/**/*.h"]),
+)

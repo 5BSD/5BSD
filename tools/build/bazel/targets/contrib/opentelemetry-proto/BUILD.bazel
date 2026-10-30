@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# contrib/opentelemetry-proto: the OTLP .proto files.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["opentelemetry/**/*.proto"]))
+
+filegroup(
+    name = "protos",
+    srcs = glob(["opentelemetry/**/*.proto"]),
+)

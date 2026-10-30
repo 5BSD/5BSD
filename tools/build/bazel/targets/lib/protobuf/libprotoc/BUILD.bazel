@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: lib/protobuf/libprotoc/Makefile (INTERNALLIB LIB_CXX
+# protoc, CXXSTD c++17, WARNS 1; Makefile.inc include paths).
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+PROTOC_SRCS = [
+    "src/google/protobuf/compiler/code_generator.cc",
+    "src/google/protobuf/compiler/code_generator_lite.cc",
+    "src/google/protobuf/compiler/command_line_interface.cc",
+    "src/google/protobuf/compiler/cpp/enum.cc",
+    "src/google/protobuf/compiler/cpp/extension.cc",
+    "src/google/protobuf/compiler/cpp/field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/cord_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/enum_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/map_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/message_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/primitive_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/string_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/string_view_field.cc",
+    "src/google/protobuf/compiler/cpp/file.cc",
+    "src/google/protobuf/compiler/cpp/generator.cc",
+    "src/google/protobuf/compiler/cpp/helpers.cc",
+    "src/google/protobuf/compiler/cpp/ifndef_guard.cc",
+    "src/google/protobuf/compiler/cpp/message.cc",
+    "src/google/protobuf/compiler/cpp/namespace_printer.cc",
+    "src/google/protobuf/compiler/cpp/padding_optimizer.cc",
+    "src/google/protobuf/compiler/cpp/parse_function_generator.cc",
+    "src/google/protobuf/compiler/cpp/service.cc",
+    "src/google/protobuf/compiler/cpp/tracker.cc",
+    "src/google/protobuf/compiler/plugin.cc",
+    "src/google/protobuf/compiler/plugin.pb.cc",
+    "src/google/protobuf/compiler/retention.cc",
+    "src/google/protobuf/compiler/subprocess.cc",
+    "src/google/protobuf/compiler/versions.cc",
+    "src/google/protobuf/compiler/zip_writer.cc",
+    "src/google/protobuf/testing/file.cc",
+]
+
+
+LOCAL = ["-Icontrib/protobuf/src", "-Icontrib/protobuf/third_party/utf8_range"]
+
+# libprotoc.a and libprotoc_pie.a.
+[bsd_cc_archive(
+    name = "protoc" + suffix,
+    archive = "protoc" + suffix,
+    kind = kind,
+    cxxopts = bsd_cxx_flags(kind, 1, "c++17", local = LOCAL,
+                            cxx_local = ["-Icontrib/abseil-cpp"]),
+    srcs = ["//contrib/protobuf:" + s for s in PROTOC_SRCS],
+    src_paths = PROTOC_SRCS,
+    hdrs = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"],
+) for kind, suffix in (("o", ""), ("pieo", "_pie"))]

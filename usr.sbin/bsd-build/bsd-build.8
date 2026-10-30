@@ -379,7 +379,9 @@ The separate libdtrace and
 .Xr dtrace 1
 probe
 .Pa tools/build/bazel/dtrace-probe.py
-is not part of this action.
+and the Protocol Buffers, Abseil and nghttp2 probe
+.Pa tools/build/bazel/protobuf-probe.py
+are not part of this action.
 The action also builds and stages a Make-only libmd installation reference
 under its private output directory, preserving the selected world profile,
 source layout, debug splitting and METALOG package metadata.

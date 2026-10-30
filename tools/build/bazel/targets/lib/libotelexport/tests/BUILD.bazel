@@ -22,6 +22,8 @@ WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc",
 
 LIB = [
     "//lib/libotelexport:headers",
+    # CFLAGS+=-I${.CURDIR:H}: the library's private headers too.
+    "//lib/libotelexport:private_headers",
     "//lib/libotelexport:otelexport_pie",
 ]
 
@@ -63,4 +65,13 @@ bsd_atf_test_c(
     deps = LIB,
     # LIBADD.sysconf_oom_test+= otelexport ucl
     linkopts = WRAP_ALLOC + ["-Wl,--wrap=reallocarray", "-lprivateucl"],
+)
+
+# PROGS otlppb_encode: LIBADD.otlppb_encode+= otelexport; it includes the
+# library's private oe_otlpenc.h and oe_otlppb.h (CFLAGS+=-I${.CURDIR:H}).
+bsd_program(
+    name = "otlppb_encode",
+    srcs = ["otlppb_encode.c"],
+    deps = LIB,
+    testonly = True,
 )

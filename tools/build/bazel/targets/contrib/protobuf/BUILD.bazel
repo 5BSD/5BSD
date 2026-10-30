@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# contrib/protobuf (trimmed import): sources, headers, version scripts and
+# .proto files as declared inputs.  Upstream BUILD files are not used.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "src/**/*.cc",
+    "src/*.map",
+    "src/**/*.proto",
+    "upb/**/*.c",
+    "upb_generator/**/*.cc",
+    "upb_generator/**/*.c",
+    "third_party/utf8_range/*.c",
+    "third_party/utf8_range/*.cc",
+]))
+
+filegroup(
+    name = "headers",
+    srcs = glob(["**/*.h", "**/*.hpp", "**/*.inc"]),
+)
+
+# The well-known types protoc-gen.mk puts on the import path.
+filegroup(
+    name = "wkt_protos",
+    srcs = glob(["src/google/protobuf/**/*.proto"]),
+)

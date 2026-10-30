@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: usr.bin/protoc/Makefile (PROG_CXX protoc, CXXSTD c++17,
+# WARNS 1, CXXFLAGS -I src -I abseil-cpp, LIBADD protoc protobuf absl).
+# "protoc" is the installed program (PROG.full); "protoc_tool" is a static
+# build of the same sources for code generation in the exec configuration,
+# as buildworld's bootstrap-tools stage builds one for the build host.
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+CXX_LOCAL = ["-Icontrib/protobuf/src", "-Icontrib/abseil-cpp"]
+
+HDRS = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"]
+
+bsd_cc_program(
+    name = "protoc",
+    output = "protoc",
+    srcs = ["main.cc"],
+    src_paths = ["main.cc"],
+    hdrs = HDRS,
+    cxxopts = bsd_cxx_flags("pieo", 1, "c++17", cxx_local = CXX_LOCAL, prog = True),
+    deps = ["//lib/protobuf/libprotoc:protoc_pie"],
+    # PIE link with ${CFLAGS} (-gz=zlib); LIBADD protobuf absl from the SDK;
+    # the c++ driver's implicit -lc++ -lm are named.
+    linkopts = ["-gz=zlib", "-pie", "-lprivateprotobuf", "-lprivateabsl", "-lc++", "-lm"],
+)
+
+bsd_cc_program(
+    name = "protoc_tool",
+    output = "protoc_tool",
+    static = True,
+    srcs = ["main.cc"],
+    src_paths = ["main.cc"],
+    hdrs = HDRS,
+    cxxopts = bsd_cxx_flags("o", 1, "c++17", cxx_local = CXX_LOCAL),
+    deps = [
+        "//lib/protobuf/libprotoc:protoc",
+        "//lib/protobuf/libprotobuf:protobuf",
+        "//lib/libabsl:absl",
+    ],
+    linkopts = ["-static", "-lz", "-lpthread", "-lc++", "-lm"],
+)
