@@ -17599,3 +17599,39 @@ outputs remain byte-identical to the Make references. Evidence:
 bazel-jevents-reference-20261030/supported-generation-comparison.json.
 A fresh libpmc Make build/install also completed in bazel-libpmc-make-20261030
 using the maintained host-build jevents; native library composition is next.
+
+### Native libpmc candidate (2026-10-30)
+
+Connected libpmc to the native execution-platform events_x86 generation action,
+with four maintained implementation sources and 83 explicit source ABI headers
+declared in their existing owning packages. Added header-only libpmcstat input
+without claiming its implementation archive is migrated. Native installation
+includes the three public headers, 41 manuals and 24 aliases. The fresh Make
+reference's event table is byte-identical to the previously qualified fresh
+jevents output (reference-event-table.json under bazel-libpmc-reference-20261030).
+Native compilation/install comparison is pending. Existing build-bsd target
+and configuration inputs suffice; no frontend/backend contract changes needed.
+This initial library target is amd64-only. Arm64/RISC-V library composition and
+RISC-V empty event maps remain open; PowerPC is excluded from migration scope.
+
+Initial native libpmc compilation exposed mixed SDK/source libc++ header search
+through the native dependency. Added -nostdinc++ so the declared source libc++
+headers consistently supply the C++ interface. Native r2 is pending. A separate
+existing pmclog pointer-sign diagnostic (size_t state length passed as ssize_t*)
+was observed and not suppressed; runtime parser review remains outstanding.
+
+Libpmc r2 compiles and installation metadata matches, but strict dynamic metadata
+comparison rejects a missing direct libm dependency. Maintained Make links with
+the C++ driver, which supplies libm; added explicit native math CcInfo/shared
+dependencies. Native r3 is pending; the comparison is unchanged.
+
+Libpmc r3 passes fresh Make comparison: 74 installation destinations, 47 regular
+payloads and one debug link. Global/weak symbols, ordered dynamic dependencies,
+archive member order, public header/manual bytes, manual aliases and debug CRC
+match. Evidence: install-audit.json and payload-audit.json under
+bazel-libpmc-reference-20261030 using bazel-libpmc-20261030-r3. Native generated
+events and native libc++/libcxxrt/libm dependencies are in the declared graph;
+SDK headers/startup/unwind runtime remain bootstrap prerequisites. No hardware
+PMC operation, log-parser runtime, system performance or full-world completion
+is claimed. Libpmcstat currently exposes only its header interface, not its
+implementation archive.

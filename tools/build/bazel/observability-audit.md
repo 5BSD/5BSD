@@ -7534,3 +7534,13 @@ Native execution-platform jevents output matches fresh Make for x86, arm64 and
 powerpc event datasets. These are offline JSON-to-C generation checks; no PMC
 allocation, kernel sampling, trace collection or event accuracy on physical
 processors was exercised. No observability hooks were changed.
+
+### libpmc (2026-10-30)
+
+Native amd64 artifacts/install parity passes with native event generation and
+source PMC ABI headers. Runtime qualification remains for allocation, attachment,
+start/stop/read, log parsing and counter access controls on a matching kernel.
+An existing size_t*/ssize_t* parser-length diagnostic in pmclog_read/get_event
+was observed without suppression; review signedness and fragmented/malformed
+record handling with parser fixtures before claiming runtime correctness.
+No new probes or audit hooks were introduced by this build migration.
