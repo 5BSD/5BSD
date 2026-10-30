@@ -41727,3 +41727,29 @@ bazel-<program>-reference-20261030 directory; daemon backend-exports.json record
 the export check. No CUSE/device operation was performed and no runtime or
 performance qualification is implied. Full world/kernel/bootstrap/pkgbase gates
 remain open; Make stays the production/default build.
+
+### Configured virtual_oss subtree integration (2026-10-30)
+
+Added parent installation manifests/archives for lib/virtual_oss and
+usr.sbin/virtual_oss, following maintained Make recursion and Bluetooth selection.
+These aggregates expose all converted children to subsequent world composition;
+they are not a complete world target. Default recursive Make references and
+bazel-voss-subtrees-20261030 are pending. Bluetooth-disabled reference inputs
+are prepared. Existing build-bsd explicit targets and typed Bluetooth setting
+cover this integration without frontend/backend contract changes.
+
+Virtual_oss subtree results: bazel-voss-subtrees-20261030 and
+bazel-voss-subtrees-nobluetooth-20261030 pass. Default recursive Make parity
+covers nine backend destinations/six regular payloads/three debug links and
+twelve program destinations/ten regular payloads/three debug links. Disabling
+Bluetooth yields exactly seven backend destinations/four payloads/two debug
+links and nine program destinations/seven payloads/two debug links, matching
+Make with no extra Bluetooth payload. All compared metadata and ELF contracts
+match. Evidence: *install-audit.json and *payload-audit.json under
+bazel-voss-{libraries,programs}-reference-20261030.
+
+World inclusion remains distinct: lib/Makefile and usr.sbin/Makefile gate these
+subtrees on both MK_CUSE and MK_SOUND. Those gates must be represented when the
+parent world graph is added; these subtree targets intentionally match invoking
+their own Makefiles directly. No complete world, package publication or live
+audio result is claimed. Existing frontend target/configuration inputs suffice.
