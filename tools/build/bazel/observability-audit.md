@@ -8028,3 +8028,13 @@ verified. Runtime work includes jail attachment/identity/authorization failures,
 accounting records and libxo output, login refusal and existing logging behavior.
 Review kernel audit coverage for jail attachment rather than infer it from the
 absence of direct userland calls. No live jail or login operation was performed.
+
+
+### build-bsd frontend subtree (2026-10-30)
+
+Native frontend and static policy helpers preserve maintained sources. Complete
+installation comparisons pass and plan-only world/kernel/packages behavior was
+compared on the host. Helper/parser test execution and static-library DTrace
+retention remain unqualified; the earlier static service archive discrepancy
+must not be generalized into a pass here. No publication, signing, deployment,
+policy activation or host system change was executed.

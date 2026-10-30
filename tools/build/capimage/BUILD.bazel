@@ -1,2 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["sign-stage.sh", "prepare-stage.sh", "verify-stage.sh"], visibility = ["//usr.sbin/capsign/tests:__pkg__"])
+exports_files(["sign-stage.sh", "prepare-stage.sh", "verify-stage.sh"], visibility = ["//usr.sbin/capsign/tests:__pkg__", "//usr.sbin/bsd-build/tests:__pkg__"])
+
+exports_files(['deploy.py', 'installer.py', 'package_inventory.py', 'package_closure.py', 'inventory_audit.py', 'loader_build.py', 'loader_production_test.py', 'elf_dependencies.py', 'generation_boot.py', 'seed_initialize.py', 'seed_dataset.py', 'state_storage.py', 'generation_image.py', 'generation_check.py', 'database_preflight.py', 'database_payload.py', 'payload_extract.py', 'database_construction.py', 'construction.py', 'certificate_policy.py', 'module_policy.py', 'library_policy.py', 'installation_policy.py', 'configuration_compose.py', 'configuration_compose_test.py', 'ucl_policy_json_test.py'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])
+exports_files(["certificate-policy.json", "module-policy.json", "library-policy.json", "database-output-policy.json", "root-layout.json"], visibility = ["//usr.sbin/bsd-build:__pkg__"])

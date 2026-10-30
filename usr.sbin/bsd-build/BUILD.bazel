@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+cc_binary(name = "build-bsd", srcs = ["build-bsd.c"], deps = ["//lib/libmd:md_link"], dynamic_deps = ["//lib/libmd:md_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+bsd_install_link(name = "command_alias", destination = "/usr/sbin/bsd-build", target = "/usr/sbin/build-bsd", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsd-build"])
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bsd-build-man"], "//conditions:default": ["package=bsd-build"]})
+bsd_compress(name = "manual_gz", src = "bsd-build.8", output = "bsd-build.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "manual", src = ":manual_gz", destination = "/usr/share/man/man8/bsd-build.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(name = "manual_alias", destination = "/usr/share/man/man8/build-bsd.8.gz", target = "/usr/share/man/man8/bsd-build.8.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+_EXAMPLES = ["bsd-build.conf.sample", "certificate-policy.json", "module-policy.json", "library-policy.json", "database-output-policy.json", "root-layout.json"]
+[bsd_install_file(name = "example_" + file, src = file if file == "bsd-build.conf.sample" else "//tools/build/capimage:" + file, destination = "/usr/share/examples/bsd-build/" + file, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsd-build"]) for file in _EXAMPLES]
+_DIRECTORIES = ({d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsd-build","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin", "/usr/lib/debug/usr/libexec", "/usr/lib/debug/usr/libexec/bsd-build"]} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsd-build"]}' for d in ["/usr/libexec/bsd-build", "/usr/share/examples/bsd-build"]})
+utility_installation(name = "install_manifest", program = "build-bsd", manual = "", package = "bsd-build", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":command_alias", ":manual", ":manual_alias"] + [":example_" + file for file in _EXAMPLES])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest", "//usr.sbin/bsd-build/ucl-policy-json:install_manifest", "//usr.sbin/bsd-build/capsule-policy-validate:install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/bsd-build/tests:install_manifest"], "//conditions:default": []}),
+    directories = select({"//tools/build/bazel/config:tests_enabled": _DIRECTORIES | {"/usr/tests/usr.sbin/bsd-build": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsd-build-tests"]}'}, "//conditions:default": _DIRECTORIES}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

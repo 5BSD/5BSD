@@ -19188,3 +19188,41 @@ need runtime checks. No jail, account or login configuration was changed.
 Frontend review: existing build-bsd explicit targets and SDK inputs cover these
 rules; no frontend/backend/signing/publication contract changed. Full system,
 bootstrap, pkgbase, runtime and performance gates remain open; Make remains default.
+
+
+### Native build-bsd frontend subtree (2026-10-30)
+
+Added native build-bsd with native libmd linkage, both maintained command/manual
+hardlinks, all six examples, and both static policy helpers: bsd-ucl-json and
+bsd-capsule-validate. The validator compiles maintained Capsule config.c and
+config_report.c with narrowly declared config/gates/protocol headers. Tests-enabled
+installation includes bsd_build_test, its Kyuafile and all 50 support files from
+the maintained Makefile, resolving local sources before its capimage .PATH.
+The support inventory is explicit in BUILD; build actions do not parse Make.
+Shared file exports preserve existing Capsule, Switchboard and capsign consumers.
+No frontend C, helper C, policy examples or stage-script behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-build-frontend-20261030. Fresh Make reference:
+/usr/obj/usr/src/bazel-bsd-build-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-build-frontend-reference-20261030. All 74 installation
+records and 65 regular payloads pass comparisons: no missing/extra/metadata
+differences, matching symbol/dynamic inventories, three debuglink CRCs, exact
+manual/examples/test-support bytes and hardlink identity checks.
+
+plan-audit.py/json executes the captured native frontend and Make reference on
+the host for plan world/kernel/packages. World and kernel JSON match exactly.
+Package JSON matches after normalizing only timestamp/PID run-root prefixes in
+CAPSIGN_HOST/WSTAGEDIR/KSTAGEDIR/SSTAGEDIR; the audit requires one consistent run
+root per plan and verifies neither was created. Host loader/libraries were used.
+Plans retain 16 CPUs, production malloc for publication, configured local ports,
+/usr/obj object paths and /usr/obj/usr/src/repo despite deliberately incorrect
+home-directory repository/object environment overrides. No planned command ran.
+
+Frontend integration review: the frontend now has a native build/install target
+through its existing explicit target/settings/SDK interface. Runtime planning
+retains Make as production backend; this change does not switch backend defaults
+or alter publication/signing contracts. No one-off replacement frontend was added.
+The maintained test bodies/support suites, helper runtime, tests-disabled variant,
+static-library probe retention, complete bootstrap/world/kernel/pkgbase and
+resource/performance qualification remain open. Building the frontend with Bazel
+does not establish that it can build a complete Bazel system yet.

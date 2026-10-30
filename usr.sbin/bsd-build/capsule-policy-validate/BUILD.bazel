@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "bsd-capsule-validate", srcs = ['capsule-policy-validate.c', '//usr.sbin/capsule:config.c', '//usr.sbin/capsule:config_report.c'], deps = ['//lib/libcapsulert:capsulert', '//lib/libucl:ucl', '//lib/libmd:md_link', '//usr.sbin/capsule:config_headers', '//lib/libcapbundle:gates_headers', '//sys/sys:zfshandle_header', '//sys/dev/mac_capability:isolation_headers'], linkstatic = True, linkopts = ["-static"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "bsd-capsule-validate", manual = "", package = "bsd-build", bindir = "/usr/libexec/bsd-build")
