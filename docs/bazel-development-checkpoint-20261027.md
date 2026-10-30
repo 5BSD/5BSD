@@ -19338,3 +19338,29 @@ Frontend review: existing explicit targets, tests setting and SDK inputs work
 through native build-bsd; no frontend/backend/signing/publication contract changed.
 These are selected amd64 artifacts, not world/kernel/bootstrap/pkgbase/runtime or
 performance qualification. Make remains production/default.
+
+### 2026-10-30: native MAC ABAC management tools
+
+- Added native `mac_abacd` and `mac_abac_ctl` compilation/link/install targets,
+  native libucl/libutil dependencies, and both existing DTrace providers. Shared
+  parser sources and the public management ABI have narrowly declared inputs;
+  userland does not import the kernel implementation's header dependencies.
+- Fresh Make comparison includes the controller's `includes` phase, public
+  `/usr/include/security/mac_abac/mac_abac.h`, daemon configuration, directory
+  policy, package/dev/config tags, ELF symbols/ordered dynamic dependencies,
+  and separated debug files/CRC. Each tool matches six changed METALOG records
+  and three regular payloads. Policy/header bytes match exactly.
+- Both native providers match Make's two probe schemas and validate three
+  ordinary instruction sites apiece. No live probe firing or policy changes
+  were performed. DTrace remains enabled by default; disabled variant untested
+  in this component qualification.
+- Evidence: `/usr/obj/usr/src/bazel-abac-tools-reference-20261030/`, fresh Make
+  stages `bazel-mac_abacd-make-20261030` and `bazel-mac_abac_ctl-make-20261030`,
+  captured native artifacts `bazel-abac-tools-20261030-r3` under `/usr/obj/usr/src`.
+  Earlier failed captures retain the missing include-mtree policy and /etc
+  metadata findings; these were corrected using maintained mtree/Make policy.
+- Frontend review: the Bazel-built maintained `build-bsd bazel-test` drove this
+  qualification with explicit input targets and 16 jobs. Existing typed inputs
+  cover these additions; no frontend C/backend/signing/publication change needed.
+  Staged SDK remains a prerequisite. This is component artifact parity, not
+  whole-system runtime, package publication, bootstrap, or performance completion.

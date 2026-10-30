@@ -43544,3 +43544,21 @@ Frontend review: existing explicit targets, tests setting and SDK inputs work
 through native build-bsd; no frontend/backend/signing/publication contract changed.
 These are selected amd64 artifacts, not world/kernel/bootstrap/pkgbase/runtime or
 performance qualification. Make remains production/default.
+
+### MAC ABAC utility qualification (2026-10-30)
+
+`//usr.sbin/mac_abacd:install_archive` and
+`//usr.sbin/mac_abac_ctl:install_archive` build native objects, native libraries,
+DTrace providers, and pkgbase installation metadata. The daemon carries its
+maintained configuration; the controller carries its public ABI header and
+include directory policy. Each matches six fresh Make installation records and
+three payloads, including debug-link CRC and exact policy/header bytes. The
+Make reference explicitly runs the controller's `includes` phase.
+
+Both providers match Make's two probe schemas and three patched ordinary sites.
+Live policy operation/probe firing and the optional DTrace-disabled configuration
+remain unqualified here. Evidence is in
+`/usr/obj/usr/src/bazel-abac-tools-reference-20261030/`, with native capture
+`/usr/obj/usr/src/bazel-abac-tools-20261030-r3/`. The maintained Bazel-built
+`build-bsd bazel-test` consumed explicit inputs with 16 jobs; no new frontend
+option or publication path was introduced.

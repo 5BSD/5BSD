@@ -8075,3 +8075,17 @@ zonectl sources. Native artifact and test-installation comparisons pass. Qualify
 enclosure control/health decoding and zone transitions/errors with appropriate
 isolated devices. Review CAM/ioctl audit and probe coverage separately from these
 userland source scans. No disk, enclosure, zoned-device or test-body execution.
+
+### 2026-10-30: mac_abacd and mac_abac_ctl
+
+Both existing `abacdaemon`/`abacctl` providers are retained with DTrace enabled
+by default. Fresh Make and native binaries have identical two-schema provider
+inventories per utility; each has three validated ordinary instruction sites
+and no is-enabled sites. Evidence: `bazel-abac-tools-reference-20261030` under
+`/usr/obj/usr/src`, per-tool `native-dof.json`/`make-dof.json` and `dof-audit.py`.
+This checks generated DOF and patched instructions, not live event delivery.
+
+The management sources refer to kernel audit handling rather than directly
+linking libbsm. No audit integration was added or removed. End-to-end audit
+records for policy updates, label changes, and denied actions still need
+matching-kernel runtime qualification; artifact parity cannot establish them.
