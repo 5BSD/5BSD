@@ -8018,3 +8018,13 @@ and complete test installation match Make artifacts. Test bodies remain unrun;
 qualify trust/distrust/rehash, malformed certificates, filesystem/write failures
 and atomicity using the maintained tests. Review certificate-store change audit
 coverage. No host certificate-store modification was performed.
+
+
+### jexec, lastlogin and nologin (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in these utility sources.
+Native rules preserve behavior; nologin's static ELF structure was explicitly
+verified. Runtime work includes jail attachment/identity/authorization failures,
+accounting records and libxo output, login refusal and existing logging behavior.
+Review kernel audit coverage for jail attachment rather than infer it from the
+absence of direct userland calls. No live jail or login operation was performed.

@@ -19164,3 +19164,27 @@ Frontend review: existing build-bsd explicit target, tests setting and SDK input
 cover the installed-system rule; no frontend/backend/signing/publication contract
 changed. This is not bootstrap, verified-boot, complete pkgbase or whole-system
 qualification. Make remains production/default.
+
+
+### jexec, lastlogin and nologin (2026-10-30)
+
+Added native jexec (jail/util libraries, jail package), lastlogin (libxo, acct
+package), and static nologin (utilities). nologin retains Make's security-required
+static linkage, /sbin/nologin symlink and distinct section-5/section-8 manuals.
+Program sources and behavior are unchanged.
+
+Native build: /usr/obj/usr/src/bazel-account-tools-20261030. Fresh Make roots:
+/usr/obj/usr/src/bazel-{jexec,lastlogin,nologin}-make-20261030. Scripts/evidence:
+/usr/obj/usr/src/bazel-account-tools-reference-20261030, per-program directories.
+jexec and lastlogin each pass five install records/three regular payloads;
+nologin passes seven records/four payloads. No missing/extra/metadata differences;
+symbol/dynamic inventories, manual bytes and all three debuglink CRCs pass.
+nologin/static-audit.py/json explicitly verifies absence of PT_INTERP and PT_DYNAMIC
+in both installed binaries. This proves static ELF structure, not login behavior.
+
+No utility was executed. Jail attachment/user/environment selection, accounting
+record/output variants and login refusal with hostile loader environment still
+need runtime checks. No jail, account or login configuration was changed.
+Frontend review: existing build-bsd explicit targets and SDK inputs cover these
+rules; no frontend/backend/signing/publication contract changed. Full system,
+bootstrap, pkgbase, runtime and performance gates remain open; Make remains default.
