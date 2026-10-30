@@ -40,3 +40,12 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "runtime_test", srcs = ["runtime_test.c"],
+    deps = [":omp", ":config_headers", "//lib/libc:shared_link_interface"],
+    dynamic_deps = [":omp_shared", "//lib/libthr:thr_shared", "//lib/msun:m_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    linkopts = ["-nodefaultlibs"],
+    copts = ["-fopenmp", "-UNDEBUG"], features = ["bsd_test_runtime_paths"],
+    data = [":omp_shared"], args = ["$(rootpath :omp_shared)"],
+    size = "small", timeout = "moderate", target_compatible_with = _PLATFORM)

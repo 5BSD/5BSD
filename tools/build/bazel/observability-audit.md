@@ -7597,3 +7597,7 @@ Native 31-C++/one-assembly runtime and installation match Make artifacts.
 Existing OMPT and ITT implementation inputs are included; no hooks changed.
 Parallel teams, task scheduling, barriers, shutdown, OMPT callbacks and runtime
 CPU/memory behavior need execution qualification before claiming correctness.
+
+OpenMP runtime follow-up: native shared-library identity verified; 16 rounds of
+four-thread teams, barrier visibility, dynamic reduction and task dependencies
+pass. OMPT/ITT callback observation and comparative performance remain open.

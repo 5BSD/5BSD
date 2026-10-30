@@ -42516,3 +42516,26 @@ Evidence: install-audit.json and payload-audit.json under
 bazel-libomp-reference-20261030, native run bazel-libomp-20261030-r5.
 Runtime parallel regions/tasks and memory/CPU performance remain unqualified;
 artifact parity alone does not establish OpenMP concurrency correctness.
+
+### Native OpenMP execution qualification (2026-10-30)
+
+Added a Bazel cc_test compiled with OpenMP support, linking the native shared
+runtime and checking loaded-library device/inode identity against its declared
+data artifact through dlsym/dladdr/stat. Assertions remain enabled explicitly.
+Sixteen rounds exercise exactly four worker-team members, barrier visibility,
+dynamic-loop reduction and a 127-task dependency chain with exact results.
+Native test passes in bazel-libomp-runtime-20261030-r2; saved test XML/logs prove
+execution and successful process exit. Build uses 16 jobs; the four-thread test
+team is a controlled correctness fixture, not a build parallelism limit.
+
+Initial execution failed because native libthr requires a newer libc private
+symbol than the host provides. The test now declares matching native libc/libsys
+through the established shared_link_interface and -nodefaultlibs pattern. No
+runtime implementation workaround or host installation was made. Host loader,
+kernel and staged toolchain/startup objects remain execution prerequisites.
+Existing build-bsd target/test inputs and runtime-path feature suffice; no
+frontend input or publication contract change is needed.
+
+This qualifies the exercised team/barrier/reduction/task paths only. Nested
+teams, cancellation, locks, OMPT callbacks, oversubscription, exhaustive scheduler
+behavior and comparative CPU/memory/disk performance remain outstanding.
