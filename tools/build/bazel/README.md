@@ -43039,3 +43039,10 @@ five Make installation records and three regular payloads. Shared generated
 parser C is compiled separately with the appropriate BTHIDCONTROL definition.
 Evidence: /usr/obj/usr/src/bazel-bthid-reference-20261030. HID/uinput/controller
 runtime qualification remains open.
+
+
+Bluetooth networking coverage (2026-10-30): btpand and rfcomm_pppd native builds
+each match five Make install records and three regular payloads. Shared RFCOMM
+SDP source is explicitly declared. Evidence:
+/usr/obj/usr/src/bazel-bt-network-reference-20261030. PAN/TAP/PPP runtime
+qualification remains pending; no host networking was changed.

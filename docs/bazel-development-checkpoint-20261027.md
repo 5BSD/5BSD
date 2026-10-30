@@ -18649,3 +18649,26 @@ delivery, /dev/uinput and privilege/error paths require isolated runtime tests.
 Existing build-bsd target/SDK inputs cover these actions; no frontend/backend,
 signing or publication contract changed. Full world/kernel/bootstrap/pkgbase,
 alternate architectures and performance remain open. Make remains default.
+
+### Bluetooth PAN and RFCOMM PPP (2026-10-30)
+
+Added native btpand and rfcomm_pppd. Explicit sources/headers and native Bluetooth,
+SDP and PAN util linkage preserve Make's selection. RFCOMM's shared rfcomm_sdp.c
+is exported from its existing rfcomm_sppd package with narrow visibility.
+No daemon source changed.
+
+Native build-bsd run: /usr/obj/usr/src/bazel-bt-network-20261030.
+Fresh Make references: bazel-btpand-make-20261030 and
+bazel-rfcomm_pppd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-network-reference-20261030. Each program matches five
+installation records and three regular payloads, including symbol/dynamic
+linkage inventories, manual bytes and debuglink CRC. All builds exited zero.
+The tool interruption occurred after btpand completed and before rfcomm_pppd's
+reference started; only the missing reference was subsequently run.
+
+No PAN service, TAP interface, Bluetooth device or PPP session was started.
+BNEP packet handling, SDP discovery, session setup/teardown, TAP authorization,
+PPP invocation and malformed/disconnected-peer behavior remain runtime gates.
+Existing build-bsd target/SDK inputs cover this group; no frontend/backend,
+signing or publication contract changed. Full system/bootstrap/pkgbase and
+performance remain unqualified; Make remains the default production backend.

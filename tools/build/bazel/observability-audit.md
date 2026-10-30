@@ -7819,3 +7819,14 @@ comparisons and parser action checks pass; no live input devices were accessed.
 Follow-up: malformed HID descriptors/maps, SDP failures, controller disconnect,
 reconnection, input-device authorization denial, keyboard/mouse events and
 cleanup of uinput devices. Build results do not prove runtime audit coverage.
+
+
+### Bluetooth PAN/RFCOMM PPP (2026-10-30)
+
+Native builds retain maintained btpand/rfcomm_pppd source and shared SDP code.
+Source scan found no direct DTRACE/SDT_PROBE/audit_ references in their program
+directories. Make artifact comparisons pass; this does not prove runtime audit
+coverage. Qualify BNEP malformed packets/filtering, SDP errors, peer disconnects,
+TAP privilege denial and cleanup, PPP execution/argument handling and failed
+session setup in isolated fixtures. No PAN service, TAP device or PPP session
+was started during this migration.
