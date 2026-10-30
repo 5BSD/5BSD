@@ -200,14 +200,14 @@ ${_D}.o: ${_DSRC} ${OBJS:S/^${_D}.o$//} ${_DTRACE_DRTI_DEP}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.o}
 .if defined(DTRACE_STATIC_ANCHOR)
-	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+	${OBJCOPY_EXTENDED} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
 ${_D}.pieo: ${_DSRC} ${OBJS:S/^${_D}.pieo$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.pieo}
 .if defined(DTRACE_STATIC_ANCHOR)
-	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+	${OBJCOPY_EXTENDED} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
 .if defined(LIB) || defined(SHLIB) || defined(SHLIB_NAME)
 CLEANFILES+= ${_D}.pico ${_D}.pieo ${_D}.po ${_D}.nossppico
@@ -216,21 +216,21 @@ ${_D}.pico: ${_DSRC} ${SOBJS:S/^${_D}.pico$//} ${_DTRACE_DRTI_DEP}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.pico}
 .if defined(DTRACE_STATIC_ANCHOR)
-	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+	${OBJCOPY_EXTENDED} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
 ${_D}.po: ${_DSRC} ${POBJS:S/^${_D}.po$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.po}
 .if defined(DTRACE_STATIC_ANCHOR)
-	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+	${OBJCOPY_EXTENDED} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
 ${_D}.nossppico: ${_DSRC} ${NOSSPSOBJS:S/^${_D}.nossppico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
 	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
 	    ${.ALLSRC:M*.nossppico}
 .if defined(DTRACE_STATIC_ANCHOR)
-	${OBJCOPY} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
+	${OBJCOPY_EXTENDED} --add-symbol __bsd_dof_anchor_${_D}=.SUNW_dof:0,global,hidden ${.TARGET}
 .endif
 .endif
 .endfor

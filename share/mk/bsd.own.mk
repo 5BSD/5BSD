@@ -160,9 +160,16 @@ __<bsd.own.mk>__:	.NOTMAIN
 CTFCONVERT_CMD=	${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
 .else
 CTFCONVERT_CMD=
-.endif 
+.endif
 
 .endif # !_WITHOUT_SRCCONF
+
+# objcopy for options only llvm-objcopy (or GNU objcopy) understands, such
+# as --add-symbol and --keep-section.  Without LLVM_BINUTILS (for example
+# WITHOUT_TOOLCHAIN) the plain "objcopy" is ELF Tool Chain's elfcopy; the
+# llvm-objcopy of the LLVM binutils bootstrap is used instead.
+# Evaluated when used: MK_LLVM_BINUTILS is set after this file is read.
+OBJCOPY_EXTENDED?=	${${MK_LLVM_BINUTILS:Uyes} == "no" && ${OBJCOPY:Uobjcopy} == "objcopy":?llvm-objcopy:${OBJCOPY:Uobjcopy}}
 
 # Binaries
 BINOWN?=	root

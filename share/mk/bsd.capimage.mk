@@ -26,7 +26,7 @@ _CAPIMAGE_INSTALL= ${PROG}.capimage.install
 STRIP=
 all: ${_CAPIMAGE_INSTALL}
 ${_CAPIMAGE_INSTALL}: ${PROG}
-	${OBJCOPY} --strip-all --keep-section=.5bsd.policy ${PROG} ${.TARGET}
+	${OBJCOPY_EXTENDED} --strip-all --keep-section=.5bsd.policy ${PROG} ${.TARGET}
 CLEANFILES+= ${_CAPIMAGE_INSTALL}
 CLEANFILES+= ${_CAPIMAGE_ASM} ${_CAPIMAGE_ASM}.tmp
 ${_CAPIMAGE_ASM}: ${_CAPIMAGE_POLICY} ${_CAPIMAGE_AWK}
