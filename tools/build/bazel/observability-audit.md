@@ -7877,3 +7877,14 @@ bazel-meshd-reference-20261030/native-dof.json and make-dof.json. No live probe
 firing is established. Qualify disabled-DTrace build, live event/error probes,
 control authorization, malformed PDUs, provisioning/persistence/restart and
 bearer backpressure with isolated fixtures. No daemon or network operation ran.
+
+
+### Bluetooth capability controller helper (2026-10-30)
+
+The native helper preserves controller policy bytes and matches Make install/
+payload metadata with its parent directory dependency. No runtime broker request
+was executed. Qualification must cover stamped session grants, missing/excess
+rights, malformed adapter requests, privileged HCI descriptor creation/transfer,
+peer disconnect and resource retirement. Embedded .5bsd.policy parity alone does
+not prove runtime entitlement enforcement or signed-image verification. Main
+BSDBluetooth daemon and aggregate bundle migration remain outstanding.

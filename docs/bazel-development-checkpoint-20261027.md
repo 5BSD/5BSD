@@ -18776,3 +18776,31 @@ Both builds completed successfully. This closes the optional disabled build
 comparison gap, not live daemon/probe/runtime qualification. DTrace remains
 enabled by default. Existing build-bsd typed setting works without frontend or
 backend changes. No host installation or daemon execution occurred.
+
+### Bluetooth capability controller helper (2026-10-30)
+
+Added native BSDBluetoothController with explicit Bluetooth/service/channel
+linkage, generated CAPIMAGE policy assembly, .5bsd.policy preservation during
+stripping, and Unit.ucl installation under Bluetooth.cap/controller.unit.
+No controller behavior or policy content changed.
+
+Native output: /usr/obj/usr/src/bazel-bt-controller-20261030-r2. Make reference:
+bazel-bt-controller-make-20261030-r2. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-controller-reference-20261030. The first native archive
+correctly rejected undeclared parent bundle directory policy. The corrected
+archive declares Bluetooth.cap and Units; the fresh reference installs those
+with the parent's maintained installdirs-BLUED_CAP/BLUED_CAP_UNITS targets before
+building/installing the helper. This comparison includes that parent dependency,
+not a standalone leaf Make invocation or the whole daemon bundle.
+
+All 13 installation records and three regular payloads match. Symbol/dynamic
+linkage inventories, Unit.ucl bytes and debuglink CRC pass. policy-audit.py/json
+verify exact controller.ucl bytes in .5bsd.policy in both stripped executables.
+This establishes unsigned embedded policy parity, not signing, verified boot,
+protection against root or runtime authorization.
+
+Main BSDBluetooth daemon migration, bundle aggregation, stamped session grant
+checks, rights denial, descriptor brokerage/transfer and lifecycle tests remain
+open. No helper was executed. Existing build-bsd target/SDK and capimage pipeline
+cover these inputs; no frontend/backend/signing/publication contract changed.
+Full system/bootstrap/pkgbase/performance remain open; Make remains default.

@@ -43079,3 +43079,10 @@ meshd's optional DTrace-disabled build also matches Make; no-dof.json verifies
 DOF-section absence in both executables. Evidence:
 /usr/obj/usr/src/bazel-meshd-nodtrace-reference-20261030. DTrace remains enabled
 by default; runtime/live firing gates remain open.
+
+
+Bluetooth capability controller (2026-10-30): native helper plus required parent
+bundle directories match 13 Make install records and three regular payloads.
+Both stripped executables retain exact declared controller.ucl policy bytes.
+Evidence: /usr/obj/usr/src/bazel-bt-controller-reference-20261030. This is unsigned
+policy/build parity; main daemon, bundle/runtime and signing gates remain open.
