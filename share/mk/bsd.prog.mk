@@ -160,7 +160,9 @@ ${PROG_FULL}: beforelinking
 .endif
 # Source makefiles declare link/feature inputs. Track their removal as well
 # as addition, including when ELF_FEATURES becomes empty on an incremental build.
-${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u}
+# Device files such as SRCCONF=/dev/null are not inputs: their times change
+# on every write and would make installworld try to relink.
+${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u:N/dev/*}
 .if defined(PROG_CXX)
 	${CXX:N${CCACHE_BIN}} ${CXXFLAGS:N-M*} ${LDFLAGS} -o ${.TARGET} \
 	    ${OBJS} ${LDADD}
@@ -201,7 +203,9 @@ ${PROG_FULL}: beforelinking
 .endif
 # Source makefiles declare link/feature inputs. Track their removal as well
 # as addition, including when ELF_FEATURES becomes empty on an incremental build.
-${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u}
+# Device files such as SRCCONF=/dev/null are not inputs: their times change
+# on every write and would make installworld try to relink.
+${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u:N/dev/*}
 .if defined(PROG_CXX)
 	${CXX:N${CCACHE_BIN}} ${CXXFLAGS:N-M*} ${LDFLAGS} -o ${.TARGET} \
 	    ${OBJS} ${LDADD}
