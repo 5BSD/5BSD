@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "elf_signature_test", srcs = ["elf_signature_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libcapimage:capimage", "//secure/lib/libcrypto:crypto"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libcapimage:capimage_shared", "//secure/lib/libcrypto:crypto_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+utility_installation(name = "install_elf", program = "elf_signature_test", manual = "", package = "capsign-tests", bindir = "/usr/tests/usr.sbin/capsign")
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name in ["capsign_test", "veriexec_test"]]
+[bsd_install_file(name = "install_" + name, src = ":" + name,
+    destination = "/usr/tests/usr.sbin/capsign/" + name, owner = "root", group = "wheel", mode = "0555", install_tags = ["package=capsign-tests"])
+ for name in ["capsign_test", "veriexec_test"]]
+[bsd_install_file(name = "install_" + name, src = "//tools/build/capimage:" + name + ".sh",
+    destination = "/usr/tests/usr.sbin/capsign/" + name + ".sh", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=capsign-tests"])
+ for name in ["sign-stage", "prepare-stage", "verify-stage"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["capsign_test", "elf_signature_test", "veriexec_test"], interfaces = {n: "atf" for n in ["capsign_test", "veriexec_test", "elf_signature_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/capsign/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=capsign-tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_capsign_test", ":install_veriexec_test", ":install_sign-stage", ":install_prepare-stage", ":install_verify-stage", ":install_kyuafile"], visibility = ["//visibility:public"])

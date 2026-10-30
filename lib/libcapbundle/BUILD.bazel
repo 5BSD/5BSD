@@ -47,3 +47,5 @@ bsd_install_archive(
 )
 
 exports_files(["libcapbundle_sign.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "gates_headers", hdrs = ["gates.h"], strip_include_prefix = ".", deps = ["//sys/dev/mac_capability:system_headers"], visibility = ["//usr.sbin/bsd-build/capsule-policy-validate:__pkg__"])

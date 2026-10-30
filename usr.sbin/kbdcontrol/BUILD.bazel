@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
+bsd_lex(name = "lexer", src = "lex.l", output = "lex.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "headers", hdrs = ["lex.h", "path.h"], strip_include_prefix = ".")
+bsd_compress(name = "manual5", src = "kbdmap.5", output = "kbdmap.5.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=console-tools-man"], "//conditions:default": ["package=console-tools"]})
+bsd_install_file(name = "install_manual5", src = ":manual5", destination = "/usr/share/man/man5/kbdmap.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(name = "manual5_alias", destination = "/usr/share/man/man5/keymap.5.gz", target = "/usr/share/man/man5/kbdmap.5.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+# Installed system program; Make's reduced BOOTSTRAPPING variant is separate.
+cc_binary(name = "kbdcontrol", srcs = ["kbdcontrol.c", ":lexer"], deps = [":headers"], local_defines = ["COMPAT_FREEBSD13"], dynamic_deps = [], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "kbdcontrol", manual = "kbdcontrol.1", package = "console-tools", bindir = "/usr/sbin", man_section = "1", aliases = [], extra_entries = [":install_manual5", ":manual5_alias"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=console-tools","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

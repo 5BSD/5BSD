@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["smart.c", "libsmart.c", "libsmart_desc.c", "freebsd_dev.c", "smart.8"], visibility = ["//usr.sbin/smart:__pkg__"])
+cc_library(name = "headers", hdrs = ["libsmart.h", "libsmart_priv.h", "libsmart_dev.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/smart:__pkg__"])

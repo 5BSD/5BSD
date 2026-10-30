@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "crontab", srcs = ["crontab.c"], deps = ["//usr.sbin/cron/cron:headers", "//usr.sbin/cron/lib:cron_pie", "//lib/libmd:md_link", "//lib/libutil:util"],
+    dynamic_deps = ["//lib/libmd:md_shared", "//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_compress(name = "config_manual_gz", src = "crontab.5", output = "crontab.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual", src = ":config_manual_gz", destination = "/usr/share/man/man5/crontab.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=cron-man"], "//conditions:default": ["package=cron"]}))
+utility_installation(name = "install_manifest", program = "crontab", manual = "crontab.1", package = "cron", bindir = "/usr/bin", binary_mode = "4555", binary_flags = "schg", extra_entries = [":config_manual"])

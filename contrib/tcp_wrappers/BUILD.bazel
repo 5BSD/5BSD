@@ -9,3 +9,6 @@ cc_library(
 )
 
 exports_files(["tcpd.c", "tcpd.8", "patchlevel.h"], visibility = ["//libexec/tcpd:__pkg__"])
+
+exports_files(["tcpdchk.c", "tcpdmatch.c", "fakelog.c", "inetcf.c", "scaffold.c", "tcpdchk.8", "tcpdmatch.8"], visibility = ["//usr.sbin/tcpdchk:__pkg__", "//usr.sbin/tcpdmatch:__pkg__"])
+cc_library(name = "diagnostic_headers", hdrs = ["inetcf.h", "scaffold.h"], strip_include_prefix = ".", deps = [":headers"], visibility = ["//usr.sbin/tcpdchk:__pkg__", "//usr.sbin/tcpdmatch:__pkg__"])

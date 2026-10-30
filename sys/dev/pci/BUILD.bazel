@@ -8,3 +8,5 @@ cc_library(name = "register_headers", hdrs = ["pcireg.h"], includes = ["../.."],
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['pcireg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "acpi_register_headers", hdrs = ["pcireg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/einj:__pkg__"])

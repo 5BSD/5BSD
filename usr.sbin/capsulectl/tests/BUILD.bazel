@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_binary(name = "capsulectl_test_bin", srcs = ["//usr.sbin/capsulectl:capsulectl.c"], deps = ["//lib/libservice:service", "//lib/libcapsulert:headers"], linkstatic = True, linkopts = ["-static"])
+cc_binary(name = "capsulectl_success_bin", srcs = ["capsulectl_success_impl.c", "fake_service.c"], deps = ["//usr.sbin/capsulectl:test_source", "//lib/libservice:headers", "//lib/libcapsulert:headers"], linkstatic = True, linkopts = ["-static"])
+utility_installation(name = "install_test", program = "capsulectl_test_bin", manual = "", package = "capsulectl-tests", bindir = "/usr/tests/usr.sbin/capsulectl")
+utility_installation(name = "install_success", program = "capsulectl_success_bin", manual = "", package = "capsulectl-tests", bindir = "/usr/tests/usr.sbin/capsulectl")
+bsd_script_wrapper(name = "capsulectl_test", body = "capsulectl_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["capsulectl_test"], interfaces = {"capsulectl_test": "atf"})
+[bsd_install_file(name = name, src = source, destination = "/usr/tests/usr.sbin/capsulectl/" + file, owner = "root", group = "wheel", mode = mode, install_tags = ["package=capsulectl-tests"])
+ for name, source, file, mode in [("install_shell", ":capsulectl_test", "capsulectl_test", "0555"), ("install_kyuafile", ":kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_extra", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])

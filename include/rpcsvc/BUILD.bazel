@@ -6,7 +6,7 @@ exports_files(["yp.x", "yppasswd.x"], visibility = ["//libexec/ypxfr:__pkg__", "
 load(":protocols.bzl", "RPCSVC_PROTOCOLS")
 load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files([n + ".x" for n in RPCSVC_PROTOCOLS if n != "yppasswd"], visibility = ["//lib/librpcsvc:__pkg__"])
+exports_files([n + ".x" for n in RPCSVC_PROTOCOLS if n != "yppasswd"], visibility = ["//lib/librpcsvc:__pkg__", "//usr.sbin/rpc.statd:__pkg__", "//usr.sbin/rpc.lockd:__pkg__"])
 [bsd_rpcgen(name = n + "_header", source = n + ".x", output = n + ".h", mode = "-h",
     flags = ["-C", "-DWANT_NFS3"], cpp_flags = ["-E", "-x", "c", "-nostdinc"],
     rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
@@ -23,3 +23,6 @@ cc_library(name = "library_local_headers", hdrs = [":" + n + ".h" for n in RPCSV
     strip_include_prefix = ".", include_prefix = "rpcsvc",
     visibility = ["//libexec/" + consumer + ":__pkg__"] + (["//usr.bin/quota:__pkg__"] if name == "rquota" else []))
  for name, consumer in [("ypxfrd", "ypxfr"), ("spray", "rpc.sprayd"), ("rquota", "rpc.rquotad"), ("rwall", "rpc.rwalld"), ("rstat", "rpc.rstatd"), ("rnusers", "rpc.rusersd")]]
+
+cc_library(name = "locking_protocol_headers", hdrs = [":sm_inter.h", ":nlm_prot.h"], strip_include_prefix = ".", include_prefix = "rpcsvc", visibility = ["//usr.sbin/rpc.lockd:__pkg__", "//usr.sbin/clear_locks:__pkg__"])
+cc_library(name = "spray_client_header", hdrs = [":spray.h"], strip_include_prefix = ".", include_prefix = "rpcsvc", visibility = ["//usr.sbin/spray:__pkg__"])

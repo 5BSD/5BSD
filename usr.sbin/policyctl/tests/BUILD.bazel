@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "policyctl_test", body = "policyctl_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["policyctl_test"], interfaces = {"policyctl_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":policyctl_test",
+    destination = "/usr/tests/usr.sbin/policyctl/policyctl_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=switchboardctl-tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.sbin/policyctl/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=switchboardctl-tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_CASES = ["roundtrip", "empty_attributes", "reject_input", "provider", "reject_invalid_bundle"]
+[bsd_atf_test(
+    name = case,
+    case_name = case,
+    body = "policyctl_test.sh",
+    data_paths = {"//usr.sbin/policyctl:policyctl": "policyctl_test_bin"},
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/mkdir:mkdir", "//bin/chmod:chmod", "//bin/cat:cat", "//bin/rm:rm", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff"],
+    # These tests require a kernel compatible with the source Capsicum ABI.
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libregex:regex_shared", "//lib/libcapbundle:capbundle_shared", "//lib/libcapsulert:capsulert_shared", "//lib/libucl:ucl_shared", "//lib/libmd:md_shared", "//lib/libcapimage:capimage_shared", "//secure/lib/libcrypto:crypto_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in _CASES]
+test_suite(name = "tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])

@@ -36,3 +36,7 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+cc_library(name = "mesh_protocol_headers", hdrs = ["ipc_proto.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bluetooth/meshd:__pkg__"])
+
+cc_library(name = "daemon_protocol_headers", hdrs = ["ipc_proto.h", "blued_plane.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bluetooth/BSDBluetooth:__pkg__"])

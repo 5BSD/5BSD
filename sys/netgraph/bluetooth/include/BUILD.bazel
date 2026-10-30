@@ -4,3 +4,5 @@ cc_library(name = "socket_headers", hdrs = ["ng_hci.h", "ng_l2cap.h", "ng_btsock
     includes = ["../../.."], visibility = ["//sys/dev/mac_capability:__pkg__"])
 
 cc_library(name = "bluetooth_user_headers", hdrs = ['ng_bluetooth.h', 'ng_btsocket.h', 'ng_hci.h', 'ng_l2cap.h'], strip_include_prefix = "/sys", visibility = ["//lib/libbluetooth:__pkg__"])
+
+cc_library(name = "vhci_user_headers", hdrs = ["ng_hci_virt.h", "ng_hci.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bluetooth/vhcitool:__pkg__"])

@@ -10,7 +10,7 @@ bsd_lex(name = "lexer", src = ":lexer_input", output = "configlexer.c", flags = 
 bsd_yacc(name = "parser", src = "//contrib/unbound:util/configparser.y", output = "configparser.c", header = "configparser.h", flags = ["-pub_c_"], yacc = "//usr.bin/yacc:yacc")
 filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
 filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
-cc_library(name = "config_headers", hdrs = ["config.h", ":parser_header"], includes = ["."])
+cc_library(name = "config_headers", hdrs = ["config.h", ":parser_header"], includes = ["."], visibility = ["//usr.sbin/unbound:__subpackages__"])
 cc_library(name = "unbound", srcs = SOURCES[:5] + [":lexer", ":parser_source"] + SOURCES[5:],
     deps = [":config_headers", "//contrib/unbound:headers", "//contrib/ldns:headers", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libthr:thr"],
     local_defines = ["OPENSSL_API_COMPAT=0x10100000L"],

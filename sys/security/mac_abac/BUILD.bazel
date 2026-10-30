@@ -8,3 +8,8 @@ _KERNEL_SOURCES = ["abac_cred.c", "abac_kenv.c", "abac_label.c", "abac_match.c",
 _KERNEL_DEPS = [":headers"]
 amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
+
+# Public management ABI; userland clients must not import kernel-only headers.
+cc_library(name = "abi_headers", hdrs = ["mac_abac.h"], strip_include_prefix = "/sys",
+    visibility = ["//usr.sbin/mac_abacd:__pkg__", "//usr.sbin/mac_abac_ctl:__pkg__"])
+exports_files(["mac_abac.h"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__"])

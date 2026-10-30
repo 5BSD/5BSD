@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "setup_script", src = "local-unbound-setup.sh", destination = "/usr/sbin/local-unbound-setup",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=local-unbound"])
+bsd_install_manifest(name = "install_manifest", entries = [":setup_script"], visibility = ["//usr.sbin/unbound:__pkg__"])

@@ -53,3 +53,5 @@ kldxref_audit_test(name = "nullfs_artifacts_test", mode = "module-artifacts",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], tags = ["local", "no-cache"], size = "small")
+
+exports_files(['inventory_audit_test.py'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])

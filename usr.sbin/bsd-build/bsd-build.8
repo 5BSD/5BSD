@@ -4340,3 +4340,62 @@ composes the complete maintained amd64 compiler-runtime installation from 27
 component manifests, including headers, ignorelists and shared-runtime debug data.
 It is an installation artifact, not an independently bootstrapped toolchain or
 a complete pkgbase transaction. Other architectures remain unqualified.
+
+.Ss Native services database generation
+.Cm //usr.sbin/services_mkdb:install_archive
+includes the utility, manual and services configuration.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:servicesdb
+mirrors MK_SERVICESDB and defaults to true.
+When enabled, the archive also includes services.db generated from the declared
+services source using the native execution-platform services_mkdb, loader and
+libraries. Byte order is selected from the target configuration; unsupported
+architectures fail selection instead of using the execution host's byte order.
+The current utility target is qualified only for amd64.
+Setting the boolean false omits database generation and installation while
+retaining the utility and configuration.
+This component archive does not establish installed NSS behavior or complete
+pkgbase ownership/update handling for the generated database.
+
+.Ss Native nscd configuration prefix
+.Cm //usr.sbin/nscd:install_archive
+includes the daemon, configuration and both manuals.
+The format-5 build-settings string
+.Cm //tools/build/bazel/config:nscd_prefix
+mirrors nscd's Make PREFIX for its compiled configuration path.
+It defaults to an empty string; a nonempty value must be an absolute path.
+A declared header defines CONFIG_PATH as the prefix followed by /etc/nscd.conf.
+As in maintained Make, this setting does not relocate the installed
+/etc/nscd.conf payload or change the relative fallback nscd.conf lookup.
+Default and /opt/5bsd configurations have artifact parity on amd64;
+this does not establish live NSS/cache or daemon runtime behavior.
+
+.Ss Native mptutil debug variant
+.Cm //usr.sbin/mptutil:install_archive
+supports the format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mptutil_debug
+(default false), corresponding to defining DEBUG in maintained Make.
+It enables additional controller commands and diagnostic code, not merely debug
+symbols. Both variants have amd64 installation/artifact parity; no controller
+operations were executed during qualification.
+
+.Ss Native MPS and MPR utilities
+.Cm //usr.sbin/mpsutil:install_archive
+installs mpsutil and the mprutil executable/manual hardlinks.
+The executable selects the controller interface from its invoked name.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mpsutil_debug
+(default false) matches Make's defined DEBUG variant.
+USE_MPT_IOCTLS remains defined in both configurations.
+Artifact and version/argument-dispatch checks cover both names and variants;
+controller and firmware operations remain unqualified.
+
+.Ss Native MFI and MRSAS utilities
+.Cm //usr.sbin/mfiutil:install_archive
+installs mfiutil and the mrsasutil executable/manual hardlinks.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mfiutil_debug
+(default false) matches Make's defined DEBUG variant, enabling additional
+controller diagnostics. The legacy dump command resolves the opened device
+and supports only the mfi driver diagnostic sysctl.
+Controller operations require separate runtime qualification.

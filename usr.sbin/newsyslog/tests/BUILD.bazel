@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["legacy_test"], interfaces = {"legacy_test": "tap"}, metadata = {"legacy_test": '{"required_programs":"newsyslog"}'})
+bsd_install_file(name = "install_shell", src = "legacy_test.sh",
+    destination = "/usr/tests/usr.sbin/newsyslog/legacy_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.sbin/newsyslog/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])

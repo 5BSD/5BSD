@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_lex(name = "lexer", src = "token.l", output = "token.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "headers", hdrs = ["common.h"], strip_include_prefix = ".")
+cc_binary(name = "automountd", srcs = ["automount.c", "automountd.c", "autounmountd.c", "common.c", "defined.c", "log.c", "popen.c", ":lexer"], deps = [":headers", "//:autofs_ioctl_headers", "//lib/libutil:util"], dynamic_deps = ["//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_compress(name = "automount_manual_gz", src = "automount.8", output = "automount.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "automount_manual", src = ":automount_manual_gz", destination = "/usr/share/man/man8/automount.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=autofs-man"], "//conditions:default": ["package=autofs"]}))
+bsd_install_link(name = "automount_link", destination = "/usr/sbin/automount", target = "/usr/sbin/automountd", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=autofs"])
+bsd_compress(name = "autounmountd_manual_gz", src = "autounmountd.8", output = "autounmountd.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "autounmountd_manual", src = ":autounmountd_manual_gz", destination = "/usr/share/man/man8/autounmountd.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=autofs-man"], "//conditions:default": ["package=autofs"]}))
+bsd_install_link(name = "autounmountd_link", destination = "/usr/sbin/autounmountd", target = "/usr/sbin/automountd", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=autofs"])
+bsd_compress(name = "auto_master_manual_gz", src = "auto_master.5", output = "auto_master.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "auto_master_manual", src = ":auto_master_manual_gz", destination = "/usr/share/man/man5/auto_master.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=autofs-man"], "//conditions:default": ["package=autofs"]}))
+bsd_install_file(name = "auto_master_config", src = "auto_master", destination = "/etc/auto_master", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "include_ldap_config", src = "autofs/include_ldap", destination = "/etc/autofs/include_ldap", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "include_nis_config", src = "autofs/include_nis", destination = "/etc/autofs/include_nis", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "include_nis_nullfs_config", src = "autofs/include_nis_nullfs", destination = "/etc/autofs/include_nis_nullfs", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "special_hosts_config", src = "autofs/special_hosts", destination = "/etc/autofs/special_hosts", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "special_media_config", src = "autofs/special_media", destination = "/etc/autofs/special_media", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "special_noauto_config", src = "autofs/special_noauto", destination = "/etc/autofs/special_noauto", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+bsd_install_file(name = "special_null_config", src = "autofs/special_null", destination = "/etc/autofs/special_null", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=autofs", "config"])
+utility_installation(name = "install_manifest", program = "automountd", manual = "automountd.8", package = "autofs", bindir = "/usr/sbin", man_section = "8", extra_entries = [":automount_manual", ":automount_link", ":autounmountd_manual", ":autounmountd_link", ":auto_master_manual", ":auto_master_config", ":include_ldap_config", ":include_nis_config", ":include_nis_nullfs_config", ":special_hosts_config", ":special_media_config", ":special_noauto_config", ":special_null_config"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/etc/autofs": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}', "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=autofs","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

@@ -1200,7 +1200,7 @@ dump_config(int fd, struct mfi_config_data *config, const char *msg_prefix)
 
 #ifdef DEBUG
 static int
-debug_config(int ac, char **av)
+debug_config(int ac, char **av __unused)
 {
 	struct mfi_config_data *config;
 	int error, fd;
@@ -1235,10 +1235,10 @@ debug_config(int ac, char **av)
 MFI_COMMAND(top, debug, debug_config);
 
 static int
-dump(int ac, char **av)
+dump(int ac, char **av __unused)
 {
 	struct mfi_config_data *config;
-	char buf[64];
+	char buf[SPECNAMELEN + 32], devname[SPECNAMELEN + 1];
 	size_t len;
 	int error, fd;
 
@@ -1255,7 +1255,21 @@ dump(int ac, char **av)
 	}
 
 	/* Get the stashed copy of the last dcmd from the driver. */
-	snprintf(buf, sizeof(buf), "dev.mfi.%d.debug_command", mfi_unit);
+	/* Resolve the opened device, including when selected with -D. */
+	if (fdevname_r(fd, devname, sizeof(devname)) == NULL) {
+		error = errno;
+		warn("Failed to get controller device name");
+		close(fd);
+		return (error);
+	}
+	/* This diagnostic sysctl is specific to the mfi driver. */
+	if (strncmp(devname, "mfi", 3) != 0 || devname[3] == '\0' ||
+	    strspn(devname + 3, "0123456789") != strlen(devname + 3)) {
+		warnx("Debug command is unsupported for %s", devname);
+		close(fd);
+		return (EOPNOTSUPP);
+	}
+	snprintf(buf, sizeof(buf), "dev.mfi.%s.debug_command", devname + 3);
 	if (sysctlbyname(buf, NULL, &len, NULL, 0) < 0) {
 		error = errno;
 		warn("Failed to read debug command");

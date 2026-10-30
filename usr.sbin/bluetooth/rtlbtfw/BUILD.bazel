@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+cc_binary(name = "rtlbtfw", srcs = ["main.c", "rtlbt_fw.c", "rtlbt_hw.c", "rtlbt_fw.h", "rtlbt_hw.h", "rtlbt_dbg.h"], deps = ["//lib/libusb:usb"], dynamic_deps = ["//lib/libusb:usb_shared"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "config", src = "rtlbtfw.conf", destination = "/etc/devd/rtlbtfw.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=bluetooth", "config"])
+utility_installation(name = "install_manifest", program = "rtlbtfw", manual = "rtlbtfw.8", package = "bluetooth", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":config"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/etc/devd": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bluetooth","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

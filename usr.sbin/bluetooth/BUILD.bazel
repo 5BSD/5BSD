@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Keep the subtree selection aligned with the maintained MK_USB choice.
+_ALWAYS = ["bluetooth-config", "BSDBluetooth", "bluedctl", "btpand", "hccontrol", "hcsecd", "l2control", "l2ping", "meshctl", "meshd", "rfcomm_pppd", "sdpcontrol", "sdpd", "vhcitool"]
+_USB = ["ath3kfw", "bcmfw", "bthidcontrol", "bthidd", "iwmbtfw", "rtlbtfw"]
+bsd_install_archive_set(name = "installation_archives",
+    archives = ["//usr.sbin/bluetooth/" + name + ":install_archive" for name in _ALWAYS] + select({"//tools/build/bazel/config:usb_enabled": ["//usr.sbin/bluetooth/" + name + ":install_archive" for name in _USB], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

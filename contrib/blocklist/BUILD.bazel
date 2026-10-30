@@ -5,7 +5,10 @@ cc_library(name = "headers", hdrs = ['include/bl.h', 'include/blocklist.h', 'por
 
 exports_files(["libexec/blocklistd-helper"], visibility = ["//libexec/blocklistd-helper:__pkg__"])
 
-exports_files(["port/vsyslog_r.c"], visibility = ["//lib/libblocklist:__pkg__", "//lib/libblacklist:__pkg__"])
+exports_files(["port/vsyslog_r.c"], visibility = ["//lib/libblocklist:__pkg__", "//lib/libblacklist:__pkg__", "//usr.sbin/blocklistd:__pkg__", "//usr.sbin/blocklistctl:__pkg__", "//usr.sbin/blacklistd:__pkg__", "//usr.sbin/blacklistctl:__pkg__"])
 exports_files(["lib/old_bl.c", "lib/blacklist.c", "include/blacklist.h", "lib/libblacklist.3"], visibility = ["//lib/libblacklist:__pkg__"])
 cc_library(name = "legacy_headers", hdrs = ["include/old_bl.h", "include/blacklist.h"],
     includes = ["include"], deps = [":headers"], visibility = ["//lib/libblacklist:__pkg__"])
+
+exports_files(["bin/blacklistctl.8", "bin/blacklistctl.c", "bin/blacklistd.8", "bin/blacklistd.c", "bin/blacklistd.conf.5", "bin/blocklistctl.8", "bin/blocklistctl.c", "bin/blocklistd.8", "bin/blocklistd.c", "bin/blocklistd.conf.5", "bin/conf.c", "bin/internal.c", "bin/old_internal.c", "bin/run.c", "bin/state.c", "bin/support.c", "port/pidfile.c", "port/popenve.c", "port/sockaddr_snprintf.c", "port/strtoi.c"], visibility = ["//usr.sbin/blocklistd:__pkg__", "//usr.sbin/blocklistctl:__pkg__", "//usr.sbin/blacklistd:__pkg__", "//usr.sbin/blacklistctl:__pkg__"])
+cc_library(name = "program_headers", hdrs = glob(["bin/*.h"]) + ["include/old_bl.h", "include/blacklist.h"], includes = ["bin", "include"], deps = [":headers"], visibility = ["//usr.sbin/blocklistd:__pkg__", "//usr.sbin/blocklistctl:__pkg__", "//usr.sbin/blacklistd:__pkg__", "//usr.sbin/blacklistctl:__pkg__"])

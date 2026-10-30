@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+[cc_library(name = "cron" + suffix, srcs = ["entry.c", "env.c", "misc.c"],
+    deps = ["//usr.sbin/cron/cron:headers", "//contrib/openpam:headers", "//lib/libutil:util"],
+    local_defines = ["LOGIN_CAP", "PAM"], copts = ["-fPIE"] if suffix else [],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//usr.sbin/cron:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":cron"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":cron_pie"], visibility = ["//visibility:public"])

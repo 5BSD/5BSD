@@ -5,3 +5,7 @@ cc_library(name = "internal_headers", hdrs = glob(["lib/*.h"]),
     visibility = ["//lib/libexpat:__pkg__"])
 exports_files(["lib/random_arc4random_buf.c", "lib/xcs.c", "lib/xmlparse.c", "lib/xmlrole.c", "lib/xmltok.c", "lib/expat.h", "lib/expat_external.h"],
     visibility = ["//lib/libexpat:__pkg__"])
+
+# Vendor API spelling used by the base Unbound anchor utility.
+cc_library(name = "vendor_api_headers", hdrs = ["lib/expat.h", "lib/expat_external.h"],
+    strip_include_prefix = "lib", visibility = ["//usr.sbin/unbound/anchor:__pkg__"])

@@ -7619,3 +7619,781 @@ Artifact/install parity now passes with explicitly staged legacy headers.
 No credential or mechanism logic changed. Mechanism loading, context/credential
 lifetimes, malformed tokens and authentication errors require runtime coverage;
 review caller audit behavior without logging secrets.
+
+### Local-Unbound programs (2026-10-30)
+
+Four executables and their manuals/setup script now have native build/install
+parity with Make. No DTrace or audit calls were found by the scoped source scan
+of vendor daemon/smallapp directories. This is not a whole-library hook audit.
+Review startup/shutdown, configuration rejection, privilege changes and remote
+control authorization/logging when qualifying live runtime; do not log DNS
+secrets or treat symbol parity as DNSSEC or authentication evidence. No source
+behavior or observability hooks were changed in this migration.
+
+### Blocklist/blacklist program family (2026-10-30)
+
+Native migration preserves vendor logging and configuration; blocklistd passes
+vsyslog_r (or verbose logging) into bl_create. No new DTrace/audit integration was
+added. Review socket peer authorization, rejected messages, helper failures,
+state changes and reload diagnostics during live qualification. Artifact parity
+does not establish firewall effects, denial behavior or audit completeness.
+
+### auditdistd and setaudit (2026-10-30)
+
+The native graph carries auditdistd's sandbox and pjdlog sources unchanged;
+sandbox.c logs identity/group lookup failures, privilege changes and Capsicum
+failures. Setaudit retains getaudit_addr/setaudit_addr, mask parsing and execvp.
+No additional DTrace/audit hooks were introduced. Matching-kernel tests still
+need to verify child audit identity, failed transitions, TLS authorization,
+trail recovery and privilege-separated worker behavior. Artifact comparison
+alone establishes none of those security behaviors.
+
+### Cron and crontab (2026-10-30)
+
+Native daemon generation preserves six DTrace probe schemas and seven ordinary/
+enabled sites, with emitted instruction/range checks against Make. Existing
+PAM and job privilege code is unchanged. Live job launch, exec failure and child
+wait probes remain untested. Review audit coverage for crontab edits, failed PAM
+sessions, credential changes and spool access; preserving probes does not prove
+audit completeness. Setuid mode and schg are checked in installation metadata;
+no privileged executable was run on the host.
+
+Cron follow-up: DTrace-disabled native and Make variants now match installation
+and payloads; actual ELF section tables contain no DOF for cron or crontab.
+Enabled live firing and scheduler/audit behavior remain unqualified.
+
+### authpf (2026-10-30)
+
+Native migration preserves existing syslog diagnostics for malformed SSH_CLIENT,
+noninteractive sessions, user/shell checks, PF device access, session locks and
+credential changes. The scoped source scan found no explicit DTrace/audit hooks.
+Review audit coverage for rule changes, privilege failures and session cleanup
+in isolated runtime tests. Preserved logs and privileged metadata do not prove
+correct authorization or live firewall effects.
+
+### EFI utilities (2026-10-30)
+
+Native migration preserves five EFI utilities and their dependencies. A scoped
+scan of the five main C files found no explicit DTrace, audit_ or syslog calls.
+Review audit coverage for variable writes, boot-order changes and wake-setting
+changes; qualify authorization/error paths only in disposable firmware/VM state.
+Device-path parser/formatter correctness and table output also remain runtime
+tests. No firmware changes were made during artifact comparison.
+
+### Quota administration programs (2026-10-30)
+
+Native edquota, quot, quotaon/off and repquota preserve existing program sources.
+A scoped scan of the four main source files found no explicit DTrace, audit_ or
+syslog calls. Review audit coverage for quota edits and enabling/disabling limits;
+existing quot UFS1/UFS2 tests require a privileged isolated filesystem fixture.
+Artifact parity does not establish enforcement or accounting correctness.
+
+### Disk inspection, trim and snapshot tools (2026-10-30)
+
+Native candidates preserve diskinfo, trim and snapinfo program sources. Diskinfo
+uses device ioctls for media geometry, identifiers, attributes and flush behavior;
+trim's destructive discard path requires a disposable device fixture. No explicit
+DTrace/audit/syslog hooks were found by the scoped scan of the three main C files.
+Review audit coverage for discard requests and failed device authorization.
+Runtime gates include metadata output, bounded read/write/flush benchmarking,
+discard ranges/error handling and UFS snapshot enumeration. The old diskinfo
+Make test target embeds device names and must not serve as a portable automated
+fixture. None of these tools was executed against host storage.
+
+### MAC label utilities (2026-10-30)
+
+Native migration preserves mac_from_text/free, file/link label APIs, and
+setpmac's mac_set_proc then execvp sequence. No explicit new DTrace/audit/syslog
+hooks were added. Review kernel audit records and user-visible failures for
+relabeling, symlink handling and denied process transitions on the target policy.
+Build parity does not prove authorization, audit coverage or enforcement.
+
+### Extended-attribute utilities (2026-10-30)
+
+Native rmextattr generation preserves 12 probe schemas and 14 ordinary/enabled
+sites, verified against Make including emitted instruction checks. File/link
+get/list/set/delete instrumentation remains unchanged. Live firing, namespace
+permissions and failed mutation audit coverage require runtime qualification.
+Extattrctl has no explicit probes in the scanned main source. Maintained ATF
+installation matches, but duplicate symlink_nofollow registration needs repair
+before test discovery/execution can be claimed complete.
+
+Extattr follow-up: duplicate symlink_nofollow registration is removed. All 19
+source-defined cases are discovered exactly once in the installed native script
+using host ATF list-only mode. Actual case execution and live probes remain open.
+
+### Chroot, setfib and rtprio/idprio (2026-10-30)
+
+Chroot's existing rootchange provider is preserved: two schemas and two ordinary/
+enabled sites match emitted Make metadata and instruction checks. No explicit
+DTrace/audit/syslog hooks were found in the scoped setfib/rtprio source scan.
+Review kernel audit coverage for root, FIB and scheduling transitions, failures
+and subsequent exec. Live policy and probe behavior remain unqualified.
+
+### Power, watchdog and kernel-state utilities (2026-10-30)
+
+Native candidates preserve powerd, watchdogd/watchdog and pstat/swapinfo sources.
+Watchdogd retains syslog diagnostics for checks that run too long, including
+existing timing handling around logging. No explicit DTrace/audit hooks were
+found in the scoped three-program scan. Review audit coverage for watchdog
+arming/disarming and power changes, and qualification of state-query access.
+Never execute watchdogd's old Make test target on the host as build validation;
+use an isolated VM watchdog with explicit recovery and timeout expectations.
+
+### RPC status and locking programs (2026-10-30)
+
+Native migration preserves generated dispatch and existing daemon syslog paths,
+including lock allocation, client/socket creation and unlock failures. Review
+kernel/userland correlation for lock recovery, monitor notifications and denied
+remote requests. No new hooks were introduced; packet validation, crash/restart
+persistence and live locking behavior remain runtime tests, not artifact claims.
+
+
+### RPC-over-TLS daemons (2026-10-30)
+
+rpc.tlsclntd/rpc.tlsservd retain maintained daemon/shared TLS sources and
+rpcgen -L -C -M generation. Selected amd64 installation and payload comparisons
+pass against Make (bazel-rpc-tls-reference-20261030). No instrumentation or
+authentication behavior was changed. Runtime qualification remains necessary
+for kernel RPC upcalls, valid/invalid/expired certificates, trust-store changes,
+mutual authentication, TLS negotiation failures, reconnect/shutdown, concurrent
+requests and diagnostic logging. This build comparison does not establish
+runtime audit coverage, probe firing or network behavior.
+
+
+### ARP and binmiscctl (2026-10-30)
+
+Native builds preserve maintained source and ARP's configurable Netlink backend.
+Source scan found no direct DTRACE, SDT_PROBE or audit_ references in these
+program directories. Make installation/payload comparisons pass; this does not
+establish runtime audit coverage. Future isolated tests should cover ARP
+add/delete/query, malformed input, privilege denial, both networking backends
+and libxo output; binmiscctl add/remove/enable/disable, interpreter matching,
+invalid registrations and authorization denial. No host state was changed.
+
+
+### Automounter group (2026-10-30)
+
+All maintained sources, lexer generation, command hard links and configuration
+helpers are preserved. Source scan found no direct DTRACE/SDT_PROBE/audit_
+references in the local C/header/lexer sources. Make artifact comparisons pass;
+this is not runtime audit evidence. Qualification should cover map errors,
+helper execution and failures, kernel upcalls, mount authorization denial,
+concurrent requests, reload/shutdown and timed unmounts, including diagnostics.
+LDAP/NIS/NFS/media integration requires isolated fixtures. No host mounts or
+service state were changed.
+
+
+### Bluetooth command utilities (2026-10-30)
+
+l2control/l2ping/hccontrol/bcmfw retain maintained sources and dependencies.
+Source scan found no direct DTRACE/SDT_PROBE/audit_ references in these command
+directories. Native Make artifact comparisons pass, with no hardware execution.
+Follow-up runtime cases: malformed addresses/commands, privilege denial, absent
+controllers, HCI query/update errors, L2CAP timeout/payload handling and firmware
+transfer interruption/failure. Audit/logging adequacy for controller changes and
+firmware loading needs review; this build migration does not add or prove it.
+
+
+### hcsecd (2026-10-30)
+
+Native migration preserves daemon/parser/lexer behavior and syslog diagnostics;
+artifact comparisons and generated-header dependency checks pass. Runtime
+qualification should cover valid/invalid/duplicate map entries, pairing acceptance
+and rejection, key persistence/reload, stale temporary files and permissions,
+controller loss and lifecycle signals. No runtime audit/probe evidence claimed.
+
+Security-review finding: parser.y dump_config(), guarded by __config_debug__,
+formats PIN and full link-key bytes for LOG_DEBUG. This pre-existing diagnostic
+needs credential-redaction review before enabling that variant. The normal
+Makefile/native target does not add that define. No daemon behavior was changed
+in this build migration; neither pairing nor key storage was exercised.
+
+
+### Bluetooth HID daemon and control utility (2026-10-30)
+
+Maintained source behavior and daemon syslog versus control stderr diagnostics
+are preserved by separate parser compilation modes. Source scan found no direct
+DTRACE/SDT_PROBE/audit_ references in these program directories. Make artifact
+comparisons and parser action checks pass; no live input devices were accessed.
+Follow-up: malformed HID descriptors/maps, SDP failures, controller disconnect,
+reconnection, input-device authorization denial, keyboard/mouse events and
+cleanup of uinput devices. Build results do not prove runtime audit coverage.
+
+
+### Bluetooth PAN/RFCOMM PPP (2026-10-30)
+
+Native builds retain maintained btpand/rfcomm_pppd source and shared SDP code.
+Source scan found no direct DTRACE/SDT_PROBE/audit_ references in their program
+directories. Make artifact comparisons pass; this does not prove runtime audit
+coverage. Qualify BNEP malformed packets/filtering, SDP errors, peer disconnects,
+TAP privilege denial and cleanup, PPP execution/argument handling and failed
+session setup in isolated fixtures. No PAN service, TAP device or PPP session
+was started during this migration.
+
+
+### USB Bluetooth firmware loaders (2026-10-30)
+
+ath3kfw/iwmbtfw/rtlbtfw source behavior and devd policies are unchanged. Local
+source scan found no direct DTRACE/SDT_PROBE/audit_ references. Artifact comparisons
+pass against Make; no USB or firmware operation ran. Follow-up cases include
+missing/truncated/malformed firmware, device revision mismatch, failed/short USB
+transfers, detach during loading, permission denial, devd invocation and retry
+behavior. Firmware-loading audit/logging adequacy remains a separate review;
+build comparison does not prove runtime audit coverage.
+
+
+### Bluetooth service discovery (2026-10-30)
+
+sdpd/sdpcontrol retain source behavior and pass Make artifact comparisons. Source
+scan found no direct DTRACE/SDT_PROBE/audit_ references in these directories.
+The daemon creates an accessible local control socket and separately obtains
+peer credentials for privileged operations; tests must exercise both allowed
+and denied registration/update/removal, not infer authorization from socket mode.
+Also qualify supplementary-group/GID/UID dropping, malformed/continued SDP
+requests, disconnect cleanup and diagnostics. No live daemon or controller test
+was run, and artifact parity does not establish runtime audit coverage.
+
+
+### BLE/mesh and virtual HCI control tools (2026-10-30)
+
+bluedctl/meshctl/vhcitool retain maintained source behavior; Make artifact
+comparisons pass. Source scan found no direct DTRACE/SDT_PROBE/audit_ references
+in the three tool directories. Qualification should cover unavailable/denied
+control endpoints, malformed responses, BLE/mesh operation errors, virtual HCI
+create/destroy and packet exchange, permissions and disconnect cleanup. The
+shared test emulator is declared as a source input, not replaced or duplicated.
+No daemon control request or virtual-controller operation was executed; runtime
+audit coverage and end-to-end Bluetooth behavior remain unproven.
+
+
+### meshd (2026-10-30)
+
+Native build preserves MESHD_DTRACE_PROBES selection and maintained provider
+instrumentation around application connections/events, bearer queues/failures
+and persistence. Native/Make providers and 13 probe schemas match; both binaries
+pass amd64 checks for 13 ordinary sites and zero enabled-check sites. Evidence:
+bazel-meshd-reference-20261030/native-dof.json and make-dof.json. No live probe
+firing is established. Qualify disabled-DTrace build, live event/error probes,
+control authorization, malformed PDUs, provisioning/persistence/restart and
+bearer backpressure with isolated fixtures. No daemon or network operation ran.
+
+
+### Bluetooth capability controller helper (2026-10-30)
+
+The native helper preserves controller policy bytes and matches Make install/
+payload metadata with its parent directory dependency. No runtime broker request
+was executed. Qualification must cover stamped session grants, missing/excess
+rights, malformed adapter requests, privileged HCI descriptor creation/transfer,
+peer disconnect and resource retirement. Embedded .5bsd.policy parity alone does
+not prove runtime entitlement enforcement or signed-image verification. Main
+BSDBluetooth daemon and aggregate bundle migration remain outstanding.
+
+
+### BSDBluetooth main daemon and bundle (2026-10-30)
+
+Native migration retains WITH_DTRACE and USE_BSM_AUDIT selection, native BSM
+linkage and the maintained provider. Enabled build matches Make artifacts;
+providers/129 probe schemas match, with 158 ordinary instruction sites validated
+in each daemon and zero enabled-check sites. This is not live firing or audit
+record evidence. Qualification must cover service activation, stamped grants,
+controller descriptor transfer, GATT service ownership/reclamation, ATT/SMP/ISO
+protocol errors, pairing keys/persistence, adapter removal and authorization
+failures, plus audit/probe-enabled and disabled variants. No runtime service was
+started. Embedded unsigned policy parity does not prove enforcement/signing.
+
+
+BSDBluetooth option follow-up (2026-10-30): independent audit-disabled and
+DTrace-disabled build comparisons pass. Audit-off retains 129 DTrace schemas
+and 158 validated ordinary sites; DTrace-off retains direct libbsm linkage and
+has no executable DOF. Neither result proves emitted audit records, live probes
+or runtime authorization. Both options remain enabled by default. The combined
+disabled/disabled configuration was not exercised in this comparison.
+
+
+### Bluetooth aggregate/configuration script (2026-10-30)
+
+The aggregate preserves Make USB inclusion policy; selection matches 20/14
+archives with USB on/off. Maintained bluetooth-config shell and manual bytes
+match Make installation, with no execution. Interactive configuration writes,
+service enable/disable and failure/recovery behavior still need isolated tests.
+Aggregate build success adds no live audit/probe/controller evidence. No host
+configuration, service or device was changed.
+
+
+### Boot support utilities (2026-10-30)
+
+boot0cfg/boottrace/btxld native builds retain maintained source behavior and pass
+Make artifact comparisons. boottrace has existing BOOTTRACE calls around command
+execution; these are separate from DTrace provider instrumentation and were not
+runtime-tested. Source scan found no direct DTRACE/SDT_PROBE/audit_ references in
+these directories. Qualify disposable-image boot-sector writes, authorization
+failures and readback, malformed BTX/ELF inputs, and command failure/boot logging.
+No host disk write or boot-state change was performed.
+
+
+### cpucontrol (2026-10-30)
+
+Native cpucontrol retains maintained sources, including shared ucode_subr.c.
+No direct DTRACE/SDT_PROBE/audit_ references were found in these sources.
+Build/install comparisons pass; no device operations were executed. Runtime
+qualification must cover authorization failures, malformed microcode inputs,
+update errors and diagnostics on supported hardware. This does not establish
+audit coverage or live probe behavior.
+
+
+### getpmac, gpioctl and cdcontrol (2026-10-30)
+
+Native rules preserve maintained program behavior. Source scan found no direct
+DTRACE/SDT_PROBE/audit_ references in these three utility directories. Artifact
+comparisons pass; runtime checks remain for MAC label selection/access failures,
+GPIO pin read/write/configuration and device failures, and CD commands/ioctls.
+Review relevant kernel audit/event coverage separately; absence of direct userland
+references does not prove absence of kernel auditing. No hardware was accessed.
+
+
+### ckdist, dumpcis and flowctl (2026-10-30)
+
+Native rules retain maintained sources. No direct DTRACE/SDT_PROBE/audit_ calls
+were found in these utilities or shared crc.c. Artifact comparisons passed,
+but checksum failure diagnostics, malformed CIS parsing and netgraph access
+failures/flow decoding need runtime qualification. Review existing kernel audit
+coverage before deciding whether additional userland instrumentation is needed.
+No device or netgraph operations were executed.
+
+
+### memcontrol and pciconf (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in these utility sources.
+Native builds preserve the maintained sources and pass Make artifact comparisons.
+Review kernel audit coverage for PCI writes/mapping and memory-range attribute
+changes; qualify privilege failures and malformed arguments on suitable isolated
+systems. PCI decoding and memory-range operation behavior remain runtime gaps.
+No host device operation was executed.
+
+
+### policyctl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in policyctl.c. Native
+artifacts and installed tests match Make; test enumeration succeeds. Test bodies
+for roundtrip policy, empty attributes, rejected inputs, providers and invalid
+bundles still need execution with the native binary and declared runtime. No
+policy activation, installed-system changes or signing operations were performed.
+
+
+### policyctl test execution prerequisite (2026-10-30)
+
+Five native Bazel cases now exist, but all failed in ATF startup at dirname's
+caph_limit_stdio assertion, before policyctl bodies. Read-only host rights probe
+confirms rights bits outside source CAP_ALL1. SDK libc diagnostic reproduces it;
+no fallback retained. Matching-kernel tests and upgrade ABI review are needed.
+Evidence: /usr/obj/usr/src/bazel-policyctl-tests-reference-20261030/capsicum-abi.json.
+
+
+### capsign (2026-10-30)
+
+Native rules preserve maintained signing sources and install all existing tests
+and stage scripts. No direct DTRACE/SDT_PROBE/audit_ calls were found in capsign's
+C sources. Artifact comparisons pass; no signing/test body ran. Runtime work must
+cover invalid keys, tampered ELF/policies, no-clobber/stage failures and the actual
+kernel signature consumers. Review signing-event diagnostics/audit coverage.
+Build parity does not establish trust enforcement or verified boot.
+
+
+### capsulectl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls in capsulectl.c. Native static real-service
+test helper retains service/channel providers absent from the staged Make link:
+52 versus 26 schemas, all Make schemas retained unchanged. Both instruction-site
+checks pass; strict DTrace equality fails and live firing remains open. Evidence:
+/usr/obj/usr/src/bazel-capsulectl-reference-20261030/dof-difference.json.
+Qualify production lifecycle authorization and control failures separately from
+the maintained fake-service fixture. No live control operations were performed.
+
+
+### certctl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in certctl.c. Native executable
+and complete test installation match Make artifacts. Test bodies remain unrun;
+qualify trust/distrust/rehash, malformed certificates, filesystem/write failures
+and atomicity using the maintained tests. Review certificate-store change audit
+coverage. No host certificate-store modification was performed.
+
+
+### jexec, lastlogin and nologin (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in these utility sources.
+Native rules preserve behavior; nologin's static ELF structure was explicitly
+verified. Runtime work includes jail attachment/identity/authorization failures,
+accounting records and libxo output, login refusal and existing logging behavior.
+Review kernel audit coverage for jail attachment rather than infer it from the
+absence of direct userland calls. No live jail or login operation was performed.
+
+
+### build-bsd frontend subtree (2026-10-30)
+
+Native frontend and static policy helpers preserve maintained sources. Complete
+installation comparisons pass and plan-only world/kernel/packages behavior was
+compared on the host. Helper/parser test execution and static-library DTrace
+retention remain unqualified; the earlier static service archive discrepancy
+must not be generalized into a pass here. No publication, signing, deployment,
+policy activation or host system change was executed.
+
+
+### Frontend policy helper runtime follow-up (2026-10-30)
+
+Native and Make UCL normalization tests and corrected Capsule static_only CLI
+case pass using host test interpreters/tools. The stale fixture had removed
+attachment/content fields; current-schema fixture and explicit removed-field
+rejections now pass without changing parser behavior. No PID/socket or daemon
+activation occurred. Bazel-run suites and matching-kernel/live authority tests
+remain separate requirements. Evidence is in the frontend reference directory.
+
+
+### Bus-control utilities (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in i2c, spi, pwm or smbmsg
+sources. Native artifact comparisons pass; runtime device authorization, transfer
+errors and parameter boundaries remain open. Preserve pwm's Capsicum setup and
+qualify with a compatible kernel. Review underlying ioctl audit/probe coverage
+before adding instrumentation. No bus operation or device write was performed.
+
+
+### rmt, utx, tcpdrop and wake (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in these utility sources. Native
+artifact comparisons pass. Runtime checks remain for protocol/input errors, utmpx
+changes, connection-drop authorization and BPF wake packet operations. Review
+existing kernel/library audit coverage for these operations before adding probes.
+No device, accounting, connection or packet operation was executed.
+
+
+### Storage administration utilities (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in sesutil, smart or
+zonectl sources. Native artifact and test-installation comparisons pass. Qualify
+enclosure control/health decoding and zone transitions/errors with appropriate
+isolated devices. Review CAM/ioctl audit and probe coverage separately from these
+userland source scans. No disk, enclosure, zoned-device or test-body execution.
+
+### 2026-10-30: mac_abacd and mac_abac_ctl
+
+Both existing `abacdaemon`/`abacctl` providers are retained with DTrace enabled
+by default. Fresh Make and native binaries have identical two-schema provider
+inventories per utility; each has three validated ordinary instruction sites
+and no is-enabled sites. Evidence: `bazel-abac-tools-reference-20261030` under
+`/usr/obj/usr/src`, per-tool `native-dof.json`/`make-dof.json` and `dof-audit.py`.
+This checks generated DOF and patched instructions, not live event delivery.
+
+The management sources refer to kernel audit handling rather than directly
+linking libbsm. No audit integration was added or removed. End-to-end audit
+records for policy updates, label changes, and denied actions still need
+matching-kernel runtime qualification; artifact parity cannot establish them.
+
+### 2026-10-30: iovctl and ip6addrctl
+
+Reviewed maintained source/build inputs: neither utility declares a userland
+DTrace provider or direct audit-library integration. Native targets retain that
+behavior. Potential observability follow-up: SR-IOV configuration changes and
+IPv6 address-selection policy add/delete/flush/install operations, including
+jail attribution, should have their kernel audit coverage checked before deciding
+whether additional userland instrumentation is necessary. No new probes/audit
+semantics were invented for migration. No live reconfiguration was performed.
+
+### 2026-10-30: console tools
+
+kbdmap/vidfont, vidcontrol, and kbdcontrol have no declared userland DTrace
+provider or direct audit-library integration in their maintained build/source
+inputs. Migration preserves that behavior. Review console ioctl audit coverage
+for keyboard map/function-key changes, font/video mode changes, and privilege
+failures during runtime qualification; do not infer an audit gap solely from
+absence of userland libbsm. Interactive device operations and live tracing were
+not run on the host. kbdcontrol's reduced bootstrap variant remains unqualified.
+
+### 2026-10-30: newsyslog
+
+Retained the generated `logrotate` provider and static anchor with DTrace enabled
+by default. Native and fresh Make metadata agree on rotate-start/done,
+compress-start/done and notify schemas; validation covers five ordinary and five
+is-enabled patched sites. Evidence: `bazel-newsyslog-reference-20261030` under
+`/usr/obj/usr/src`, `native-dof.json`, `make-dof.json`, and `dof-audit.py`.
+Live probe firing and the maintained TAP rotation/compression suite were not
+executed. No direct audit-library integration was added; audit requirements for
+rotation/configuration changes remain a runtime coverage review item.
+
+### 2026-10-30: newsyslog explicit no-DTrace configuration
+
+The optional DTrace-disabled build now matches fresh Make ELF/debug/install
+artifacts. The installed executable has no DOF and its separated debug file
+has no DTrace probe symbols; the default artifacts retain both. Audit evidence:
+`/usr/obj/usr/src/bazel-newsyslog-options-reference-20261030/options-audit.json`.
+This is configuration coverage, not removal of default instrumentation. Live
+probe firing and TAP runtime qualification remain pending.
+
+### 2026-10-30: rarpd, rtadvd and rtadvctl
+
+These maintained source/build inputs declare no userland DTrace provider or
+direct audit-library integration. Migration preserves that behavior. Follow-up
+runtime coverage should examine RARP request/reply paths, router advertisement
+and renumbering handling, configuration reloads, and control-socket authorization
+with kernel audit attribution. Absence of userland libbsm alone does not establish
+missing audit events. No network daemon or control operation ran on the host.
+
+### 2026-10-30: inetd
+
+Preserved inetd spawn/refuse probes. Default native and fresh Make artifacts
+match both schemas and two ordinary instruction sites; no is-enabled sites
+exist in this provider. Explicit DTrace-disabled builds omit DOF and probe
+symbols in both implementations, without changing the enabled default.
+Evidence: `/usr/obj/usr/src/bazel-inetd-reference-20261030/dof-audit.py`,
+`native-dof.json`/`make-dof.json`, and the corresponding options-reference audit.
+Live event delivery, accepted/refused connections, login-cap transitions, TCP
+wrapper rules, IPv6 and IPsec behavior remain runtime qualification items.
+No direct audit-library dependency was introduced; kernel audit coverage for
+service creation/refusal needs runtime examination.
+
+### 2026-10-30: acpiconf, acpidump and einj
+
+The maintained inputs declare no userland DTrace providers or direct audit
+library dependencies. Native targets preserve that behavior. Runtime review
+should cover attribution/denial of ACPI ioctl operations, firmware reads,
+suspend requests, and error-injection requests using appropriate isolated
+hardware/VM fixtures. No such operation was executed on the host. Kernel audit
+coverage must be examined before treating absent userland libbsm as a gap.
+
+### 2026-10-30: acpidb
+
+Preserved the maintained ACPICA debugger/application compile definitions and
+native libthr dependency. The local frontend declares no DTrace provider or
+direct audit-library linkage; ACPICA's debugger/debug output is a separate
+mechanism. Thread instrumentation belongs to libthr and is not a new acpidb
+provider. Runtime review should cover AML loading, interpreter exceptions,
+simulated region I/O and debugger/thread shutdown. None was exercised here;
+no host firmware execution or system-state change was performed.
+
+### 2026-10-30: iasl
+
+Preserved ACPICA ASL compiler defines and its existing diagnostics. No local
+DTrace provider or direct audit-library integration is declared. Offline runtime
+checks exercise preprocessing, compilation, disassembly and parser rejection;
+these do not establish broad diagnostics coverage or live system observability.
+No AML was loaded into firmware/kernel or executed by an interpreter. Audit
+requirements for deployment of compiled tables belong to the loader/deployment
+path and are not inferred from successful offline compilation.
+
+### 2026-10-30: ifmcstat, mtest and ndp
+
+No userland DTrace provider or direct audit-library integration appears in these
+maintained inputs. Native builds preserve this behavior. Runtime follow-up should
+cover multicast join/leave/source filtering, neighbor add/delete/flush, permission
+denials, and both ndp backend paths with kernel audit attribution. No multicast
+or neighbor-state mutation was executed on the host. Artifact parity and feature
+selection checks do not establish live observability coverage.
+
+### 2026-10-30: rrenumd
+
+No userland DTrace provider or direct audit-library dependency is declared in
+maintained rrenumd inputs. Native compilation preserves that behavior. Runtime
+review should cover configuration rejection, IPsec setup, renumbering send/retry
+and receive handling, plus privilege failures in isolated networking. No daemon
+was started and no renumbering packet was sent. Kernel audit attribution remains
+a runtime question; absence of userland libbsm alone does not answer it.
+
+### 2026-10-30: hwstat and reclaimstat
+
+No local DTrace provider or direct audit-library integration is declared by these
+programs. hwstat retains its native otelexport dependency and existing export
+formats; reclaimstat consumes the maintained capreclaim interface header.
+Mocked sensor/metrics/RAPL C tests passed for both implementations, including
+counter rollover/failure cases. This is not evidence of real counter accuracy,
+live export delivery, or kernel audit attribution. Hardware access denials,
+reclaim visibility and external export behavior remain runtime review items.
+
+### 2026-10-30: hwstat runtime qualification follow-up
+
+All 33 mocked sensor/metrics/RAPL/sampling cases passed under native Bazel test
+execution with declared native loader/libraries; none skipped. Host-runtime
+Make/native timing cases additionally cover child exit, failure, signals, masks,
+poll intervals and reaping. These exercise maintained measurement logic but do
+not demonstrate real hardware-counter accuracy, live export delivery or kernel
+audit coverage. The shell suite remains unexecuted.
+
+### 2026-10-30: logctl static helper provider discrepancy
+
+logctl introduces no local provider; it consumes the existing logging libraries.
+The real static test helper retains all 26 Make probe schemas unchanged but has
+74 additional schemas from fidl_bsd, libchannel, logcmp, service_ambient,
+service_runtime and shmring in the native experimental traced-archive build.
+Both binaries pass patched amd64 site validation; exact provider/schema parity
+fails and remains explicitly open. No probes were disabled to make comparisons
+pass. Evidence and comparison scripts are in
+/usr/obj/usr/src/bazel-logctl-reference-20261030/dof-difference.json and adjacent
+scripts; strict dof-audit.py retains its failure. Host shell runtime passes use
+maintained fake service responses and do not establish live probe firing,
+logging-service authorization or kernel audit attribution.
+
+### 2026-10-30: sysconf
+
+No local DTrace provider or direct libbsm integration is declared by sysconf.
+Native integration preserves libbsdconf/libjail dependencies and all ten sources.
+Configuration modification attribution, jail behavior and live audit coverage
+remain review items. Runtime attempts have identical seven-case Capsicum
+assertion failures per Make/native build on this older host; four cases per
+build pass. Do not interpret installation parity or matching failures as complete
+runtime/observability qualification. See bazel-sysconf-reference-20261030 under
+/usr/obj/usr/src for the retained evidence.
+
+### 2026-10-30: timezone operator tools
+
+zic and zdump declare no local DTrace provider or direct audit-library integration.
+Native targets preserve upstream sources/configuration. Offline slim/fat compile,
+alias, transition and invalid-input checks pass against fresh Make artifacts;
+these do not establish system timezone-update audit attribution or live tracing.
+Any administrative timezone-change audit coverage remains a separate runtime
+review item; no host configuration was modified during qualification.
+
+### 2026-10-30: tzsetup
+
+No local DTrace provider or direct audit-library integration is declared.
+Normal and bootstrap builds preserve their intended dependency split. Private-root
+checks cover dry-run, selection, reinstall and rejection; they do not establish
+administrative audit attribution for timezone changes. Interactive dialog and
+installed-system runtime remain unqualified. The bootstrap source fix only
+conditions UI-specific clock state/query; no instrumentation was removed.
+
+### 2026-10-30: uhsoctl, wlandebug, wlanstat and uathload
+
+No local DTrace provider or direct libbsm integration is declared by these tools.
+uhsoctl retains its existing syslog calls; wlanstat retains libbsdstat and
+wlandebug retains libifconfig. Firmware generation is qualified without loading
+firmware onto hardware. Modem control, debug-mask changes, hardware statistics
+and firmware-operation authorization/audit attribution require runtime review.
+Installation and firmware-byte parity do not establish those behaviors.
+
+### 2026-10-30: fwcontrol and dconschat
+
+Neither tool declares a local DTrace provider or direct libbsm integration.
+Native targets preserve the shared FireWire ROM source and dconschat libkvm
+access path. Controller reset/configuration, DMA/console access and associated
+authorization/audit attribution need runtime review with appropriate fixtures.
+Current evidence covers build/install artifacts only; no host device or kernel
+memory operation was executed.
+
+### 2026-10-30: services_mkdb
+
+No local DTrace provider or direct libbsm integration is declared. The native
+database generator preserves maintained parsing/storage code and matches fresh
+Make output bytes. This does not establish installed NSS lookup tracing or audit
+attribution of configuration/database replacement. Database generation ran only
+inside the build action; no host /etc/services or /var/db/services.db was changed.
+
+### 2026-10-30: sa and vipw
+
+Neither declares a local DTrace provider or direct libbsm integration. sa consumes
+kernel-produced accounting records; private fixture tests cover format conversion
+and accumulation, not live accounting delivery or attribution. vipw retains its
+native libutil dependency; password-lock/edit/update behavior and associated audit
+coverage remain runtime review items. No host password or accounting state changed.
+
+### 2026-10-30: moused and msconvd
+
+Both retain existing syslog paths; neither declares a local DTrace provider or
+direct libbsm integration. Native integration includes the complete maintained
+moused parser/quirks/evdev/list helpers. Device access, configuration changes,
+hotplug failures and daemon startup/shutdown attribution need runtime review.
+Installation parity and aggregate coverage do not establish those behaviors;
+no daemon was started on the host.
+
+### 2026-10-30: nscd
+
+Native integration preserves existing syslog and internal debug paths and all
+three agents. No local DTrace provider or direct libbsm integration is declared.
+Lookup cache hit/miss/expiry, agent failures, credential boundaries and daemon
+lifecycle attribution require runtime review. Source/installation parity does
+not establish those behaviors; no host NSS configuration or cache state changed.
+
+### 2026-10-30: mptable and mlxcontrol
+
+Neither declares a local DTrace provider or direct audit-library integration.
+Native builds preserve source behavior and controller headers. Physical-memory
+access, controller administration and authorization/audit attribution remain
+runtime review items. Installation parity is the evidence available here; no
+host controller or memory operation ran.
+
+### 2026-10-30: camdd
+
+No local DTrace provider or direct libbsm integration is declared. Native targets
+preserve CAM/mt/util/thread dependencies. Private regular-file copy checks pass;
+CAM completion latency, queue depth/error reporting and device-access audit
+attribution need runtime review with suitable hardware/VM fixtures. File-copy
+correctness is not evidence of device performance or complete I/O observability.
+
+### 2026-10-30: mptutil
+
+No local DTrace provider or direct libbsm integration is declared. Both normal
+and DEBUG source branches are compiled and artifact-compared; DEBUG retains
+additional administrative operations and diagnostics. Controller event handling,
+configuration/volume changes and authorization/audit attribution require runtime
+review. No controller command was executed during these checks.
+
+### 2026-10-30: mpsutil and mprutil
+
+No local DTrace provider or direct libbsm integration is declared. Native builds
+retain debug/diagnostic sources and invocation-name interface selection. Alias
+argument/version checks pass without opening controllers. Firmware updates,
+controller event/configuration operations and their authorization/audit attribution
+remain runtime review items; artifact parity does not establish those behaviors.
+
+### 2026-10-30: mfiutil and mrsasutil
+
+No local DTrace provider or direct libbsm integration is declared in Make.
+Native normal/debug builds retain all twelve source files and diagnostic command
+registration. The repaired legacy debug dump lookup is device-specific; runtime
+sysctl availability remains unqualified. Firmware writes, volume/configuration
+changes, event retrieval and authorization/audit attribution require controller
+runtime review. No controller operations were executed during artifact checks.
+
+### 2026-10-30: fifolog
+
+The three utilities/internal library declare no local DTrace provider or direct
+libbsm integration in Make. The native graph retains all library members and the
+generated date parser. Private-file compression/round-trip/filter checks pass
+for native and Make binaries. Circular wraparound, corruption handling, crash
+recovery, write/sync latency and attribution of log-file access remain review
+items. These correctness checks do not establish I/O performance.
+
+### 2026-10-30: uefisign, valectl and zzz
+
+These Make components declare no local DTrace provider or direct libbsm linkage.
+Native builds preserve the source/dependency inventories. Signing/key-access
+attribution and the uefisign child capability boundary need runtime qualification.
+VALE create/attach/detach and polling operations, and power-device suspend requests,
+need matching-kernel observability/audit review. Artifact checks do not establish
+these operations or their performance; none were executed on the host.
+
+### 2026-10-30: oeslogger
+
+Preserved oeslogger event-handled, wait-done and dispatch-error provider schemas.
+Native and Make executables match all three schemas and five ordinary probe
+sites; instruction/function-bound checks pass. Optional disabled builds contain
+no DOF. These checks cover the executable provider, not runtime firing or all
+liboes/dependency providers. Event subscription/authorization, event JSON output,
+stream loss/error reporting and live tracing still need matching-system tests.
+No OES event session was opened during this qualification.
+
+### 2026-10-30: tcpdchk, tcpdmatch and tcpsso
+
+No local DTrace provider or direct libbsm linkage is declared by these Make
+components. The diagnostic programs retain fakelog/scaffold sources and libwrap
+policy evaluation. Private tcpdmatch allow/deny verdict checks pass for both
+builds. Policy diagnostic coverage, name-service behavior, and tcpsso socket-option
+attribution/error paths need further runtime review; no host socket control was
+performed. These checks establish no performance result.
+
+### 2026-10-30: gssd
+
+No local DTrace provider or direct libbsm dependency is declared in the daemon's
+Makefile. Native MIT builds preserve all RPC sources and byte-identical generated
+protocol code. Kernel GSS upcalls, credential-cache/keytab lifecycle, principal
+mapping, authentication failures and NFS security-context observability require
+runtime qualification. No daemon or credential operation was executed here.

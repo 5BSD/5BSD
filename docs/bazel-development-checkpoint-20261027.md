@@ -18009,10 +18009,13 @@ public loader trust anchor used by the previous survey. Evidence:
 /usr/obj/usr/src/bazel-world-inventory-refresh-20261030/inventory.json.
 This discovers Make recursion only, not native compile/install coverage.
 
-A new maintained world-components.py query is running with 16 jobs against that
-inventory, output bazel-world-components-refresh-20261030. On completion, inspect
-summary failures before invoking world-native-survey.py; do not reuse stale
-metadata or turn BUILD-file presence into completion counts. The root still has
+The maintained world-components.py query completed all 2,103 directories with
+16 jobs and no failed components in 282 seconds. The subsequent hash-checked
+world-native-survey.py run succeeded. Evidence is under
+/usr/obj/usr/src/bazel-world-components-refresh-20261030. It finds 1,156 local
+BUILD directories and 947 ancestor-only directories; among the latter, 350 have
+program metadata and 82 have library metadata. These are review queues, not
+missing binary counts or qualified completion counts. The root still has
 no complete world installation aggregate, and current library component parity
 does not imply a world/kernel/pkgbase build has succeeded.
 
@@ -18024,3 +18027,2155 @@ transformations, preserving package tags; qualify before wiring into a future
 world aggregate. Existing native libunbound now supplies their main dependency.
 This diagnostic changes no frontend or production build contract; normal
 build-bsd remains unchanged and Make remains default.
+
+### Package completeness gate clarified (2026-10-30)
+
+Use three independent comparisons for the migration: configured Make component
+metadata, installation METALOG records, and generated package manifests. Bind
+comparisons to the same source revision, architecture, kernel configuration and
+build options. Include internal libraries and build tools in component coverage
+even when they are absent from installed packages. Include kernel/modules and
+separately built hardware in the final repository qualification.
+
+The existing release/scripts/check-world-package-coverage.sh queries active
+package SUBDIR and _ALLPACKAGES, rejects duplicate targets and conflicting
+directory metadata, and rejects staged plists lacking active targets. Its
+comm -23 comparison is intentionally one-way: it does not prove every expected
+package was produced. Do not reuse its success as a complete Make/Bazel package
+parity gate. That gate must compare both missing and unexpected actual packages,
+then dependencies, payload paths, metadata, links, debug files and applicable
+artifact contents. Empty conditional package targets require explicit accounting
+against the configured Make reference, not an assumed package count.
+
+No complete package comparison was run in this inventory refresh. No frontend,
+staging, signing or publication inputs changed; build-bsd stays unchanged.
+
+### Local-Unbound program group (2026-10-30)
+
+Native targets now build local-unbound, local-unbound-anchor,
+local-unbound-checkconf and local-unbound-control using maintained explicit source
+lists and native libunbound/dependencies. Expat's original vendor API headers are
+explicit inputs to anchor, matching Make's vendor include path; the first build
+caught that missing dependency. No staged-header fallback was added.
+
+Five manuals use the maintained Make sed expressions as declared actions with
+explicit tool/runtime inputs. The setup script installs without its .sh suffix.
+The aggregate includes stripped executables, separate debug files, manual
+compression, package tags and the script-owned /usr/sbin directory record.
+The first install comparison caught that missing directory declaration; it is
+now included. No host setup script or daemon was run.
+
+Final native evidence: /usr/obj/usr/src/bazel-unbound-programs-20261030-r4.
+Fresh Make reference: /usr/obj/usr/src/bazel-unbound-programs-make-20261030.
+Comparison scripts/results: /usr/obj/usr/src/bazel-unbound-programs-reference-20261030.
+All 17 installation records match, with no missing/extra destinations or metadata
+mismatches. All 14 regular payloads pass: ELF global/weak symbol inventories,
+ordered dynamic dependencies, exact five compressed manuals and setup script,
+and four debuglink CRCs. The development reference uses the existing staged SDK;
+this is not independent world/bootstrap or production package qualification.
+
+Runtime configuration checks for these programs, live daemon/control behavior,
+anchor fetching/DNSSEC, option/cross-architecture coverage, cache invalidation
+and comparative performance remain open. Existing native libunbound runtime
+checks do not establish those program-level behaviors. Existing build-bsd
+explicit targets cover this work; no frontend input, signing or publication
+contract changed. Make remains production/default.
+
+### Blocklist and legacy blacklist programs (2026-10-30)
+
+Added native blocklistd/blocklistctl/blacklistd/blacklistctl targets with explicit
+vendor sources, header closure, Make feature defines and native blocklist/util
+libraries. Legacy programs retain their own configuration/helper paths and
+old_internal.c, while preserving Make's blocklist library selection. Corrected
+C-string definition escaping after the first compile exposed stripped quotes.
+No program behavior was modified.
+
+Each daemon installs its configuration and section-5 manual alongside executable,
+debug symbols and section-8 manual; each control utility installs executable,
+debug symbols and manual. Fresh Make references run installconfig for the daemons
+in addition to install: ordinary install alone does not stage CONFS. The native
+manifest preserves the /etc directory's utilities tag and config-file tags.
+
+Final native run: /usr/obj/usr/src/bazel-blocklist-programs-20261030-r3.
+Fresh Make runs: /usr/obj/usr/src/bazel-{blocklistd,blocklistctl,blacklistd,blacklistctl}-make-20261030.
+Comparators/results: /usr/obj/usr/src/bazel-blocklist-programs-reference-20261030,
+per-program subdirectories. Each daemon matches eight installation records and
+five regular payloads; each control utility matches five records and three
+regular payloads. No missing/extra destinations or metadata mismatches. Global/
+weak symbol inventories and ordered dynamic dependencies match; manuals/config
+bytes match; all four debuglink CRCs pass. Shared directory records mean these
+per-component counts must not be summed as distinct world destinations.
+
+Live socket authorization, helper execution/firewall effects, persistent state,
+configuration reload, logging, sandbox/cache mutation and performance remain
+unqualified. No daemon or firewall helper was started. Existing build-bsd explicit
+targets suffice; no frontend input, signing or publication contract changed.
+These builds consume the existing staged SDK; Make remains production/default.
+
+### Audit distribution and session utility (2026-10-30)
+
+Native auditdistd and setaudit now build and install with explicit source/library
+inputs. Auditdistd uses native lex/m4 and yacc actions with declared token.c,
+parse.c, parse.h and parse.output; generated headers are declared compile inputs.
+Its vendor header closure, OPENSSL_API_COMPAT and thread-safety-analysis exception
+preserve maintained Make requirements. The initial comparison caught different
+DSO ordering: bsd.libnames.mk enforces pthread last, which the native graph now
+preserves. No authentication, sandbox or audit behavior was modified.
+
+Final native run: /usr/obj/usr/src/bazel-audit-programs-20261030-r2.
+Fresh Make references: /usr/obj/usr/src/bazel-{auditdistd,setaudit}-make-20261030.
+Comparison scripts/logs: /usr/obj/usr/src/bazel-audit-programs-reference-20261030,
+per-program subdirectories. Auditdistd matches six installation records and four
+regular payloads; setaudit matches five records and three payloads. Both pass
+symbol inventories, ordered dynamic dependencies, exact manuals and debuglink
+CRC checks, with no missing/extra destinations or metadata mismatches.
+
+This does not qualify TLS transfer, trail recovery, configuration rejection,
+privilege separation/Capsicum, or changing a process audit identity and executing
+a child. Neither program was run to mutate host audit state or start a service.
+These component builds use the existing staged SDK; independent bootstrap,
+world/pkgbase, sandbox/cache and comparative performance gates remain open.
+Existing build-bsd explicit targets suffice; no frontend, signing or publication
+contract changed. Make remains production/default.
+
+### Cron migration in progress (2026-10-30)
+
+Native internal cron library and cron/crontab program candidates have been added.
+The daemon graph includes conditional native DTrace provider/header/object actions
+and PAM/util dependencies. Initial compile run is
+/usr/obj/usr/src/bazel-cron-programs-20261030; independent Make build/install/
+installconfig reference is bazel-cron-programs-make-20261030. Both were still
+running at this checkpoint; no success or parity claim is made.
+
+Next: finish crontab installation with mode 4555, its section-1/5 manuals,
+aggregate both programs/configuration, inspect library dependency propagation,
+and compare generated probes and artifact/install outputs. Qualify DTrace-off
+configuration too. No scheduler or setuid program has been executed. Existing
+build-bsd explicit targets suffice; no frontend/signing/publication input change.
+
+### Cron build/install and emitted DTrace qualification (2026-10-30)
+
+The native cron/crontab graph and internal ordinary/PIE archives now pass their
+initial Make comparison. Internal cron code requires OpenPAM headers, not a PAM
+link dependency; the first link failure exposed over-propagation of PAM into
+crontab. The corrected graph keeps PAM linkage on the daemon. No source behavior
+was changed. Crontab installation preserves root ownership, mode 4555 and schg;
+the comparison checks file flags in both the manifest and tar PAX metadata.
+
+Final native run: /usr/obj/usr/src/bazel-cron-programs-20261030-r2.
+Fresh Make build/install/installconfig: bazel-cron-programs-make-20261030.
+Evidence: /usr/obj/usr/src/bazel-cron-programs-reference-20261030.
+All 12 install records match with no missing/extra destinations or metadata
+mismatches; eight regular payloads pass symbol/dynamic dependency inventories,
+exact configuration/manual bytes and two debuglink CRCs. Both internal archives
+match three ordered members and 117 global/weak symbols. DTrace inventories
+match six probe schemas; both binaries pass instruction/function-range checks
+for seven ordinary and seven enabled sites. This is not live firing evidence.
+
+The DTrace-disabled variant remains to qualify. Scheduler execution, PAM,
+setuid crontab operations, spool permissions, credential transitions, concurrent
+edits and runtime probes still need matching-system tests. No daemon or setuid
+program was executed. Full world/bootstrap/pkgbase and performance remain open.
+Existing build-bsd explicit inputs cover the work; no frontend/signing/publication
+contract changed. Make remains production/default.
+
+### Cron DTrace-disabled variant (2026-10-30)
+
+Native dtrace=false and fresh Make WITHOUT_DTRACE=1 builds now pass the same
+installation/payload/archive comparison. Evidence:
+/usr/obj/usr/src/bazel-cron-nodtrace-reference-20261030; native run
+bazel-cron-nodtrace-20261030; Make reference bazel-cron-nodtrace-make-20261030.
+All 12 records, eight regular payloads, two debuglink CRCs and both internal
+three-member/117-symbol archives match. Crontab setuid mode and schg archive flags
+remain checked. ELF section-table checks verify zero SHT_SUNW_dof sections in
+both cron and crontab from both builds (no-dof.json). This closes the disabled
+build variant gap recorded above, not the live scheduler/PAM/privilege tests.
+Existing typed dtrace configuration needed no frontend/backend changes; no host
+installation, scheduler execution or privilege-state change was performed.
+
+### Authpf privileged utility (2026-10-30)
+
+Native authpf now uses declared vendor sources/pathnames and the maintained
+forced OpenBSD compatibility header, with native math/util linkage. Installation
+preserves root:authpf ownership, mode 6555 and binary/manual authpf-noip hardlinks.
+No application source or authentication behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-authpf-20261030.
+Fresh Make reference: /usr/obj/usr/src/bazel-authpf-make-20261030.
+Comparators/results: /usr/obj/usr/src/bazel-authpf-reference-20261030.
+All seven installation records match without missing/extra paths or metadata
+mismatches. Three regular payloads pass ELF symbol and ordered dependency
+comparison, exact manual bytes and debuglink CRC. Hardlink targets/content and
+Make inode identity are checked for both aliases.
+
+No privileged executable was run. SSH session validation, identity/group changes,
+PF rule installation/removal, concurrent sessions and logout cleanup remain
+runtime gates on an isolated matching system. Component compilation uses the
+existing staged SDK; full-world, independent bootstrap, cache and performance
+qualification remain open. Existing build-bsd explicit targets suffice; no
+frontend/signing/publication contract changed. Make remains production/default.
+
+### EFI utilities migration in progress (2026-10-30)
+
+Native efibootmgr, efidp, efivar, efiwake and efitable install archives built
+successfully through build-bsd at /usr/obj/usr/src/bazel-efi-tools-20261030.
+Their graph uses explicit program sources, native efivar/geom/xo dependencies
+where selected by Make, and the existing source efichar interface; efibootmgr
+retains its own efichar.c compilation as in Make.
+
+Fresh Make references are running sequentially with 16 compilation jobs each,
+under bazel-<program>-make-20261030. Scripts and pending comparisons live in
+/usr/obj/usr/src/bazel-efi-tools-reference-20261030. Successful native builds
+alone do not establish parity: inspect the reference runner and execute each
+program's install-audit.py and payload-audit.py after it completes. No firmware
+variables, wake settings or boot entries were changed. Existing build-bsd explicit
+targets cover this work; no frontend/signing/publication contract changed.
+
+EFI follow-up: efibootmgr, efidp and efivar references have completed and each
+passes five installation records and three regular payload comparisons,
+including symbols, ordered dynamic dependencies, manual bytes and debuglink CRC.
+Efiwake and efitable references remain in progress. Efibootmgr emits a native
+pointer-sign warning at the create_loadopt call (efibootmgr.c:730); maintained
+Make passes -Wno-pointer-sign. The underlying call is unchanged and the native
+warning has not been suppressed. Review that API pointer type separately.
+
+### EFI utility group qualification completed (2026-10-30)
+
+Native efibootmgr, efidp, efivar, efiwake and efitable now pass fresh Make
+build/install comparison. Each matches five installation records and three
+regular payloads, including global/weak symbol inventories, ordered dynamic
+dependencies, exact manual bytes and debuglink CRC. No missing/extra destinations
+or metadata mismatches. Shared ancestor directories mean these component record
+counts must not be summed as distinct world paths.
+
+Native evidence: /usr/obj/usr/src/bazel-efi-tools-20261030.
+Make evidence: /usr/obj/usr/src/bazel-<program>-make-20261030 for the five programs.
+Comparison scripts/logs: /usr/obj/usr/src/bazel-efi-tools-reference-20261030,
+per-program subdirectories. The native efibootmgr pointer-sign warning at
+create_loadopt remains visible; Make suppresses it with -Wno-pointer-sign.
+The underlying source call was not changed as part of this build migration.
+
+Firmware-variable reads/writes, boot order, device-path parsing/translation,
+wake settings and EFI table output remain runtime gates. No firmware utility
+was executed. Independent bootstrap/world/pkgbase, cross-architecture and cache/
+performance qualification remain open. Existing build-bsd explicit targets cover
+this work; no frontend/signing/publication contract changed. Make remains default.
+
+### Quota administration utilities in progress (2026-10-30)
+
+Native edquota, quot, quotaon and repquota candidates now declare program/library
+inputs and installation payloads, including quotaoff binary/manual hardlinks.
+The first build exposed a missing edquota pathnames.h declaration; it is fixed.
+Corrected native build bazel-quota-tools-20261030-r2 is running. All four isolated
+Make references completed under bazel-<program>-make-20261030. Comparators under
+/usr/obj/usr/src/bazel-quota-tools-reference-20261030 point at the r2 artifacts;
+run them only after confirming successful completion. No parity claim yet.
+
+Quot's existing ufs1/ufs2 ATF cases require root, mdconfig/newfs and mount, and
+still need native test installation/integration and isolated VM execution. The
+current candidate qualifies the tests-disabled program payload only. No quotas
+or host mounts were modified. Existing build-bsd explicit inputs suffice; no
+frontend/signing/publication contract changed.
+
+### Quota utility artifact comparison completed (2026-10-30)
+
+Final native run bazel-quota-tools-20261030-r2 passes all four Make comparisons.
+Edquota, quot and repquota each match five installation records; quotaon matches
+seven, including quotaoff binary/manual hardlinks. Each has three regular
+payloads: symbol inventories, ordered dynamic dependencies, exact manuals and
+debuglink CRC pass. No missing/extra destinations or metadata mismatches.
+Evidence: /usr/obj/usr/src/bazel-quota-tools-reference-20261030, per-program
+comparison scripts/logs; fresh Make references bazel-<program>-make-20261030.
+
+No application logic changed. This is tests-disabled program/install parity;
+quot's maintained ufs1/ufs2 test integration and isolated VM execution remain
+pending, along with quota editing/enforcement, filesystem accounting, concurrent
+updates and error-path runtime checks. No host quota/mount state changed.
+Existing build-bsd explicit targets suffice; no frontend/signing/publication
+contract changed. Independent world/bootstrap/pkgbase and performance remain open.
+
+### Quot maintained test installation (2026-10-30)
+
+The tests-enabled native quot aggregate now installs the maintained ATF shell
+suite and generated Kyuafile. Both existing UFS1/UFS2 cases and cleanup routines
+are unchanged. Test directory metadata comes from BSD.tests.dist; an initially
+redundant explicit directory declaration was removed after comparison caught it.
+
+Native evidence: /usr/obj/usr/src/bazel-quot-tests-20261030-r2.
+Fresh tests-enabled Make reference: bazel-quot-tests-make-20261030.
+Comparators/logs: /usr/obj/usr/src/bazel-quot-tests-reference-20261030.
+Seven changed install records match, with no missing/extra destinations or
+metadata mismatches; five regular payloads pass. The installed quot_test and
+Kyuafile are byte-identical to Make, and program symbols/dependencies/manual/
+debuglink still match. Final source cleanup only removed trailing whitespace.
+
+This closes test payload installation, not execution: no UFS fixture was mounted,
+no ATF case ran, and direct Bazel execution/VM orchestration is still pending.
+The suite requires root and creates/mounts memory disks, so qualify it in the
+isolated matching VM. Existing build-bsd tests setting selects installation;
+no frontend, signing or publication contract changed.
+
+### Disk utility migration in progress (2026-10-30)
+
+Native diskinfo, trim and snapinfo build/install candidates have been added with
+Make-selected util or ufs linkage and utilities/ufs package tags. Native run
+bazel-disk-tools-20261030 and isolated Make references bazel-<program>-make-20261030
+are in progress. Comparison scripts are prepared under
+/usr/obj/usr/src/bazel-disk-tools-reference-20261030; no parity claim yet.
+
+Diskinfo's legacy Make test target names /dev/ad4 and md50 explicitly. Do not run
+that target as a qualification fixture: future tests must accept an explicit
+disposable VM/device input and bound writes/trim to that fixture. No disk utility
+has been executed, and no host storage was modified. Existing build-bsd explicit
+inputs suffice; no frontend/signing/publication contract changed.
+
+### Disk utility artifact qualification completed (2026-10-30)
+
+Native diskinfo, trim and snapinfo now pass fresh Make build/install comparison.
+Each matches five installation records and three regular payloads, with no
+missing/extra destinations or metadata mismatches. Global/weak symbol inventories,
+ordered dynamic dependencies, exact manual bytes and debuglink CRCs pass.
+Native evidence: /usr/obj/usr/src/bazel-disk-tools-20261030. Fresh Make evidence:
+bazel-{diskinfo,trim,snapinfo}-make-20261030. Comparators/logs reside in
+/usr/obj/usr/src/bazel-disk-tools-reference-20261030 per-program directories.
+
+No application logic changed and no tool ran against host storage. Device/ioctl
+behavior, discard authorization/ranges, UFS snapshots and actual storage
+performance remain isolated VM/device qualification gates. Diskinfo's old fixed-
+device test target was not used. Existing build-bsd explicit target inputs cover
+this work; no frontend/signing/publication contract changed. Component SDK use
+and outstanding full-world/bootstrap/pkgbase/performance limits remain unchanged.
+
+### MAC label utility migration in progress (2026-10-30)
+
+Added native setfmac, setpmac and getfmac program/install candidates. Setfsmac is
+a binary hardlink to setfmac with a distinct section-8 manual, preserved explicitly.
+Native run bazel-mac-tools-20261030 and isolated Make references
+bazel-<program>-make-20261030 are running; comparison scripts are under
+/usr/obj/usr/src/bazel-mac-tools-reference-20261030. No parity claim yet.
+
+MAC API calls and program logic are unchanged. No file/process labels were
+modified. Matching-kernel policy/error-path and exec transition tests remain
+runtime gates. Existing build-bsd explicit target inputs suffice; no frontend,
+signing or publication contract changed. This adds no BIP scope.
+
+### MAC label utility artifact qualification completed (2026-10-30)
+
+Native setfmac/setfsmac, setpmac and getfmac pass fresh Make build/install
+comparisons. Setfmac matches seven installation records and four regular
+payloads, including the setfsmac binary hardlink and separate manual. Setpmac
+and getfmac each match five records and three payloads. No missing/extra paths
+or metadata mismatches; symbol inventories, ordered dynamic dependencies,
+manual bytes and all three debuglink CRCs pass.
+
+Native evidence: /usr/obj/usr/src/bazel-mac-tools-20261030. Fresh Make references:
+bazel-{setfmac,setpmac,getfmac}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-mac-tools-reference-20261030, per-program subdirectories.
+No labels were changed and no process label transition was executed. Symlink/
+recursive labeling, policy rejection, process exec and kernel audit behavior
+remain matching-system runtime gates. Existing build-bsd explicit inputs suffice;
+no frontend/signing/publication contract changed. Full system and performance
+qualification remain open; BIP remains excluded.
+
+### Extended-attribute utility migration (2026-10-30)
+
+Native rmextattr/getextattr/setextattr/lsextattr and extattrctl now build and
+install, with conditional DTrace header/object generation, native sbuf linkage,
+binary/manual hardlinks and conditional maintained ATF suite installation.
+Fresh tests-enabled Make comparisons pass: extattr has 13 install records and
+five regular payloads; extattrctl has five records and three payloads. No missing/
+extra paths or metadata mismatches. Symbols, ordered dependencies, manual/test/
+Kyuafile bytes and debuglink CRCs match. Hardlink targets and content are checked.
+
+Native evidence: /usr/obj/usr/src/bazel-extattr-tools-20261030. Make references:
+bazel-{extattr,extattrctl}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-extattr-tools-reference-20261030, per-program subdirectories.
+DOF inventories match 12 probe schemas; both binaries pass instruction/range
+checks for 14 ordinary and 14 enabled sites. This is not live firing evidence.
+
+Existing extattr_test.sh registers symlink_nofollow twice. The installed test
+payload currently preserves Make exactly; fix the source registration and verify
+case discovery before claiming runnable suite completeness. No ATF cases ran.
+DTrace-disabled/RESCUE/BOOTSTRAPPING selection and filesystem namespace, symlink,
+permission and error-path runtime checks remain qualification gaps. No host
+attributes were changed. Existing build-bsd explicit targets/configuration cover
+this work; no frontend/signing/publication contract changed. Full system,
+bootstrap, cache and performance gates remain open.
+
+### Extended-attribute ATF discovery correction (2026-10-30)
+
+Removed the duplicate symlink_nofollow registration from the maintained source
+suite; all case bodies remain unchanged. Shell syntax passes. Host atf-sh list-
+only discovery verifies all 19 defined cases are registered exactly once, both
+from source and from the extracted Bazel installation payload. No test body ran.
+
+Rebuilt native archive: /usr/obj/usr/src/bazel-extattr-discovery-20261030.
+Fresh Make reference: bazel-extattr-discovery-make-20261030. Evidence:
+/usr/obj/usr/src/bazel-extattr-discovery-reference-20261030, including
+source-discovery.txt, installed-discovery.txt and discovery.json (script hash,
+case inventory and host-interpreter limitation). All 13 installation records and
+five regular payloads still match Make, including exact corrected test/Kyuafile
+bytes and binary/debug checks. This closes duplicate discovery, not native ATF
+execution, filesystem permission coverage or live probe qualification. Existing
+build-bsd tests configuration suffices; no frontend/signing/publication change.
+
+### Process utility group in progress (2026-10-30)
+
+Native chroot, setfib and rtprio/idprio candidates now declare program and
+installation targets. Chroot retains conditional rootchange provider/header/
+object generation; rtprio retains idprio binary/manual hardlinks. Native run
+bazel-process-tools-20261030 and isolated Make references
+bazel-<program>-make-20261030 are running. Comparators reside under
+/usr/obj/usr/src/bazel-process-tools-reference-20261030; no parity claim yet.
+
+Next checks: install/payload parity for all three, chroot DOF schemas and emitted
+sites, then variant/runtime follow-ups. No root directory, FIB or priority was
+changed on the host. Existing build-bsd explicit inputs suffice; no frontend,
+signing or publication contract changed. Runtime authorization and exec behavior
+remain matching-kernel gates; this migration changes no application policy.
+
+### Process utility artifact qualification completed (2026-10-30)
+
+Native chroot, setfib and rtprio/idprio pass fresh Make build/install comparisons.
+Chroot and setfib each match five installation records; rtprio matches seven,
+including both idprio hardlinks. Each has three regular payloads with matching
+symbol inventories, ordered dynamic dependencies, manual bytes and debuglink CRC.
+No missing/extra destinations or metadata mismatches. Chroot DOF inventories
+match two schemas; both binaries pass instruction/range checks at two ordinary
+and two enabled sites. No live probe firing was tested.
+
+Native evidence: /usr/obj/usr/src/bazel-process-tools-20261030. Make references:
+bazel-{chroot,setfib,rtprio}-make-20261030. Comparators and chroot DOF records:
+/usr/obj/usr/src/bazel-process-tools-reference-20261030, per-program directories.
+No application source or policy changed. No root/FIB/priority transition ran.
+DTrace-disabled and rescue/bootstrap chroot variants, authorization, credential
+changes, child exec, priority limits and routing behavior remain runtime/config
+qualification gaps. Existing build-bsd explicit inputs suffice; no frontend,
+signing or publication contract changed. Full-system gates remain open.
+
+### Power, watchdog and state utility artifact qualification (2026-10-30)
+
+Native powerd, watchdogd/watchdog and pstat/swapinfo pass fresh Make build/install
+comparisons. Powerd matches five installation records and three regular payloads;
+watchdogd matches seven records and four payloads (separate watchdog manual);
+pstat matches seven records and three payloads, including swapinfo binary/manual
+hardlinks. No missing/extra paths or metadata mismatches. Symbols, ordered
+dynamic dependencies, manual bytes and all three debuglink CRCs pass.
+
+Native evidence: /usr/obj/usr/src/bazel-host-tools-20261030. Fresh Make references:
+bazel-{powerd,watchdogd,pstat}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-host-tools-reference-20261030 per-program directories.
+No application logic changed. No daemon started and no watchdog was armed.
+Power/frequency behavior, watchdog timeout/recovery and matching-kernel state
+queries remain isolated runtime gates. Existing build-bsd explicit inputs suffice;
+no frontend/signing/publication contract changed. Full-world/bootstrap/pkgbase,
+cache and performance qualification remain outstanding.
+
+### RPC locking/status utilities (2026-10-30)
+
+Added native rpc.statd, rpc.lockd, clear_locks and spray targets. The maintained
+bsd_rpcgen rule now accepts -m for server dispatch generation. Daemons explicitly
+declare their protocol source, generator/preprocessor/runtime inputs, -L -C
+flags, generated dispatch C and headers. Native public protocol headers are
+explicit consumer dependencies; no Make-generated source is substituted.
+Source sm_inter.x/nlm_prot.x hashes match the staged Make SDK protocol inputs.
+
+Native run: /usr/obj/usr/src/bazel-rpc-tools-20261030. Fresh Make references:
+bazel-{rpc.statd,rpc.lockd,clear_locks,spray}-make-20261030. Evidence:
+/usr/obj/usr/src/bazel-rpc-tools-reference-20261030, including protocol-inputs.json
+and per-program comparison scripts/logs. Rpc.lockd matches six install records
+(including lockd manual alias); each other program matches five. All have three
+regular payloads and pass symbol inventories, ordered dependencies, exact manuals
+and debuglink CRC. No missing/extra destinations or metadata mismatches.
+
+No RPC daemon/client was run. Lock recovery, NSM notifications, malformed wire
+messages, crash/restart persistence, network authorization and matching-kernel
+NFS locking remain isolated runtime gates. Existing ad hoc daemon test programs
+also still require native integration. Generator invalidation/cross-compilation,
+world/bootstrap/pkgbase and performance qualification remain open. The new rule
+mode is exercised by both real daemon builds; existing build-bsd explicit inputs
+need no new option. No frontend/signing/publication contract changed.
+
+### RPC-over-TLS daemons (2026-10-30)
+
+Added native rpc.tlsclntd and rpc.tlsservd targets with declared rpcgen header,
+dispatch and XDR actions using the maintained -L -C -M flags. Protocol sources
+are exported from the existing sys/rpc package; shared TLS code and headers are
+explicit dependencies. Native SSL/crypto/util linkage and the server's pthread
+linkage preserve Make's selection. No daemon source behavior changed.
+
+Native build-bsd run: /usr/obj/usr/src/bazel-rpc-tls-20261030.
+Fresh Make references: bazel-rpc.tlsclntd-make-20261030 and
+bazel-rpc.tlsservd-make-20261030. Comparisons and scripts are under
+/usr/obj/usr/src/bazel-rpc-tls-reference-20261030, in per-daemon directories.
+Each daemon matches five installation records with no missing/extra paths or
+metadata mismatches. Three regular payloads per daemon pass symbol/dynamic
+linkage inventories, manual byte comparison and one debuglink CRC check.
+The native receipt has no runtime test cases: success covers selected builds,
+not TLS handshakes, certificate policy, kernel upcalls or service lifecycle.
+
+Frontend review: existing explicit targets and configured SDK inputs cover
+these actions; no build-bsd/backend/signing/publication contract changed.
+Staged SDK dependence, full world/kernel/pkgbase, alternate architectures,
+cache/performance and matching-system runtime qualification remain open.
+Make remains the production/default backend.
+
+### ARP and binary interpreter registration utilities (2026-10-30)
+
+Added native arp and binmiscctl targets. ARP selects arp_netlink.c or
+WITHOUT_NETLINK using the existing typed netlink_support setting and links
+native libxo. Both arp.4 and arp.8 are installed. No program source changed.
+Native build-bsd run: /usr/obj/usr/src/bazel-arp-binmisc-20261030.
+Fresh Make references: bazel-arp-make-20261030 and bazel-binmiscctl-make-20261030.
+Evidence/scripts: /usr/obj/usr/src/bazel-arp-binmisc-reference-20261030.
+ARP matches six installation records and four regular payloads; binmiscctl
+matches five records and three regular payloads. Symbol/dynamic dependency
+inventories, manual bytes and both debuglink CRCs pass. All reference commands
+and the native build completed successfully. No runtime tests were selected.
+
+ARP Netlink-disabled compilation, neighbor updates/routing-socket behavior,
+libxo output modes and binmiscctl interpreter registration remain to qualify.
+No host networking or interpreter configuration was modified. Existing frontend
+explicit targets and typed build settings cover these changes; no frontend,
+backend, signing or publication contract change is required. Full world/kernel,
+bootstrap/pkgbase and performance gates remain open; Make remains default.
+
+### ARP without Netlink (2026-10-30)
+
+Qualified the existing netlink_support=false choice against a fresh Make
+WITHOUT_NETLINK_SUPPORT=1 build. Native output:
+/usr/obj/usr/src/bazel-arp-nonetlink-20261030; Make reference:
+bazel-arp-nonetlink-make-20261030. Scripts and comparison evidence:
+/usr/obj/usr/src/bazel-arp-nonetlink-reference-20261030.
+Six installation records and four regular payloads match, including symbol and
+dynamic dependency inventories, both manual bytes and debuglink CRC. The saved
+execution-log audit verifies exactly one ARP compile action: arp.c with
+-DWITHOUT_NETLINK, excluding arp_netlink.c. Both build processes exited zero.
+This closes the disabled-backend build comparison gap, not live neighbor or
+routing-socket behavior. Existing build-bsd typed settings worked unchanged;
+no frontend/backend/signing/publication change is needed. Make remains default.
+
+### Automounter group (2026-10-30)
+
+Native automountd carries all seven maintained C sources and a declared native
+lex/m4 action for token.l. automount/autounmountd preserve Make's executable
+hard links and distinct manuals. Explicit installation includes auto_master,
+all seven executable /etc/autofs configuration helpers, and four manuals.
+The ioctl header is declared in the existing root Bazel package, avoiding a
+new package boundary across kernel inputs. No program source changed.
+
+Native output: /usr/obj/usr/src/bazel-autofs-20261030-r2; fresh Make reference:
+bazel-autofs-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-autofs-reference-20261030. All 20 installation records
+match, with no missing/extra paths or attribute mismatches; 14 regular payloads
+pass symbol/dynamic dependency inventories, configuration/helper/manual byte
+comparisons and debuglink CRC. Both binary hard links match Make inode identity.
+The first comparison exposed a missing /etc/autofs directory record; native
+metadata now matches Make's configuration-install record (package=utilities).
+
+No daemon, helper or mount operation was executed. Map parsing, kernel requests,
+LDAP/NIS/NFS/media helpers, mount/unmount lifecycle, privilege failures and
+concurrency need isolated matching-system tests. Full world/kernel/bootstrap,
+pkgbase and performance qualification remain open. Existing build-bsd explicit
+targets and SDK inputs handle these actions; no frontend/backend, signing or
+publication contract changed. Make remains the production/default backend.
+
+### Bluetooth command utilities (2026-10-30)
+
+Added native l2control, l2ping, hccontrol and bcmfw targets with explicit sources,
+local headers and maintained native libbluetooth dependencies (bcmfw has no
+explicit LIBADD). hccontrol includes /etc/defaults/bluetooth.device.conf with
+Make's config tag/mode and directory metadata. No program source changed.
+
+Native run: /usr/obj/usr/src/bazel-bluetooth-tools-20261030. Fresh Make build,
+install and installconfig references: bazel-{l2control,l2ping,hccontrol,bcmfw}-
+make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bluetooth-tools-reference-20261030, per-command directories.
+All commands completed successfully. l2control/l2ping/bcmfw each match five
+installation records and three regular payloads; hccontrol matches seven
+records and four regular payloads. No missing/extra paths or metadata mismatches.
+Symbol/dynamic dependency inventories, manual/config bytes and four debuglink
+CRCs pass. These comparisons do not establish Bluetooth runtime correctness.
+
+Hardware/controller queries, L2CAP traffic, HCI command behavior, firmware
+loading/error paths and matching-kernel Netgraph behavior remain to qualify.
+No device was opened or firmware loaded. Existing build-bsd target/SDK inputs
+cover this group; no frontend/backend/signing/publication contract changed.
+Full world/kernel/bootstrap/pkgbase and performance remain open; Make is default.
+
+### Bluetooth security daemon (2026-10-30)
+
+Added native hcsecd with declared lex/m4 and yacc actions, generated parser header
+and explicit native libbluetooth linkage. Configuration installation preserves
+root:wheel mode 0600, config package tags and the distinct configuration manual.
+No daemon source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-hcsecd-20261030; fresh Make reference:
+bazel-hcsecd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-hcsecd-reference-20261030. Eight installation records and
+five regular payloads match Make; symbol/dynamic dependency inventories,
+configuration/manual bytes and debuglink CRC pass. generated-inputs.json records
+native lexer/parser actions and verifies the parser header is an input to lexer
+compilation. Both builds completed successfully; no runtime tests were selected.
+
+Pairing, key persistence, configuration parsing/reload, authorization failures
+and matching-kernel HCI behavior remain to qualify. No daemon/device was run.
+The observability log records a pre-existing __config_debug__-guarded routine
+that logs PIN/key contents for separate security review. Existing build-bsd
+explicit targets and SDK inputs cover this work; no frontend/backend/signing/
+publication contract change. Full system/bootstrap/pkgbase/performance remain
+open and Make remains production/default.
+
+### Bluetooth HID daemon/control (2026-10-30)
+
+Added native bthidd and bthidcontrol. Lexer/parser generation is shared; generated
+parser C is separately compiled for each binary, with BTHIDCONTROL=1 only for
+the control utility. Each program keeps its own hid.c. Local/generated headers,
+Bluetooth/USB HID libraries and the control utility's SDP dependency are explicit.
+No daemon/control source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-bthid-20261030. Fresh Make references:
+bazel-bthidd-make-20261030 and bazel-bthidcontrol-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bthid-reference-20261030. Each program matches five
+installation records and three regular payloads, with symbol/dynamic dependency
+inventories, manual bytes and debuglink CRC passing. parser-variants.json checks
+two parser compile actions, exactly one BTHIDCONTROL definition, and declared
+bthid_config.h inputs. All builds exited zero. Reference runner progress text
+still says arp from its template; its recorded command paths and comparison
+inputs identify the actual bthidd/bthidcontrol builds. No runtime test was run.
+
+HID descriptor parsing, SDP discovery, reconnect/disconnect, keyboard/mouse event
+delivery, /dev/uinput and privilege/error paths require isolated runtime tests.
+Existing build-bsd target/SDK inputs cover these actions; no frontend/backend,
+signing or publication contract changed. Full world/kernel/bootstrap/pkgbase,
+alternate architectures and performance remain open. Make remains default.
+
+### Bluetooth PAN and RFCOMM PPP (2026-10-30)
+
+Added native btpand and rfcomm_pppd. Explicit sources/headers and native Bluetooth,
+SDP and PAN util linkage preserve Make's selection. RFCOMM's shared rfcomm_sdp.c
+is exported from its existing rfcomm_sppd package with narrow visibility.
+No daemon source changed.
+
+Native build-bsd run: /usr/obj/usr/src/bazel-bt-network-20261030.
+Fresh Make references: bazel-btpand-make-20261030 and
+bazel-rfcomm_pppd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-network-reference-20261030. Each program matches five
+installation records and three regular payloads, including symbol/dynamic
+linkage inventories, manual bytes and debuglink CRC. All builds exited zero.
+The tool interruption occurred after btpand completed and before rfcomm_pppd's
+reference started; only the missing reference was subsequently run.
+
+No PAN service, TAP interface, Bluetooth device or PPP session was started.
+BNEP packet handling, SDP discovery, session setup/teardown, TAP authorization,
+PPP invocation and malformed/disconnected-peer behavior remain runtime gates.
+Existing build-bsd target/SDK inputs cover this group; no frontend/backend,
+signing or publication contract changed. Full system/bootstrap/pkgbase and
+performance remain unqualified; Make remains the default production backend.
+
+### USB Bluetooth firmware loaders (2026-10-30)
+
+Added native ath3kfw, iwmbtfw and rtlbtfw with explicit three-source/header lists
+and native libusb linkage. Intel retains Make's NDEBUG definition. Intel/Realtek
+devd files are installed from maintained source with config tags, directory
+metadata and mode 0644. No loader source or device matching policy changed.
+
+Native output: /usr/obj/usr/src/bazel-bt-usbfw-20261030. Fresh Make references:
+bazel-{ath3kfw,iwmbtfw,rtlbtfw}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-usbfw-reference-20261030. All builds completed.
+Atheros matches five install records and three regular payloads; Intel/Realtek
+each match seven records and four payloads. Symbol/dynamic dependency inventories,
+manual/configuration bytes and three debuglink CRCs pass without missing/extra
+paths or metadata mismatches. No hardware/runtime tests were selected.
+
+USB attach/detach, firmware lookup/transfer, malformed files, unsupported device
+revisions, permission denial and interrupted transfers remain runtime gates.
+No device was opened or firmware loaded. Existing build-bsd explicit targets
+and SDK inputs cover the work; no frontend/backend/signing/publication contract
+changed. World aggregation must retain Make's MK_USB selection for this group.
+Full system/bootstrap/pkgbase and performance qualification remain open; Make
+remains the production/default backend.
+
+### Bluetooth service discovery (2026-10-30)
+
+Added native sdpd (26 maintained C sources) and sdpcontrol (two sources) with
+explicit local headers. Daemon Bluetooth/SDP dependencies are header-only,
+matching Make's lack of LIBADD; the control utility links native Bluetooth/SDP.
+No program source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-bt-sdp-20261030. Fresh Make references:
+bazel-sdpd-make-20261030 and bazel-sdpcontrol-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-sdp-reference-20261030. Each program matches five
+installation records and three regular payloads, with symbol/dynamic dependency
+inventories, manual bytes and debuglink CRC passing. All builds exited zero.
+No daemon or Bluetooth session was run.
+
+Service registration/search/update/removal, local peer credential checks,
+privilege dropping, malformed protocol requests, continuation responses and
+connection lifecycle require isolated runtime tests. Existing build-bsd explicit
+targets and SDK inputs cover the work; no frontend/backend/signing/publication
+contract changed. Full world/kernel/bootstrap/pkgbase/performance qualification
+remains open; Make remains the default production backend.
+
+### BLE/mesh and virtual HCI tools (2026-10-30)
+
+Added native bluedctl, meshctl and vhcitool. BLE/Netgraph dependencies match Make;
+meshctl has no explicit library dependency. vhcitool explicitly reuses the
+maintained tests/usr.sbin/bluetooth/BSDBluetooth/hci_emulator.c and its header,
+plus source-tree ng_hci_virt.h/ng_hci.h. No copied emulator or program source
+changes were introduced.
+
+Native output: /usr/obj/usr/src/bazel-bt-modern-tools-20261030. Fresh Make
+references: bazel-{bluedctl,meshctl,vhcitool}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-modern-tools-reference-20261030. Each command matches
+five install records and three regular payloads. Symbol/dynamic dependency
+inventories, manual bytes and three debuglink CRCs pass. All builds completed.
+No live control requests, virtual controller creation or runtime test occurred.
+
+BLE daemon interaction, mesh control protocol/errors, virtual-controller
+create/destroy, emulator packet exchange and matching-kernel Netgraph lifecycle
+remain runtime gates. The shared emulator is useful for later hardware-free
+Bluetooth tests, but this build result does not qualify those tests. Existing
+build-bsd targets/SDK inputs cover the additions; no frontend/backend/signing/
+publication contract changed. Full system/bootstrap/pkgbase/performance remain
+open; Make remains production/default.
+
+### Bluetooth mesh daemon (2026-10-30)
+
+Added native meshd with all ten maintained C sources, explicit local and shared
+BLE protocol headers, native mesh/Bluetooth/crypto linkage, conditional native
+DTrace header/object/provider generation and sample configuration installation.
+No daemon source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-meshd-20261030; fresh Make reference:
+bazel-meshd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-meshd-reference-20261030. Seven installation records and
+four regular payloads match Make, including symbol/dynamic dependency inventories,
+manual/sample bytes and debuglink CRC. Both builds completed. Saved native-dof.json
+and make-dof.json match providers and 13 probe schemas; both pass amd64 instruction
+and function-range checks for 13 ordinary sites (zero enabled-check sites).
+This is metadata/site evidence, not live probe firing.
+
+DTrace-disabled compilation, daemon/control behavior, provisioning, mesh traffic,
+persistent state/restart, malformed input and live probes remain qualification
+gates. No daemon was executed. Existing build-bsd typed DTrace and explicit target/
+SDK inputs cover the addition; no frontend/backend/signing/publication contract
+changed. Full world/kernel/bootstrap/pkgbase/performance remain open; Make remains
+the production/default backend.
+
+### meshd optional DTrace-disabled configuration (2026-10-30)
+
+The explicit dtrace=false build now passes the same Make comparison as the
+enabled build. Native: /usr/obj/usr/src/bazel-meshd-nodtrace-20261030.
+Fresh Make WITHOUT_DTRACE=1: bazel-meshd-nodtrace-make-20261030.
+Evidence/scripts: /usr/obj/usr/src/bazel-meshd-nodtrace-reference-20261030.
+Seven install records and four regular payloads match; symbol/dynamic dependency
+inventories, manual/sample bytes and debuglink CRC pass. ELF section-table checks
+verify no SHT_SUNW_dof section in either executable (no-dof.json/no-dof.py).
+Both builds completed successfully. This closes the optional disabled build
+comparison gap, not live daemon/probe/runtime qualification. DTrace remains
+enabled by default. Existing build-bsd typed setting works without frontend or
+backend changes. No host installation or daemon execution occurred.
+
+### Bluetooth capability controller helper (2026-10-30)
+
+Added native BSDBluetoothController with explicit Bluetooth/service/channel
+linkage, generated CAPIMAGE policy assembly, .5bsd.policy preservation during
+stripping, and Unit.ucl installation under Bluetooth.cap/controller.unit.
+No controller behavior or policy content changed.
+
+Native output: /usr/obj/usr/src/bazel-bt-controller-20261030-r2. Make reference:
+bazel-bt-controller-make-20261030-r2. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-controller-reference-20261030. The first native archive
+correctly rejected undeclared parent bundle directory policy. The corrected
+archive declares Bluetooth.cap and Units; the fresh reference installs those
+with the parent's maintained installdirs-BLUED_CAP/BLUED_CAP_UNITS targets before
+building/installing the helper. This comparison includes that parent dependency,
+not a standalone leaf Make invocation or the whole daemon bundle.
+
+All 13 installation records and three regular payloads match. Symbol/dynamic
+linkage inventories, Unit.ucl bytes and debuglink CRC pass. policy-audit.py/json
+verify exact controller.ucl bytes in .5bsd.policy in both stripped executables.
+This establishes unsigned embedded policy parity, not signing, verified boot,
+protection against root or runtime authorization.
+
+Main BSDBluetooth daemon migration, bundle aggregation, stamped session grant
+checks, rights denial, descriptor brokerage/transfer and lifecycle tests remain
+open. No helper was executed. Existing build-bsd target/SDK and capimage pipeline
+cover these inputs; no frontend/backend/signing/publication contract changed.
+Full system/bootstrap/pkgbase/performance remain open; Make remains default.
+
+### BSDBluetooth daemon and aggregate capability bundle (2026-10-30)
+
+Added native BSDBluetooth with all 35 maintained C sources, explicit local/BLE/
+controller protocol headers, native library linkage and configurable audit and
+DTrace support. The compile exposed an undeclared source vhid.h dependency;
+the existing sys/dev/hid target now grants narrow package visibility and is an
+explicit dependency. No broad source include fallback was introduced.
+Generated policy assembly is retained in stripped executables. Aggregate install
+includes the controller manifest, bundle/unit/configuration files, distinct
+manual alias and the maintained /usr/sbin/blued symlink. The first metadata
+comparison caught symlink mode 0777 versus Make's recorded 0755; it is corrected.
+
+Native run: /usr/obj/usr/src/bazel-bt-daemon-20261030-r3. Fresh Make reference:
+bazel-bt-daemon-make-20261030 (daemon plus recursive controller install).
+Evidence/scripts: /usr/obj/usr/src/bazel-bt-daemon-reference-20261030.
+All 26 installation records and nine regular payloads match, including symbol/
+dynamic dependency inventories, bundle/unit/config/manual bytes, links and two
+debuglink CRCs. policy-audit.py/json verify exact blued.ucl bytes in the daemon's
+stripped .5bsd.policy. Controller policy was separately qualified in the prior
+helper step. Native/Make DTrace providers and 129 probe schemas match; both
+binaries pass amd64 instruction/function-range checks for 158 ordinary sites,
+zero enabled-check sites (native-dof.json/make-dof.json). No live firing claimed.
+
+No daemon or controller was executed. Audit-disabled/DTrace-disabled variants,
+activation and stamped authorization, descriptor grants, GATT/ATT/SMP/ISO,
+pairing/persistence/restart, controller removal and live audit/probes remain
+runtime/configuration gates. Embedded unsigned policy is not signing, verified
+boot or protection against root. Existing build-bsd typed options, explicit
+inputs and capimage rules cover this addition; no frontend/backend/signing/
+publication contract changed. Full system/bootstrap/pkgbase/performance remain
+open; Make remains the production/default backend.
+
+### BSDBluetooth independent audit/DTrace options (2026-10-30)
+
+Two additional configurations now pass fresh Make comparisons:
+- audit=false, dtrace=true: bazel-bt-daemon-noaudit-20261030 and fresh Make
+  bazel-bt-daemon-noaudit-make-20261030. Evidence/scripts under
+  /usr/obj/usr/src/bazel-bt-daemon-noaudit-reference-20261030.
+- audit=true, dtrace=false: bazel-bt-daemon-nodtrace-20261030 and fresh Make
+  bazel-bt-daemon-nodtrace-make-20261030. Evidence/scripts under
+  /usr/obj/usr/src/bazel-bt-daemon-nodtrace-reference-20261030.
+
+Each matches 26 installation records, nine regular payloads, symbol/dynamic
+linkage inventories, unit/config/manual bytes, two debuglink CRCs and exact
+blued.ucl bytes in the stripped policy section. All builds completed.
+Audit-disabled binaries have no direct libbsm dependency and retain matching
+DTrace providers/129 schemas/158 validated ordinary sites. DTrace-disabled
+binaries have no DOF section and retain libbsm linkage. Saved linkage/DOF reports
+record these limits; they do not establish runtime record emission or firing.
+
+Together with the earlier enabled/enabled build, this qualifies three build
+configurations; disabled/disabled has not been compared. Defaults remain audit
+and DTrace enabled. Existing build-bsd typed options work without frontend or
+backend changes. Runtime activation/authorization/Bluetooth and complete system,
+bootstrap/pkgbase/performance qualification remain open. No host service ran.
+
+### Bluetooth subtree aggregate and configuration script (2026-10-30)
+
+Added native bluetooth-config script/manual installation and a public
+//usr.sbin/bluetooth:installation_archives aggregate. The aggregate follows the
+maintained MK_USB choice using the existing typed usb setting: 14 unconditional
+subdirectories plus six USB-dependent ones. The BSDBluetooth archive includes
+its controller. This provides one selectable subtree through build-bsd.
+
+Native USB-on run: /usr/obj/usr/src/bazel-bluetooth-config-20261030-r2; USB-off:
+bazel-bluetooth-nousb-20261030-r2. Both aggregate builds pass. Fresh script Make
+reference: bazel-bluetooth-config-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bluetooth-config-reference-20261030. Script comparison
+matches three installation records and exact script/manual bytes. An initial
+comparison exposed Make's package-owned /usr/sbin directory entry; the native
+manifest now preserves it. The script itself was not executed.
+
+selection-audit.py/json query Make's evaluated SUBDIR for both USB choices and
+compare the complete native archive lists with no missing/extra members:
+20 archives with USB, 14 without. Artifact hashes are checked. This proves
+subtree selection/build coverage for these configurations, not full world,
+combined pkgbase reconciliation, runtime behavior or performance. USB-on rebuild
+also reports existing libthr pointer-sign warnings against staged SDK atomics;
+no warning suppression or source workaround was added.
+
+Frontend review: existing explicit aggregate targets and typed usb inputs work
+through build-bsd; no frontend/backend/signing/publication contract changed.
+The script's interactive configuration changes, Bluetooth service/hardware/
+virtual-controller behavior and complete system gates remain open. Make remains
+production/default. No host configuration or service was changed.
+
+### Boot support utilities (2026-10-30)
+
+Added native boot0cfg, boottrace and btxld with explicit local source/header lists
+and native GEOM linkage for boot0cfg. No program source changed; boottrace's
+maintained BOOTTRACE calls remain intact.
+
+Native run: /usr/obj/usr/src/bazel-boot-tools-20261030. Fresh Make references:
+bazel-{boot0cfg,boottrace,btxld}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-boot-tools-reference-20261030. All builds completed.
+Each utility matches five install records and three regular payloads, including
+symbol/dynamic dependency inventories, manual bytes and debuglink CRC. No paths
+or metadata differ. These are selected amd64 build/install results only.
+
+Boot-sector update/readback on disposable images, btxld valid/malformed object
+handling and boot execution, and boottrace command/status/kernel logging need
+runtime qualification. No disk or boot configuration was changed, and no utility
+was executed. Existing build-bsd explicit target/SDK inputs cover the additions;
+no frontend/backend/signing/publication contract changed. Full system/bootstrap,
+pkgbase and performance remain open; Make remains production/default.
+
+
+### cpucontrol (2026-10-30)
+
+Added native cpucontrol with explicit local sources/headers and a narrowly
+exported shared sys/x86/x86/ucode_subr.c source. Program behavior is unchanged.
+Native build: /usr/obj/usr/src/bazel-cpucontrol-20261030. Fresh Make reference:
+/usr/obj/usr/src/bazel-cpucontrol-make-20261030. Comparison scripts and evidence:
+/usr/obj/usr/src/bazel-cpucontrol-reference-20261030/cpucontrol.
+Both builds completed; all five install records match with no missing, extra or
+mismatched entries. Three regular payloads pass symbol/dynamic dependency,
+manual-byte and debuglink CRC comparisons. This is selected amd64 artifact
+qualification, not runtime or whole-system qualification. No microcode/device
+operation was executed. Privileged ioctls, malformed microcode handling and
+hardware update behavior remain runtime checks.
+
+Frontend review: existing build-bsd explicit target/SDK inputs cover this rule;
+no frontend/backend/signing/publication contract changed. Make remains production
+default. Full world/kernel/bootstrap/pkgbase and performance gates remain open.
+
+
+### getpmac, gpioctl and cdcontrol (2026-10-30)
+
+Added native rules with explicit sources and native libgpio/libedit dependencies
+where required by Make. No program behavior changed. cdcontrol retains its
+section-1 manual and /usr/sbin executable location; the first native build caught
+an incorrect section-8 assumption, corrected before qualification.
+
+Native run: /usr/obj/usr/src/bazel-device-tools-20261030-r2. Fresh Make references:
+/usr/obj/usr/src/bazel-{getpmac,gpioctl,cdcontrol}-make-20261030. Scripts/results:
+/usr/obj/usr/src/bazel-device-tools-reference-20261030, per-program subdirectories.
+Each matches five install records and three regular payloads with no missing,
+extra or mismatched entries. Symbol/dynamic dependency inventories, compressed
+manual bytes and debuglink CRC pass. No utility was executed. Device operations,
+MAC label queries and authorization behavior remain runtime qualification work.
+
+Frontend review: existing build-bsd explicit target/configuration and SDK inputs
+cover these additions; no frontend/backend/signing/publication contract changed.
+These results cover selected amd64 components only. Full world/kernel/bootstrap,
+pkgbase and performance gates remain open; Make remains production/default.
+
+
+### ckdist, dumpcis and flowctl (2026-10-30)
+
+Added native rules preserving explicit maintained sources and dependencies.
+ckdist consumes the shared cksum/crc.c and a narrow extern.h header target;
+its section-1 manual remains separate from its /usr/sbin installation. dumpcis
+lists its three sources and local headers. flowctl uses native libnetgraph and
+independent inet_support/inet6_support selectors, matching Make's definitions.
+The first native analysis caught an incorrect libmd target; the corrected rule
+uses the existing md_link CcInfo target and md_shared.
+
+Native run: /usr/obj/usr/src/bazel-inspection-tools-20261030-r2. Fresh Make roots:
+/usr/obj/usr/src/bazel-{ckdist,dumpcis,flowctl}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-inspection-tools-reference-20261030 (per-program directories).
+Each passes five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+compressed manual bytes and debuglink CRC. Default IPv4+IPv6 configuration was
+built; other flowctl protocol selections still require qualification.
+
+No utility was executed. Checksum/missing-file/error cases, malformed CIS inputs
+and netgraph authorization/flow decoding remain runtime work. Frontend review:
+existing explicit targets, SDK and typed IP options cover these additions; no
+frontend/backend/signing/publication contract changed. Selected amd64 artifact
+results do not establish whole-world/kernel/bootstrap/pkgbase or performance
+qualification. Make remains production/default.
+
+
+### flowctl protocol configuration qualification (2026-10-30)
+
+Qualified IPv4-only, IPv6-only and neither-protocol builds, in addition to the
+previous default dual-protocol build. Native runs:
+/usr/obj/usr/src/bazel-flowctl-{ipv4,ipv6,noip}-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-flowctl-{ipv4,ipv6,noip}-make-20261030. Comparison scripts,
+inputs and results are in corresponding -reference-20261030 directories.
+Each variant matches all five installation records and three regular payloads,
+including symbols/dynamic dependencies, manual bytes and debuglink CRC.
+
+protocol-audit.py/json under bazel-flowctl-noip-reference-20261030 also checks
+actual native execution-log compile arguments against fresh Make compile logs:
+only INET, only INET6, and neither respectively. Thus the configuration comparisons
+did not accidentally reuse identical compiler definitions. No protocol selector
+or program source changes were needed. No live netgraph operations were tested.
+
+Frontend review: existing typed inet_support/inet6_support settings and explicit
+target inputs work through build-bsd. No frontend/backend/signing/publication
+contract changed. These are component configuration results, not whole-system,
+runtime, bootstrap, package publication or performance qualification. Make
+remains production/default.
+
+
+### memcontrol and pciconf (2026-10-30)
+
+Added native rules with explicit sources and local pciconf headers. Maintained
+program behavior is unchanged. Native build:
+/usr/obj/usr/src/bazel-pci-memory-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{memcontrol,pciconf}-make-20261030. Scripts and evidence:
+/usr/obj/usr/src/bazel-pci-memory-reference-20261030, per-program directories.
+Both builds pass five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+manual bytes and debuglink CRC. No utility was executed and no hardware state
+was changed. PCI configuration read/write/mapping, capability decoding and
+memory-range attribute operations still need runtime qualification.
+
+Frontend review: existing build-bsd explicit targets and SDK inputs cover these
+additions; no frontend/backend/signing/publication contract changed. These are
+selected amd64 artifact results, not full world/kernel/bootstrap/pkgbase or
+performance qualification. Make remains production/default.
+
+
+### policyctl and installed ATF suite (2026-10-30)
+
+Added native policyctl linked to native libcapbundle, preserving package
+switchboardctl. Added configuration-selected installation of its maintained
+ATF shell suite and generated Kyuafile under package switchboardctl-tests.
+Archive enforcement caught a missing test-directory record; the rule now declares
+Make's exact directory ownership/mode/tags. An intermediate BUILD dictionary
+syntax error was corrected before the successful build.
+
+Native run: /usr/obj/usr/src/bazel-policyctl-20261030-r3. Fresh Make reference:
+/usr/obj/usr/src/bazel-policyctl-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-policyctl-reference-20261030/policyctl. Eight installation
+records match with no missing/extra/metadata differences. Five regular payloads
+pass symbol/dynamic inventory, debuglink CRC and byte comparisons, including
+the installed test script, Kyuafile and manual. The host ATF interpreter lists
+all five expected cases from the native-installed script; test bodies were not
+executed. Bazel test execution with declared tools/libraries remains outstanding,
+as does qualification with test installation disabled.
+
+Frontend review: existing build-bsd explicit target, typed tests option and SDK
+inputs cover the additions; no frontend/backend/signing/publication contract
+changed. This does not establish signing, verified boot, live authorization or
+whole-system/bootstrap/pkgbase/performance qualification. Make remains default.
+
+
+### policyctl native Bazel tests: host ABI blocker (2026-10-30)
+
+Added five bsd_atf_test cases and a public test suite for policyctl. Each uses the
+unchanged maintained shell body, native production policyctl mapped to its local
+policyctl_test_bin fixture name, declared ATF/shell/file tools and native runtime
+libraries (SDK libgcc_s remains declared). No host policyctl substitution or test
+body weakening was introduced. Installed test files are unchanged.
+
+Inputs: /usr/obj/usr/src/bazel-policyctl-tests-reference-20261030/inputs.json.
+Run bazel-policyctl-tests-20261030-r2 built targets but all five tests failed
+before test bodies: ATF's dirname call invokes caph_limit_stdio, which asserts
+in cap_rights_intersect on the rights returned by the host. Diagnostic r3 with
+explicit SDK libc/libsys failed identically. Final rules retain native libc/libsys;
+the SDK diagnostic was not retained as a fallback. The initial invocation was
+rejected because tests were not also selected build targets; inputs now explicitly
+select all five tests and the installation archive.
+
+Read-only host probe and capsicum-abi.json in the reference directory establish:
+host word 1 = 0x040000006fffffff; source CAP_ALL1 = 0x05fc000001ffffff;
+host bits rejected by the source mask = 0x6e000000. Source and staged SDK headers
+allocate 5BSD rights differently from the running host. This is concrete runtime
+ABI incompatibility, not a policyctl test-body result. Logs/failure reports remain
+in r2/r3. No assertion disabling, rights changes or kernel installation was done.
+Run these tests against a kernel matching the source ABI; source/host compatibility
+and upgrade implications remain open. No test case is claimed passed or skipped.
+
+Frontend review: existing explicit test targets and declared runtime graph work
+through build-bsd; no frontend/backend/signing/publication contract changed.
+Whole-system/runtime/bootstrap/pkgbase/performance gates remain open, and Make
+remains production/default.
+
+
+### capsign and complete test installation (2026-10-30)
+
+Added native capsign with maintained capsign.c/capsign_tree.c and explicit native
+capimage, capbundle and crypto linkage. Tests-enabled installation includes both
+ATF shell suites, the native elf_signature_test binary/debug file, generated
+Kyuafile and all three maintained stage scripts. Script exports have narrow
+visibility; no signing or stage-script behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-capsign-20261030-r4. Fresh Make reference:
+/usr/obj/usr/src/bazel-capsign-make-20261030. Scripts/results:
+/usr/obj/usr/src/bazel-capsign-reference-20261030/capsign. All 17 installation
+records match. Eleven regular payloads pass symbol/dynamic dependency inventories,
+manual/test/script/Kyuafile bytes and two debuglink CRC checks. Earlier attempts
+caught manifest-provider composition, test-directory metadata, Kyuafile ordering
+and ATF library ordering; these were corrected without loosening comparisons.
+
+No signing operation or test body was executed. Native Bazel test execution,
+key/tamper/staging cases, live veriexec/ELF-kernel consumers and tests-disabled
+qualification remain open. The previously recorded host Capsicum ABI mismatch
+also affects qualification planning. Building these artifacts does not establish
+verified boot, signing enforcement or protection against compromised root.
+
+Frontend review: existing build-bsd explicit target, typed tests and SDK inputs
+cover this addition. Maintained stage scripts are consumed unchanged; no frontend,
+backend, signing or publication contract changed. Full world/kernel/bootstrap,
+pkgbase and performance remain unqualified; Make remains production/default.
+
+
+### capsulectl attributed bundle and tests (2026-10-30)
+
+Added native capsulectl with native service linkage and declared capsulert headers.
+Preserves CapsuleControl.cap layout, Bundle.ucl/Unit.ucl, embedded .5bsd.policy,
+/usr/sbin compatibility symlink, and all maintained test installation: shell suite,
+Kyuafile, static real-service helper and static fake-service helper. Narrow exports
+preserve Switchboard's existing Unit.ucl fixture visibility. No source behavior
+changed. One initial BUILD multiline syntax error was corrected.
+
+Native run: /usr/obj/usr/src/bazel-capsulectl-20261030-r2. Fresh Make reference:
+/usr/obj/usr/src/bazel-capsulectl-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-capsulectl-reference-20261030. All 27 install records and
+11 regular payload comparisons pass, including symbol/dynamic dependency
+inventories, three debuglink CRCs, manual/test/manifest bytes and symlink metadata.
+policy-audit.py verifies maintained Unit.ucl bytes in both stripped executables.
+
+DTrace exact parity does NOT pass for the static capsulectl_test_bin. Native
+experimental section archives retain service_ambient/service_runtime/libchannel
+providers absent from the staged Make-linked executable. Make's 26 schemas are
+all retained unchanged among 52 native schemas. Native has 63 ordinary/31 enabled
+sites; Make has 30 ordinary/31 enabled sites; both pass instruction-site checks.
+The staged Make libservice.a stores DOF in a separate provider member while code
+members have weak probe symbols, consistent with static archive extraction losing
+the provider. This is an unresolved structural difference, not full DTrace parity.
+Original dof-audit.py fails the strict provider comparison; native-dof.json,
+make-dof.json and dof-difference.json retain the evidence. No probes were removed
+to match the reference. Live provider registration/firing remains unqualified.
+
+Test bodies, production control requests, tests-disabled configuration and runtime
+authorization remain open. Prior host Capsicum ABI mismatch also remains open.
+Frontend review: existing typed tests/explicit target/SDK inputs cover this rule;
+no frontend/backend/signing/publication contract changed. Embedded policy bytes
+are not signing or verified-boot qualification. Whole-system/bootstrap/pkgbase and
+performance remain open; Make remains production/default.
+
+
+### certctl and test installation (2026-10-30)
+
+Added native installed-system certctl with native crypto linkage. Configuration-
+selected test installation preserves certctl_test, certctl.subr, failure_test.py
+and generated Kyuafile. No program or test-source behavior changed. The first
+metadata comparison caught a redundant test-directory record; existing BSD.tests
+mtree already supplies that directory, so the explicit duplicate was removed.
+
+Native run: /usr/obj/usr/src/bazel-certctl-20261030-r2. Fresh Make reference:
+/usr/obj/usr/src/bazel-certctl-make-20261030. Scripts/evidence:
+/usr/obj/usr/src/bazel-certctl-reference-20261030/certctl. All nine installation
+records and seven regular payloads match: no missing/extra/metadata differences,
+matching symbol/dynamic inventories, debuglink CRC and exact manual/test bytes.
+No certificate store was modified and no test body was executed.
+
+The BOOTSTRAPPING variant uses scandir instead of fdscandir and remains a separate
+unimplemented native bootstrap target/qualification requirement. Tests-disabled
+configuration and actual trust/distrust/rehash/error/atomicity test execution also
+remain open; existing host/source ABI limitations still apply to runtime planning.
+Frontend review: existing build-bsd explicit target, tests setting and SDK inputs
+cover the installed-system rule; no frontend/backend/signing/publication contract
+changed. This is not bootstrap, verified-boot, complete pkgbase or whole-system
+qualification. Make remains production/default.
+
+
+### jexec, lastlogin and nologin (2026-10-30)
+
+Added native jexec (jail/util libraries, jail package), lastlogin (libxo, acct
+package), and static nologin (utilities). nologin retains Make's security-required
+static linkage, /sbin/nologin symlink and distinct section-5/section-8 manuals.
+Program sources and behavior are unchanged.
+
+Native build: /usr/obj/usr/src/bazel-account-tools-20261030. Fresh Make roots:
+/usr/obj/usr/src/bazel-{jexec,lastlogin,nologin}-make-20261030. Scripts/evidence:
+/usr/obj/usr/src/bazel-account-tools-reference-20261030, per-program directories.
+jexec and lastlogin each pass five install records/three regular payloads;
+nologin passes seven records/four payloads. No missing/extra/metadata differences;
+symbol/dynamic inventories, manual bytes and all three debuglink CRCs pass.
+nologin/static-audit.py/json explicitly verifies absence of PT_INTERP and PT_DYNAMIC
+in both installed binaries. This proves static ELF structure, not login behavior.
+
+No utility was executed. Jail attachment/user/environment selection, accounting
+record/output variants and login refusal with hostile loader environment still
+need runtime checks. No jail, account or login configuration was changed.
+Frontend review: existing build-bsd explicit targets and SDK inputs cover these
+rules; no frontend/backend/signing/publication contract changed. Full system,
+bootstrap, pkgbase, runtime and performance gates remain open; Make remains default.
+
+
+### Native build-bsd frontend subtree (2026-10-30)
+
+Added native build-bsd with native libmd linkage, both maintained command/manual
+hardlinks, all six examples, and both static policy helpers: bsd-ucl-json and
+bsd-capsule-validate. The validator compiles maintained Capsule config.c and
+config_report.c with narrowly declared config/gates/protocol headers. Tests-enabled
+installation includes bsd_build_test, its Kyuafile and all 50 support files from
+the maintained Makefile, resolving local sources before its capimage .PATH.
+The support inventory is explicit in BUILD; build actions do not parse Make.
+Shared file exports preserve existing Capsule, Switchboard and capsign consumers.
+No frontend C, helper C, policy examples or stage-script behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-build-frontend-20261030. Fresh Make reference:
+/usr/obj/usr/src/bazel-bsd-build-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-build-frontend-reference-20261030. All 74 installation
+records and 65 regular payloads pass comparisons: no missing/extra/metadata
+differences, matching symbol/dynamic inventories, three debuglink CRCs, exact
+manual/examples/test-support bytes and hardlink identity checks.
+
+plan-audit.py/json executes the captured native frontend and Make reference on
+the host for plan world/kernel/packages. World and kernel JSON match exactly.
+Package JSON matches after normalizing only timestamp/PID run-root prefixes in
+CAPSIGN_HOST/WSTAGEDIR/KSTAGEDIR/SSTAGEDIR; the audit requires one consistent run
+root per plan and verifies neither was created. Host loader/libraries were used.
+Plans retain 16 CPUs, production malloc for publication, configured local ports,
+/usr/obj object paths and /usr/obj/usr/src/repo despite deliberately incorrect
+home-directory repository/object environment overrides. No planned command ran.
+
+Frontend integration review: the frontend now has a native build/install target
+through its existing explicit target/settings/SDK interface. Runtime planning
+retains Make as production backend; this change does not switch backend defaults
+or alter publication/signing contracts. No one-off replacement frontend was added.
+The maintained test bodies/support suites, helper runtime, tests-disabled variant,
+static-library probe retention, complete bootstrap/world/kernel/pkgbase and
+resource/performance qualification remain open. Building the frontend with Bazel
+does not establish that it can build a complete Bazel system yet.
+
+
+### Frontend helper runtime and native frontend reuse (2026-10-30)
+
+Ran maintained ucl_policy_json_test.py against both captured native and fresh
+Make bsd-ucl-json: both test methods pass, including valid/duplicate/nested/macro/
+NUL/size/object inputs, literal variable handling, and composition binding hashes.
+Evidence: bazel-build-frontend-reference-20261030/{native,make}-ucl-tests.log and
+ucl-runtime.json. These runs use host Python and are not Bazel test executions.
+
+The maintained Capsule static_only CLI case initially failed identically with
+both bsd-capsule-validate binaries: its supposedly valid fixture retained removed
+storage attachment/content fields. Corrected the fixture to current cfg_storage
+keys, retained an invalid-right rejection, and added independent rejection checks
+for each removed field. No production parser or authority behavior changed.
+Both helpers now pass the full maintained static_only case, including malformed/
+missing/symlink/directory/writable inputs, explicit manager report, invalid CLI
+and absence of forbidden PID/socket creation. Original failures remain in
+{native,make}-validator-runtime; corrected results are in corresponding -r2
+folders and validator-runtime-r2.json. Host ATF/tools were used, not Bazel ATF.
+
+The captured Bazel-built build-bsd then successfully drove bazel-test for its own
+complete installation (16 jobs): /usr/obj/usr/src/bazel-build-frontend-20261030-r2.
+Fresh Make reference: /usr/obj/usr/src/bazel-bsd-build-make-20261030-r2. Comparison
+evidence: bazel-build-frontend-reference-20261030/bsd-build-r2. All 74 records and
+65 regular payloads still pass, including corrected installed test bytes.
+This is native frontend reuse with the existing prepared SDK, not independent
+bootstrap or a complete Bazel-built world/kernel.
+
+Frontend review: corrected shared test source is consumed by both maintained
+Make and native installation rules; no C/backend/publication changes are needed.
+Native Bazel execution of these suites, matching-kernel tests, all option variants,
+static probe retention, complete bootstrap/pkgbase and resource/performance gates
+remain open. No installation, publication, signing, daemon activation or reboot
+occurred. Make remains production/default.
+
+
+### i2c, spi, pwm and smbmsg (2026-10-30)
+
+Added native rules with explicit sources and smbmsg's local pathnames header.
+No program behavior changed, including pwm's maintained Capsicum setup.
+Captured Bazel-built build-bsd drove the native qualification at
+/usr/obj/usr/src/bazel-bus-tools-20261030 with 16 jobs. Fresh Make references:
+/usr/obj/usr/src/bazel-{i2c,spi,pwm,smbmsg}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bus-tools-reference-20261030, per-program directories.
+Each passes five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+manual bytes and debuglink CRC. Scope is selected amd64 artifacts.
+
+No program was executed or bus transaction issued. Device permission failures,
+I2C transfers/address handling, SPI transfer settings, PWM period/duty/polarity
+and SMBus transactions need hardware/runtime qualification. pwm's Capsicum path
+also requires attention to the documented host/source rights ABI mismatch.
+Frontend review: existing explicit target/SDK inputs cover these additions and
+the native frontend successfully drives them; no frontend/backend/signing or
+publication contract changed. Full world/kernel/bootstrap/pkgbase and performance
+gates remain open. Make remains production/default.
+
+
+### rmt, utx, tcpdrop and wake (2026-10-30)
+
+Added native rules preserving maintained sources and utx's acct package identity.
+rmt includes /etc/rmt -> ../usr/sbin/rmt, matching the maintained etc-rmt target
+called by etc/Makefile. Its fresh Make reference invokes that actual target in
+addition to all/install/installconfig, rather than synthesizing a reference link.
+No program behavior changed.
+
+Native build through the captured Bazel-built frontend:
+/usr/obj/usr/src/bazel-session-tools-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{rmt,utx,tcpdrop,wake}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-session-tools-reference-20261030, per-program directories.
+rmt matches six install records; each other utility matches five. All four match
+three regular payloads apiece: no missing/extra/metadata differences, matching
+symbol/dynamic inventories, compressed manual bytes and debuglink CRC. rmt link
+metadata and target also match. These are selected amd64 artifact checks.
+
+No utility was executed. Remote tape protocol/device failure paths, accounting
+updates, TCP selection/drop authorization and wake packet construction/transmission
+remain runtime work. No account, connection, device or network operation occurred.
+Frontend review: existing explicit targets/SDK inputs cover these additions;
+no frontend/backend/signing/publication contract changed. Full world/kernel,
+bootstrap, pkgbase, runtime and resource/performance gates remain open. Make
+remains production/default.
+
+
+### sesutil, smart/diskhealth and zonectl (2026-10-30)
+
+Added native rules preserving explicit sources and maintained library order.
+smart uses its maintained contrib sources/headers, LIBXO definition, smart package
+and diskhealth binary/manual hardlinks. zonectl includes configuration-selected
+installation of the maintained ATF shell suite and Kyuafile. No source behavior
+changed; no broad include-directory escape or substituted device implementation.
+
+Native build via the captured Bazel-built frontend:
+/usr/obj/usr/src/bazel-storage-tools-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{sesutil,smart,zonectl}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-storage-tools-reference-20261030, per-program directories.
+sesutil passes five installation records/three regular payloads; smart passes
+seven records/three payloads plus both hardlinks; zonectl passes seven records/
+five payloads including test files. Symbol/dynamic inventories, manuals, tests,
+metadata and all three debuglink CRCs match; no missing/extra paths.
+
+No utility or test body was executed. Enclosure discovery/control, SMART health
+protocols/output/error paths, and zoned-device state transitions remain runtime
+qualification. zonectl's maintained tests create zoned memory devices and need
+appropriate isolated kernel testing. Tests-disabled and broader platform coverage
+remain open. No disk, enclosure or zone state was modified.
+
+Frontend review: existing explicit targets, tests setting and SDK inputs work
+through native build-bsd; no frontend/backend/signing/publication contract changed.
+These are selected amd64 artifacts, not world/kernel/bootstrap/pkgbase/runtime or
+performance qualification. Make remains production/default.
+
+### 2026-10-30: native MAC ABAC management tools
+
+- Added native `mac_abacd` and `mac_abac_ctl` compilation/link/install targets,
+  native libucl/libutil dependencies, and both existing DTrace providers. Shared
+  parser sources and the public management ABI have narrowly declared inputs;
+  userland does not import the kernel implementation's header dependencies.
+- Fresh Make comparison includes the controller's `includes` phase, public
+  `/usr/include/security/mac_abac/mac_abac.h`, daemon configuration, directory
+  policy, package/dev/config tags, ELF symbols/ordered dynamic dependencies,
+  and separated debug files/CRC. Each tool matches six changed METALOG records
+  and three regular payloads. Policy/header bytes match exactly.
+- Both native providers match Make's two probe schemas and validate three
+  ordinary instruction sites apiece. No live probe firing or policy changes
+  were performed. DTrace remains enabled by default; disabled variant untested
+  in this component qualification.
+- Evidence: `/usr/obj/usr/src/bazel-abac-tools-reference-20261030/`, fresh Make
+  stages `bazel-mac_abacd-make-20261030` and `bazel-mac_abac_ctl-make-20261030`,
+  captured native artifacts `bazel-abac-tools-20261030-r3` under `/usr/obj/usr/src`.
+  Earlier failed captures retain the missing include-mtree policy and /etc
+  metadata findings; these were corrected using maintained mtree/Make policy.
+- Frontend review: the Bazel-built maintained `build-bsd bazel-test` drove this
+  qualification with explicit input targets and 16 jobs. Existing typed inputs
+  cover these additions; no frontend C/backend/signing/publication change needed.
+  Staged SDK remains a prerequisite. This is component artifact parity, not
+  whole-system runtime, package publication, bootstrap, or performance completion.
+
+### 2026-10-30: native iovctl and ip6addrctl
+
+- Added explicit native source/library/install targets for iovctl (libnv,
+  libucl, libm; section 8 and section 5 manuals) and ip6addrctl (runtime package,
+  conditional libjail and JAIL definition). The latter's sample configuration
+  is not installed by Make and is not invented as a package payload here.
+- Fresh Make/native parity: iovctl six changed installation records/four regular
+  payloads; ip6addrctl five/three in both default and WITHOUT_JAIL configurations.
+  Compared complete staged metadata, tags, manual bytes, ELF global/weak symbols,
+  ordered dynamic dependencies, and debug CRCs. Both Make and native default
+  binaries reference libjail/jail_getid/jail_attach; neither no-jail binary does.
+- Evidence under `/usr/obj/usr/src`: `bazel-network-config-reference-20261030`,
+  `bazel-network-config-20261030`, `bazel-ip6addrctl-nojail-reference-20261030`,
+  `bazel-ip6addrctl-nojail-20261030`, and per-utility fresh Make stages.
+- Frontend review: existing explicit target/settings inputs and the maintained
+  Bazel-built `build-bsd bazel-test` qualify both configurations with 16 jobs;
+  no new C frontend/backend/signing/publication changes are required. Make stays
+  default. No live PCI/IPv6 policy changes, jail attachment, host installation,
+  performance qualification, or complete-world claim follows from these checks.
+
+### 2026-10-30: native console utilities
+
+- Added kbdmap/vidfont, vidcontrol, and installed-system kbdcontrol native targets.
+  kbdmap links native libbsddialog; vidcontrol declares decode sources/headers;
+  kbdcontrol generates its lexer with native lex/m4 execution tools and carries
+  COMPAT_FREEBSD13 as maintained Make does for the installed program.
+- Fresh Make parity covers kbdmap seven changed installation records/three
+  regular payloads plus binary/manual vidfont hardlinks; vidcontrol five/three;
+  kbdcontrol seven/four including both manual sections and keymap.5 hardlink.
+  Full metadata, package tags, manual bytes, global/weak ELF symbols, ordered
+  dynamic dependencies and separated-debug CRC checks passed.
+- Evidence under `/usr/obj/usr/src`: `bazel-console-tools-reference-20261030`,
+  `bazel-console-tools-20261030`, `bazel-kbdcontrol-reference-20261030`,
+  `bazel-kbdcontrol-20261030`, and fresh per-utility Make stages.
+- The reduced BOOTSTRAPPING/BOOTSTRAP_KBDCONTROL program remains a separate
+  unimplemented native bootstrap contract; this installed-program result does
+  not qualify it. Console ioctl operations, interactive dialogs, keymap loading,
+  and font loading were not executed against the host.
+- Frontend integration reviewed: existing explicit targets/settings and the
+  maintained Bazel-built `build-bsd bazel-test` handle this scope with 16 jobs.
+  No new frontend C/backend/stage/signing/publication option is needed. The
+  staged SDK and full world/kernel/package/runtime/performance gates remain.
+
+### 2026-10-30: native newsyslog with policy and TAP installation
+
+- Added native newsyslog/libutil/libsbuf build, generated DTrace header/provider
+  and static anchor, primary configuration, both manuals, conditional rotation
+  fragments, and maintained TAP script/Kyuafile installation.
+- Rotation fragments follow declared lpr/ofed/pf/ppp/sendmail options with their
+  Make package tags. Qualified default selection is opensm, pf and ppp; lpr and
+  sendmail are not selected. Make's configuration-directory metadata is retained.
+- Fresh Make with tests enabled matches all 14 changed installation records and
+  ten regular payloads: byte-identical policies/manuals/TAP script/Kyuafile,
+  ELF global/weak symbols and ordered dependencies, and separated debug CRC.
+  The TAP script is installed unchanged, per tap.test.mk; the initial use of an
+  ATF-style shebang wrapper was caught by exact byte comparison and corrected.
+- DTrace matches Make's five probe schemas, five ordinary instruction sites and
+  five is-enabled sites. No live probe firing or log rotation was performed.
+- Evidence under `/usr/obj/usr/src`: `bazel-newsyslog-reference-20261030`,
+  `bazel-newsyslog-make-20261030`, final capture `bazel-newsyslog-20261030-r3`.
+  Earlier captures retain directory-policy and script-wrapper findings.
+- Frontend review: existing explicit targets/options support this addition via
+  the maintained Bazel-built `build-bsd bazel-test` with 16 jobs. No C frontend,
+  backend, signing or publication change needed. TAP execution, option-matrix
+  variants, live tracing, full-system and performance qualification remain open;
+  test installation is not a claim that the test body passed.
+
+### 2026-10-30: newsyslog alternative-option qualification
+
+- Qualified a second explicit configuration: LPR/SENDMAIL/MAIL enabled;
+  OFED/PF/PPP/DTRACE/TESTS disabled. Fresh Make and native captures agree on all
+  11 changed installation records and seven regular payloads, including exact
+  lpr/sendmail configuration bytes and tags, manuals, ELF symbols/dependencies,
+  and debug CRC. Default configuration previously qualified remains unchanged.
+- `options-audit.py` compares both configurations and implementations: default
+  has opensm/pf/ppp fragments, installed TAP test, DOF and DTrace symbols;
+  alternative has only lpr/sendmail fragments, no TAP payload and no DOF/probe
+  symbols. Probe symbols are checked in separated debug files, not assumed to
+  survive stripping in the installed executable. This exercises each of the
+  five fragment toggles both ways; it is not an exhaustive cross-product test.
+- Evidence under `/usr/obj/usr/src`: `bazel-newsyslog-options-reference-20261030`
+  (inputs, Make runner, metadata/payload comparators, options-audit.py/json),
+  `bazel-newsyslog-options-20261030`, `bazel-newsyslog-options-make-20261030`.
+- Existing maintained build-bsd explicit configuration inputs handled the
+  alternative with 16 jobs, requiring no frontend C/backend/policy change.
+  No default was disabled. No host log rotation, live tracing, TAP execution,
+  installation/publication or performance qualification was performed.
+
+### 2026-10-30: RARP and router advertisement utilities
+
+- Added native rarpd, rtadvd and rtadvctl builds with their maintained source
+  lists and native libutil dependencies where Make specifies them. rtadvctl
+  explicitly imports shared control/interface/timer sources and narrowly
+  exported headers from rtadvd, rather than relying on Make .PATH discovery.
+- Fresh Make comparison passes: rarpd five changed installation records/three
+  regular payloads; rtadvd six/four; rtadvctl five/three. Checks cover complete
+  metadata/tags, exact manuals, ELF symbols and ordered dynamic dependencies,
+  and separated debug CRCs. rtadvd includes its configuration manual, but does
+  not invent a configuration payload that its Makefile does not install.
+- Evidence under `/usr/obj/usr/src`: `bazel-router-tools-reference-20261030`,
+  native capture `bazel-router-tools-20261030`, and fresh per-program Make stages.
+  No RARP service, router advertisements, control socket operations, or host
+  network reconfiguration were executed.
+- Frontend integration reviewed: maintained Bazel-built build-bsd bazel-test
+  consumed explicit targets with 16 jobs; existing inputs suffice, so no C
+  frontend/backend/staging/signing/publication change was needed. These staged
+  SDK artifact comparisons do not qualify runtime or system-wide performance.
+
+### 2026-10-30: native inetd and optional features
+
+- Added native inetd objects, DTrace provider, native libutil/libwrap/libipsec
+  linkage, LOGIN_CAP/IPSEC defines, IPv6/TCP-wrapper/DTrace selects, maintained
+  configuration and cross-section manual hardlink. DTrace remains on by default.
+- Fresh Make comparison passed in default and explicit no-INET6_SUPPORT,
+  no-TCP_WRAPPERS, no-DTRACE configurations: eight installation records and four
+  regular payloads each, plus the manual hardlink. Compared metadata/tags, exact
+  configuration/manual bytes, global/weak ELF symbols and ordered dependencies,
+  debug CRCs and hardlink content/inode semantics.
+- Default DTrace matches two probe schemas and two ordinary instruction sites.
+  Both reduced-feature binaries have no DOF, probe symbols or libwrap dependency;
+  both retain libipsec. Live spawn/refuse events and network service operation
+  remain untested. This covers two configurations, not every option combination.
+- Evidence under `/usr/obj/usr/src`: `bazel-inetd-reference-20261030`,
+  `bazel-inetd-options-reference-20261030`, matching native captures and fresh
+  Make stages. Per-reference audit scripts/JSON retain the comparisons.
+- Frontend review: existing explicit targets/settings cover these additions via
+  maintained Bazel-built build-bsd bazel-test with 16 jobs. No frontend C/backend,
+  signing or publication change required. No daemon was started, no port bound,
+  and no host install or configuration mutation performed. Whole-system runtime,
+  bootstrap, packaging/publication and performance gates remain open.
+
+### 2026-10-30: native ACPI configuration/dump/error-injection utilities
+
+- Added native acpiconf, acpidump and einj compilation and installation targets.
+  Preserved the parent Makefile's acpi package assignment. Explicit ACPICA
+  public header closure and narrow ACPI ioctl/PCI register header targets
+  replace broad source include-path reliance. Existing ACPICA package boundaries
+  and bhyve header targets were left intact.
+- Each fresh Make/native comparison passes five changed installation records
+  and three regular payloads, with exact manuals, metadata/package tags, ELF
+  global/weak symbols and ordered dynamic dependencies, and separated debug CRC.
+- Evidence under `/usr/obj/usr/src`: `bazel-acpi-tools-reference-20261030`, native
+  capture `bazel-acpi-tools-20261030`, and fresh per-tool Make stages.
+- This does not finish the ACPI subtree: acpidb and iasl remain to migrate.
+  Firmware dump/disassembly integration, battery/suspend operations and hardware
+  error injection were not executed. Artifact parity does not qualify hardware
+  behavior, live observability, or system-wide performance.
+- Frontend review: maintained Bazel-built build-bsd bazel-test with explicit
+  targets and 16 jobs covers these additions without new frontend C/backend,
+  staging/signing/publication requirements. No host installation occurred.
+
+### 2026-10-30: native ACPICA debugger
+
+- Added acpidb with 190 explicit source labels (189 contributed ACPICA sources),
+  45 transitively referenced ACPICA headers, native libthr, ACPI_DB_APP and
+  ACPI_EXEC_APP, and Make's no-strict-aliasing/compiler compatibility choice.
+  Root-owned contributed sources are narrowly exported without introducing new
+  package boundaries that would invalidate existing bhyve/kernel labels.
+- Source audit compares actual fresh Make compile commands to native source
+  labels: 190 each, no omissions/extras/duplicates. Source inventories and the
+  audit are retained in the evidence directory, not dynamically read by Bazel.
+- Fresh Make artifact comparison passes five changed installation records and
+  three regular payloads, including exact manual, package/permission metadata,
+  global/weak ELF symbols and ordered shared-library dependencies, debug CRC.
+- Evidence: `/usr/obj/usr/src/bazel-acpidb-reference-20261030`, native capture
+  `bazel-acpidb-20261030`, fresh `bazel-acpidb-make-20261030` under `/usr/obj/usr/src`.
+- Frontend review: maintained Bazel-built build-bsd bazel-test used explicit
+  inputs and 16 jobs; no new C/backend/staging/signing/publication requirements.
+  AML load/interpretation, region simulation, debugger commands and thread
+  behavior remain runtime qualification work. iasl still needs migration;
+  complete ACPI/world/bootstrap/runtime/performance completion is not claimed.
+
+### 2026-10-30: native iasl generation and complete ACPI archive selection
+
+- Added iasl with 200 contributed C sources, four lexer/four parser actions,
+  explicit m4 grammar fragments and generated-header aliases. Native lex/m4/yacc
+  execution tools own generation; generated C/header files are not checked in.
+  aslsupport.l is a declared textual include of the generated lexer. Existing
+  source/header exports were extended narrowly for shared ACPICA inputs.
+- Actual Make compile-command audit matches all 208 native C inputs with no
+  missing/extra/duplicate sources. Both builds report the maintained grammar's
+  134 shift/reduce conflicts. Five changed installation records and three regular
+  payloads match Make metadata/manual bytes/ELF symbols/dependencies/debug CRC.
+- Offline runtime comparison passed on host loader/libc for both captured
+  binaries: include/macro preprocessing, ASL compile, AML disassembly, recompilation
+  to byte-identical AML, checksum verification, and malformed-ASL rejection with
+  no AML output. Native and Make AML bytes match. This is a bounded compiler
+  runtime check, not Bazel test execution or firmware/kernel AML execution.
+- Added `//usr.sbin/acpi:installation_archives`. Evaluated Make SUBDIR matches
+  acpiconf/acpidb/acpidump/einj/iasl in order; captured aggregate contains exactly
+  five archives with verified hashes. All five now have individual artifact
+  parity evidence. This does not qualify every runtime behavior of those tools.
+- Evidence under `/usr/obj/usr/src`: `bazel-iasl-reference-20261030` (source,
+  install/payload, runtime and subtree/aggregate audits), `bazel-iasl-20261030`,
+  `bazel-iasl-make-20261030`, `bazel-acpi-aggregate-20261030`.
+- Frontend review: maintained Bazel-built build-bsd bazel-test handled component
+  and aggregate explicit targets with 16 jobs; no frontend C/backend/staging,
+  signing or publication change required. Complete world/kernel/pkgbase,
+  reproducible bootstrap, Bazel runtime tests and performance gates remain open.
+
+### 2026-10-30: multicast and neighbor-discovery utilities
+
+- Added native ifmcstat, mtest and ndp targets. Preserved conditional INET6 in
+  multicast utilities, Make's unconditional INET for mtest, and ndp's selected
+  Netlink source or WITHOUT_NETLINK route-socket implementation with native libxo.
+- Fresh default and alternative Make comparisons pass for all three: five
+  changed installation records/three regular payloads per program/configuration,
+  complete metadata/tags, exact manuals, ELF symbols/dependencies and debug CRC.
+- Recorded Bazel execution commands and actual Make compile commands agree on
+  INET/INET6/WITHOUT_NETLINK defines. ndp_netlink.c compiles in both defaults and
+  neither alternative. Disabling optional INET6_SUPPORT does not make ndp an
+  IPv4 utility; its alternative here selects the IPv6 route-socket backend.
+- Evidence under `/usr/obj/usr/src`: `bazel-multicast-tools-reference-20261030`,
+  `bazel-multicast-options-reference-20261030`, final default native capture
+  `bazel-multicast-tools-20261030-r2`, `bazel-multicast-options-20261030`, and
+  per-program fresh Make stages. An initial duplicate BUILD argument was caught
+  by Bazel analysis and corrected before qualification; failed output retained.
+- Frontend review: explicit targets/settings through maintained Bazel-built
+  build-bsd bazel-test, 16 jobs, no new C/backend/signing/publication changes.
+  No multicast membership, neighbor cache, routing state or host network setting
+  was changed. Packet behavior/runtime/performance qualification remains open.
+
+### 2026-10-30: native router renumbering daemon
+
+- Added rrenumd with native lex/m4/yacc generation, declared parser C/token
+  header dependencies, native libipsec and the maintained IPSEC define. Both
+  section-8 and configuration section-5 manuals retain utilities package tags.
+- Fresh Make/native comparison passes six changed installation records and
+  four regular payloads, complete metadata/tags, exact manuals, global/weak ELF
+  symbols and ordered dependencies, and separated debug CRC.
+- Evidence: `/usr/obj/usr/src/bazel-rrenumd-reference-20261030`, native capture
+  `bazel-rrenumd-20261030`, fresh `bazel-rrenumd-make-20261030`.
+- Default installed program is qualified at artifact level. Make's optional
+  developer YACCDEBUG variant remains unimplemented/unqualified in native rules.
+  Parser/network behavior, IPsec configuration and renumbering packet handling
+  remain runtime work; no daemon or network mutation was executed on the host.
+- Frontend review: maintained Bazel-built build-bsd bazel-test consumed existing
+  explicit targets with 16 jobs. No frontend C/backend/staging/signing/publication
+  update needed. Full-system/bootstrap/runtime/performance gates remain open.
+
+### 2026-10-30: native hardware/reclaim statistics tools
+
+- Added reclaimstat with its declared capreclaim header (no invented library
+  linkage), plus hwstat/native otelexport and complete five-C/one-shell test
+  installation. Test-included implementation sources are declared textual inputs;
+  shared linked sources and native libraries are explicit.
+- Fresh Make parity passes reclaimstat five records/three regular payloads and
+  hwstat with tests 21 records/15 regular payloads/six debug links. Full metadata,
+  package tags, exact manuals/shell/Kyuafile, ELF symbols/ordered dependencies,
+  and debug CRCs agree. Initial missing test-directory policy and libthr ordering
+  were caught and corrected from maintained Make behavior; failed captures remain.
+- Ran all cases from sensors_test (5), metrics_test (5) and rapl_test (13) for
+  both captured native and Make builds: 46 executions passed. These use maintained
+  mocks for sensor/RAPL operations and host loader/libraries, not Bazel test
+  execution. Sampling/exec-timing and shell-test runtime remain pending; all their
+  installed binaries/scripts were compared. No hardware-management action ran.
+- Evidence under `/usr/obj/usr/src`: `bazel-hwstat-tools-reference-20261030`
+  (comparators, runtime-audit.py/json, individual logs), final native capture
+  `bazel-hwstat-tools-20261030-r3`, fresh reclaimstat/hwstat Make stages.
+- Frontend review: maintained Bazel-built build-bsd bazel-test used existing
+  explicit targets/tests setting with 16 jobs; no new frontend C/backend/staging,
+  signing/publication requirements. Full-system/VM/Bazel-runtime/performance
+  qualification remains open, as do tests-disabled installation variants here.
+
+### 2026-10-30: hwstat native Bazel tests and remaining C runtime coverage
+
+- Completed direct host-runtime runs for sampling_test (10 cases) and
+  exec_timing_test (7), for both captured native and Make binaries: 34 additional
+  passes, 80 total C case executions including the earlier 46. These use host
+  loader/libraries, and the timing suite uses real child processes/host utilities;
+  this is explicitly separate from native Bazel qualification.
+- Added 33 native bsd_atf_test cases for sensors, metrics, RAPL and mocked sampling,
+  each using the maintained C binary, native rtld, native ATF/libc/libsys and
+  declared native export libraries where required. No hardware devices or child
+  tools are required by these cases. All 33 passed with zero skips; captured XML,
+  logs and hashes were audited, and case registration matches maintained sources.
+- The seven exec-timing cases remain host-qualified rather than Bazel-registered:
+  their absolute child-tool paths require a declared-input integration first.
+  Shell suite execution, live hardware/export behavior, and tests-disabled
+  installation remain pending. No assertion or test body was weakened.
+- Evidence: `/usr/obj/usr/src/bazel-hwstat-tools-reference-20261030/runtime-extra-audit.py`
+  and JSON/per-case logs; `bazel-hwstat-native-tests-reference-20261030` inputs,
+  case inventory/report audit; `bazel-hwstat-native-tests-20261030` receipt,
+  execution log and captured test reports under `/usr/obj/usr/src`.
+- Frontend review: existing maintained build-bsd bazel-test explicit test labels,
+  runtime dependency declarations and 16-job execution suffice. No frontend C,
+  backend/publication change needed. This closes bounded native test coverage,
+  not complete-world/runtime/VM/performance gates.
+
+### 2026-10-30: logctl native build and bounded qualification
+
+- Added native logctl plus both maintained static test helpers, shell suite,
+  fixtures and Kyuafile. Shared BSDLog configuration parser inputs are explicit
+  with narrow visibility; no parser copy or alternate implementation added.
+- Fresh Make comparison covers 17 metadata records and 11 regular payloads,
+  including three debug links, global/weak symbols, ordered dynamic dependencies,
+  and exact manual/configuration/test-script bytes. This is not byte-identical
+  ELF or exact DTrace parity.
+- Eight maintained shell cases passed for each build (16 executions) using host
+  ATF/tools and captured static helpers. Service commands use the maintained
+  fake service. Native Bazel test execution and live service behavior remain open.
+- Static logctl_test_bin has a recorded DOF difference: native 100 schemas,
+  134 ordinary/31 enabled sites; Make 26 schemas, 30 ordinary/31 enabled sites.
+  All 26 Make schemas are preserved unchanged. Additional native providers are
+  fidl_bsd, libchannel, logcmp, service_ambient, service_runtime and shmring.
+  Patched amd64 instruction sites validate for both. Strict dof-audit.py still
+  fails exact parity; dof-difference.py records the discrepancy without masking
+  it. The experimental static-provider extraction difference needs resolution
+  before claiming full tracing qualification; live firing remains untested.
+- Evidence: /usr/obj/usr/src/bazel-logctl-reference-20261030 (installation,
+  payload, runtime and DOF audits), bazel-logctl-20261030-r2 native capture and
+  bazel-logctl-make-20261030 fresh Make stage. Initial analysis failure from a
+  duplicate config.c export was corrected while preserving BSDLog test access.
+- Frontend integration reviewed: maintained build-bsd bazel-test with existing
+  explicit targets, tests/DTrace settings and 16 jobs handles this component.
+  No frontend C, backend, signing or publication contract change is required.
+  Tests-disabled installation, full-world/kernel/package/runtime/performance
+  qualification remain open. Make remains production default.
+
+### 2026-10-30: sysconf native installation and runtime limitations
+
+- Added all ten sysconf sources with explicit private headers and native
+  libbsdconf/libjail dependencies, eight manuals, and the maintained shell test
+  plus Kyuafile under the tests build setting. No copied parser implementation.
+- Fresh Make installation matches 14 changed metadata records and 12 regular
+  payloads, including exact eight compressed manuals/script/Kyuafile bytes,
+  global/weak symbols, ordered dynamic dependencies and one debug-link CRC.
+  An initially redundant test-directory record was removed: the directory is
+  already supplied by maintained BSD.tests.dist. The final archive uses that
+  policy rather than duplicating it.
+- All 11 maintained shell cases were attempted for each build. Four passed and
+  seven failed identically for each (22 executions: eight passes, 14 failures).
+  Every failure reports cap_rights_is_valid(src) in cap_rights_intersect at
+  subr_capability.c:341, consistent with the previously identified host/source
+  Capsicum ABI mismatch. These failures remain qualification blockers; matching
+  outcomes do not establish runtime correctness.
+- Runtime harness used host ATF/tools/kernel, an explicitly captured native
+  loader for both implementations, and separately copied/hashed native or
+  staged Make libbsdconf/libjail/libc/libsys. No host installation occurred.
+  Configuration writes were to private test roots/files; the sysctl case reads
+  running-kernel type metadata and edits a private file. This is not native
+  Bazel test execution. Original host-libc missing-symbol failure and an
+  incorrect loader-option harness attempt are retained alongside final results.
+- Evidence under /usr/obj/usr/src: bazel-sysconf-reference-20261030 (comparison
+  scripts/results, runtime-r4-audit.py/json and per-case logs), final native
+  capture bazel-sysconf-20261030-r2, fresh bazel-sysconf-make-20261030 stage.
+- Frontend review: existing build-bsd bazel-test targets/tests setting and 16
+  jobs suffice; no frontend C/backend/signing/publication contract change.
+  Tests-disabled installation, matching-kernel runtime, native Bazel tests and
+  overall world/kernel/package/performance gates remain open. Make stays default.
+
+### 2026-10-30: native zic and zdump
+
+- Added native targets for both tools with explicit contributed sources/manuals,
+  the maintained forced tzconfig.h include, and declared private/version headers.
+  Existing libc timezone target visibility remains unchanged; tool exports are
+  limited to their consumers.
+- Fresh Make comparisons pass for each: five changed metadata records, three
+  regular payloads, one debug link. Global/weak symbols, ordered dynamic
+  dependencies, manual bytes and debug CRCs match the maintained reference.
+- Offline runtime checks use captured binaries with host loader/libc and private
+  outputs. Both builds produce byte-identical slim/fat TZif files for fixed and
+  seasonal zones plus aliases; 2023/2024 transition and compact output match
+  after normalizing only private output-root paths. Invalid input is rejected
+  without output files. No system timezone configuration or database was changed.
+- Evidence under /usr/obj/usr/src: bazel-timezone-tools-reference-20261030
+  (per-tool installation/payload audits, runtime-audit.py, runtime/audit.json
+  and command stdout/stderr), bazel-timezone-tools-20261030 native capture,
+  bazel-zic-make-20261030 and bazel-zdump-make-20261030 fresh Make references.
+- Frontend review: maintained build-bsd bazel-test handles the explicit targets
+  with 16 jobs. No new frontend C/backend/staging/signing/publication contract.
+  Native Bazel test execution, installed timezone-data generation, cross-target
+  execution and full-world/kernel/package/performance gates remain open. These
+  tool checks do not qualify the entire timezone subsystem. Make stays default.
+
+### 2026-10-30: tzsetup normal and bootstrap variants
+
+- Added native normal tzsetup and bootstrap_tzsetup targets. Normal explicitly
+  declares HAVE_BSDDIALOG and the native dialog dependency; bootstrap omits both,
+  matching maintained Make. Bootstrap is a separate construction target, not an
+  alternate installed system utility selected silently.
+- Fresh bootstrap Make compilation exposed skiputc set-but-unused with -Werror.
+  Fixed the source by keeping UI-only clock state/VM query under the existing
+  HAVE_BSDDIALOG condition. Bootstrap still accepts -s; normal UI behavior is
+  unchanged. No warning suppression or alternate implementation was introduced.
+- Rebuilt both Make variants after the fix. Normal installation matches five
+  metadata records, three regular payloads and one debug link, including manual
+  bytes, symbols and ordered dependencies. Captured bootstrap global/weak
+  symbols and ordered NEEDED entries match fresh Make tzsetup.full; neither
+  bootstrap binary depends on the dialog library.
+- Offline runtime: normal zone-table parser output matches Make using maintained
+  source zone1970.tab/iso3166 copied into private roots. Both variants of both
+  builds pass dry-run (no localtime/database written), UTC selection, recorded
+  timezone reinstall and missing-zone rejection without overwriting the recorded
+  choice. Host UTC is read; all configuration writes stay in private roots.
+- These runs use host loader/libc/ncurses/kernel and explicitly copied native or
+  staged Make dialog libraries. They are not native Bazel test execution or
+  interactive menu qualification. Full bootstrap construction, cross execution,
+  installed-system behavior and world/kernel/package/performance remain open.
+- Evidence under /usr/obj/usr/src: bazel-tzsetup-reference-20261030 comparison and
+  runtime scripts/results; final bazel-tzsetup-20261030-r2 native capture;
+  bazel-tzsetup-make-20261030-r2 and bazel-tzsetup-bootstrap-make-20261030-r2.
+  Original failing Make bootstrap log is retained in the corresponding non-r2
+  directory. Frontend review: maintained build-bsd bazel-test explicit targets
+  and 16 jobs suffice; no C/backend/signing/publication contract changes needed.
+
+### 2026-10-30: wireless utilities and native firmware decoding
+
+- Added uhsoctl, wlandebug, wlanstat and uathload native targets, preserving
+  maintained source/library choices, manual sections and installation metadata.
+  wlanstat directly includes a source-tree net80211 ioctl header; it is now an
+  explicit input. wlandebug retains Make's libm shared dependency through the
+  native libifconfig graph.
+- wlanstat's maintained Makefile replaces CFLAGS and omits optimization. Its
+  native target explicitly uses -O0 to preserve that behavior. This is recorded
+  for a separate optimization/performance review rather than silently changing
+  the reference or accepting differing compiler-generated symbol inventories.
+- uathload firmware uses new reusable bsd_uudecode.bzl with native bintrans,
+  native rtld and declared libc/libsys in the execution configuration. The input
+  contains a license preamble that the fixture-only Python decoder rejects;
+  production firmware now uses the maintained decoder rather than extending a
+  replacement parser or editing the licensed input. Execution evidence confirms
+  BSDNativeUUDecode ran successfully under processwrapper-sandbox. This does not
+  establish stronger sandbox enforcement or cross-target execution.
+- Fresh Make comparisons pass for all four: 22 changed metadata records, 13
+  regular payloads, four debug links; global/weak symbols, ordered dependencies,
+  manual bytes and CRCs match. Firmware is byte-identical, 153416 bytes, SHA256
+  352f07dda4dc263426550cb23304d4684011cde0a67d701ae8a673906b1063e0.
+  Firmware directory package metadata also matches Make.
+- Evidence under /usr/obj/usr/src: bazel-wireless-tools-reference-20261030
+  (per-component comparators/results and audit-all.py), final native capture
+  bazel-wireless-tools-20261030-r4, fresh bazel-{uhsoctl,wlandebug,wlanstat,uathload}-make-20261030.
+  Earlier captures retain framing, missing-header and link/optimization failures;
+  r3 execution.json records successful native firmware generation.
+- No live modem/network/debugging/statistics/firmware operations were run.
+  Hardware runtime, native Bazel behavioral tests, comparative performance and
+  whole-world/kernel/package qualification remain open. Frontend review:
+  maintained build-bsd bazel-test uses these explicit targets with 16 jobs and
+  captures their generated payloads; no frontend C/backend/signing/publication
+  contract changes needed. Make remains production default.
+
+### 2026-10-30: fwcontrol and dconschat
+
+- Added native fwcontrol (including the shared kernel-tree fwcrom.c) and
+  dconschat with native libkvm. Exact FireWire/dcons headers are declared with
+  narrow consumer visibility and their maintained include paths; no source copy
+  or broad kernel-source glob is used.
+- Fresh Make installation comparisons pass for each: five changed metadata
+  records, three regular payloads, one debug link; global/weak symbols, ordered
+  dynamic dependencies, manual bytes and debug CRCs match.
+- Evidence under /usr/obj/usr/src: bazel-firewire-tools-reference-20261030 with
+  per-component comparison scripts/results, bazel-firewire-tools-20261030 native
+  capture, bazel-fwcontrol-make-20261030 and bazel-dconschat-make-20261030 fresh
+  Make stages. No live FireWire/kernel-memory/remote-console operation was run.
+- Frontend review: maintained build-bsd bazel-test explicit targets and 16 jobs
+  handle both archives. No frontend C/backend/signing/publication contract
+  changes required. Hardware/VM behavior, native Bazel behavioral tests,
+  cross-target builds and full-system/performance qualification remain open.
+
+### 2026-10-30: services_mkdb and conditional database generation
+
+- Added the native utility, services configuration and manual, plus a declared
+  generation action using native execution-platform services_mkdb, rtld and
+  libc/libsys. Database input/output and byte order are explicit; current amd64
+  target selects little endian with no host-endian or unknown-target fallback.
+- Added config:servicesdb (true by default, matching MK_SERVICESDB). False omits
+  both database action dependency and installed database. Existing format-5
+  typed settings carry the choice through maintained build-bsd; its manual now
+  documents the option and limitations. No frontend C/backend/signing contract
+  change is necessary.
+- Fresh Make parity passes in both configurations: enabled eight metadata records
+  and five payloads; disabled seven records and four payloads; one debug link in
+  each. Symbols, ordered dynamic dependencies, manual/configuration bytes and
+  generated database bytes match. The sole payload-path difference is services.db.
+  Database size is 2097920 bytes, SHA256
+  ba71f56b901aa4ceee950df50d309a342c25355771051f034a3c1a8613dd7054.
+- Archive validation caught missing /var/db policy; added maintained BSD.var.dist
+  rather than ad hoc directory attributes. /etc retains Make package metadata.
+  Make emits no package tag for services.db; native metadata preserves that.
+  The evidence comparator now interprets absent tags as an empty set rather than
+  a singleton empty string. Whole-pkgbase ownership/update treatment of this
+  generated mutable database remains a separate integration gate.
+- Evidence under /usr/obj/usr/src: bazel-services_mkdb-reference-20261030 and
+  bazel-services_mkdb-off-reference-20261030 (comparators/results and options
+  audit), final native bazel-services_mkdb-20261030-r2 and
+  bazel-services_mkdb-off-20261030, fresh corresponding Make stages. The original
+  archive-policy failure remains retained. No host configuration was installed.
+- Database generation executes native code, but installed NSS lookups, native
+  Bazel behavioral tests, cross builds, complete world/kernel/pkgbase and
+  performance qualification remain open. Make remains production default.
+
+### 2026-10-30: sa and vipw
+
+- Added native sa with explicit shared lastcomm/readrec.c and native vipw with
+  libutil. sa installs the maintained TAP script, Kyuafile architecture/program
+  metadata and all 16 fixtures under the tests setting; the script is unchanged.
+- Fresh Make comparisons pass: sa 23 changed metadata records/21 regular
+  payloads; vipw five records/three payloads, one debug link each. Symbols,
+  ordered dynamic dependencies, manuals, script, Kyuafile and fixture bytes match.
+- The maintained sa suite passes all 13 cases for each captured binary (26 total),
+  covering v1/v2 account records, summary reads, conversion, summarization and
+  accumulation. Runs used host shell/tools/loader/libc and private files, with
+  the required maintained lastcomm account fixtures copied into the expected
+  test-tree layout and hashes recorded. This is not native Bazel test execution.
+- Evidence under /usr/obj/usr/src: bazel-sa-vipw-reference-20261030 comparisons,
+  runtime-audit.py/json and per-build logs; bazel-sa-vipw-20261030 capture;
+  bazel-sa-make-20261030 and bazel-vipw-make-20261030 fresh references.
+  An initial attempted reuse of the older account-tools evidence name was
+  rejected before building; its top-level redirect log was overwritten by that
+  rejection, but prior capture/receipts/artifacts were not replaced. New work
+  uses the distinct sa-vipw paths above.
+- No vipw runtime or host password-file modification occurred. Tests-disabled
+  installation, native Bazel TAP execution, installed accounting behavior and
+  full-world/kernel/package/performance gates remain open. Frontend review:
+  maintained build-bsd bazel-test explicit targets/tests setting and 16 jobs
+  suffice; no frontend C/backend/signing/publication contract changes required.
+
+### 2026-10-30: complete mouse-service installation subtree
+
+- Added native moused and msconvd targets with explicit maintained sources,
+  local headers and native math/util dependencies. moused includes moused.conf,
+  both manuals and 5-generic-touchpad.quirks with Make's ownership/modes/tags.
+- Fresh Make comparisons pass: moused ten changed metadata records/six regular
+  payloads; msconvd five records/three payloads; one debug link each. Symbols,
+  ordered dynamic dependencies, manual/configuration/quirk bytes and CRCs match.
+- Added the parent installation_archives aggregate. Evaluated Make SUBDIR gives
+  exactly moused and msconvd; captured aggregate archive names/hashes match those
+  two independently compared child archives. This establishes installation
+  subtree coverage, not runtime or complete-system coverage.
+- Evidence under /usr/obj/usr/src: bazel-mouse-tools-reference-20261030 per-child
+  comparisons and aggregate-audit.py/json, bazel-mouse-tools-20261030 native
+  capture, bazel-moused-make-20261030 and bazel-msconvd-make-20261030 fresh Make
+  references. Neither daemon was started; no host device configuration changed.
+- Frontend review: maintained build-bsd bazel-test explicit targets and 16 jobs
+  handle leaf and aggregate outputs. No frontend C/backend/signing/publication
+  contract change. Device input/hotplug/quirk runtime, daemon lifecycle, native
+  Bazel behavioral tests and full world/kernel/package/performance gates remain
+  open. Make stays production default.
+
+### 2026-10-30: nscd complete source and configuration inputs
+
+- Added native nscd with its checked-in parser and all passwd/group/services
+  agents, native util/pthread libraries, configuration and both manuals. Actual
+  compile records match all 17 Make source inputs with no duplicates/omissions.
+- Added typed nscd_prefix setting (default empty) matching Make PREFIX's compiled
+  CONFIG_PATH. A declared generated header encodes the value as a C string;
+  nonempty prefixes must be absolute and control characters are rejected.
+  Default and /opt/5bsd builds both match Make, including full metadata,
+  global/weak symbols, ordered dynamic dependencies, configuration/manual bytes
+  and debug link. Each has eight changed metadata records and five payloads.
+- Binary checks confirm /etc/nscd.conf versus /opt/5bsd/etc/nscd.conf and preserve
+  the separately installed /etc/nscd.conf path, as Make does. The relative fallback
+  remains unchanged. Initial Starlark invalid-escape failure was corrected using
+  supported string operations; its evidence remains retained.
+- Evidence under /usr/obj/usr/src: bazel-nscd-reference-20261030 and
+  bazel-nscd-prefix-reference-20261030 comparisons, source-audit.py/json and
+  prefix-audit.json; final native bazel-nscd-20261030-r2 and
+  bazel-nscd-prefix-20261030; corresponding fresh Make stages.
+- Frontend review: maintained build-bsd format-5 typed settings and 16-job
+  bazel-test handle both configurations; manual documents the setting. No C,
+  backend/signing/publication contract change. No daemon started or NSS state
+  changed. Live cache/agent/protocol behavior, native Bazel runtime tests,
+  cross-target and full-world/kernel/package/performance gates remain open.
+
+### 2026-10-30: mptable and mlxcontrol
+
+- Added native mptable and mlxcontrol with maintained source sets, manual
+  sections and installation policies. mlx controller ABI headers are explicit
+  inputs with narrow consumer visibility and preserved include paths.
+- Both fresh Make comparisons pass: five changed metadata records, three
+  regular payloads and one debug link each. Global/weak symbols, ordered dynamic
+  dependencies, manual bytes and debug CRCs match. No device or physical-memory
+  operations were executed.
+- Evidence under /usr/obj/usr/src: bazel-legacy-hardware-reference-20261030
+  per-tool scripts/results, bazel-legacy-hardware-20261030 native capture,
+  bazel-mptable-make-20261030 and bazel-mlxcontrol-make-20261030 fresh references.
+- Frontend review: maintained build-bsd bazel-test explicit targets with 16 jobs
+  handles both archives; no frontend C/backend/signing/publication contract
+  changes. Device behavior, native Bazel behavioral tests, cross builds and full
+  world/kernel/package/performance qualification remain open. Make stays default.
+
+### 2026-10-30: camdd native build and regular-file correctness
+
+- Added native camdd with maintained CAM/mt/util/pthread dependencies. Fresh Make
+  comparison passes five changed metadata records, three regular payloads and
+  one debug link, including symbols, ordered dependencies, manual bytes and CRC.
+- Three private regular-file cases pass for each captured binary (six total):
+  partial final block with differing read/write block sizes, smaller blocks,
+  and input/output offsets with a transfer limit. Every output matches exact
+  expected bytes, including the output hole. No disk/tape device was opened.
+- Runtime harness copies/hashes native or staged Make libcam/libmt/libutil/
+  libthr/libsbuf/libbsdxml/libc/libsys, verifies their NEEDED closure, and uses
+  an explicitly copied native loader for both implementations. Host kernel is
+  still used. These are correctness checks, not disk performance results or
+  native Bazel test execution. CAM passthrough, asynchronous queueing, tape,
+  error recovery and comparative CPU/memory/I/O qualification remain open.
+- Evidence under /usr/obj/usr/src: bazel-camdd-reference-20261030 comparisons,
+  runtime-audit.py and runtime/audit.json/per-case logs/runtime-input hashes;
+  bazel-camdd-20261030 native capture and bazel-camdd-make-20261030 reference.
+- Frontend review: existing maintained build-bsd bazel-test target handling with
+  16 jobs suffices; no frontend C/backend/signing/publication contract changes.
+  Full-world/kernel/package/VM/performance gates remain open; Make stays default.
+
+### 2026-10-30: mptutil default and DEBUG builds
+
+- Added native mptutil with the eight maintained sources and explicit MPI
+  controller headers. mpt_flash.c remains excluded exactly as in Make's source
+  list. Native CAM/util dependencies preserve the reference linkage.
+- Added typed mptutil_debug boolean (default false), matching Make's defined
+  DEBUG variant. Both builds pass fresh Make parity: five metadata records,
+  three regular payloads and one debug link each, including global/weak symbols,
+  ordered dynamic dependencies, manual bytes and debug CRCs.
+- Actual compile records verify all eight sources exactly once in each build
+  and DEBUG defined only in the selected variant. This option enables additional
+  controller operations/diagnostics; it is not a debug-symbol-only setting.
+- Evidence under /usr/obj/usr/src: bazel-mptutil-reference-20261030 and
+  bazel-mptutil-debug-reference-20261030 comparisons, variant-audit.py/json;
+  bazel-mptutil-20261030 and bazel-mptutil-debug-20261030 captures; corresponding
+  fresh Make stages. No controller operations ran.
+- Frontend review: existing build-bsd typed format-5 settings and 16-job
+  bazel-test handle both variants; manual documents the setting. No frontend C,
+  backend/signing/publication contract change. Controller runtime, native Bazel
+  behavioral tests, cross builds and full-system/performance gates remain open.
+
+### 2026-10-30: mpsutil/mprutil aliases and debug configuration
+
+- Added the native seven-source mpsutil target with explicit MPS/MPR ioctl/MPI
+  headers. Preserved the executable and manual hardlinks for mprutil: controller
+  interface selection depends on the invoked name. USE_MPT_IOCTLS is retained.
+- Added typed mpsutil_debug boolean (default false). Both normal/debug variants
+  pass fresh Make comparison: seven metadata records, three regular payloads,
+  two hardlinks and one debug link each. Symbols, ordered dependencies, manuals,
+  link identity/content and debug CRCs match.
+- Actual compile records confirm all seven sources, USE_MPT_IOCTLS in both
+  variants, and DEBUG only in the selected variant. Sixteen safe host-runtime
+  checks cover both builds/variants/names with matching versus mismatched device
+  name prefixes and the version dispatcher. All pass and match Make output.
+  Source review confirms these paths do not open a controller. Runs use host
+  loader/libc and captured binaries, not native Bazel test execution.
+- Evidence under /usr/obj/usr/src: bazel-mpsutil-reference-20261030 and
+  bazel-mpsutil-debug-reference-20261030 artifact audits; variant-audit.py/json,
+  runtime-audit.py and runtime/audit.json/per-command logs; corresponding native
+  captures and fresh Make stages. No controller/firmware operation was run.
+- Frontend review: maintained build-bsd format-5 settings and 16-job bazel-test
+  suffice; manual documents aliases and debug selection. No frontend C/backend,
+  signing or publication contract changes. Controller runtime, native Bazel
+  tests, cross builds and full-world/kernel/package/performance gates remain open.
+
+### Native mfiutil/mrsasutil normal and debug builds (2026-10-30)
+
+Added native mfiutil with all twelve maintained Make C sources, explicit MFI
+headers, CAM/sbuf/util dependencies, and mrsasutil executable/manual hardlinks.
+The typed mfiutil_debug boolean defaults false and corresponds to Make DEBUG.
+Fresh Make DEBUG compilation exposed a pre-existing out-of-scope mfi_unit
+reference and unused handler parameters. The shared source now derives the
+legacy diagnostic sysctl unit from the opened device via fdevname_r, rejects
+non-mfi device names, and marks the unused parameters. No warnings were disabled.
+The original Make failure remains in bazel-mfiutil-debug-make-20261030.
+
+Evidence roots: /usr/obj/usr/src/bazel-mfiutil-reference-20261030 and
+/usr/obj/usr/src/bazel-mfiutil-debug-reference-20261030. Native captures are
+bazel-mfiutil-20261030 and bazel-mfiutil-debug-20261030; Make references are
+bazel-mfiutil-make-20261030 and bazel-mfiutil-debug-make-20261030-r2.
+Each variant matches seven install records with no missing/extra destinations
+or metadata differences, three regular payload symbol/dependency/manual checks,
+two hardlink aliases and one debuglink CRC. variant-audit.json verifies all
+12 compiled sources and DEBUG selection against Make for both configurations.
+The normal captures predate the source repair, which is entirely inside DEBUG.
+
+No controller or firmware operations were executed. Device identity resolution,
+diagnostic sysctl availability and controller behavior still need hardware/runtime
+qualification. These are Clang builds, not GCC qualification or performance tests.
+Existing build-bsd format-5 targets/settings handle this addition; the maintained
+manual documents the new setting. No frontend C, signing, staging or publication
+contract change is needed. Whole-system gates remain open and Make stays default.
+
+### Native fifolog subtree (2026-10-30)
+
+Added explicit native targets for the internal ordinary/PIE fifolog archives and
+fifolog_create, fifolog_writer and fifolog_reader. The five library members
+include getdate.c generated from maintained getdate.y by the native exec yacc
+through a declared BSDYacc action. The internal library remains uninstalled.
+The create component owns fifolog.1 and its three maintained manual hardlinks;
+the reader/writer do not invent separate manuals. The parent installation set
+includes all three programs.
+
+Evidence: /usr/obj/usr/src/bazel-fifolog-reference-20261030; fresh Make subtree
+build/install/installconfig bazel-fifolog-make-20261030; final native capture
+bazel-fifolog-20261030-r2. The first native build exposed a libutil/zlib dependency
+order difference in fifolog_create. Its dependency order was corrected to match
+Make; the failed first comparison/capture remains available.
+
+All twelve installation records match with no missing/extra destinations or
+metadata mismatches. Seven regular payloads pass symbol/dependency/manual checks,
+three manual hardlinks match, and all three debuglink CRCs validate. Both internal
+archives match five ordered members and 95 global/weak symbol records each.
+Runtime evidence in runtime/audit.json records 24 passing checks: native/Make,
+compression levels 0 and 9, create/write/read, regex filtering, date-range parsing
+and invalid-date rejection. Executables, native loader, and native or staged Make
+libraries were copied and hashed; shared-library dependencies were checked for
+closure. All log files are private. These are host-kernel correctness checks,
+not Bazel-registered tests, wraparound/crash-recovery qualification or performance
+measurements. Full world/kernel/pkgbase and runtime gates remain open.
+
+Existing build-bsd format-5 explicit targets accept the subtree and both archive
+targets without a frontend C or policy change. No new user-facing build setting,
+staging/signing/verification requirement or publication contract was introduced.
+Make remains production/default; no host installation was performed.
+
+### Native uefisign, valectl and zzz (2026-10-30)
+
+Added native amd64 targets using maintained sources and dependencies: uefisign
+(three C sources, crypto), valectl (netmap), and zzz (libc). Installations retain
+/usr/sbin, section-8 manuals, utilities/netmap package ownership, and split debug
+artifacts. No application source changes or privilege-check bypasses were needed.
+
+Evidence: /usr/obj/usr/src/bazel-admin-tools-reference-20261030, native capture
+bazel-admin-tools-20261030, and independent Make references
+bazel-uefisign-make-20261030, bazel-valectl-make-20261030 and
+bazel-zzz-make-20261030. Each component matches five installation records with
+no missing/extra destinations or metadata mismatches. Each passes three regular
+payload checks (global/weak symbol inventories, ordered dynamic dependencies,
+manual bytes) and one debuglink CRC. Logs and JSON comparisons are retained in
+the component evidence directories.
+
+No signing, firmware-variable, netmap or power-transition runtime operation was
+performed. In particular this does not qualify verified boot, uefisign signing
+correctness, Capsicum behavior on a matching kernel, VALE operations or suspend.
+The uefisign child retains its caph_enter call. Whole-system runtime/package and
+performance gates remain open. Make remains production/default.
+Existing build-bsd explicit target inputs cover these components; no frontend C,
+manual option, signing/staging/verification or publication contract changed.
+
+### Native oeslogger and DTrace variants (2026-10-30)
+
+Added native oeslogger using the maintained share/examples/oes/oeslogger.c via
+an explicit narrowly visible source export, local diagnostics header/provider,
+and native shared liboes. FIVEBSD_TRACE remains defined in both variants;
+WITH_DTRACE and the declared provider generation/object transformation follow
+the existing typed dtrace setting, which remains enabled by default.
+
+Evidence roots: /usr/obj/usr/src/bazel-oeslogger-reference-20261030 and
+bazel-oeslogger-nodtrace-reference-20261030. Native captures:
+bazel-oeslogger-20261030 and bazel-oeslogger-nodtrace-20261030. Independent Make
+references: bazel-oeslogger-make-20261030 and
+bazel-oeslogger-nodtrace-make-20261030. Each variant matches five installation
+records, three regular payload symbol/dependency/manual checks and one debuglink
+CRC. Enabled DOF comparison matches three probe schemas, with five ordinary
+sites and zero is-enabled sites; both ELF instruction/function-bound checks
+pass. Disabled executable section checks find no SHT_SUNW_dof sections in
+native or Make. Evidence JSON and comparison scripts remain in those roots.
+
+No OES session or event stream was opened; event JSON semantics, authorization,
+stream loss/error handling and live probe firing still require runtime tests.
+Artifact/probe metadata checks do not establish system-wide OES behavior or
+performance. Existing build-bsd format-5 targets/dtrace settings cover both
+variants without new frontend C/manual options or staging/signing/publication
+contracts. Make remains production/default and full system gates remain open.
+
+### Native TCP diagnostic utilities (2026-10-30)
+
+Added tcpdchk/tcpdmatch with explicit vendor source/header/manual exports, native
+libwrap, distinct Make compile definitions, and the existing inet6_support
+selection. Added tcpsso with its maintained source and libc dependency. The
+standard /usr/libexec and /etc/hosts.allow/hosts.deny compile-time defaults match
+the current Make configuration and existing native tcpd/libwrap layout; arbitrary
+Make LIBEXECDIR overrides are not qualified here.
+
+Evidence: /usr/obj/usr/src/bazel-tcp-tools-reference-20261030; native capture
+bazel-tcp-tools-20261030; independent Make references bazel-tcpdchk-make-20261030,
+bazel-tcpdmatch-make-20261030, bazel-tcpsso-make-20261030. Each component matches
+five installation records, three regular payload symbol/dependency/manual checks
+and one debuglink CRC. An initial tcpsso comparison ran before its Make reference
+finished and reported a missing METALOG; it was rerun after successful completion.
+No build was restarted or assertion weakened.
+
+runtime/audit.json records eight passing tcpdmatch private-policy checks across
+native and Make: default access, deny-all, allow-before-deny precedence, and a
+rule for another service. Executables/native loader/native or staged Make
+libraries were copied and hashed; library dependency closure was checked. The
+host kernel/NSS remained in use, with an explicit empty inetd.conf and private
+hosts.allow/hosts.deny selected by -d. No host access policy was modified.
+These tests do not qualify all tcpdchk diagnostics, IPv6-disabled compilation,
+netgroup/DNS behavior, tcpsso kernel ABI/socket mutation, or performance.
+
+Existing build-bsd explicit target inputs and inet6_support setting cover these
+additions without new frontend C/manual settings or staging/signing/publication
+contracts. Make remains production/default; whole-system gates remain open.
+
+### Native MIT gssd and RPC generation (2026-10-30)
+
+Added native gssd with all maintained C inputs and declared RPC header/server/XDR
+outputs from sys/kgssapi/gssd.x, generated by native exec rpcgen with explicit
+preprocessor inputs and Make's -L -C -M flags. Dependencies retain MIT GSSAPI,
+krb5, k5crypto, internal static krb5profile, and krb5support. The internal profile
+library grants only gssd additional visibility. The target explicitly requires
+the existing mitkrb5_enabled configuration; Heimdal is not silently substituted
+and remains a migration/qualification gap.
+
+Evidence: /usr/obj/usr/src/bazel-gssd-reference-20261030; fresh Make reference
+bazel-gssd-make-20261030; final native capture bazel-gssd-20261030-r3. Earlier
+captures retain the incorrect shared-profile target and missing-visibility
+analysis failures; the final graph follows Make's internal static linkage.
+Five installation records match with no missing/extra destinations or metadata
+differences. Three regular payload symbol/dependency/manual checks and one
+debuglink CRC pass. generated-audit.json proves gssd.h, gssd_svc.c and gssd_xdr.c
+are byte-identical to fresh Make-generated files.
+
+No daemon was started, credentials accessed, kernel module loaded, or NFS/GSS
+session established. Kernel upcalls, credential lifecycle, authentication/errors,
+Heimdal and runtime performance remain unqualified. Existing build-bsd explicit
+targets and typed mitkrb5 configuration handle this addition; no new frontend C,
+manual option, staging/signing/verification or publication contract is required.
+Make remains production/default; full-system gates remain open.

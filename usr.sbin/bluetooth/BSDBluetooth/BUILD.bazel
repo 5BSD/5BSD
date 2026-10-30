@@ -2,3 +2,50 @@
 
 # Source fixtures shipped with Switchboard contract tests.
 exports_files(['blued.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "blued_provider.d", output = "blued_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+cc_library(name = "headers", hdrs = ["adv_builder.h", "att.h", "att_server.h", "att_server_internal.h", "ble_util.h", "blued.h", "blued_devmgr.h", "blued_encryption_event.h", "blued_internal.h", "blued_le_meta.h", "blued_persist.h", "blued_probe_tap.h", "blued_probes.h", "config.h", "conn.h", "ctl.h", "ctl_internal.h", "discovery.h", "gatt.h", "hci_internal.h", "hci_log.h", "hci_util.h", "hogp_boot.h", "hogp_report.h", "iso.h", "smp.h", "smp_internal.h"], strip_include_prefix = ".")
+_AUDIT = "//tools/build/bazel/config:audit_enabled"
+_LIBS = ["//lib/libbluetooth:bluetooth", "//secure/lib/libcrypto:crypto", "//lib/libextensioncmp:extensioncmp", "//lib/libfilesystemcmp:filesystemcmp", "//lib/libservice:service", "//lib/libchannel:channel", "//lib/libcapreclaim:capreclaim", "//lib/libucl:ucl", "//lib/libutil:util", "//lib/liblogcmp:logcmp"] + select({_AUDIT: ["//lib/libbsm:bsm"], "//conditions:default": []}) + ["//lib/libthr:thr"]
+_SHARED = ["//lib/libbluetooth:bluetooth_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libextensioncmp:extensioncmp_shared", "//lib/libfilesystemcmp:filesystemcmp_shared", "//lib/libservice:service_shared", "//lib/libchannel:channel_shared", "//lib/libcapreclaim:capreclaim_shared", "//lib/libucl:ucl_shared", "//lib/libutil:util_shared", "//lib/liblogcmp:logcmp_shared"] + select({_AUDIT: ["//lib/libbsm:bsm_shared"], "//conditions:default": []}) + ["//lib/libthr:thr_shared"]
+cc_library(name = "objects", srcs = ["blued.c", "blued_event.c", "blued_central.c", "blued_peripheral.c", "hogp_report.c", "att.c", "att_server.c", "att_server_dispatch.c", "att_server_notify.c", "att_server_hash.c", "config.c", "conn.c", "blued_persist.c", "blued_devmgr.c", "ctl.c", "ctl_conn.c", "ctl_gatt.c", "ctl_iso.c", "iso.c", "discovery.c", "adv_builder.c", "gatt.c", "hci_util.c", "hci_adv.c", "hci_scan.c", "hci_conn.c", "hogp_boot.c", "hci_privacy.c", "hci_misc.c", "hci_log.c", "smp.c", "smp_crypto.c", "smp_keys.c", "smp_legacy.c", "smp_sc.c"], deps = [":headers", "//sys/dev/hid:vhid_header", "//lib/libble:daemon_protocol_headers", "//usr.sbin/bluetooth/BSDBluetooth/controller:protocol_headers"] + _LIBS + select({_TRACE: [":provider_headers"], "//conditions:default": []}), local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}) + select({_AUDIT: ["USE_BSM_AUDIT"], "//conditions:default": []}), copts = ["-fPIE"], target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "blued_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _LIBS)
+load("//tools/build/bazel:bsd_capimage.bzl", "bsd_capimage_policy")
+bsd_capimage_policy(name = "policy_assembly", src = "blued.ucl")
+cc_binary(name = "BSDBluetooth", srcs = [":policy_assembly"], deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}), dynamic_deps = _SHARED, linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_BUNDLE = "/Capabilities/System/Bluetooth.cap"
+_UNIT = _BUNDLE + "/Units/blued.unit"
+_CONTROLLER = _BUNDLE + "/Units/controller.unit"
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bluetooth"])
+ for name, src, dest in [("bundle", "capbundle/Bundle.ucl", _BUNDLE + "/Bundle.ucl"), ("unit", "blued.ucl", _UNIT + "/Unit.ucl"), ("config", "blued.conf.sample", _UNIT + "/Config/blued.conf")]]
+bsd_install_link(name = "compat_link", destination = "/usr/sbin/blued", target = "../.." + _UNIT + "/bin/BSDBluetooth", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bluetooth"])
+utility_installation(name = "install_manifest", program = "BSDBluetooth", manual = "BSDBluetooth.8", package = "bluetooth", bindir = _UNIT + "/bin", man_section = "8", manual_aliases = ["blued"], keep_sections = [".5bsd.policy"], extra_entries = [":bundle", ":unit", ":config", ":compat_link"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest", "//usr.sbin/bluetooth/BSDBluetooth/controller:install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bluetooth"]}' for d in [_BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin", _UNIT + "/Config", _CONTROLLER, _CONTROLLER + "/bin"]} |
+        {"/usr/lib/debug" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bluetooth","dbg"]}' for d in ["/Capabilities", "/Capabilities/System", _BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin", _CONTROLLER, _CONTROLLER + "/bin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

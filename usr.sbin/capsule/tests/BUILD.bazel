@@ -208,3 +208,5 @@ _BOOTSTRAP_CASES = ["bootstrap_starts_switchboard", "bootstrap_channel_ping", "c
  for case in _BOOTSTRAP_CASES]
 test_suite(name = "bootstrap_shell_tests", tests = [":capsule_bootstrap_test_" + case for case in _BOOTSTRAP_CASES],
     tags = ["manual"], visibility = ["//visibility:public"])
+
+exports_files(['capsule_config_cli_test.sh'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])

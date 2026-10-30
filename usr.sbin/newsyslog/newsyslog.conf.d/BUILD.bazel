@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "lpr", src = "lpr.conf", destination = "/etc/newsyslog.conf.d/lpr.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=lp", "config"])
+bsd_install_file(name = "opensm", src = "opensm.conf", destination = "/etc/newsyslog.conf.d/opensm.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=newsyslog", "config"])
+bsd_install_file(name = "pf", src = "pf.conf", destination = "/etc/newsyslog.conf.d/pf.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=pf", "config"])
+bsd_install_file(name = "ppp", src = "ppp.conf", destination = "/etc/newsyslog.conf.d/ppp.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=ppp", "config"])
+bsd_install_file(name = "sendmail", src = "sendmail.conf", destination = "/etc/newsyslog.conf.d/sendmail.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=sendmail", "config"])
+bsd_install_manifest(name = "install_manifest", entries = [] + select({"//tools/build/bazel/config:lpr_enabled": [":lpr"], "//conditions:default": []}) + select({"//tools/build/bazel/config:ofed_enabled": [":opensm"], "//conditions:default": []}) + select({"//tools/build/bazel/config:pf_enabled": [":pf"], "//conditions:default": []}) + select({"//tools/build/bazel/config:ppp_enabled": [":ppp"], "//conditions:default": []}) + select({"//tools/build/bazel/config:sendmail_enabled": [":sendmail"], "//conditions:default": []}), visibility = ["//usr.sbin/newsyslog:__pkg__"])

@@ -73,7 +73,7 @@ cc_library(name = "test_headers", deps = [":private_headers"], includes = ["."],
 cc_library(name = "release_test_includes", hdrs = ["capsule_proto_claims.c"],
     deps = [":test_headers"], visibility = ["//usr.sbin/capsule/tests:__pkg__"])
 
-exports_files(["config.c", "protected_crypto.c", "capsule-daemon.conf"] + ["examples/" + n + ".conf" for n in ["desktop", "server", "embedded", "broker"]], visibility = ["//usr.sbin/capsule/tests:__pkg__"])
+exports_files(["protected_crypto.c", "capsule-daemon.conf"] + ["examples/" + n + ".conf" for n in ["desktop", "server", "embedded", "broker"]], visibility = ["//usr.sbin/capsule/tests:__pkg__"])
 
 # Non-PIE static test variant: restrict OpenZFS compilation context to this unit.
 cc_library(name = "test_storage_objects", srcs = ["protected_storage.c"], hdrs = ["//sys/modules/zfs:zfs_config.h"],
@@ -92,3 +92,7 @@ bsd_install_archive(name = "install_archive", manifests = [":install_capsule", "
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+exports_files(["config.c"], visibility = ["//usr.sbin/capsule/tests:__pkg__", "//usr.sbin/bsd-build/capsule-policy-validate:__pkg__"])
+exports_files(["config_report.c"], visibility = ["//usr.sbin/bsd-build/capsule-policy-validate:__pkg__"])
+cc_library(name = "config_headers", hdrs = ["config.h"], strip_include_prefix = ".", deps = ["//lib/libcapsulert:headers", "//sys/dev/mac_capability:capprotect_headers"], visibility = ["//usr.sbin/bsd-build/capsule-policy-validate:__pkg__"])
