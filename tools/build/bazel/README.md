@@ -43467,3 +43467,25 @@ Native Bazel execution of these suites, matching-kernel tests, all option varian
 static probe retention, complete bootstrap/pkgbase and resource/performance gates
 remain open. No installation, publication, signing, daemon activation or reboot
 occurred. Make remains production/default.
+
+
+### i2c, spi, pwm and smbmsg (2026-10-30)
+
+Added native rules with explicit sources and smbmsg's local pathnames header.
+No program behavior changed, including pwm's maintained Capsicum setup.
+Captured Bazel-built build-bsd drove the native qualification at
+/usr/obj/usr/src/bazel-bus-tools-20261030 with 16 jobs. Fresh Make references:
+/usr/obj/usr/src/bazel-{i2c,spi,pwm,smbmsg}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bus-tools-reference-20261030, per-program directories.
+Each passes five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+manual bytes and debuglink CRC. Scope is selected amd64 artifacts.
+
+No program was executed or bus transaction issued. Device permission failures,
+I2C transfers/address handling, SPI transfer settings, PWM period/duty/polarity
+and SMBus transactions need hardware/runtime qualification. pwm's Capsicum path
+also requires attention to the documented host/source rights ABI mismatch.
+Frontend review: existing explicit target/SDK inputs cover these additions and
+the native frontend successfully drives them; no frontend/backend/signing or
+publication contract changed. Full world/kernel/bootstrap/pkgbase and performance
+gates remain open. Make remains production/default.

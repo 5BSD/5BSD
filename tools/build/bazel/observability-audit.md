@@ -8048,3 +8048,12 @@ attachment/content fields; current-schema fixture and explicit removed-field
 rejections now pass without changing parser behavior. No PID/socket or daemon
 activation occurred. Bazel-run suites and matching-kernel/live authority tests
 remain separate requirements. Evidence is in the frontend reference directory.
+
+
+### Bus-control utilities (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in i2c, spi, pwm or smbmsg
+sources. Native artifact comparisons pass; runtime device authorization, transfer
+errors and parameter boundaries remain open. Preserve pwm's Capsicum setup and
+qualify with a compatible kernel. Review underlying ioctl audit/probe coverage
+before adding instrumentation. No bus operation or device write was performed.
