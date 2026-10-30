@@ -7419,3 +7419,10 @@ Native amd64 candidate preserves common/machine-dependent sources and snapshot
 definition. Make declares no library DTrace provider; kernel probes are outside
 this library build. VM ioctls, snapshots, dirty-log behavior, audit interactions
 and performance require matching-kernel qualification. No VM is started here.
+
+### bhyvectl (2026-10-30)
+
+Native amd64 candidate preserves sources and configured snapshot command code.
+Make declares no program DTrace provider. Kernel-side probe/audit coverage,
+VM control and snapshot operations need matching-kernel runtime qualification.
+No live VM control is issued during artifact checks.

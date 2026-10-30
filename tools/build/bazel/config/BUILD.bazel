@@ -459,3 +459,8 @@ config_setting(name = "cuse_debug_enabled", flag_values = {":cuse_debug": "true"
 # pkg(7) repository selection: release/platform defaults or explicit file override.
 string_flag(name = "pkg_config_branch", build_setting_default = "", visibility = ["//visibility:public"])
 label_flag(name = "pkg_repository_config", build_setting_default = "//usr.sbin/pkg:default_repository", visibility = ["//visibility:public"])
+
+# amd64 defaults to snapshot support in src.opts.mk; other architectures remain
+# outside the initial native bhyvectl target's compatibility set.
+bool_flag(name = "bhyve_snapshot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bhyve_snapshot_enabled", flag_values = {":bhyve_snapshot": "true"}, visibility = ["//visibility:public"])

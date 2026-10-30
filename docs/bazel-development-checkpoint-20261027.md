@@ -17173,3 +17173,36 @@ debug-link CRC. Evidence: install-audit.json and payload-audit.json under
 bazel-libvmmapi-reference-20261030. Snapshot support is compiled as in amd64 Make;
 snapshot execution and other VM operations remain unqualified. No production
 library source changed. Other architectures and full-system gates remain open.
+
+### Native amd64 bhyvectl candidate (2026-10-30)
+
+Added native common/amd64 sources, vmmapi/util/nv linkage and bhyve package
+installation. Explicit VMCS/VMCB, IPC and optional snapshot header dependencies
+avoid directory-wide source inclusion. New typed bhyve_snapshot defaults true
+for the amd64-only target, matching src.opts.mk; select changes compile inputs
+and action keys instead of recreating Make's mode stamp. Existing build-bsd
+build-settings input accepts this flag without a new frontend option.
+Fresh default Make completes; bazel-bhyvectl-20261030 is pending. Snapshot-disabled
+reference inputs are prepared. Other architectures and live VM/snapshot commands
+remain unqualified; none are executed on the host.
+
+Bhyvectl initial native analysis/compilation found an undeclared transitive
+snapshot_identity.h include. Fresh Make depfiles confirm that header belongs
+to the snapshot closure; declared it explicitly rather than broadening include
+directories. Default run bazel-bhyvectl-20261030-r2 is pending. Snapshot-disabled
+Make reference completes. Original failed native output is retained.
+
+Bhyvectl default r2 and nosnapshot native runs pass. Both match independent
+Make at five installation destinations, three regular payloads and one debug
+link, including ordered dynamic metadata and manual bytes. A return to the
+default setting is running as bazel-bhyvectl-snapshot-return-20261030 to check
+configuration switching in shared Bazel state. No VM control has been executed.
+
+Bhyvectl configuration-switch result: enabled -> disabled -> enabled in the same
+Bazel build state yields distinct enabled/disabled program hashes and restores
+the original enabled program byte-for-byte. Saved artifact hashes were verified
+before extracting each binary. Evidence: configuration-switch.json under
+bazel-bhyvectl-reference-20261030; default/disabled install/payload audits remain
+there too. This is a component configuration check, not complete cache/sandbox
+qualification. Both settings preserve Make artifact/install contracts. Full
+world/kernel/pkgbase/bootstrap and runtime/performance gates remain open.
