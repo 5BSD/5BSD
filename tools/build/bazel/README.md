@@ -44350,3 +44350,29 @@ behavior, other sysctl types and performance remain unqualified.
 Existing build-bsd explicit target inputs cover the additions with no new
 frontend C/manual options, staging/security policy or publication requirements.
 Make remains production/default; the whole-system gates are unchanged.
+
+### Native Hyper-V KVP and VSS daemons (2026-10-30)
+
+Added hv_kvp_daemon and hv_vss_daemon with explicit maintained vendor source/manual
+exports and narrow driver utility header dependencies. The usr.sbin/hyperv
+installation set includes both Make-selected daemon subdirectories. Existing
+libexec/hyperv targets own the five helper scripts; this change does not duplicate
+them or claim combined package/runtime qualification. Standard maintained vendor
+sources are covered; arbitrary HV_KVP_DAEMON_DISTDIR/HV_VSS_DAEMON_DISTDIR overrides
+and the GCC-specific warning configuration are not qualified by this Clang pass.
+
+Evidence: /usr/obj/usr/src/bazel-hyperv-daemons-reference-20261030; native capture
+bazel-hyperv-daemons-20261030; fresh complete Make subtree reference
+bazel-hyperv-make-20261030. All eight installation records match with no missing/
+extra destinations or metadata differences. Six regular payload symbol/dynamic
+library/manual checks and both debuglink CRCs pass. hyperv-tools ownership and
+/usr/sbin placement remain identical to Make.
+
+No daemon was executed. Host/guest KVP protocol, pool persistence, helper-script
+network configuration, filesystem freeze/thaw and error recovery require a
+suitable Hyper-V guest and disposable filesystem tests. Generic QEMU execution
+alone would not establish those Hyper-V service behaviors. No pool, networking,
+mount or storage state was modified. Existing build-bsd explicit target inputs
+cover this addition; no frontend C, manual option, staging/signing/security policy
+or publication contract changed. Make remains production/default and full system
+runtime/performance/package gates remain open.

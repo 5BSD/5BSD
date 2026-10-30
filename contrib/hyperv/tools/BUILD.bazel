@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["hv_kvp_daemon.c", "hv_kvp_daemon.8"], visibility = ["//usr.sbin/hyperv/tools/kvp:__pkg__"])
+exports_files(["hv_vss_daemon.c", "hv_vss_daemon.8"], visibility = ["//usr.sbin/hyperv/tools/vss:__pkg__"])

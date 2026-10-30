@@ -8416,3 +8416,11 @@ components. Native targets preserve their sources, libraries and IPSEC definitio
 Read-only exporter metric/filter/HTTP checks pass; sound-device changes, multicast
 transmission/response handling, socket privilege attribution and latency require
 separate runtime review. No such device/network operations were performed here.
+
+### 2026-10-30: Hyper-V KVP and VSS daemons
+
+No local DTrace provider or direct libbsm dependency is declared by these daemon
+Makefiles. Native targets retain vendor source and utility protocol headers.
+KVP persistent-pool/network-script failures and VSS filesystem freeze/thaw/error
+recovery need runtime observability and audit review in a suitable Hyper-V guest.
+No daemon/device operation was performed during the artifact checks.
