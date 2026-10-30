@@ -17076,3 +17076,35 @@ absence was checked directly from each disabled ELF's section types.
 Evidence: *install-audit.json, *payload-audit.json, native-dof.json, make-dof.json,
 dof-comparison.json and nodtrace-dof.json under bazel-voss-bt-reference-20261030.
 No live Bluetooth/probe execution, HAVE_LIBAV or full-system claim is made.
+
+### Native virtual_oss programs candidate (2026-10-30)
+
+Added explicit native targets for virtual_oss, virtual_oss_cmd and
+virtual_bt_speaker, with public/control and Bluetooth header interfaces. Daemon
+linkage preserves CUSE/math/nv/pthread/private-samplerate dependencies and the
+virtual_oss_wait/voss_has_synchronization dynamic exports used by backends.
+Installation declares all three programs/manuals/debug payloads and virtual_oss.h.
+Fresh independent Make references complete; combined native run
+bazel-virtual-oss-programs-20261030 is pending through build-bsd with 16 jobs.
+Existing target/SDK inputs suffice without frontend or backend contract changes.
+Audio/CUSE/Bluetooth runtime, option variants and performance remain unqualified.
+
+Virtual_oss initial native compilation/install succeeds, but strict payload
+comparison detects a daemon NEEDED ordering difference. Make's effective
+link command places -lpthread after private samplerate; native dependencies now
+follow that emitted order. Combined run bazel-virtual-oss-programs-20261030-r2
+is pending. Comparison was not relaxed. Daemon main initializes CUSE before
+parsing options, so even a help invocation is not treated as a safe host smoke
+test. No live daemon run has been attempted.
+
+Virtual_oss programs final artifact result: bazel-virtual-oss-programs-20261030-r2
+passes all three installation targets. Fresh Make comparison matches six daemon
+destinations/four regular payloads and five destinations/three regular payloads
+for each command. All ordered dynamic metadata, symbol inventories, manuals,
+header bytes and three debug-link CRCs match. Daemon dynamic symbol tables in
+both builds explicitly contain virtual_oss_wait and voss_has_synchronization.
+Evidence: install-audit.json and payload-audit.json in each program's
+bazel-<program>-reference-20261030 directory; daemon backend-exports.json records
+the export check. No CUSE/device operation was performed and no runtime or
+performance qualification is implied. Full world/kernel/bootstrap/pkgbase gates
+remain open; Make stays the production/default build.

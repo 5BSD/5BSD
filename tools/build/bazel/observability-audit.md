@@ -7398,3 +7398,10 @@ Default native/Make DOF schemas match; both ELFs independently validate two prob
 and two is-enabled instruction sites and function bounds. Disabled builds match
 Make artifacts and have no DOF sections. Live registration/firing and Bluetooth
 I/O remain unqualified. Evidence: bazel-voss-bt-reference-20261030/*dof*.json.
+
+### virtual_oss programs (2026-10-30)
+
+Native daemon and command candidates preserve maintained sources and backend
+dynamic exports. Their Makefiles declare no DTrace provider; the Bluetooth
+backend owns the carried-forward btaudio probes. CUSE/device interactions and
+end-to-end audio execution remain qualification work, not implied by linkage.
