@@ -867,6 +867,13 @@ WMAKEENV+=	PYTHON=${_PYTHON_CMD:Q}
 DTRACE_CROSS_OBJROOT=	${OBJTOP}/host-dtrace-${TARGET_ARCH}
 DTRACE_CROSS=	${DTRACE_CROSS_OBJROOT}${.CURDIR}/cddl/usr.sbin/dtrace/dtrace
 WMAKEENV+=	DTRACE=${DTRACE_CROSS}
+.include "${.CURDIR}/lib/protobuf/protobuf.dirs.mk"
+_DTRACE_CROSS_PROTOC=	${WORLDTMP}/legacy${PROTOC_BINDIR}/protoc
+_DTRACE_CROSS_PROTOC_PLUGINS=
+.for _p in upb upb_minitable upbdefs
+_DTRACE_CROSS_PROTOC_PLUGINS+= \
+	--plugin=protoc-gen-${_p}=${WORLDTMP}/legacy${PROTOC_PLUGINDIR}/protoc-gen-${_p}
+.endfor
 .endif
 
 # make hierarchy
@@ -1262,11 +1269,16 @@ _dtrace-cross-tool:
 	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
 	    MK_MAN=no MK_TESTS=no
 .endfor
+# This host build runs outside the world environment (no SYSROOT), so
+# protoc-gen.mk would fall back to the build host's installed protoc; name
+# the protoc and upb plugins built by bootstrap-tools explicitly.
 	${_+_}${MAKE} -C ${.CURDIR}/lib/libotelexport \
 	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
 	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
 	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
 	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
+	    PROTOC=${_DTRACE_CROSS_PROTOC} \
+	    PROTOC_PLUGINS=${_DTRACE_CROSS_PROTOC_PLUGINS:Q} \
 	    MK_MAN=no MK_TESTS=no
 	${_+_}${MAKE} -C ${.CURDIR}/cddl/lib/libdtotel \
 	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
