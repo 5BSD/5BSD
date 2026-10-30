@@ -41549,3 +41549,44 @@ inventory, ordered dynamic tags, header/manual bytes and debug-link CRC checks.
 Evidence lives under bazel-libmp-reference-20261030 in install-audit.json and
 payload-audit.json. The legacy TAP arithmetic tests and their installation remain
 next work; no arithmetic runtime or full-system qualification is claimed here.
+
+### Native libmp TAP qualification candidate (2026-10-30)
+
+Added the existing legacy_test.c as a native executable and TAP/Kyua test. The
+qualification executable uses a test-only inherited ORIGIN RPATH so the maintained
+runtime checker can verify actual native libmp/libcrypto provenance; the ordinary
+installation executable retains Make's link contract. SDK libc/libsys and host
+Kyua execution facilities remain explicit limits. TAP is parsed by Kyua rather
+than treating EX_OK as proof that all 25 arithmetic checks passed.
+
+Run bazel-libmp-tests-20261030 and full Make reference
+bazel-libmp-full-make-20261030 are pending. Test installation manifest declarations
+exist but their parent tests-enabled aggregate still needs wiring and comparison.
+Existing build-bsd/source_graph explicit test/target inputs handle this unchanged.
+No arithmetic runtime pass or full-system qualification is claimed yet.
+
+Libmp follow-up: full Make test/install reference completed. Initial native TAP
+analysis rejected runtime-checker/helper visibility; added the explicit libmp/tests
+consumer to the maintained exports. Tests-enabled library installation now includes
+the TAP executable, debug data and Kyuafile, using existing tests configuration.
+Combined run bazel-libmp-full-20261030 is pending; no TAP success or full installed
+suite parity is claimed before inspecting its reports and artifact comparisons.
+
+Libmp combined run passes TAP through Kyua and verifies four declared runtime
+libraries, but installed test ELF comparison found an extra direct libcrypto
+NEEDED entry absent from Make's executable. Libmp already owns that dependency;
+removed the redundant direct dynamic_deps declaration from its test consumer.
+The runtime provenance map still includes crypto. Full installation metadata
+matches at 14 destinations. Run bazel-libmp-full-20261030-r2 is pending; complete
+payload parity is not yet claimed. Ordered dynamic comparison remains unchanged.
+
+Libmp final component result: bazel-libmp-full-20261030-r2 passes its maintained
+25-check TAP arithmetic program as one Kyua case. Runtime provenance verifies
+native libmp/libcrypto and declared SDK libc/libsys. Fresh Make comparison matches
+all 14 changed installation destinations and eight regular payloads, including
+ordered dynamic metadata, symbols, Kyuafile bytes and two debug-link CRCs. Test
+consumer linkage now follows libmp's transitive crypto dependency without an
+extra direct NEEDED entry. Evidence: full-install-audit.json/full-payload-audit.json
+under bazel-libmp-reference-20261030 and saved native test reports/artifacts.
+No production arithmetic code changed. Independent bootstrap, full-system and
+performance qualification gates remain open.

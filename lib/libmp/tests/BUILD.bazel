@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[cc_binary(name = "legacy_test" + suffix, srcs = ["legacy_test.c"],
+    deps = ["//lib/libmp:mp"], dynamic_deps = ["//lib/libmp:mp_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for suffix in ["", "_qualification"]]
+bsd_kyua_test(name = "native_legacy", program = ":legacy_test_qualification", interface = "tap",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/libmp:mp_shared": "libmp.so.7", "//secure/lib/libcrypto:crypto_shared": "libcrypto.so.35",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"}, size = "small")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "legacy_test", manual = "", package = "tests", bindir = "/usr/tests/lib/libmp")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["legacy_test"], interfaces = {"legacy_test": "tap"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libmp/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":install_test"], entries = [":install_kyuafile"], visibility = ["//lib/libmp:__pkg__"])

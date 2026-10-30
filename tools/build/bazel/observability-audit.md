@@ -7357,3 +7357,14 @@ OpenSSL-backed arithmetic implementation is unchanged; native archive/shared and
 installation metadata match Make. No DTrace/audit hooks were introduced. Arithmetic
 correctness requires the maintained TAP suite; process exit zero alone is not
 sufficient because this suite prints comparison failures in TAP records.
+
+Libmp final component result: bazel-libmp-full-20261030-r2 passes its maintained
+25-check TAP arithmetic program as one Kyua case. Runtime provenance verifies
+native libmp/libcrypto and declared SDK libc/libsys. Fresh Make comparison matches
+all 14 changed installation destinations and eight regular payloads, including
+ordered dynamic metadata, symbols, Kyuafile bytes and two debug-link CRCs. Test
+consumer linkage now follows libmp's transitive crypto dependency without an
+extra direct NEEDED entry. Evidence: full-install-audit.json/full-payload-audit.json
+under bazel-libmp-reference-20261030 and saved native test reports/artifacts.
+No production arithmetic code changed. Independent bootstrap, full-system and
+performance qualification gates remain open.
