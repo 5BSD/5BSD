@@ -19407,3 +19407,27 @@ performance qualification. Make remains production/default.
   maintained Bazel-built `build-bsd bazel-test` handle this scope with 16 jobs.
   No new frontend C/backend/stage/signing/publication option is needed. The
   staged SDK and full world/kernel/package/runtime/performance gates remain.
+
+### 2026-10-30: native newsyslog with policy and TAP installation
+
+- Added native newsyslog/libutil/libsbuf build, generated DTrace header/provider
+  and static anchor, primary configuration, both manuals, conditional rotation
+  fragments, and maintained TAP script/Kyuafile installation.
+- Rotation fragments follow declared lpr/ofed/pf/ppp/sendmail options with their
+  Make package tags. Qualified default selection is opensm, pf and ppp; lpr and
+  sendmail are not selected. Make's configuration-directory metadata is retained.
+- Fresh Make with tests enabled matches all 14 changed installation records and
+  ten regular payloads: byte-identical policies/manuals/TAP script/Kyuafile,
+  ELF global/weak symbols and ordered dependencies, and separated debug CRC.
+  The TAP script is installed unchanged, per tap.test.mk; the initial use of an
+  ATF-style shebang wrapper was caught by exact byte comparison and corrected.
+- DTrace matches Make's five probe schemas, five ordinary instruction sites and
+  five is-enabled sites. No live probe firing or log rotation was performed.
+- Evidence under `/usr/obj/usr/src`: `bazel-newsyslog-reference-20261030`,
+  `bazel-newsyslog-make-20261030`, final capture `bazel-newsyslog-20261030-r3`.
+  Earlier captures retain directory-policy and script-wrapper findings.
+- Frontend review: existing explicit targets/options support this addition via
+  the maintained Bazel-built `build-bsd bazel-test` with 16 jobs. No C frontend,
+  backend, signing or publication change needed. TAP execution, option-matrix
+  variants, live tracing, full-system and performance qualification remain open;
+  test installation is not a claim that the test body passed.

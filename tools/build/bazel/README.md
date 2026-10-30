@@ -43595,3 +43595,19 @@ manual bytes, ELF symbols/dependencies, and debug CRCs. Evidence is under
 `/usr/obj/usr/src/bazel-kbdcontrol-reference-20261030`. The maintained Bazel-built
 frontend ran both captures with 16 jobs. Interactive/console device operations
 were not exercised; these results establish component artifact parity only.
+
+### newsyslog artifacts (2026-10-30)
+
+`//usr.sbin/newsyslog:install_archive` includes the native program and DTrace
+provider, its two manuals and primary configuration, declared optional rotation
+fragments, and the maintained TAP installation when tests are enabled. Fragment
+selection follows lpr/ofed/pf/ppp/sendmail settings and preserves each package tag.
+The default tested selection includes opensm, pf and ppp.
+
+Fresh Make comparison with tests enabled passes 14 installation records and ten
+regular payloads, including exact policy/script/Kyuafile bytes and ELF/debug
+checks. Five DTrace schemas and five ordinary/five is-enabled instruction sites
+match Make. Evidence: `/usr/obj/usr/src/bazel-newsyslog-reference-20261030`,
+final capture `bazel-newsyslog-20261030-r3`. Maintained build-bsd drives the native
+capture with 16 jobs. TAP runtime execution, other option combinations and live
+probe delivery are still pending; installation parity alone does not prove them.

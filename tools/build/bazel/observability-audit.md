@@ -8109,3 +8109,14 @@ for keyboard map/function-key changes, font/video mode changes, and privilege
 failures during runtime qualification; do not infer an audit gap solely from
 absence of userland libbsm. Interactive device operations and live tracing were
 not run on the host. kbdcontrol's reduced bootstrap variant remains unqualified.
+
+### 2026-10-30: newsyslog
+
+Retained the generated `logrotate` provider and static anchor with DTrace enabled
+by default. Native and fresh Make metadata agree on rotate-start/done,
+compress-start/done and notify schemas; validation covers five ordinary and five
+is-enabled patched sites. Evidence: `bazel-newsyslog-reference-20261030` under
+`/usr/obj/usr/src`, `native-dof.json`, `make-dof.json`, and `dof-audit.py`.
+Live probe firing and the maintained TAP rotation/compression suite were not
+executed. No direct audit-library integration was added; audit requirements for
+rotation/configuration changes remain a runtime coverage review item.
