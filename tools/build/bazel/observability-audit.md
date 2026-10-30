@@ -7562,3 +7562,10 @@ was exercised yet. Existing key-material exclusion policy is unchanged.
 Mesh runtime follow-up: 69 unchanged crypto/network/transport/replay ATF cases
 pass against the native static library. This includes malformed/tampered messages
 and replay rejection; live provider firing and daemon audit paths remain open.
+
+### libsmdb / libsmutil (2026-10-30)
+
+Internal archive parity is verified; no implementation or probes changed.
+Database/map error handling, file locking and safe-file ownership/permission
+checks need runtime consumer coverage. Review audit needs at Sendmail callers;
+no mail delivery, TLS operation or security-boundary qualification is claimed.

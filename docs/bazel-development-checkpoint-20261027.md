@@ -17745,3 +17745,27 @@ Frontend review: build-bsd's existing explicit targets/tests and ATF reporting
 support the suite; no frontend/backend input contract changes are needed. The
 initial request omitted cases from targets and was correctly rejected; the
 qualification input now declares every requested test as a selected target.
+
+### Native Sendmail support archives (2026-10-30)
+
+Added libsmdb and libsmutil ordinary/PIE targets, reusing the declared FreeBSD
+sm_os.h generation and Sendmail header interface from libsm. Source ownership
+remains contrib/sendmail. Native libsmutil selects STARTTLS with the existing
+OpenSSL configuration setting. Neither internal archive introduces installed
+package files, matching INTERNALLIB in the maintained Make definitions.
+
+Fresh Make archive comparisons pass: libsmdb has five members and 47 global/weak
+symbol entries per variant; libsmutil has six members and 68 entries per variant.
+Undefined references, binding/visibility, multiplicities and member order are
+checked; only Make's .pieo filename suffix is normalized to .o. Native saved
+artifact hashes are verified. Evidence: archive-audit.json under
+bazel-libsmdb-reference-20261030 and bazel-libsmutil-reference-20261030, using
+respective bazel-libsmdb-20261030 and bazel-libsmutil-20261030 frontend outputs.
+
+This is the default compile-option candidate, not complete Sendmail migration.
+Custom SENDMAIL_CFLAGS remains an explicit configuration gap (also in existing
+libsm); it must be represented and qualified before world/backend support can
+claim equivalent customization. OpenSSL-disabled libsmutil, database operations,
+locking/safe-file runtime and eventual consumers remain to qualify. Existing
+build-bsd target inputs suffice for these baseline archives; no new install,
+signing or publication contract is introduced. Make remains the default.
