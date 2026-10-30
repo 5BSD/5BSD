@@ -43053,3 +43053,10 @@ builds pass Make installation and payload comparisons, including Intel's NDEBUG
 selection and maintained Intel/Realtek devd files. Evidence:
 /usr/obj/usr/src/bazel-bt-usbfw-reference-20261030. Firmware/USB runtime checks
 and world MK_USB aggregation qualification remain open.
+
+
+Bluetooth service-discovery coverage (2026-10-30): native sdpd/sdpcontrol each
+match five Make installation records and three regular payloads. Daemon header
+requirements are separate from the control utility's library linkage. Evidence:
+/usr/obj/usr/src/bazel-bt-sdp-reference-20261030. Live protocol, authorization
+and privilege-drop behavior remain unqualified.

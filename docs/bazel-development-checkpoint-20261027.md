@@ -18695,3 +18695,24 @@ and SDK inputs cover the work; no frontend/backend/signing/publication contract
 changed. World aggregation must retain Make's MK_USB selection for this group.
 Full system/bootstrap/pkgbase and performance qualification remain open; Make
 remains the production/default backend.
+
+### Bluetooth service discovery (2026-10-30)
+
+Added native sdpd (26 maintained C sources) and sdpcontrol (two sources) with
+explicit local headers. Daemon Bluetooth/SDP dependencies are header-only,
+matching Make's lack of LIBADD; the control utility links native Bluetooth/SDP.
+No program source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-bt-sdp-20261030. Fresh Make references:
+bazel-sdpd-make-20261030 and bazel-sdpcontrol-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-sdp-reference-20261030. Each program matches five
+installation records and three regular payloads, with symbol/dynamic dependency
+inventories, manual bytes and debuglink CRC passing. All builds exited zero.
+No daemon or Bluetooth session was run.
+
+Service registration/search/update/removal, local peer credential checks,
+privilege dropping, malformed protocol requests, continuation responses and
+connection lifecycle require isolated runtime tests. Existing build-bsd explicit
+targets and SDK inputs cover the work; no frontend/backend/signing/publication
+contract changed. Full world/kernel/bootstrap/pkgbase/performance qualification
+remains open; Make remains the default production backend.

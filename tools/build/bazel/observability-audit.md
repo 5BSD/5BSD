@@ -7841,3 +7841,15 @@ missing/truncated/malformed firmware, device revision mismatch, failed/short USB
 transfers, detach during loading, permission denial, devd invocation and retry
 behavior. Firmware-loading audit/logging adequacy remains a separate review;
 build comparison does not prove runtime audit coverage.
+
+
+### Bluetooth service discovery (2026-10-30)
+
+sdpd/sdpcontrol retain source behavior and pass Make artifact comparisons. Source
+scan found no direct DTRACE/SDT_PROBE/audit_ references in these directories.
+The daemon creates an accessible local control socket and separately obtains
+peer credentials for privileged operations; tests must exercise both allowed
+and denied registration/update/removal, not infer authorization from socket mode.
+Also qualify supplementary-group/GID/UID dropping, malformed/continued SDP
+requests, disconnect cleanup and diagnostics. No live daemon or controller test
+was run, and artifact parity does not establish runtime audit coverage.
