@@ -8251,3 +8251,12 @@ alias, transition and invalid-input checks pass against fresh Make artifacts;
 these do not establish system timezone-update audit attribution or live tracing.
 Any administrative timezone-change audit coverage remains a separate runtime
 review item; no host configuration was modified during qualification.
+
+### 2026-10-30: tzsetup
+
+No local DTrace provider or direct audit-library integration is declared.
+Normal and bootstrap builds preserve their intended dependency split. Private-root
+checks cover dry-run, selection, reinstall and rejection; they do not establish
+administrative audit attribution for timezone changes. Interactive dialog and
+installed-system runtime remain unqualified. The bootstrap source fix only
+conditions UI-specific clock state/query; no instrumentation was removed.

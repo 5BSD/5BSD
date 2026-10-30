@@ -824,24 +824,24 @@ main(int argc, char **argv)
 {
 #ifdef HAVE_BSDDIALOG
 	char		prompt[128];
-	int		fd;
-#endif
-	int		c, rv, skiputc;
+	int		fd, skiputc;
 	char		vm_guest[16] = "";
 	size_t		len = sizeof(vm_guest);
+#endif
+	int		c, rv;
 	char		*dztpath;
 
 	dztpath = NULL;
-	skiputc = 0;
 
 #ifdef HAVE_BSDDIALOG
+	skiputc = 0;
 	setlocale(LC_ALL, "");
-#endif
 
 	/* Default skiputc to 1 for VM guests */
 	if (sysctlbyname("kern.vm_guest", vm_guest, &len, NULL, 0) == 0 &&
 	    strcmp(vm_guest, "none") != 0)
 		skiputc = 1;
+#endif
 
 	while ((c = getopt(argc, argv, "C:d:nrs")) != -1) {
 		switch (c) {
@@ -861,7 +861,9 @@ main(int argc, char **argv)
 #endif
 			break;
 		case 's':
+#ifdef HAVE_BSDDIALOG
 			skiputc = 1;
+#endif
 			break;
 		default:
 			usage();

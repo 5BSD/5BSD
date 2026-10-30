@@ -43837,3 +43837,34 @@ with 16 jobs and existing explicit input settings.
   Native Bazel test execution, installed timezone-data generation, cross-target
   execution and full-world/kernel/package/performance gates remain open. These
   tool checks do not qualify the entire timezone subsystem. Make stays default.
+
+### 2026-10-30: tzsetup normal and bootstrap variants
+
+- Added native normal tzsetup and bootstrap_tzsetup targets. Normal explicitly
+  declares HAVE_BSDDIALOG and the native dialog dependency; bootstrap omits both,
+  matching maintained Make. Bootstrap is a separate construction target, not an
+  alternate installed system utility selected silently.
+- Fresh bootstrap Make compilation exposed skiputc set-but-unused with -Werror.
+  Fixed the source by keeping UI-only clock state/VM query under the existing
+  HAVE_BSDDIALOG condition. Bootstrap still accepts -s; normal UI behavior is
+  unchanged. No warning suppression or alternate implementation was introduced.
+- Rebuilt both Make variants after the fix. Normal installation matches five
+  metadata records, three regular payloads and one debug link, including manual
+  bytes, symbols and ordered dependencies. Captured bootstrap global/weak
+  symbols and ordered NEEDED entries match fresh Make tzsetup.full; neither
+  bootstrap binary depends on the dialog library.
+- Offline runtime: normal zone-table parser output matches Make using maintained
+  source zone1970.tab/iso3166 copied into private roots. Both variants of both
+  builds pass dry-run (no localtime/database written), UTC selection, recorded
+  timezone reinstall and missing-zone rejection without overwriting the recorded
+  choice. Host UTC is read; all configuration writes stay in private roots.
+- These runs use host loader/libc/ncurses/kernel and explicitly copied native or
+  staged Make dialog libraries. They are not native Bazel test execution or
+  interactive menu qualification. Full bootstrap construction, cross execution,
+  installed-system behavior and world/kernel/package/performance remain open.
+- Evidence under /usr/obj/usr/src: bazel-tzsetup-reference-20261030 comparison and
+  runtime scripts/results; final bazel-tzsetup-20261030-r2 native capture;
+  bazel-tzsetup-make-20261030-r2 and bazel-tzsetup-bootstrap-make-20261030-r2.
+  Original failing Make bootstrap log is retained in the corresponding non-r2
+  directory. Frontend review: maintained build-bsd bazel-test explicit targets
+  and 16 jobs suffice; no C/backend/signing/publication contract changes needed.
