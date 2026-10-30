@@ -3,7 +3,7 @@
 # Check the 5BSD book (docs/book/src) against the source tree it describes.
 #
 # usage: check-book.sh [-m man-inventory] [-s sysctl-inventory] root
-#        check-book.sh -g man|sysctl root
+#        check-book.sh -g man|sysctl|headers root
 #
 # root mirrors the source layout: the top of a source tree, or a staged copy
 # holding docs/book/src, sys/kern/syscalls.master and the sys/sys headers the
@@ -35,8 +35,20 @@ export LC_ALL
 usage()
 {
 	echo "usage: check-book.sh [-m man-inventory] [-s sysctl-inventory] root" >&2
-	echo "       check-book.sh -g man|sysctl root" >&2
+	echo "       check-book.sh -g man|sysctl|headers root" >&2
 	exit 2
+}
+
+# Header inputs shared by the checker and installed-test staging. The appendix
+# supplies its documented headers; these additional headers own the constant
+# families checked across all chapters (including packet-filter PF_XTAG_*).
+gen_headers()
+{
+	{
+		grep -ohE 'sys/sys/[A-Za-z0-9_]+\.h' \
+		    "$1/docs/book/src/appendix/syscalls-and-sysctls.md"
+		printf '%s\n' sys/sys/file.h sys/sys/user.h sys/sys/socket.h sys/sys/mbuf.h
+	} | sort -u
 }
 
 # Every manual page the tree provides, as name.section: page sources
@@ -167,6 +179,7 @@ case "$genonly" in
 "") ;;
 man) gen_man "$root"; exit $? ;;
 sysctl) gen_sysctl "$root"; exit $? ;;
+headers) gen_headers "$root"; exit $? ;;
 *) usage ;;
 esac
 
@@ -208,11 +221,9 @@ awk '
 		want = 0
 	}' "$syscalls" >"$tmp/syscalls"
 
-# The #define table of every sys/ header the appendix names, plus the headers
-# behind the DTYPE_, KF_TYPE_ and AF_ families: "header name value".
-hdrs=$(grep -ohE 'sys/sys/[A-Za-z0-9_]+\.h' "$appendix" | sort -u)
-hdrs=$(printf '%s\n' $hdrs sys/sys/file.h sys/sys/user.h sys/sys/socket.h |
-    sort -u)
+# The #define table of the same headers included in installed test fixtures:
+# "header name value".
+hdrs=$(gen_headers "$root")
 : >"$tmp/defines"
 for h in $hdrs; do
 	if [ ! -f "$root/$h" ]; then
@@ -349,7 +360,7 @@ function check_families(text,    s, nm) {
 		s = substr(s, RSTART + RLENGTH)
 		if (nm ~ /_$/ || nm ~ /\*/) continue
 		if (!(nm in defval))
-			fail("`" nm "` is not defined in sys/sys/file.h, user.h or socket.h")
+			fail("`" nm "` is not defined in the checked headers")
 	}
 }
 

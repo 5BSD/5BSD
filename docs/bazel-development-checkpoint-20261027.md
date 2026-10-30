@@ -20382,3 +20382,38 @@ mapping, followed by runtime and disposable-disk installation/upgrade tests.
 Existing build-bsd format-5 inputs cover this target with no new C frontend or
 signing/publication contract; manual documentation was updated in this change.
 Make remains production/default and full-system gates remain open.
+
+### Installer test reference (2026-10-30)
+
+Fresh maintained Make build/install/installconfig with MK_TESTS=yes completed
+under /usr/obj/usr/src/bazel-bsdinstall-tests-make-20261030. Installed test
+fixtures contain 111 files, including 98 srctree files; generated manual and
+sysctl inventories contain 19127 and 7940 lines respectively. Evidence and
+SHA-256 inventory: /usr/obj/usr/src/bazel-installer-tests-reference-20261030/
+fixture-audit.json, book-check.stdout and book-check.stderr.
+
+Running the installed check-book.sh against its installed source fixtures and
+inventories exits 1: persistent-state-contract.md links to a missing architecture
+heading; network-provenance.md names PF_XTAG_LOOP and PF_XTAG_ICMP_ERROR which
+are absent from the checker-selected headers. Two dynamic sysctl patterns are
+reported unverified separately. These are observed Make-reference failures,
+not successful runtime qualification or a reason to weaken the checker.
+
+Bazel installer tests remain explicitly incompatible pending complete declared
+fixture and inventory inputs. No frontend input or packaging contract changed;
+build-bsd integration needs no change for this reference-only qualification.
+
+Installer reference follow-up: fixed the stale historical BIP link without
+restoring BIP scope. PF_XTAG_LOOP and PF_XTAG_ICMP_ERROR are real definitions in
+sys/sys/mbuf.h. check-book.sh now exposes `-g headers`; both the checker and
+Make test staging consume that shared inventory, including mbuf.h. The fresh
+r2 Make build/install/installconfig succeeded and installed 112 test files.
+The installed book checker reports zero failures and two explicitly unverified
+dynamic sysctl patterns. Private-copy negative cases reject a removed constant
+and a removed header. Evidence: bazel-installer-tests-reference-20261030/fixed/
+audit.json under /usr/obj/usr/src. An initial negative-test attempt encountered
+the copied installed header's 0444 mode; only the private copy was made writable
+for the completed checks. This qualifies the reference fixture correction, not
+the still-pending Bazel fixture graph or full installer runtime.
+Frontend review: build-bsd and backend packaging use the maintained test Makefile;
+no new frontend option or staging override is required by this correction.

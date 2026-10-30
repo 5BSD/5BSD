@@ -8,9 +8,9 @@
 ## Scope after the compatibility architecture decision
 
 User-approved direction, 2026-10-20: this contract applies to **explicitly
-protected mutable resources**, not all writable state. The accepted architecture
-in [system security](system-security.md#accepted-architecture-os-integrity-with-software-compatibility)
-takes precedence over earlier universal-integration language below.
+protected mutable resources**, not all writable state. This is a historical
+architecture decision. The current [system security roadmap](system-security.md)
+records BIP removal and takes precedence over the integration language below.
 
 Ordinary logs, caches, temporary files and application state retain conventional
 filesystem access unless a documented security dependency requires protection.
