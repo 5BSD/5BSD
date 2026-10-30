@@ -67,3 +67,7 @@ cc_library(name = "bluetooth_user_headers", hdrs = ['_align.h', '_clock_id.h', '
 
 cc_library(name = "uvmem_headers", hdrs = ["vmem.h", "hash.h"],
     strip_include_prefix = "/sys", visibility = ["//lib/libuvmem:__pkg__"])
+
+# Source-tree header closure used by the amd64 libvmmapi build.
+cc_library(name = "vmmapi_headers", hdrs = ['_align.h', '_bitset.h', '_clock_id.h', '_cpuset.h', '_decls.h', '_domainset.h', '_endian.h', '_iovec.h', '_maxphys.h', '_null.h', '_nv.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_stdarg.h', '_stdint.h', '_termios.h', '_timespec.h', '_timeval.h', '_types.h', '_visible.h', '_winsize.h', 'bitcount.h', 'bitset.h', 'caprights.h', 'capsicum.h', 'cdefs.h', 'conf.h', 'cpuset.h', 'domainset.h', 'errno.h', 'fcntl.h', 'file.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'limits.h', 'linker.h', 'mman.h', 'module.h', 'nv.h', 'nv_namespace.h', 'param.h', 'queue.h', 'sdt.h', 'select.h', 'signal.h', 'sockio.h', 'sysctl.h', 'syslimits.h', 'timespec.h', 'ttycom.h', 'ttydefaults.h', 'types.h', 'unistd.h'],
+    strip_include_prefix = "/sys", visibility = ["//lib/libvmmapi:__pkg__"])

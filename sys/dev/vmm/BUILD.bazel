@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Source-tree header closure used by the amd64 libvmmapi build.
+cc_library(name = "vmmapi_headers", hdrs = ['vmm_dev.h', 'vmm_dirty_log.h', 'vmm_dirty_log_request.h', 'vmm_mem.h', 'vmm_param.h', 'vmm_startup_event.h', 'vmm_startup_mode.h', 'vmm_startup_request.h', 'vmm_startup_run_request.h'],
+    strip_include_prefix = "/sys", visibility = ["//lib/libvmmapi:__pkg__"])

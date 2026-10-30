@@ -7412,3 +7412,10 @@ Native candidate compiles the existing userland branch of sys/kern/subr_vmem.c,
 without changing production behavior or enabling its kernel-only code. Make
 declares no library DTrace provider. Allocator correctness, contention and memory
 consumption remain runtime/performance qualification work.
+
+### libvmmapi (2026-10-30)
+
+Native amd64 candidate preserves common/machine-dependent sources and snapshot
+definition. Make declares no library DTrace provider; kernel probes are outside
+this library build. VM ioctls, snapshots, dirty-log behavior, audit interactions
+and performance require matching-kernel qualification. No VM is started here.

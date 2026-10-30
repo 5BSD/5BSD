@@ -3,3 +3,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(name = "kernel_headers", hdrs = glob(["*.h"]), includes = [".."], visibility = ["//visibility:public"])
+
+# Source-tree header closure used by the amd64 libvmmapi build.
+cc_library(name = "vmmapi_headers", hdrs = ['vm.h'],
+    strip_include_prefix = "/sys", visibility = ["//lib/libvmmapi:__pkg__"])

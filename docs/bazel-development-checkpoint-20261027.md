@@ -17153,3 +17153,23 @@ manual bytes and one debug-link CRC. Evidence: install-audit.json and
 payload-audit.json under bazel-libuvmem-reference-20261030, plus saved artifacts
 and native receipt. No allocation/runtime or performance claim is made.
 Full world/kernel/bootstrap/pkgbase qualification remains open.
+
+### Native amd64 libvmmapi candidate (2026-10-30)
+
+Added six maintained common/amd64 sources, WITH_VMMAPI_SNAPSHOT, native libutil
+linkage and ABI 7 installation. Explicit source-header inventories were reviewed
+from the fresh Make dependency files, preserving source-tree VMM ioctl ABI inputs
+rather than replacing them with running-host headers. Other target architectures
+are explicitly incompatible until migrated. No new generated header is needed.
+Fresh Make completes; bazel-libvmmapi-20261030 is pending. Existing build-bsd
+explicit inputs cover this component without frontend contract changes.
+No VM creation, ioctl runtime, dirty-log correctness or performance is established.
+
+Libvmmapi amd64 artifact result: bazel-libvmmapi-20261030 passes. Fresh Make
+comparison matches all seven installation destinations with no missing/extra
+paths or metadata differences. Four regular payloads match archive member order,
+global/weak symbols, ordered dynamic dependencies, public header bytes and one
+debug-link CRC. Evidence: install-audit.json and payload-audit.json under
+bazel-libvmmapi-reference-20261030. Snapshot support is compiled as in amd64 Make;
+snapshot execution and other VM operations remain unqualified. No production
+library source changed. Other architectures and full-system gates remain open.
