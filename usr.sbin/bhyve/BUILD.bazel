@@ -3,3 +3,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "ipc_headers", hdrs = ["ipc.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bhyvectl:__pkg__"])
 cc_library(name = "snapshot_headers", hdrs = ["snapshot.h", "snapshot_identity.h", "checkpoint_topology.h", "checkpoint_cpu.h"],
     strip_include_prefix = ".", deps = ["//contrib/libucl:headers", "//contrib/libxo:headers"], visibility = ["//usr.sbin/bhyvectl:__pkg__"])
+
+exports_files(["config.c"], visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])
+cc_library(name = "config_headers", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])

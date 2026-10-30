@@ -7432,3 +7432,10 @@ No live VM control is issued during artifact checks.
 Native amd64 build preserves source and userboot callback interface. Its Makefile
 declares no DTrace provider; live userboot loading, VM ioctl behavior and kernel
 observability remain unqualified. No guest was created or loaded.
+
+### bhyve support outputs (2026-10-30)
+
+Slirp helper native candidate preserves maintained sources; no DTrace generation
+is declared by its Makefile. GDB descriptions and keyboard layouts are data.
+The engine's vsock_provider.d remains required in subsequent native engine work.
+No helper network sandbox, guest or tracing runtime was exercised here.
