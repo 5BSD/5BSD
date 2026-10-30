@@ -8231,3 +8231,14 @@ pass. Evidence and comparison scripts are in
 scripts; strict dof-audit.py retains its failure. Host shell runtime passes use
 maintained fake service responses and do not establish live probe firing,
 logging-service authorization or kernel audit attribution.
+
+### 2026-10-30: sysconf
+
+No local DTrace provider or direct libbsm integration is declared by sysconf.
+Native integration preserves libbsdconf/libjail dependencies and all ten sources.
+Configuration modification attribution, jail behavior and live audit coverage
+remain review items. Runtime attempts have identical seven-case Capsicum
+assertion failures per Make/native build on this older host; four cases per
+build pass. Do not interpret installation parity or matching failures as complete
+runtime/observability qualification. See bazel-sysconf-reference-20261030 under
+/usr/obj/usr/src for the retained evidence.

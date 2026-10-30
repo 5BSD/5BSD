@@ -43781,3 +43781,35 @@ with 16 jobs and existing explicit input settings.
   No frontend C, backend, signing or publication contract change is required.
   Tests-disabled installation, full-world/kernel/package/runtime/performance
   qualification remain open. Make remains production default.
+
+### 2026-10-30: sysconf native installation and runtime limitations
+
+- Added all ten sysconf sources with explicit private headers and native
+  libbsdconf/libjail dependencies, eight manuals, and the maintained shell test
+  plus Kyuafile under the tests build setting. No copied parser implementation.
+- Fresh Make installation matches 14 changed metadata records and 12 regular
+  payloads, including exact eight compressed manuals/script/Kyuafile bytes,
+  global/weak symbols, ordered dynamic dependencies and one debug-link CRC.
+  An initially redundant test-directory record was removed: the directory is
+  already supplied by maintained BSD.tests.dist. The final archive uses that
+  policy rather than duplicating it.
+- All 11 maintained shell cases were attempted for each build. Four passed and
+  seven failed identically for each (22 executions: eight passes, 14 failures).
+  Every failure reports cap_rights_is_valid(src) in cap_rights_intersect at
+  subr_capability.c:341, consistent with the previously identified host/source
+  Capsicum ABI mismatch. These failures remain qualification blockers; matching
+  outcomes do not establish runtime correctness.
+- Runtime harness used host ATF/tools/kernel, an explicitly captured native
+  loader for both implementations, and separately copied/hashed native or
+  staged Make libbsdconf/libjail/libc/libsys. No host installation occurred.
+  Configuration writes were to private test roots/files; the sysctl case reads
+  running-kernel type metadata and edits a private file. This is not native
+  Bazel test execution. Original host-libc missing-symbol failure and an
+  incorrect loader-option harness attempt are retained alongside final results.
+- Evidence under /usr/obj/usr/src: bazel-sysconf-reference-20261030 (comparison
+  scripts/results, runtime-r4-audit.py/json and per-case logs), final native
+  capture bazel-sysconf-20261030-r2, fresh bazel-sysconf-make-20261030 stage.
+- Frontend review: existing build-bsd bazel-test targets/tests setting and 16
+  jobs suffice; no frontend C/backend/signing/publication contract change.
+  Tests-disabled installation, matching-kernel runtime, native Bazel tests and
+  overall world/kernel/package/performance gates remain open. Make stays default.
