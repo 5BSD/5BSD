@@ -17573,3 +17573,29 @@ Libpmc/libpmcstat compilation, unsupported-architecture empty-table selection,
 input-change/cache tests, kernel PMC operation and complete bootstrap/system
 qualification remain open. Generated arm64/powerpc data does not establish
 cross-compiled executables or hardware-counter operation on those architectures.
+
+### PMC architecture scope correction (2026-10-30)
+
+Per user direction, PowerPC is excluded from the native PMC migration. Removed
+the events_powerpc target and constrained the generation rule to x86/arm64.
+Earlier PowerPC output comparisons are historical evidence, not a supported
+architecture commitment. No PowerPC PMC target is to be added to libpmc/world
+composition. Existing build-bsd explicit target validation applies; no frontend
+flag or backend contract changes are needed for this target removal.
+
+RISC-V 64 is explicitly in the supported system migration scope per user
+clarification. The x86/arm64 restriction above describes populated PMC event
+datasets, not the full system architecture list. The current source has no
+RISC-V event dataset; maintained Make selects EVENT_ARCH=none and emits empty
+event maps. Native RISC-V PMC composition must reproduce and qualify that
+behavior explicitly until real event definitions exist. This remains outstanding;
+do not substitute another architecture's table or infer that cross-building
+and hardware counter operation are qualified. PowerPC is outside the migration
+plan. LLVM's independent target-code-generation settings still include PowerPC
+and require a separate scope review; they are not an OS boot target declaration.
+
+After removing PowerPC, bazel-jevents-supported-20261030 passes and the x86/arm64
+outputs remain byte-identical to the Make references. Evidence:
+bazel-jevents-reference-20261030/supported-generation-comparison.json.
+A fresh libpmc Make build/install also completed in bazel-libpmc-make-20261030
+using the maintained host-build jevents; native library composition is next.

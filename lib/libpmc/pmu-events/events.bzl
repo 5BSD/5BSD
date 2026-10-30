@@ -29,7 +29,7 @@ def _events(ctx):
 bsd_pmu_events = rule(
     implementation = _events,
     attrs = {
-        "architecture": attr.string(mandatory = True),
+        "architecture": attr.string(values = ["x86", "arm64"], mandatory = True),
         "mapfile": attr.label(allow_single_file = True, mandatory = True),
         "event_files": attr.label_list(allow_files = True, mandatory = True),
         "jevents": attr.label(executable = True, cfg = "exec", mandatory = True),

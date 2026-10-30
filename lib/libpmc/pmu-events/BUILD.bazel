@@ -12,4 +12,4 @@ cc_library(name = "headers", hdrs = ["pmu-events.h"], strip_include_prefix = "."
     runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
     jevents = ":jevents", output = arch + "/libpmc_events.c",
     visibility = ["//visibility:public"])
- for arch in ["x86", "arm64", "powerpc"]]
+ for arch in ["x86", "arm64"]]
