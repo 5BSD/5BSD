@@ -18950,3 +18950,29 @@ Frontend review: existing build-bsd explicit target/configuration and SDK inputs
 cover these additions; no frontend/backend/signing/publication contract changed.
 These results cover selected amd64 components only. Full world/kernel/bootstrap,
 pkgbase and performance gates remain open; Make remains production/default.
+
+
+### ckdist, dumpcis and flowctl (2026-10-30)
+
+Added native rules preserving explicit maintained sources and dependencies.
+ckdist consumes the shared cksum/crc.c and a narrow extern.h header target;
+its section-1 manual remains separate from its /usr/sbin installation. dumpcis
+lists its three sources and local headers. flowctl uses native libnetgraph and
+independent inet_support/inet6_support selectors, matching Make's definitions.
+The first native analysis caught an incorrect libmd target; the corrected rule
+uses the existing md_link CcInfo target and md_shared.
+
+Native run: /usr/obj/usr/src/bazel-inspection-tools-20261030-r2. Fresh Make roots:
+/usr/obj/usr/src/bazel-{ckdist,dumpcis,flowctl}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-inspection-tools-reference-20261030 (per-program directories).
+Each passes five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+compressed manual bytes and debuglink CRC. Default IPv4+IPv6 configuration was
+built; other flowctl protocol selections still require qualification.
+
+No utility was executed. Checksum/missing-file/error cases, malformed CIS inputs
+and netgraph authorization/flow decoding remain runtime work. Frontend review:
+existing explicit targets, SDK and typed IP options cover these additions; no
+frontend/backend/signing/publication contract changed. Selected amd64 artifact
+results do not establish whole-world/kernel/bootstrap/pkgbase or performance
+qualification. Make remains production/default.

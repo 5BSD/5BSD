@@ -7950,3 +7950,13 @@ comparisons pass; runtime checks remain for MAC label selection/access failures,
 GPIO pin read/write/configuration and device failures, and CD commands/ioctls.
 Review relevant kernel audit/event coverage separately; absence of direct userland
 references does not prove absence of kernel auditing. No hardware was accessed.
+
+
+### ckdist, dumpcis and flowctl (2026-10-30)
+
+Native rules retain maintained sources. No direct DTRACE/SDT_PROBE/audit_ calls
+were found in these utilities or shared crc.c. Artifact comparisons passed,
+but checksum failure diagnostics, malformed CIS parsing and netgraph access
+failures/flow decoding need runtime qualification. Review existing kernel audit
+coverage before deciding whether additional userland instrumentation is needed.
+No device or netgraph operations were executed.
