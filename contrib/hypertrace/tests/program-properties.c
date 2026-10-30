@@ -1091,6 +1091,127 @@ case_dof(void)
 	}
 
 	/*
+	 * dtrace_program_append(): a HyperTrace host (dtrace -E) appends
+	 * every command-line program to the first and sends that one.  The
+	 * statements keep their order, the translator references are the
+	 * union (one bitmap ORed, one table grown for a newer translator), and
+	 * the combined program's DOF is checked like the others ("appended").
+	 */
+	{
+		dtrace_hdl_t *ah = open_nodev();
+		dtrace_prog_t *ap[4], *bad;
+		static const char *const asrc[4] = {
+			"struct ya { int a; int b; }; provider fa { probe "
+			    "bar(struct ya *x); }; fa:::bar { trace(args[0]->a); }",
+			"fa:::bar { trace(args[0]->b); }",
+			"struct yc { int c; }; provider fc { probe baz(struct yc "
+			    "*y); }; fc:::baz { trace(args[0]->c); }",
+			"BEGIN { trace(1); }",
+		};
+		static const char *const order[4] = { "bar", "bar", "baz",
+		    "BEGIN" };
+		dt_elf_ident_owner_t owner = { 0 };
+		dt_stmt_t *stp;
+		uint_t xa = 0, xc;
+		int ok, n;
+
+		(void) dtrace_setopt(ah, "late", "dynamic");
+		for (n = 0; n < 4; n++) {
+			ap[n] = compile(ah, asrc[n], 0);
+			CHECK("append-compile", ap[n] != NULL);
+		}
+		if (ap[0] != NULL && ap[1] != NULL && ap[2] != NULL &&
+		    ap[3] != NULL) {
+			while (xa < ap[0]->dp_xrefslen &&
+			    ap[0]->dp_xrefs[xa] == NULL)
+				xa++;
+			xc = ap[2]->dp_xrefslen - 1;
+			CHECK("append-fixture", xa < ap[0]->dp_xrefslen &&
+			    ap[1]->dp_xrefslen > xa && ap[1]->dp_xrefs[xa] !=
+			    NULL && ap[2]->dp_xrefslen > ap[0]->dp_xrefslen &&
+			    ap[2]->dp_xrefs[xc] != NULL &&
+			    ap[3]->dp_xrefslen == 0);
+			/* Same translator: member b joins member a. */
+			ok = dtrace_program_append(ah, ap[0], ap[1]) == 0;
+			CHECK("append-same-translator", ok &&
+			    BT_TEST(ap[0]->dp_xrefs[xa], 0) &&
+			    BT_TEST(ap[0]->dp_xrefs[xa], 1) &&
+			    ap[1]->dp_xrefs == NULL && ap[1]->dp_xrefslen == 0 &&
+			    dt_list_next(&ap[1]->dp_stmts) == NULL);
+			/* A newer translator grows the table. */
+			n = ap[2]->dp_xrefslen;
+			ok = dtrace_program_append(ah, ap[0], ap[2]) == 0;
+			CHECK("append-newer-translator", ok &&
+			    ap[0]->dp_xrefslen == (uint_t)n &&
+			    ap[2]->dp_xrefs == NULL &&
+			    ap[0]->dp_xrefs[xa] != NULL &&
+			    ap[0]->dp_xrefs[xc] != NULL &&
+			    BT_TEST(ap[0]->dp_xrefs[xc], 0));
+			CHECK("append-no-translator",
+			    dtrace_program_append(ah, ap[0], ap[3]) == 0 &&
+			    ap[0]->dp_dofversion == DOF_VERSION_1);
+			n = 0;
+			ok = 1;
+			for (stp = dt_list_next(&ap[0]->dp_stmts); stp != NULL;
+			    stp = dt_list_next(stp), n++)
+				ok = ok && n < 4 && strcmp(stp->ds_desc->
+				    dtsd_ecbdesc->dted_probe.dtpd_name,
+				    order[n]) == 0;
+			CHECK("append-order", ok && n == 4);
+			json_program(dofjson, "appended", ap[0]);
+			emit_dof(ah, ap[0], 0, "appended");
+			emit_dof(ah, ap[0], DTRACE_D_STRIP, "appended-strip");
+
+			/* Refusals leave both programs unchanged. */
+			bad = dt_program_create(ah);
+			CHECK("append-null", dtrace_program_append(ah, NULL,
+			    bad) == -1 && dtrace_program_append(ah, bad,
+			    NULL) == -1 && dtrace_errno(ah) == EINVAL);
+			CHECK("append-self", dtrace_program_append(ah, bad,
+			    bad) == -1 && dtrace_errno(ah) == EINVAL);
+			for (int side = 0; side < 2; side++) {
+				dtrace_prog_t *d = side ? ap[3] : bad;
+				dtrace_prog_t *t = side ? bad : ap[3];
+
+				d->dp_vmid = 3;
+				CHECK("append-received", dtrace_program_append(
+				    ah, side ? t : d, side ? d : t) == -1);
+				d->dp_vmid = 0;
+				d->dp_eprobes = (dtrace_probedesc_t *)&owner;
+				CHECK("append-guest-probes",
+				    dtrace_program_append(ah, side ? t : d,
+				    side ? d : t) == -1);
+				d->dp_eprobes = NULL;
+				dt_list_append(&d->dp_elfidents, &owner);
+				CHECK("append-elf-identifiers",
+				    dtrace_program_append(ah, side ? t : d,
+				    side ? d : t) == -1);
+				dt_list_delete(&d->dp_elfidents, &owner);
+				d->dp_haserror = 1;
+				CHECK("append-program-error",
+				    dtrace_program_append(ah, side ? t : d,
+				    side ? d : t) == -1 &&
+				    dtrace_errno(ah) == EINVAL);
+				d->dp_haserror = 0;
+			}
+			/* The higher DOF version wins. */
+			ap[3]->dp_dofversion = DOF_VERSION_2;
+			CHECK("append-dof-version", dtrace_program_append(ah,
+			    bad, ap[3]) == 0 && bad->dp_dofversion ==
+			    DOF_VERSION_2);
+			/* A program without translator references takes the
+			 * other's table; a lower DOF version keeps the higher. */
+			ap[1] = compile(ah, asrc[1], 0);
+			CHECK("append-takes-table", ap[1] != NULL &&
+			    dtrace_program_append(ah, bad, ap[1]) == 0 &&
+			    bad->dp_xrefslen > xa && bad->dp_xrefs[xa] != NULL &&
+			    BT_TEST(bad->dp_xrefs[xa], 1) &&
+			    bad->dp_dofversion == DOF_VERSION_2);
+		}
+		dtrace_close(ah);
+	}
+
+	/*
 	 * Kernel and user relocations (dtrace -G / linkmode output): each
 	 * table is emitted as a RELTAB with a KRELHDR or URELHDR naming the
 	 * DIFO's string table and its integer table as the target.
@@ -3208,6 +3329,46 @@ sc_verify_relocated(int n, char *why, size_t len)
 	return (0);
 }
 
+/* dtrace_program_append(): growing the translator table is its only
+ * allocation; a failure leaves both programs as they were. */
+static int
+sc_append(int n, char *why, size_t len)
+{
+	dtrace_hdl_t *dtp = open_nodev();
+	dtrace_prog_t *a, *b;
+	uint_t alen, blen;
+	int rc;
+
+	(void) dtrace_setopt(dtp, "late", "dynamic");
+	a = compile(dtp, "struct ya { int a; }; provider fa { probe "
+	    "bar(struct ya *x); }; fa:::bar { trace(args[0]->a); }", 0);
+	b = compile(dtp, "struct yb { int b; }; provider fb { probe "
+	    "bar(struct yb *x); }; fb:::bar { trace(args[0]->b); }", 0);
+	if (a == NULL || b == NULL) {
+		snprintf(why, len, "compile");
+		return (-1);
+	}
+	alen = a->dp_xrefslen;
+	blen = b->dp_xrefslen;
+	arm(n);
+	rc = dtrace_program_append(dtp, a, b);
+	disarm();
+	if (rc != 0 && (dtrace_errno(dtp) != EDT_NOMEM ||
+	    a->dp_xrefslen != alen || b->dp_xrefslen != blen ||
+	    dt_list_next(&b->dp_stmts) == NULL ||
+	    dt_list_next(dt_list_next(&a->dp_stmts)) != NULL)) {
+		snprintf(why, len, "failed append changed a program");
+		return (-1);
+	}
+	if (rc == 0 && (a->dp_xrefslen != blen ||
+	    dt_list_next(&b->dp_stmts) != NULL)) {
+		snprintf(why, len, "append incomplete");
+		return (-1);
+	}
+	dtrace_close(dtp);
+	return (0);
+}
+
 static void
 sweep(const char *name, scenario_f fn, int max)
 {
@@ -3285,6 +3446,7 @@ case_faults(void)
 	sweep("fault-verify-growth-action", sc_verify_growth_action, 400);
 	sweep("fault-verify-formats", sc_verify_formats, 400);
 	sweep("fault-verify-relocated", sc_verify_relocated, 400);
+	sweep("fault-append", sc_append, 50);
 }
 #endif
 

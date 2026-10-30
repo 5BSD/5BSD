@@ -164,6 +164,81 @@ dt_program_destroy(dtrace_hdl_t *dtp, dtrace_prog_t *pgp)
 	dt_free(dtp, pgp);
 }
 
+/*
+ * Move every statement of the compiled program src to the end of dst, so a
+ * consumer that delivers one program (a HyperTrace host, which forwards one
+ * ELF and binds one compiled-program digest per consumer session) can send
+ * every program of its command line.  The result is the program that
+ * enabling dst and then src would have produced: statements keep their
+ * order, the translator references are the union of both (the DOF imports
+ * each referenced translator once), and the DOF version is the higher one.
+ *
+ * Only compiled programs qualify: not one received from a guest, parsed from
+ * an ELF (which owns its identifiers) or with a recorded error.  The
+ * translator table is the only allocation; when it fails, both programs are
+ * unchanged.  On success src is left empty and still owned by the handle.
+ */
+int
+dtrace_program_append(dtrace_hdl_t *dtp, dtrace_prog_t *dst,
+    dtrace_prog_t *src)
+{
+	dt_stmt_t *stp;
+	ulong_t **xrefs;
+	dt_xlator_t *dxp;
+	uint_t i, len;
+	size_t w;
+
+	if (dst == NULL || src == NULL || dst == src)
+		return (dt_set_errno(dtp, EINVAL));
+	if (dst->dp_vmid != 0 || src->dp_vmid != 0 ||
+	    dst->dp_eprobes != NULL || src->dp_eprobes != NULL ||
+	    dt_list_next(&dst->dp_elfidents) != NULL ||
+	    dt_list_next(&src->dp_elfidents) != NULL ||
+	    dst->dp_haserror || src->dp_haserror)
+		return (dt_set_errno(dtp, EINVAL));
+
+	len = MAX(dst->dp_xrefslen, src->dp_xrefslen);
+	xrefs = dst->dp_xrefs;
+	if (len > dst->dp_xrefslen) {
+		xrefs = dt_zalloc(dtp, sizeof (ulong_t *) * len);
+		if (xrefs == NULL)
+			return (-1);
+		if (dst->dp_xrefslen != 0)
+			memcpy(xrefs, dst->dp_xrefs,
+			    sizeof (ulong_t *) * dst->dp_xrefslen);
+		dt_free(dtp, dst->dp_xrefs);
+		dst->dp_xrefs = xrefs;
+		dst->dp_xrefslen = len;
+	}
+	for (i = 0; i < src->dp_xrefslen; i++) {
+		if (src->dp_xrefs[i] == NULL)
+			continue;
+		if (xrefs[i] == NULL) {
+			xrefs[i] = src->dp_xrefs[i];
+		} else {
+			/*
+			 * Translator ids are global to the handle: both bitmaps
+			 * were sized for this translator (dt_as_xlate()).
+			 */
+			dxp = dt_xlator_lookup_id(dtp, i);
+			for (w = 0; w < BT_BITOUL(dxp->dx_nmembers); w++)
+				xrefs[i][w] |= src->dp_xrefs[i][w];
+			dt_free(dtp, src->dp_xrefs[i]);
+		}
+		src->dp_xrefs[i] = NULL;
+	}
+	dt_free(dtp, src->dp_xrefs);
+	src->dp_xrefs = NULL;
+	src->dp_xrefslen = 0;
+
+	while ((stp = dt_list_next(&src->dp_stmts)) != NULL) {
+		dt_list_delete(&src->dp_stmts, stp);
+		dt_list_append(&dst->dp_stmts, stp);
+	}
+	dst->dp_dofversion = MAX(dst->dp_dofversion, src->dp_dofversion);
+	return (0);
+}
+
 /*ARGSUSED*/
 void
 dtrace_program_info(dtrace_hdl_t *dtp, dtrace_prog_t *pgp,

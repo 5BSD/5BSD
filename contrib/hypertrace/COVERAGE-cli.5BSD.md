@@ -394,3 +394,68 @@ builds. All 12 `-c`/`-p` cases passed with unchanged expectations:
 `proc-create-fails`, `proc-grab-invalid-pid`, `proc-grab-fails`,
 `proc-argv-allocation-fails` and `grab-anonymous`. No exit-notification,
 release or stop behavior changed.
+
+## Follow-up (2026-10-30): every program with `-E`
+
+**Defect.** In host HyperTrace mode `exec_prog()` served the first program
+and then called `exit(0)`, so a second `-s`/`-n`/`-P` program was compiled
+but never sent; with `-x hypertrace_session_file` more than one program was
+refused ("HyperTrace consumer session requires one DTrace program").
+
+**Design.** A host consumer forwards one ELF, registers one compiled-program
+digest (HPI2) for its session, and each traced machine links, enables and
+returns that one program (`dtrace -Y` already takes any number of
+statements). So the programs are combined, not multiplexed: new libdtrace
+`dtrace_program_append(dtp, dst, src)` moves `src`'s statements to the end
+of `dst`, ORs/merges the translator reference bitmaps (the table grows for a
+newer translator; its growth is the only allocation, and a failure changes
+neither program), and keeps the higher DOF version. It refuses received,
+ELF-parsed and failed programs (EINVAL). `main()` calls
+`hypertrace_combine()` for host `-E` (with or without `-e`) and serves the
+result once. Consequences:
+
+- one base ELF, one registration/digest, one consumer session, one drain
+  and one stop for all programs; ids, epochs and the drain digest are the
+  combined program's; the session file accepts any number of programs;
+- statements keep command-line order (a later program's clause on a probe is
+  that probe's later ECB) and globals are shared, as in a local run;
+- a compile error in any program ends the command before anything is sent;
+  a program a guest cannot link fails that guest's whole delivery (the guest
+  reports it and publishes nothing); other guests are unaffected;
+- `-x otel` host mode is unchanged: every program's records export and guest
+  records keep their per-guest resource;
+- `-E -e` writes the combined ELF (one path), the one `-E` would send.
+
+**Tests (17 CLI cases: 16 new, 1 replacing an old one).** `host-two-programs`,
+`host-three-programs` (-s/-n/-P, ECB order), `host-verbose-two-programs`,
+`host-second-program-compile-error`, `host-combine-fails`,
+`host-combine-fails-first-of-three`, `host-drain-two-programs`,
+`host-drain-two-programs-digest-mismatch`, `host-session-file-two-programs`
+(replaces `host-session-requires-one-program`),
+`host-session-file-three-programs-reconnect`, `host-stop-before-two-programs`,
+`host-loop-two-programs` (identified flow, real guest `-Y` enables both),
+`host-roundtrip-two-programs` (guest links both; one program's global read
+by the other), `host-roundtrip-second-program-link-fails`,
+`host-otel-guest-two-programs`, `elf-create-two-programs`,
+`elf-create-no-program`. Each checks one base ELF and one registration. With
+the old dtrace.c 12 of the 16 behavioural cases fail (status 134 "no ECB",
+the session refusal, two ELF paths). Library: `program-properties.c`
+`append-*` cases (order, bitmap union, table growth, every refusal, DOF
+version, DOF of the combined program checked by the independent decoder) and
+the `fault-append` allocation sweep; `dtrace_program_append` 50/50 lines,
+42/42 branches.
+
+**Result.** `mp-cli-run3`: 546/546 cases, gate passed; dtrace.c 3330/3503
+lines, 1650/1879 branches, 85/85 functions. The changed lines are 24/24 and
+18/18 branch halves; the rest of the file is 3306/3479 and 1632/1861 (old
+floors 3304/1627). Floors re-baselined with a review comment in
+`coverage-cli.py`. `coverage-cli.py` now derives the object-tree prefix from
+the source root, so a worktree other than `/usr/obj/5BSD-hypertrace` can be
+measured. Evidence `/usr/obj/5BSD-otel-validation/mp-*`.
+
+**Not run.** A live bhyve host/guest session (needs vmm, not loadable on this
+host; the QEMU TCG harness cannot run bhyve HyperTrace). Guest-side coverage
+is the offline loop with the real binary as `-Y` guest.
+
+**AGENTS.md.** No build inputs, staging, signing, verification or
+publication requirement changed; `build-bsd.c` needs nothing.

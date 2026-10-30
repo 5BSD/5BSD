@@ -4293,7 +4293,12 @@ host/guest runtime evidence.
    session through `-x hypertrace_session_file=/absolute/path`. The client
    checks ownership, mode, link count, length, magic, nonzero identity, and
    SHA-256, rejects symlinks, and holds an exclusive lock until exit. Invalid
-   or busy files fail closed without generating a new session. The
+   or busy files fail closed without generating a new session. Since
+   2026-10-30 the host `dtrace -E` serves every command-line program: it
+   appends them, in order, into the one compiled program it registers
+   (one HPI2 digest, one base ELF, one session, drain and stop), so the
+   session file no longer refuses several programs; guests link the one ELF
+   as before (`/usr/obj/5BSD-otel-validation/mp-*`). The
    source-extracted sanitized session-file fixture and all 77 native port
    suites pass under
    `/usr/obj/5BSD-hypertrace-validation/consumer-session-native-port/`.

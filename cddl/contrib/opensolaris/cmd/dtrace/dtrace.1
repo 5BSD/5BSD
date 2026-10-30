@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd October 29, 2026
+.Dd October 30, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -29,7 +29,7 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl 32 | Fl 64
-.Op Fl aACdeFGhHlOqSvVwZ
+.Op Fl aACdeEFGhHlOqSvVwZ
 .Op Fl -libxo
 .Op Fl b Ar bufsz
 .Op Fl c Ar cmd
@@ -229,6 +229,43 @@ option to print anonymous tracing data and exit.
 You can also combine this option with D compiler options.
 This combination verifies that the programs compile without actually executing
 them and enabling the corresponding instrumentation.
+.It Fl E
+Act as the host consumer of a HyperTrace session.
+The programs are compiled but not enabled here: they are sent through
+.Xr dtraced 8
+to the traced machines, which link and enable them and return what they
+enabled, and their records are consumed here.
+Every program given with
+.Fl s , P , m , f , n
+or
+.Fl i
+is appended, in command-line order, to the first one, and that one
+program is sent: each traced machine links, enables and returns all of them
+together, under one consumer session with one drain and one stop, as
+.Nm
+without
+.Fl E
+enables every program before it starts tracing.
+Clauses for the same probe run in command-line order, and a global variable
+set by one program is the one another program reads.
+A program that fails to compile ends the command before anything is sent.
+A program that a traced machine cannot link fails the whole delivery to
+that machine, which reports the error and enables nothing; records from
+other machines are not affected.
+With
+.Fl e ,
+the combined program is written to an ELF file, its path is printed and
+nothing is sent.
+The
+.Sy hypertrace_session_file Ns = Ns Ar path
+option
+.Pq Fl x
+names a provisioned consumer session file, by absolute path, that a
+supervisor uses to keep the consumer's session across a restart; it
+requires
+.Fl E ,
+and since the programs are sent as one, any number of programs may be given
+with it.
 .It Fl f Oo Oo Ar provider : Oc Ar module : Oc Ar function Oo Oo Ar predicate \
     Oc Ar action Oc
 Specify function name to trace or list
