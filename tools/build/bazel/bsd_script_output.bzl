@@ -102,7 +102,7 @@ def _generate(ctx):
     if library_dirs:
         runtime_environment = 'LD_LIBRARY_PATH=' + ":".join(['"$(pwd -P)/"' + _quote(directory) for directory in library_dirs]) + '\nexport LD_LIBRARY_PATH\n'
     ctx.actions.write(launcher, runtime_environment + 'PATH="$(pwd -P)/$PATH"\nexport PATH\nexec ' +
-        _quote(ctx.executable.shell.path) + " " + _quote(ctx.file.script.path) + ' "$@"\n')
+        " ".join([_quote(ctx.executable.shell.path)] + [_quote(flag) for flag in ctx.attr.shell_flags] + [_quote(ctx.file.script.path)]) + ' "$@"\n')
     args[args.index(ctx.file.script.path)] = launcher.path
     generated_inputs.append(launcher)
     ctx.actions.run(executable = ctx.attr.redirect[DefaultInfo].files_to_run,
@@ -125,6 +125,7 @@ bsd_script_output = rule(implementation = _generate, attrs = {
     "cpp_deps": attr.label_list(providers = [CcInfo], doc = "Target compilation contexts supplying declared preprocessing headers, includes and defines."),
     "compiler_inputs": attr.label(doc = "Declared selected compiler, headers, resource files and runtime closure."),
     "arguments": attr.string_list(),
+    "shell_flags": attr.string_list(doc = "Flags for the maintained generator shell, before its script path."),
     "path_tools": attr.label_keyed_string_dict(cfg = "exec", allow_files = True, mandatory = True),
     "runtime_libraries": attr.label_list(allow_files = True, cfg = "exec"),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),

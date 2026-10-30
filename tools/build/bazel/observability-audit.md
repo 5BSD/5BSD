@@ -8424,3 +8424,11 @@ Makefiles. Native targets retain vendor source and utility protocol headers.
 KVP persistent-pool/network-script failures and VSS filesystem freeze/thaw/error
 recovery need runtime observability and audit review in a suitable Hyper-V guest.
 No daemon/device operation was performed during the artifact checks.
+
+### 2026-10-30: crunchgen and crunchide
+
+No local DTrace providers/direct libbsm integration are declared. Native tools
+retain both ELF classes and the maintained skeleton generator. Private symbol
+transformation/generated-output checks pass; a complete rescue build must still
+verify preservation of its constituent programs' probes and audit paths. These
+tool checks do not establish instrumentation retention in a linked rescue image.

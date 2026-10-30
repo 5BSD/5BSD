@@ -20278,3 +20278,38 @@ mount or storage state was modified. Existing build-bsd explicit target inputs
 cover this addition; no frontend C, manual option, staging/signing/security policy
 or publication contract changed. Make remains production/default and full system
 runtime/performance/package gates remain open.
+
+### Native crunch tools and maintained skeleton generation (2026-10-30)
+
+Added crunchgen/crunchide and their parent installation set. The maintained
+mkskel.sh/crunched_main.c generation uses declared shell/cat/sed and a tool-only
+PATH. The generic bsd_script_output rule now accepts optional shell_flags,
+quoted individually in the launcher; crunchgen requests -e to preserve Make's
+sh -e semantics. Existing consumers keep the empty default. crunchide retains
+NLIST_ELF32/NLIST_ELF64 and declares exec_elf32.c both as its own compilation unit
+and as the textual input included by exec_elf64.c.
+
+Evidence: /usr/obj/usr/src/bazel-crunch-reference-20261030; fresh Make subtree
+bazel-crunch-make-20261030; final native capture bazel-crunch-20261030-r3.
+Initial sandbox failure exposed the missing textual source input, then strict
+installation comparison caught inherited Makefile.inc package/path settings.
+Final targets install in /usr/bin with toolchain ownership and section-1 manuals.
+All eight install records match; six regular payload symbol/dependency/manual
+checks and two debuglink CRCs pass. skeleton-audit.json records exact generated
+crunched_skel.c byte parity with Make.
+
+runtime-r2/audit.json records six passing tool checks across native and Make:
+ELF32/ELF64 symbol hiding preserves an explicit kept entry and undefined external
+symbol; transformed files are byte-identical. crunchgen generates byte-identical
+C, Makefile and cache outputs for a configured program/alias. Runtime uses copied/
+hashed native loader and native or staged Make libc/libsys; host compiler/linker
+create private fixture inputs. The initial raw compiler object had a combined
+string-table layout rejected by crunchide. The successful fixture uses relocatable
+linking, as the maintained crunchgen pipeline does before invoking crunchide;
+the original failed fixture is retained. This is not a full rescue link/run,
+bootstrap reproducibility, cross-system build or performance qualification.
+
+Existing build-bsd explicit target inputs cover these additions. The maintained
+generator backend was updated in the same change for shell flags; no new frontend
+C/manual user option, security policy or staging/publication contract is needed.
+Make remains production/default; full-system gates remain open.

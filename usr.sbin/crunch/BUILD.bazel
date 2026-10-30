@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+# Mirrors the maintained crunch tools subtree selection.
+_PROGRAMS = ["crunchgen", "crunchide"]
+bsd_install_archive_set(name = "installation_archives",
+    archives = ["//usr.sbin/crunch/" + name + ":install_archive" for name in _PROGRAMS],
+    visibility = ["//visibility:public"])
