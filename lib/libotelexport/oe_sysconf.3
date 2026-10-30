@@ -166,7 +166,7 @@ is created by and belongs to that user
 and creates and starts the exporter the settings select in
 .Va svc->exporter
 .Pq Xr oe_exporter_open 3 :
-OTLP/HTTP, or the OTLP JSON Lines file
+OTLP with the resolved protocol, or the OTLP JSON Lines file
 .Pa <export.directory>/<service_name>.jsonl
 of the
 .Xr otel.conf 5
@@ -175,7 +175,7 @@ file target.
 makes what the service queued durable when it exports to the file
 target: the pending lines are written, the file synced, and a rotation by
 .Xr newsyslog 8
-acted on; it does nothing for OTLP/HTTP, whose batches leave on their
+acted on; it does nothing for OTLP export, whose batches leave on their
 own thread.
 A service calls it after each batch of records and at least once a
 second while records are pending, and calls

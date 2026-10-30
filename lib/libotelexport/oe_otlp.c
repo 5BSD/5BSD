@@ -3,11 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * OTLP/HTTP+JSON exporter.  Batches events as OpenTelemetry
+ * OTLP exporter.  Batches events as OpenTelemetry
  * LogRecords and POSTs them to /v1/logs; aggregation snapshots map
  * to OTLP metrics POSTed to /v1/metrics and spans to /v1/traces.  Request bodies come from
  * the shared encoder (oe_otlpenc.c), so they are identical to the
- * lines the OTLP JSON file exporter writes.
+ * lines the OTLP JSON file exporter writes; for http/protobuf and grpc
+ * oe_otlppb.c transcodes each request and sends it (post_with_retry()).
  *
  * Batching is count-based (default 200 records) plus a time-based
  * flush (default 500 ms).  A dedicated sender thread performs the

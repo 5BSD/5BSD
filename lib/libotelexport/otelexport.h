@@ -7,7 +7,8 @@
  * (bsdinstruments, hwstat).  An exporter consumes probe events and
  * aggregation snapshots from a tool's run loop and ships them to a
  * destination: a stream or rotating file (text, JSONL, collapsed
- * stacks, OTLP JSON Lines) or an OTLP/HTTP+JSON collector.
+ * stacks, OTLP JSON Lines) or an OTLP collector (OTLP/HTTP with protobuf
+ * or JSON bodies, or OTLP/gRPC).
  *
  * C port of the ObservableBSD Swift OTelExport library.
  */
