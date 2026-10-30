@@ -43562,3 +43562,20 @@ remain unqualified here. Evidence is in
 `/usr/obj/usr/src/bazel-abac-tools-20261030-r3/`. The maintained Bazel-built
 `build-bsd bazel-test` consumed explicit inputs with 16 jobs; no new frontend
 option or publication path was introduced.
+
+### Network configuration utilities (2026-10-30)
+
+`//usr.sbin/iovctl:install_archive` and
+`//usr.sbin/ip6addrctl:install_archive` now build native utility/library inputs
+and installation/debug metadata. Fresh Make artifact parity covers iovctl's
+six installation records/four payloads and ip6addrctl's five/three. ip6addrctl
+is also qualified with `//tools/build/bazel/config:jail=false`: libjail and jail
+entry points disappear in both implementations. Maintained Make controls which
+files belong in each installation; iovctl carries both manuals, while no sample
+ip6addrctl configuration is silently installed.
+
+Evidence: `/usr/obj/usr/src/bazel-network-config-reference-20261030/` and
+`/usr/obj/usr/src/bazel-ip6addrctl-nojail-reference-20261030/`. Both runs use the
+maintained Bazel-built frontend with explicit configuration and 16 jobs. These
+are artifact comparisons against the staged SDK; live hardware/network changes
+and matching-kernel runtime behavior remain outside this qualification.

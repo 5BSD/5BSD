@@ -19364,3 +19364,23 @@ performance qualification. Make remains production/default.
   cover these additions; no frontend C/backend/signing/publication change needed.
   Staged SDK remains a prerequisite. This is component artifact parity, not
   whole-system runtime, package publication, bootstrap, or performance completion.
+
+### 2026-10-30: native iovctl and ip6addrctl
+
+- Added explicit native source/library/install targets for iovctl (libnv,
+  libucl, libm; section 8 and section 5 manuals) and ip6addrctl (runtime package,
+  conditional libjail and JAIL definition). The latter's sample configuration
+  is not installed by Make and is not invented as a package payload here.
+- Fresh Make/native parity: iovctl six changed installation records/four regular
+  payloads; ip6addrctl five/three in both default and WITHOUT_JAIL configurations.
+  Compared complete staged metadata, tags, manual bytes, ELF global/weak symbols,
+  ordered dynamic dependencies, and debug CRCs. Both Make and native default
+  binaries reference libjail/jail_getid/jail_attach; neither no-jail binary does.
+- Evidence under `/usr/obj/usr/src`: `bazel-network-config-reference-20261030`,
+  `bazel-network-config-20261030`, `bazel-ip6addrctl-nojail-reference-20261030`,
+  `bazel-ip6addrctl-nojail-20261030`, and per-utility fresh Make stages.
+- Frontend review: existing explicit target/settings inputs and the maintained
+  Bazel-built `build-bsd bazel-test` qualify both configurations with 16 jobs;
+  no new C frontend/backend/signing/publication changes are required. Make stays
+  default. No live PCI/IPv6 policy changes, jail attachment, host installation,
+  performance qualification, or complete-world claim follows from these checks.

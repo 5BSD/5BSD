@@ -8089,3 +8089,13 @@ The management sources refer to kernel audit handling rather than directly
 linking libbsm. No audit integration was added or removed. End-to-end audit
 records for policy updates, label changes, and denied actions still need
 matching-kernel runtime qualification; artifact parity cannot establish them.
+
+### 2026-10-30: iovctl and ip6addrctl
+
+Reviewed maintained source/build inputs: neither utility declares a userland
+DTrace provider or direct audit-library integration. Native targets retain that
+behavior. Potential observability follow-up: SR-IOV configuration changes and
+IPv6 address-selection policy add/delete/flush/install operations, including
+jail attribution, should have their kernel audit coverage checked before deciding
+whether additional userland instrumentation is necessary. No new probes/audit
+semantics were invented for migration. No live reconfiguration was performed.
