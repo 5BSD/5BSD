@@ -18860,3 +18860,33 @@ configurations; disabled/disabled has not been compared. Defaults remain audit
 and DTrace enabled. Existing build-bsd typed options work without frontend or
 backend changes. Runtime activation/authorization/Bluetooth and complete system,
 bootstrap/pkgbase/performance qualification remain open. No host service ran.
+
+### Bluetooth subtree aggregate and configuration script (2026-10-30)
+
+Added native bluetooth-config script/manual installation and a public
+//usr.sbin/bluetooth:installation_archives aggregate. The aggregate follows the
+maintained MK_USB choice using the existing typed usb setting: 14 unconditional
+subdirectories plus six USB-dependent ones. The BSDBluetooth archive includes
+its controller. This provides one selectable subtree through build-bsd.
+
+Native USB-on run: /usr/obj/usr/src/bazel-bluetooth-config-20261030-r2; USB-off:
+bazel-bluetooth-nousb-20261030-r2. Both aggregate builds pass. Fresh script Make
+reference: bazel-bluetooth-config-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bluetooth-config-reference-20261030. Script comparison
+matches three installation records and exact script/manual bytes. An initial
+comparison exposed Make's package-owned /usr/sbin directory entry; the native
+manifest now preserves it. The script itself was not executed.
+
+selection-audit.py/json query Make's evaluated SUBDIR for both USB choices and
+compare the complete native archive lists with no missing/extra members:
+20 archives with USB, 14 without. Artifact hashes are checked. This proves
+subtree selection/build coverage for these configurations, not full world,
+combined pkgbase reconciliation, runtime behavior or performance. USB-on rebuild
+also reports existing libthr pointer-sign warnings against staged SDK atomics;
+no warning suppression or source workaround was added.
+
+Frontend review: existing explicit aggregate targets and typed usb inputs work
+through build-bsd; no frontend/backend/signing/publication contract changed.
+The script's interactive configuration changes, Bluetooth service/hardware/
+virtual-controller behavior and complete system gates remain open. Make remains
+production/default. No host configuration or service was changed.

@@ -43101,3 +43101,12 @@ schemas/158 valid sites without direct BSM linkage; the latter retains BSM and
 has no DOF section. Evidence: bazel-bt-daemon-noaudit-reference-20261030 and
 bazel-bt-daemon-nodtrace-reference-20261030 under /usr/obj/usr/src. Both defaults
 remain enabled; disabled/disabled and runtime behavior are not qualified here.
+
+
+Bluetooth subtree aggregate (2026-10-30):
+//usr.sbin/bluetooth:installation_archives builds through build-bsd and follows
+the existing usb setting. Exact archive selection matches evaluated Make SUBDIR:
+20 with USB, 14 without. bluetooth-config script/manual bytes and three install
+records match Make. Evidence: /usr/obj/usr/src/bazel-bluetooth-config-reference-20261030.
+These are subtree build/selection results; runtime, world and combined pkgbase
+qualification remain open.

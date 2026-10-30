@@ -7909,3 +7909,13 @@ and 158 validated ordinary sites; DTrace-off retains direct libbsm linkage and
 has no executable DOF. Neither result proves emitted audit records, live probes
 or runtime authorization. Both options remain enabled by default. The combined
 disabled/disabled configuration was not exercised in this comparison.
+
+
+### Bluetooth aggregate/configuration script (2026-10-30)
+
+The aggregate preserves Make USB inclusion policy; selection matches 20/14
+archives with USB on/off. Maintained bluetooth-config shell and manual bytes
+match Make installation, with no execution. Interactive configuration writes,
+service enable/disable and failure/recovery behavior still need isolated tests.
+Aggregate build success adds no live audit/probe/controller evidence. No host
+configuration, service or device was changed.
