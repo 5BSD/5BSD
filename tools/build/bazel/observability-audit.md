@@ -7520,3 +7520,10 @@ Native decoder artifact/install parity and public version consumer test pass.
 No decoder algorithms or tracing hooks changed. Intel PT packet decoding, corrupt
 trace handling, image/section resolution and capture-to-decoder integration still
 need runtime fixtures/hardware evidence. No throughput or memory claim is made.
+
+### OpenCSD (2026-10-30)
+
+Native private-library artifact/install comparison passes for 45 C++ sources
+and 43 installed headers. No tracing/audit hooks or decoder algorithms changed.
+ETE, ETMv3/4, PTM/STM, frame decoding and image/memory-access error paths remain
+runtime fixture work; no capture integration or decoding performance claim.

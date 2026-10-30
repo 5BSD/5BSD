@@ -17526,3 +17526,23 @@ This tests the corrected public-header contract, not trace decoding correctness
 or hardware capture. Existing build-bsd explicit targets/tests and staging flow
 handle the generated header; no frontend/backend contract changes are needed.
 Whole-world/bootstrap/pkgbase, real trace fixtures and performance remain open.
+
+### OpenCSD native candidate (2026-10-30)
+
+Fresh Make reference completes. Native declarations cover 45 ordered C++ sources
+and 43 installed headers across the maintained protocol groups. Make's private
+library naming does not relocate these explicitly assigned include directories:
+headers install under /usr/include/opencsd. Corrected the candidate to match
+that layout and Make's direct libcxxrt dependency without adding libc++. Initial
+sandbox compilation found a source-adjacent private header; these source headers
+are now declared textual inputs. Native r2 is pending. Existing build-bsd
+explicit target and packaging interfaces suffice without frontend/backend
+contract changes. No trace decoding runtime or performance evidence is implied.
+
+OpenCSD r2 passes fresh Make artifact/install comparison: 49 destinations,
+46 regular payloads and one debug link. All 43 installed headers match bytewise;
+archive member order, global/weak C++ symbols, ordered dynamic metadata and
+debug-link CRC match. Evidence: install-audit.json and payload-audit.json under
+bazel-libopencsd-reference-20261030, using bazel-libopencsd-20261030-r2 artifacts.
+No live trace decoder, protocol fixture, memory/throughput or hardware capture
+qualification is claimed. Complete world/bootstrap/pkgbase gates remain open.
