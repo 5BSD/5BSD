@@ -243,6 +243,8 @@ serve_one(struct collector *co, int fd)
 	struct coll_req *rq;
 	size_t rep_bodylen = 0;
 	int rep_chunked = 0;
+	const char *rep_raw = NULL;
+	size_t rep_rawlen = 0;
 	char *buf, *hdrend, *cl, resp[1024];
 	size_t cap, len, need, hlen;
 	ssize_t n;
@@ -298,13 +300,18 @@ serve_one(struct collector *co, int fd)
 	if (co->next < co->nscript) {
 		rep_bodylen = co->bodylen[co->next];
 		rep_chunked = co->chunked[co->next];
+		rep_raw = co->raw[co->next];
+		rep_rawlen = co->rawlen[co->next];
 		rep = co->script[co->next++];
 	}
 	else {
 		memset(&rep, 0, sizeof(rep));
 		rep.status = 200;
-		rep.body = "{}";
+		rep.body = co->fallback_body != NULL ? co->fallback_body :
+		    "{}";
 	}
+	if (hdrend != NULL && co->nreqs >= COLL_MAX_REQ)
+		co->nlost++;
 	if (hdrend != NULL && co->nreqs < COLL_MAX_REQ) {
 		rq = &co->reqs[co->nreqs++];
 		memset(rq, 0, sizeof(*rq));
@@ -325,7 +332,9 @@ serve_one(struct collector *co, int fd)
 		}
 	}
 	pthread_mutex_unlock(&co->lock);
-	if (rep.garbage)
+	if (rep_raw != NULL)
+		c_write(&c, rep_raw, rep_rawlen);
+	else if (rep.garbage)
 		c_write(&c, "SMTP ready\r\n\r\n", 14);
 	else if (rep.no_header_end) {
 		snprintf(resp, sizeof(resp), "HTTP/1.1 %d OK\r\n",
@@ -436,6 +445,8 @@ coll_script(struct collector *co, const struct coll_reply *r, int n)
 	memcpy(co->script, r, (size_t)n * sizeof(*r));
 	memset(co->bodylen, 0, sizeof(co->bodylen));
 	memset(co->chunked, 0, sizeof(co->chunked));
+	memset(co->raw, 0, sizeof(co->raw));
+	memset(co->rawlen, 0, sizeof(co->rawlen));
 	co->nscript = n;
 	co->next = 0;
 	pthread_mutex_unlock(&co->lock);
@@ -448,6 +459,16 @@ coll_script_body(struct collector *co, int i, size_t len, int chunked)
 	pthread_mutex_lock(&co->lock);
 	co->bodylen[i] = len;
 	co->chunked[i] = chunked;
+	pthread_mutex_unlock(&co->lock);
+}
+
+void
+coll_script_raw(struct collector *co, int i, const char *raw, size_t len)
+{
+
+	pthread_mutex_lock(&co->lock);
+	co->raw[i] = raw;
+	co->rawlen[i] = len;
 	pthread_mutex_unlock(&co->lock);
 }
 

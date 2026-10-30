@@ -72,6 +72,7 @@ struct gsrv {
 	int		 nscript, next;
 	struct gsrv_req	 reqs[GSRV_MAX_REQ];
 	int		 nreqs;
+	int		 nlost;		/* requests past GSRV_MAX_REQ */
 };
 
 /*

@@ -49,9 +49,15 @@ struct collector {
 	/* coll_script_body(): binary body lengths and chunked replies. */
 	size_t		 bodylen[COLL_MAX_SCRIPT];
 	int		 chunked[COLL_MAX_SCRIPT];
+	/* coll_script_raw(): replies sent verbatim. */
+	const char	*raw[COLL_MAX_SCRIPT];
+	size_t		 rawlen[COLL_MAX_SCRIPT];
 	int		 nscript, next;
+	/* Body of the 200 past the script (NULL: "{}", for OTLP/JSON). */
+	const char	*fallback_body;
 	struct coll_req	 reqs[COLL_MAX_REQ];
 	int		 nreqs;
+	int		 nlost;		/* requests past COLL_MAX_REQ */
 };
 
 /*
@@ -67,6 +73,8 @@ void	 coll_script(struct collector *, const struct coll_reply *, int);
  * string length), sent chunked when chunked is set.
  */
 void	 coll_script_body(struct collector *, int i, size_t len, int chunked);
+/* After coll_script(): reply i is the len bytes at raw, status line and all. */
+void	 coll_script_raw(struct collector *, int i, const char *raw, size_t len);
 void	 coll_stop(struct collector *);
 int	 coll_nreqs(struct collector *);
 /* Wait (up to ms) until at least n requests arrived. */

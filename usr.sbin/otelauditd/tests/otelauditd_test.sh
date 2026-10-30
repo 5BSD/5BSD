@@ -410,6 +410,10 @@ pipe_file_full_body()
 		sleep 0.5
 		i=$((i + 1))
 	done
+	# The first failure may come from a full batch on the record path
+	# ("cannot queue an audit record"): leave a few records pending so
+	# the idle flush has something to write and fails too.
+	for j in 1 2 3; do /usr/bin/true; done
 	sleep 4
 	kill -TERM $pid
 	wait $pid

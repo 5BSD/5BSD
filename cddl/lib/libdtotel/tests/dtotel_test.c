@@ -1996,6 +1996,108 @@ ATF_TC_BODY(session_tick, tc)
 	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 0));
 }
 
+/*
+ * Principal-buffer drops and aggregations in one session (the merge2 VM
+ * case: -b 8k with a printf flood): each tick exports the drops counter
+ * and the final snapshot at close carries the aggregations together with
+ * the counter.  When the kernel dropped every aggregating firing (its key
+ * tuple is staged in the principal buffer, so a full buffer drops the
+ * whole ECB and counts a principal drop), DTrace's aggregations are empty
+ * and only the counter is exported, as plain dtrace(1) prints nothing.
+ */
+static char *
+last_line_with(const char *text, const char *needle)
+{
+	const char *p, *found = NULL;
+	char *line;
+	size_t n;
+
+	for (p = text; *p != '\0'; p += n + (p[n] == '\n')) {
+		n = strcspn(p, "\n");
+		if (memmem(p, n, needle, strlen(needle)) != NULL)
+			found = p;
+	}
+	if (found == NULL)
+		return (NULL);
+	n = strcspn(found, "\n");
+	line = strndup(found, n);
+	ATF_REQUIRE(line != NULL);
+	return (line);
+}
+
+ATF_TC(session_drops_and_aggregations);
+ATF_TC_HEAD(session_drops_and_aggregations, tc)
+{
+
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(session_drops_and_aggregations, tc)
+{
+	struct dtotel_session *s;
+	struct fake_agg *fa[2];
+	const dtrace_aggdata_t *ads[2];
+	struct otlp_counts c;
+	int64_t q[DTRACE_QUANTIZE_NBUCKETS], n;
+	char *text, *last;
+
+	s = session_on(DTOTEL_OTLPJSON, "da.jsonl", 0, NULL);
+	deliver(NULL, "dd 1 0\n", 0, 2, 1, 0);
+	dtotel_drops(dtotel_session_bridge(s), DTRACEDROP_PRINCIPAL, 733);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	usleep(1100000);
+	deliver(NULL, "dd 1 3\n", 0, 3, 1, 0);
+	dtotel_drops(dtotel_session_bridge(s), DTRACEDROP_PRINCIPAL, 431);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	/* The aggregations the final snapshot finds. */
+	n = 36;
+	fa[0] = fake_new("n", 0);
+	fake_rec(fa[0], DTRACEAGG_COUNT, 0, &n, sizeof(n));
+	memset(q, 0, sizeof(q));
+	q[DTRACE_QUANTIZE_ZEROBUCKET + 11] = 36;	/* [1024, 2048) */
+	fa[1] = fake_new("lat", 0);
+	fake_rec(fa[1], DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+	ads[0] = &fa[0]->ad;
+	ads[1] = &fa[1]->ad;
+	stub.aggs = ads;
+	stub.naggs = 2;
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+	stub.aggs = NULL;
+	stub.naggs = 0;
+	text = read_file("da.jsonl");
+	validate_lines(text, &c);
+	/* Two ticks (the counter) and the final snapshot (all three). */
+	ATF_CHECK_EQ(5, c.metrics);
+	/* The last metrics request: both aggregations and all the drops. */
+	last = last_line_with(text, "\"resourceMetrics\"");
+	ATF_REQUIRE(last != NULL);
+	ATF_CHECK_MSG(strstr(last, "\"name\":\"dtrace.script.n\"") != NULL,
+	    "%s", last);
+	ATF_CHECK(strstr(last, "\"name\":\"dtrace.script.lat\"") != NULL);
+	ATF_CHECK(strstr(last, "\"exponentialHistogram\"") != NULL);
+	ATF_CHECK(strstr(last, "\"name\":\"dtrace.drops\"") != NULL);
+	ATF_CHECK(strstr(last, "\"asInt\":\"1164\"") != NULL);
+	ATF_CHECK(strstr(last, "\"stringValue\":\"principal\"") != NULL);
+	free(last);
+	free(text);
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+
+	/* Every aggregating firing dropped: the counter alone. */
+	s = session_on(DTOTEL_OTLPJSON, "empty.jsonl", 0, NULL);
+	deliver(NULL, "dd 1 0\n", 0, 2, 1, 0);
+	dtotel_drops(dtotel_session_bridge(s), DTRACEDROP_PRINCIPAL, 5);
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+	text = read_file("empty.jsonl");
+	validate_lines(text, &c);
+	ATF_CHECK_EQ(1, c.metrics);
+	last = last_line_with(text, "\"resourceMetrics\"");
+	ATF_REQUIRE(last != NULL);
+	ATF_CHECK(strstr(last, "\"name\":\"dtrace.drops\"") != NULL);
+	ATF_CHECK(strstr(last, "\"name\":\"dtrace.script.") == NULL);
+	free(last);
+	free(text);
+}
+
 ATF_TC_WITHOUT_HEAD(session_open_errors);
 ATF_TC_BODY(session_open_errors, tc)
 {
@@ -3364,6 +3466,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, session_guest_resources);
 	ATF_TP_ADD_TC(tp, session_formats);
 	ATF_TP_ADD_TC(tp, session_tick);
+	ATF_TP_ADD_TC(tp, session_drops_and_aggregations);
 	ATF_TP_ADD_TC(tp, session_open_errors);
 	ATF_TP_ADD_TC(tp, buffered_edges);
 	ATF_TP_ADD_TC(tp, record_edges);

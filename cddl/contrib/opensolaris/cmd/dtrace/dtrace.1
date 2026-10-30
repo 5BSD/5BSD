@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd October 29, 2026
+.Dd October 30, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -1430,6 +1430,17 @@ with the attribute
 .Pq Cm principal , aggregation , dynamic , dynamic_rinse , dynamic_dirty , speculation , speculation_busy , speculation_unavailable , stack_string_overflow , error_in_error_probe ;
 HyperTrace guests' records are dropped in the host's buffers and are
 counted there, not per guest.
+An aggregating clause stages its key tuple in the principal buffer, so
+while that buffer is full its firings are dropped whole and counted as
+.Cm principal
+drops: the aggregations then miss those updates, or stay empty and are
+not exported at all, exactly as
+.Nm
+prints nothing for them; a larger
+.Fl b
+or a higher
+.Cm switchrate
+avoids it.
 Runtime errors are ERROR log records with the event name
 .Ql dtrace.error ,
 the probe, and the attributes

@@ -14,7 +14,8 @@
  * 60), so a client that keeps sending is never refused.  It then writes
  * each request to dir/NNNN.path (the request path, or gRPC method),
  * NNNN.hdr (headers) and NNNN.bin (the body or message, decompressed)
- * and exits 0 when at least count requests arrived, 1 otherwise.  Decode
+ * and exits 0 when at least count requests arrived, 1 otherwise (also
+ * when more requests arrived than it can record: 64).  Decode
  * NNNN.bin with otlp_pb_oracle or protoc --decode.
  */
 
@@ -84,7 +85,7 @@ main(int argc, char **argv)
 	struct gsrv gs;
 	const char *mode, *portfile, *dir;
 	time_t end;
-	int ch, count, secs, i, n = 0;
+	int ch, count, secs, i, n = 0, lost = 0;
 
 	mode = portfile = dir = NULL;
 	count = 1;
@@ -123,6 +124,7 @@ main(int argc, char **argv)
 		while (!stop && time(NULL) < end)
 			usleep(100000);
 		n = gsrv_nreqs(&gs);
+		lost = gs.nlost;
 		/* gsrv_stop() frees the requests. */
 		for (i = 0; i < n; i++) {
 			put(dir, i, "path", gs.reqs[i].path,
@@ -142,10 +144,13 @@ main(int argc, char **argv)
 			rep[i].body = "";
 		}
 		coll_script(&co, rep, COLL_MAX_SCRIPT);
+		/* And past the script too: never the OTLP/JSON "{}". */
+		co.fallback_body = "";
 		put_port(portfile, co.port);
 		while (!stop && time(NULL) < end)
 			usleep(100000);
 		n = coll_nreqs(&co);
+		lost = co.nlost;
 		for (i = 0; i < n; i++) {
 			put(dir, i, "path", co.reqs[i].path,
 			    strlen(co.reqs[i].path));
@@ -157,5 +162,11 @@ main(int argc, char **argv)
 		coll_stop(&co);
 	} else
 		usage();
+	/* Requests past the recording limit were answered but not kept. */
+	if (lost > 0) {
+		warnx("%d requests past the first %d were not recorded",
+		    lost, n);
+		return (1);
+	}
 	return (n >= count ? 0 : 1);
 }

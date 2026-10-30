@@ -241,6 +241,8 @@ record(struct sconn *c)
 		memset(&c->rep, 0, sizeof(c->rep));
 		c->rep.mode = GSRV_NORMAL;
 	}
+	if (s->nreqs >= GSRV_MAX_REQ)
+		s->nlost++;
 	if (s->nreqs < GSRV_MAX_REQ) {
 		rq = &s->reqs[s->nreqs++];
 		memset(rq, 0, sizeof(*rq));
