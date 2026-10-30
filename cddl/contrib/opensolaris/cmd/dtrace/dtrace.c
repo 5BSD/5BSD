@@ -331,25 +331,81 @@ usage(FILE *fp)
 
 /*
  * Handle ownership.  Once a second thread exists (signal handler, receiver,
- * reporter, output worker), every use of g_dtp is serialized by the recursive
- * g_dtpmtx through dtp_lock()/dtp_unlock(), which also keep a per-thread
- * depth.  A thread holding g_dtpmtx never waits for g_pgplistmtx (the lock
- * order is g_pgplistmtx before g_dtpmtx).  The mutex is never destroyed:
- * other threads may still be blocked on it while the process exits.
+ * reporter, output worker), every use of g_dtp is serialized by the handle
+ * lock through dtp_lock()/dtp_unlock(), which is recursive through a
+ * per-thread depth.  A thread holding the handle never waits for
+ * g_pgplistmtx (the lock order is g_pgplistmtx before the handle).
+ *
+ * The handle lock is granted in arrival order.  The output worker holds it
+ * across dtrace_sleep() and takes it again immediately after each release;
+ * with a plain mutex the receiver, the reporter and the stop path could
+ * lose every one of those races and starve (a guest reply sent while an
+ * earlier program was enabling was then never parsed).  g_dtpmtx only
+ * guards the ownership state below and is held briefly.  Neither it nor
+ * g_dtpcv is ever destroyed: other threads may still wait while the
+ * process exits.
  */
+struct dtp_waiter {
+	struct dtp_waiter *next;
+};
+static pthread_cond_t g_dtpcv;
+static int g_dtp_held;
+static struct dtp_waiter *g_dtp_head;
+static struct dtp_waiter **g_dtp_tail = &g_dtp_head;
 static int g_dtpmtx_ready;
 static _Thread_local int t_dtp_depth;
 static _Atomic int g_exiting;
 static pthread_t g_exiting_thread;
 static _Atomic int g_proc_wake;
 
+/* Take the handle, waiting behind earlier arrivals. */
 static void
 dtp_lock(void)
 {
+	struct dtp_waiter self = { NULL };
+
 	if (!g_dtpmtx_ready)
 		return;
+	if (t_dtp_depth > 0) {
+		t_dtp_depth++;
+		return;
+	}
 	(void) pthread_mutex_lock(&g_dtpmtx);
-	t_dtp_depth++;
+	if (g_dtp_held || g_dtp_head != NULL) {
+		*g_dtp_tail = &self;
+		g_dtp_tail = &self.next;
+		while (g_dtp_held || g_dtp_head != &self)
+			(void) pthread_cond_wait(&g_dtpcv, &g_dtpmtx);
+		g_dtp_head = self.next;
+		if (g_dtp_head == NULL)
+			g_dtp_tail = &g_dtp_head;
+	}
+	g_dtp_held = 1;
+	(void) pthread_mutex_unlock(&g_dtpmtx);
+	t_dtp_depth = 1;
+}
+
+/* The handle if it is free and nobody waits for it; EBUSY otherwise. */
+static int
+dtp_trylock(void)
+{
+	int error = 0;
+
+	if (!g_dtpmtx_ready)
+		return (0);
+	if (t_dtp_depth > 0) {
+		t_dtp_depth++;
+		return (0);
+	}
+	(void) pthread_mutex_lock(&g_dtpmtx);
+	if (g_dtp_held || g_dtp_head != NULL)
+		error = EBUSY;
+	else
+		g_dtp_held = 1;
+	(void) pthread_mutex_unlock(&g_dtpmtx);
+	if (error == 0)
+		t_dtp_depth = 1;
+	return (error);
 }
 
 static void
@@ -357,7 +413,12 @@ dtp_unlock(void)
 {
 	if (!g_dtpmtx_ready)
 		return;
-	t_dtp_depth--;
+	if (--t_dtp_depth > 0)
+		return;
+	(void) pthread_mutex_lock(&g_dtpmtx);
+	g_dtp_held = 0;
+	if (g_dtp_head != NULL)
+		(void) pthread_cond_broadcast(&g_dtpcv);
 	(void) pthread_mutex_unlock(&g_dtpmtx);
 }
 
@@ -427,7 +488,7 @@ tmp_unlink(const char *path)
 
 /*
  * Only the first terminating thread proceeds.  Another thread that reaches
- * fatal() meanwhile releases any hold it has on g_dtpmtx (so the first can
+ * fatal() meanwhile releases any hold it has on the handle (so the first can
  * close the handle) and waits for the process to exit; it never touches
  * g_dtp again.  Re-entry on the terminating thread exits at once.
  */
@@ -451,7 +512,7 @@ fatal_enter(void)
 /*
  * Close the DTrace handle to ensure that any controlled processes are
  * correctly restored and continued (created processes are handled as
- * dtrace_close() does), then exit while still holding g_dtpmtx so that no
+ * dtrace_close() does), then exit while still holding the handle so that no
  * other thread can use the closed handle.
  */
 static void
@@ -2368,13 +2429,26 @@ handle_consumer_drain(dtd_arg_t *connection, int rx_sockfd, int64_t deadline)
  * shutdown. Close admission under its queue mutex, then wait for the active
  * operation, reporter and output worker to relinquish the old session. */
 static int
-consumer_stop_lock(pthread_mutex_t *mutex, int64_t deadline)
+mutex_trylock(void *mutex)
+{
+	return (pthread_mutex_trylock(mutex));
+}
+
+static int
+handle_trylock(void *unused __unused)
+{
+	return (dtp_trylock());
+}
+
+/* Poll trylock(arg) until it succeeds or the deadline passes. */
+static int
+consumer_stop_lock(int (*trylock)(void *), void *arg, int64_t deadline)
 {
 	int error, timeout;
 	for (;;) {
 		if (dtraced_io_remaining_timeout(deadline, &timeout) != 0)
 			return (-1);
-		error = pthread_mutex_trylock(mutex);
+		error = trylock(arg);
 		if (error == 0)
 			return (0);
 		if (error != EBUSY) {
@@ -2456,7 +2530,7 @@ consumer_stop_quiesce(const dtraced_consumer_stop_t *challenge,
     int64_t deadline)
 {
 	int busy, stopped, timeout, async_done;
-	if (consumer_stop_lock(&g_pgplistmtx, deadline) != 0)
+	if (consumer_stop_lock(mutex_trylock, &g_pgplistmtx, deadline) != 0)
 		return (0);
 	atomic_store(&g_session_stop, 1);
 	atomic_store(&g_stop, 1);
@@ -2466,7 +2540,7 @@ consumer_stop_quiesce(const dtraced_consumer_stop_t *challenge,
 		async_done = dtrace_async_discard_step();
 		if (async_done < 0)
 			return (0);
-		if (consumer_stop_lock(&g_pgplistmtx, deadline) != 0)
+		if (consumer_stop_lock(mutex_trylock, &g_pgplistmtx, deadline) != 0)
 			return (0);
 		busy = g_processing_pgp || g_execution_reporting;
 		pthread_mutex_unlock(&g_pgplistmtx);
@@ -2481,9 +2555,10 @@ consumer_stop_quiesce(const dtraced_consumer_stop_t *challenge,
 			return (0);
 		(void)usleep(10000);
 	}
-	if (consumer_stop_lock(&g_dtpmtx, deadline) != 0)
+	/* The worker is done: the handle is normally free; never wait
+	 * past the stop deadline for it. */
+	if (consumer_stop_lock(handle_trylock, NULL, deadline) != 0)
 		return (0);
-	t_dtp_depth++;
 	stopped = g_dtp != NULL &&
 	    dtrace_output_discard(g_dtp, g_ofp) == 0 &&
 	    (dtrace_status(g_dtp) == DTRACE_STATUS_INACTIVE ||
@@ -4559,15 +4634,9 @@ main(int argc, char *argv[])
 	 */
 	/* pthread functions return the error; fatal() reports errno. */
 	{
-		pthread_mutexattr_t attr;
-
-		/* Recursive: fatal() may run on a thread that holds it. */
-		if ((errno = pthread_mutexattr_init(&attr)) != 0 ||
-		    (errno = pthread_mutexattr_settype(&attr,
-		    PTHREAD_MUTEX_RECURSIVE)) != 0 ||
-		    (errno = pthread_mutex_init(&g_dtpmtx, &attr)) != 0)
-			fatal("failed to create the dtp mutex");
-		(void) pthread_mutexattr_destroy(&attr);
+		if ((errno = pthread_cond_init(&g_dtpcv, NULL)) != 0 ||
+		    (errno = pthread_mutex_init(&g_dtpmtx, NULL)) != 0)
+			fatal("failed to create the dtp lock");
 		g_dtpmtx_ready = 1;
 	}
 

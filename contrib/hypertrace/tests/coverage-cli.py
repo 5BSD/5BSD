@@ -301,8 +301,18 @@ def load_cases():
 # branch halves covered (old floors 3295 and 1619), so nothing regressed;
 # evidence /usr/obj/5BSD-otel-validation/merge2-cli-combined (newcode.txt).
 # Observed 3310/3483 and 1637/1865; the floors keep the old tolerance.
+# Re-baselined 2026-10-30 (fix4) for the arrival-ordered handle lock
+# (dtp_lock/dtp_trylock/dtp_unlock, the trylock-polling stop path and the
+# lock's creation; +3 functions, +40 lines, +24 branch halves): the new or
+# changed code is 49/54 lines and 29/36 branch halves (the uncovered ones are
+# dtp_trylock's not-ready, recursive and busy arms, which the stop path never
+# meets once the worker is done); the unchanged code has 3296/3469 lines and
+# 1626/1853 branch halves, the merge2 figures less the 8 lines and 8 halves
+# now counted as changed (7 of those halves were covered).  Evidence
+# /usr/obj/5BSD-otel-validation/fix4-cli-run2 (531/531 in one run) and
+# fix4-work/cli-run2-newcode.txt.  Observed 3345/3523 and 1655/1889.
 REGRESSION = {
-    'dtrace.c': {'lines': (3304, 3483), 'branches': (1627, 1865), 'functions': (84, 84)},
+    'dtrace.c': {'lines': (3339, 3523), 'branches': (1645, 1889), 'functions': (87, 87)},
     'dtrace_identifiers.h': {'lines': (53, 57), 'branches': (33, 46), 'functions': (3, 3)},
     'hypertrace_frame.h': {'lines': (47, 48), 'branches': (47, 60), 'functions': (2, 2)},
 }

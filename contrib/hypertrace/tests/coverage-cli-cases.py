@@ -1274,13 +1274,16 @@ case('exec-run-elf-then-compile-only', FAST + ['-e', '-y', fx('derived.elf')],
      stdout_re='(?s).*', stderr_re=r'(?s).*prog_exec = 1\n.*',
      check=lambda d, out, *a: elf_path_check('printed.elf')(
          d, out.strip().splitlines()[-1] if out.strip() else '', *a))
-for n, name in ((1, 'the dtp mutex'), (2, 'pgplistmtx'), (3, 'benchlistmtx')):
+# The handle lock (its condition and mutex) is created first, then the program list mutex, benchmark mutex and program condition.
+for n, name in ((1, 'the dtp lock'), (2, 'pgplistmtx'), (3, 'benchlistmtx')):
     case(f'init-mutex-{n}-fails', ['-e', '-n', 'BEGIN {}'], open='nodev',
          faults=f'pthread_mutex_init:{n}:12', status=1, stdout='',
          stderr=f'dtrace: failed to {"create" if n == 1 else "init"} {name}: '
          'Cannot allocate memory\n')
-case('init-cond-fails', ['-e', '-n', 'BEGIN {}'], open='nodev', faults='pthread_cond_init:1:12',
-     status=1, stdout='', stderr='dtrace: failed to init pgpcond: Cannot allocate memory\n')
+for n, name in ((1, 'create the dtp lock'), (2, 'init pgpcond')):
+    case('init-cond-fails' if n == 2 else 'init-cond-1-fails', ['-e', '-n', 'BEGIN {}'],
+         open='nodev', faults=f'pthread_cond_init:{n}:12', status=1, stdout='',
+         stderr=f'dtrace: failed to {name}: Cannot allocate memory\n')
 case('signal-thread-create-fails', FAST + ['-n', 'BEGIN { exit(0); }'],
      faults='pthread_create:1:35', status=134, allow_abort=True, log_has=['ABORT'],
      stdout_re='.*', stderr=matched('BEGIN ', 1))
