@@ -8361,3 +8361,12 @@ generated date parser. Private-file compression/round-trip/filter checks pass
 for native and Make binaries. Circular wraparound, corruption handling, crash
 recovery, write/sync latency and attribution of log-file access remain review
 items. These correctness checks do not establish I/O performance.
+
+### 2026-10-30: uefisign, valectl and zzz
+
+These Make components declare no local DTrace provider or direct libbsm linkage.
+Native builds preserve the source/dependency inventories. Signing/key-access
+attribution and the uefisign child capability boundary need runtime qualification.
+VALE create/attach/detach and polling operations, and power-device suspend requests,
+need matching-kernel observability/audit review. Artifact checks do not establish
+these operations or their performance; none were executed on the host.

@@ -44171,3 +44171,27 @@ Existing build-bsd format-5 explicit targets accept the subtree and both archive
 targets without a frontend C or policy change. No new user-facing build setting,
 staging/signing/verification requirement or publication contract was introduced.
 Make remains production/default; no host installation was performed.
+
+### Native uefisign, valectl and zzz (2026-10-30)
+
+Added native amd64 targets using maintained sources and dependencies: uefisign
+(three C sources, crypto), valectl (netmap), and zzz (libc). Installations retain
+/usr/sbin, section-8 manuals, utilities/netmap package ownership, and split debug
+artifacts. No application source changes or privilege-check bypasses were needed.
+
+Evidence: /usr/obj/usr/src/bazel-admin-tools-reference-20261030, native capture
+bazel-admin-tools-20261030, and independent Make references
+bazel-uefisign-make-20261030, bazel-valectl-make-20261030 and
+bazel-zzz-make-20261030. Each component matches five installation records with
+no missing/extra destinations or metadata mismatches. Each passes three regular
+payload checks (global/weak symbol inventories, ordered dynamic dependencies,
+manual bytes) and one debuglink CRC. Logs and JSON comparisons are retained in
+the component evidence directories.
+
+No signing, firmware-variable, netmap or power-transition runtime operation was
+performed. In particular this does not qualify verified boot, uefisign signing
+correctness, Capsicum behavior on a matching kernel, VALE operations or suspend.
+The uefisign child retains its caph_enter call. Whole-system runtime/package and
+performance gates remain open. Make remains production/default.
+Existing build-bsd explicit target inputs cover these components; no frontend C,
+manual option, signing/staging/verification or publication contract changed.
