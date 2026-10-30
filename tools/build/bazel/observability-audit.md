@@ -8343,3 +8343,12 @@ retain debug/diagnostic sources and invocation-name interface selection. Alias
 argument/version checks pass without opening controllers. Firmware updates,
 controller event/configuration operations and their authorization/audit attribution
 remain runtime review items; artifact parity does not establish those behaviors.
+
+### 2026-10-30: mfiutil and mrsasutil
+
+No local DTrace provider or direct libbsm integration is declared in Make.
+Native normal/debug builds retain all twelve source files and diagnostic command
+registration. The repaired legacy debug dump lookup is device-specific; runtime
+sysctl availability remains unqualified. Firmware writes, volume/configuration
+changes, event retrieval and authorization/audit attribution require controller
+runtime review. No controller operations were executed during artifact checks.

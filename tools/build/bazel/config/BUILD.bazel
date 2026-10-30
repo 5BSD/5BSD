@@ -479,3 +479,7 @@ config_setting(name = "mptutil_debug_enabled", flag_values = {":mptutil_debug": 
 # mpsutil Make DEBUG variant.
 bool_flag(name = "mpsutil_debug", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "mpsutil_debug_enabled", flag_values = {":mpsutil_debug": "true"}, visibility = ["//visibility:public"])
+
+# mfiutil Make DEBUG variant.
+bool_flag(name = "mfiutil_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "mfiutil_debug_enabled", flag_values = {":mfiutil_debug": "true"}, visibility = ["//visibility:public"])

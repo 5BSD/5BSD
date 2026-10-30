@@ -20012,3 +20012,31 @@ performance qualification. Make remains production/default.
   suffice; manual documents aliases and debug selection. No frontend C/backend,
   signing or publication contract changes. Controller runtime, native Bazel
   tests, cross builds and full-world/kernel/package/performance gates remain open.
+
+### Native mfiutil/mrsasutil normal and debug builds (2026-10-30)
+
+Added native mfiutil with all twelve maintained Make C sources, explicit MFI
+headers, CAM/sbuf/util dependencies, and mrsasutil executable/manual hardlinks.
+The typed mfiutil_debug boolean defaults false and corresponds to Make DEBUG.
+Fresh Make DEBUG compilation exposed a pre-existing out-of-scope mfi_unit
+reference and unused handler parameters. The shared source now derives the
+legacy diagnostic sysctl unit from the opened device via fdevname_r, rejects
+non-mfi device names, and marks the unused parameters. No warnings were disabled.
+The original Make failure remains in bazel-mfiutil-debug-make-20261030.
+
+Evidence roots: /usr/obj/usr/src/bazel-mfiutil-reference-20261030 and
+/usr/obj/usr/src/bazel-mfiutil-debug-reference-20261030. Native captures are
+bazel-mfiutil-20261030 and bazel-mfiutil-debug-20261030; Make references are
+bazel-mfiutil-make-20261030 and bazel-mfiutil-debug-make-20261030-r2.
+Each variant matches seven install records with no missing/extra destinations
+or metadata differences, three regular payload symbol/dependency/manual checks,
+two hardlink aliases and one debuglink CRC. variant-audit.json verifies all
+12 compiled sources and DEBUG selection against Make for both configurations.
+The normal captures predate the source repair, which is entirely inside DEBUG.
+
+No controller or firmware operations were executed. Device identity resolution,
+diagnostic sysctl availability and controller behavior still need hardware/runtime
+qualification. These are Clang builds, not GCC qualification or performance tests.
+Existing build-bsd format-5 targets/settings handle this addition; the maintained
+manual documents the new setting. No frontend C, signing, staging or publication
+contract change is needed. Whole-system gates remain open and Make stays default.

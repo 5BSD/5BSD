@@ -4367,3 +4367,13 @@ The format-5 build-settings boolean
 USE_MPT_IOCTLS remains defined in both configurations.
 Artifact and version/argument-dispatch checks cover both names and variants;
 controller and firmware operations remain unqualified.
+
+.Ss Native MFI and MRSAS utilities
+.Cm //usr.sbin/mfiutil:install_archive
+installs mfiutil and the mrsasutil executable/manual hardlinks.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mfiutil_debug
+(default false) matches Make's defined DEBUG variant, enabling additional
+controller diagnostics. The legacy dump command resolves the opened device
+and supports only the mfi driver diagnostic sysctl.
+Controller operations require separate runtime qualification.
