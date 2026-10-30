@@ -7376,3 +7376,10 @@ Authentication/encryption source selection follows inputs; production code and
 instrumentation are unchanged. SRA/PAM authentication and live protocol/error-path
 audit behavior remain unqualified. Legacy Heimdal support is an explicit missing
 configuration, not a passing subset or a silently dropped source.
+
+### libsamplerate (2026-10-30)
+
+Native candidate carries the maintained four vendor sources and three coefficient
+tables without production changes. No new probes are introduced. Audio conversion
+correctness, throughput and numerical-quality qualification are still outstanding;
+archive/install comparison alone cannot establish those properties.

@@ -41626,3 +41626,28 @@ This establishes those two selected archive configurations only; Heimdal is stil
 explicitly incompatible and must be migrated before complete configuration coverage.
 The failed OpenSSL-only-disabled Make run remains available as evidence. No live
 authentication/encryption behavior or full-system completion is claimed.
+
+### Native libsamplerate candidate (2026-10-30)
+
+Added explicit four-source native archive/shared-library targets, all three sinc
+coefficient tables, and private-library installation declarations. Fresh Make
+reference bazel-libsamplerate-make-20261030 completes and confirms private ABI 5,
+/usr/lib/libprivatesamplerate artifacts, sound package tags and the header under
+/usr/include/private/samplerate. No fabricated config.h is used: the vendor
+sources guard it with HAVE_CONFIG_H, which Make does not enable.
+
+Native run bazel-libsamplerate-20261030 is pending through maintained build-bsd
+with 16 jobs; no artifact/runtime pass is claimed yet. Existing explicit
+target/SDK inputs cover this component without frontend/backend contract changes.
+Saved Make/native comparators live under bazel-libsamplerate-reference-20261030.
+Full-system, bootstrap, configuration and performance gates remain open.
+
+Libsamplerate artifact result: bazel-libsamplerate-20261030 passes. Fresh Make
+comparison matches all seven installation destinations with zero missing/extra
+paths or metadata mismatches. Four regular payloads pass archive order, symbol
+inventories, ordered dynamic metadata, header bytes and one debug-link CRC.
+Evidence: install-audit.json and payload-audit.json under
+bazel-libsamplerate-reference-20261030, plus saved native artifacts and receipt.
+No audio runtime or performance result is claimed. virtual_oss backend and daemon
+consumers remain migration work; their Makefiles distinguish header-only uses
+from actual samplerate linkage, which native dependencies must preserve.
