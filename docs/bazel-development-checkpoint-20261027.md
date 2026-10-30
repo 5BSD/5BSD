@@ -17348,3 +17348,25 @@ crypto-selection.json under bazel-bhyve-reference-20261030.
 The nonetgraph evidence predates the manual-only availability sentence; default
 and noopenssl fresh references include it. No network/device runtime or full
 option matrix is claimed. Existing frontend configuration flow remains intact.
+
+### Native stack-protector library candidates (2026-10-30)
+
+Added libssp shared ABI 0 with its LIBSSP version maps, explicit secure sources,
+_elf_aux_info alias and disabled bsd_ssp toolchain feature to avoid instrumenting
+its own guard setup. Installation follows Make: shared library, development
+symlink, two manuals and debug data, with no invented static libssp archive.
+libssp_nonshared installs its single-object archive compiled with -fPIC, matching
+Make's NO_PIC plus explicit PIC flag. Fresh Make references complete; combined
+native bazel-ssp-libraries-20261030 is pending. Existing build-bsd target/toolchain
+feature interfaces suffice without frontend changes. Runtime failure handling
+and full-world/compiler-bootstrap qualification remain open.
+
+Stack-protector artifact result: bazel-ssp-libraries-20261030 passes. Libssp
+matches fresh Make at six destinations/four regular payloads/one debug link;
+nonshared matches its one installed archive, including member order and symbols.
+Shared symbols/versions, ordered dynamic metadata and manual bytes match. Actual
+recorded compile actions confirm no stack-protector enable flag on all 15 libssp
+sources and explicit -fPIC on libssp_nonshared. Evidence: per-library install/
+payload-audit.json under bazel-libssp{,_nonshared}-reference-20261030 and
+compile-policy.json under the libssp reference, bound to execution.json's hash.
+No failure-path runtime or full bootstrap/system qualification is claimed.

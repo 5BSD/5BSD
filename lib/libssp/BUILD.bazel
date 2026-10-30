@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# The protector implementation cannot safely instrument its own guard setup.
+cc_library(name = "ssp", srcs = ['//lib/libc/secure:fgets_chk.c', '//lib/libc/secure:memcpy_chk.c', '//lib/libc/secure:memmove_chk.c', '//lib/libc/secure:memset_chk.c', '//lib/libc/secure:snprintf_chk.c', '//lib/libc/secure:sprintf_chk.c', '//lib/libc/secure:stpcpy_chk.c', '//lib/libc/secure:stpncpy_chk.c', '//lib/libc/secure:strcat_chk.c', '//lib/libc/secure:strcpy_chk.c', '//lib/libc/secure:strncat_chk.c', '//lib/libc/secure:strncpy_chk.c', '//lib/libc/secure:vsnprintf_chk.c', '//lib/libc/secure:vsprintf_chk.c', '//lib/libc/secure:libc_stack_protector.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_elf_aux_info=elf_aux_info"], features = ["-bsd_ssp"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "ssp_shared", deps = [":ssp"], shared_lib_name = "libssp.so.0",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,libssp.so.0", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}' for d in ["/usr/lib/debug/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

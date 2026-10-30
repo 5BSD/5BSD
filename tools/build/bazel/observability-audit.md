@@ -7460,3 +7460,10 @@ Bhyve OpenSSL/netgraph follow-up (2026-10-30): corrected source selection so
 virtio-crypto is absent when its OpenSSL backend is disabled. Default retains
 the device and libcrypto; separate noopenssl/nonetgraph artifacts match Make.
 No crypto runtime/device execution or live network/provider firing is claimed.
+
+### libssp and libssp_nonshared (2026-10-30)
+
+Native candidates preserve maintained secure sources. Make declares no DTrace
+provider; stack failure reporting/runtime termination remains separate runtime
+qualification. Explicit no-SSP policy on the shared implementation avoids
+recursive guard instrumentation. No failure path is executed on the host.
