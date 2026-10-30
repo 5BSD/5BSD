@@ -7747,3 +7747,15 @@ including lock allocation, client/socket creation and unlock failures. Review
 kernel/userland correlation for lock recovery, monitor notifications and denied
 remote requests. No new hooks were introduced; packet validation, crash/restart
 persistence and live locking behavior remain runtime tests, not artifact claims.
+
+
+### RPC-over-TLS daemons (2026-10-30)
+
+rpc.tlsclntd/rpc.tlsservd retain maintained daemon/shared TLS sources and
+rpcgen -L -C -M generation. Selected amd64 installation and payload comparisons
+pass against Make (bazel-rpc-tls-reference-20261030). No instrumentation or
+authentication behavior was changed. Runtime qualification remains necessary
+for kernel RPC upcalls, valid/invalid/expired certificates, trust-store changes,
+mutual authentication, TLS negotiation failures, reconnect/shutdown, concurrent
+requests and diagnostic logging. This build comparison does not establish
+runtime audit coverage, probe firing or network behavior.

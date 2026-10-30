@@ -42992,3 +42992,11 @@ also still require native integration. Generator invalidation/cross-compilation,
 world/bootstrap/pkgbase and performance qualification remain open. The new rule
 mode is exercised by both real daemon builds; existing build-bsd explicit inputs
 need no new option. No frontend/signing/publication contract changed.
+
+
+RPC-over-TLS daemon coverage (2026-10-30): rpc.tlsclntd and rpc.tlsservd now
+have native targets, explicit shared TLS dependencies and rpcgen -L -C -M
+header/dispatch/XDR actions. Selected amd64 build/install comparisons each
+match five Make records, three regular payloads and debuglink CRCs. Evidence:
+/usr/obj/usr/src/bazel-rpc-tls-reference-20261030. These results do not qualify
+live TLS/kernel RPC operation or a complete world; Make remains default.

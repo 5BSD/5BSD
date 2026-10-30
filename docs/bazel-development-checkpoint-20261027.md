@@ -18495,3 +18495,27 @@ also still require native integration. Generator invalidation/cross-compilation,
 world/bootstrap/pkgbase and performance qualification remain open. The new rule
 mode is exercised by both real daemon builds; existing build-bsd explicit inputs
 need no new option. No frontend/signing/publication contract changed.
+
+### RPC-over-TLS daemons (2026-10-30)
+
+Added native rpc.tlsclntd and rpc.tlsservd targets with declared rpcgen header,
+dispatch and XDR actions using the maintained -L -C -M flags. Protocol sources
+are exported from the existing sys/rpc package; shared TLS code and headers are
+explicit dependencies. Native SSL/crypto/util linkage and the server's pthread
+linkage preserve Make's selection. No daemon source behavior changed.
+
+Native build-bsd run: /usr/obj/usr/src/bazel-rpc-tls-20261030.
+Fresh Make references: bazel-rpc.tlsclntd-make-20261030 and
+bazel-rpc.tlsservd-make-20261030. Comparisons and scripts are under
+/usr/obj/usr/src/bazel-rpc-tls-reference-20261030, in per-daemon directories.
+Each daemon matches five installation records with no missing/extra paths or
+metadata mismatches. Three regular payloads per daemon pass symbol/dynamic
+linkage inventories, manual byte comparison and one debuglink CRC check.
+The native receipt has no runtime test cases: success covers selected builds,
+not TLS handshakes, certificate policy, kernel upcalls or service lifecycle.
+
+Frontend review: existing explicit targets and configured SDK inputs cover
+these actions; no build-bsd/backend/signing/publication contract changed.
+Staged SDK dependence, full world/kernel/pkgbase, alternate architectures,
+cache/performance and matching-system runtime qualification remain open.
+Make remains the production/default backend.
