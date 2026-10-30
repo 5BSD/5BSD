@@ -42815,3 +42815,20 @@ wake settings and EFI table output remain runtime gates. No firmware utility
 was executed. Independent bootstrap/world/pkgbase, cross-architecture and cache/
 performance qualification remain open. Existing build-bsd explicit targets cover
 this work; no frontend/signing/publication contract changed. Make remains default.
+
+### Quota utility artifact comparison completed (2026-10-30)
+
+Final native run bazel-quota-tools-20261030-r2 passes all four Make comparisons.
+Edquota, quot and repquota each match five installation records; quotaon matches
+seven, including quotaoff binary/manual hardlinks. Each has three regular
+payloads: symbol inventories, ordered dynamic dependencies, exact manuals and
+debuglink CRC pass. No missing/extra destinations or metadata mismatches.
+Evidence: /usr/obj/usr/src/bazel-quota-tools-reference-20261030, per-program
+comparison scripts/logs; fresh Make references bazel-<program>-make-20261030.
+
+No application logic changed. This is tests-disabled program/install parity;
+quot's maintained ufs1/ufs2 test integration and isolated VM execution remain
+pending, along with quota editing/enforcement, filesystem accounting, concurrent
+updates and error-path runtime checks. No host quota/mount state changed.
+Existing build-bsd explicit targets suffice; no frontend/signing/publication
+contract changed. Independent world/bootstrap/pkgbase and performance remain open.

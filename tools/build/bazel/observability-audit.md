@@ -7679,3 +7679,11 @@ Review audit coverage for variable writes, boot-order changes and wake-setting
 changes; qualify authorization/error paths only in disposable firmware/VM state.
 Device-path parser/formatter correctness and table output also remain runtime
 tests. No firmware changes were made during artifact comparison.
+
+### Quota administration programs (2026-10-30)
+
+Native edquota, quot, quotaon/off and repquota preserve existing program sources.
+A scoped scan of the four main source files found no explicit DTrace, audit_ or
+syslog calls. Review audit coverage for quota edits and enabling/disabling limits;
+existing quot UFS1/UFS2 tests require a privileged isolated filesystem fixture.
+Artifact parity does not establish enforcement or accounting correctness.
