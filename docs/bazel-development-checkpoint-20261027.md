@@ -17431,3 +17431,28 @@ bazel-libgcc_s_asneeded-reference-20261030 and bazel-libc++experimental-referenc
 frontend inputs suffice; build-bsd/backend interfaces need no changes. Runtime
 linker AS_NEEDED behavior and broader exception/bootstrap/system qualification
 remain open. Make remains production/default.
+
+### Native libgcc_s stack-walk runtime candidate (2026-10-30)
+
+Added a Bazel cc_test that dlopens the explicit native DSO runfile, verifies both
+resolved unwind entry points belong to that file by device/inode identity, checks
+three named caller frames in order, and tests callback-requested termination.
+The test preserves caller frames with noinline functions and post-call volatile
+side effects, while exporting names for dladdr inspection. No arbitrary frame
+count is substituted for the required caller identities. Runtime run
+bazel-libgcc_s-runtime-20261030 is pending. Existing build-bsd targets/tests input
+contract already handles this test; no frontend changes required. This scope
+does not establish C++ exceptions, signal-frame handling or sanitizer behavior.
+
+Initial stack-walk test compilation rejected a non-existent _Unwind_Ptr typedef.
+Corrected the test to uintptr_t as declared by this source tree's unwind_itanium.h;
+no runtime-library implementation changed. Runtime r2 is pending.
+
+Native libgcc_s runtime r2 passes its Bazel cc_test. Both dynamically resolved
+unwind functions match the explicit native DSO's device/inode; traversal reaches
+leaf/middle/outer frames in order and returns end-of-stack. A second traversal
+returns the callback's stop code after one callback. Evidence: test-reports/0/
+test.log and test.xml under bazel-libgcc_s-runtime-20261030-r2. Source ABI headers
+and the native shared runtime are used; SDK libc/startup and host loader/kernel
+remain prerequisites. C++ exception propagation, signal frames, sanitizer
+interaction and whole-system/bootstrap qualification remain open.

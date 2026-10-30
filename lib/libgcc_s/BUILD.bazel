@@ -56,3 +56,17 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(
+    name = "backtrace_test",
+    srcs = ["backtrace_test.c"],
+    deps = ["//contrib/llvm-project/libunwind/include:headers"],
+    data = [":gcc_s_shared"],
+    args = ["$(rootpath :gcc_s_shared)"],
+    copts = ["-UNDEBUG", "-funwind-tables"],
+    linkopts = ["-Wl,--export-dynamic"],
+    linkstatic = True,
+    target_compatible_with = _PLATFORM,
+    size = "small",
+)

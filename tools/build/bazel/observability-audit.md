@@ -7489,3 +7489,10 @@ Libgcc_s_asneeded contains no implementation objects; libc++experimental current
 contains only upstream keep.cpp. Neither contains runtime service logic or new
 probe/audit opportunities. Artifact/install parity passes; runtime linker
 AS_NEEDED behavior is not established by linker-script byte equality.
+
+### libgcc_s live stack traversal (2026-10-30)
+
+Bazel backtrace_test passes with explicit native DSO identity checks, three
+ordered caller frames and callback-requested stop. This supplies limited live
+stack-walk evidence beyond ELF/debug inspection. It does not cover exception
+cleanup, signal frames, concurrent walks, sanitizer integration or performance.
