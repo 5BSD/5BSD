@@ -7629,3 +7629,11 @@ Review startup/shutdown, configuration rejection, privilege changes and remote
 control authorization/logging when qualifying live runtime; do not log DNS
 secrets or treat symbol parity as DNSSEC or authentication evidence. No source
 behavior or observability hooks were changed in this migration.
+
+### Blocklist/blacklist program family (2026-10-30)
+
+Native migration preserves vendor logging and configuration; blocklistd passes
+vsyslog_r (or verbose logging) into bl_create. No new DTrace/audit integration was
+added. Review socket peer authorization, rejected messages, helper failures,
+state changes and reload diagnostics during live qualification. Artifact parity
+does not establish firewall effects, denial behavior or audit completeness.

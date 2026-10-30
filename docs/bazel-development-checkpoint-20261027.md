@@ -18080,3 +18080,34 @@ and comparative performance remain open. Existing native libunbound runtime
 checks do not establish those program-level behaviors. Existing build-bsd
 explicit targets cover this work; no frontend input, signing or publication
 contract changed. Make remains production/default.
+
+### Blocklist and legacy blacklist programs (2026-10-30)
+
+Added native blocklistd/blocklistctl/blacklistd/blacklistctl targets with explicit
+vendor sources, header closure, Make feature defines and native blocklist/util
+libraries. Legacy programs retain their own configuration/helper paths and
+old_internal.c, while preserving Make's blocklist library selection. Corrected
+C-string definition escaping after the first compile exposed stripped quotes.
+No program behavior was modified.
+
+Each daemon installs its configuration and section-5 manual alongside executable,
+debug symbols and section-8 manual; each control utility installs executable,
+debug symbols and manual. Fresh Make references run installconfig for the daemons
+in addition to install: ordinary install alone does not stage CONFS. The native
+manifest preserves the /etc directory's utilities tag and config-file tags.
+
+Final native run: /usr/obj/usr/src/bazel-blocklist-programs-20261030-r3.
+Fresh Make runs: /usr/obj/usr/src/bazel-{blocklistd,blocklistctl,blacklistd,blacklistctl}-make-20261030.
+Comparators/results: /usr/obj/usr/src/bazel-blocklist-programs-reference-20261030,
+per-program subdirectories. Each daemon matches eight installation records and
+five regular payloads; each control utility matches five records and three
+regular payloads. No missing/extra destinations or metadata mismatches. Global/
+weak symbol inventories and ordered dynamic dependencies match; manuals/config
+bytes match; all four debuglink CRCs pass. Shared directory records mean these
+per-component counts must not be summed as distinct world destinations.
+
+Live socket authorization, helper execution/firewall effects, persistent state,
+configuration reload, logging, sandbox/cache mutation and performance remain
+unqualified. No daemon or firewall helper was started. Existing build-bsd explicit
+targets suffice; no frontend input, signing or publication contract changed.
+These builds consume the existing staged SDK; Make remains production/default.
