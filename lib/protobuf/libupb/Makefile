@@ -75,4 +75,18 @@ SRCS+=	upb/wire/reader.c
 SRCS+=	upb/reflection/cmake/google/protobuf/descriptor.upb_minitable.c \
 	third_party/utf8_range/utf8_range.c
 
+# upb is linked statically into every libotelexport consumer (dtrace,
+# bsdinstruments, hwstat, otelpfd, otelauditd, otelconf), whose packages need
+# not depend on the protobuf package: install its licences (BSD-3-Clause,
+# utf8_range MIT) with the OTLP one, in utilities.
+.if !defined(BOOTSTRAPPING)
+FILESGROUPS+=	UPB_LICENSES UPB_UTF8_LICENSES
+UPB_LICENSES=	${PROTOBUF}/LICENSE
+UPB_LICENSESDIR= /usr/share/licenses/upb
+UPB_LICENSESPACKAGE= utilities
+UPB_UTF8_LICENSES= ${PROTOBUF}/third_party/utf8_range/LICENSE
+UPB_UTF8_LICENSESDIR= /usr/share/licenses/upb/utf8_range
+UPB_UTF8_LICENSESPACKAGE= utilities
+.endif
+
 .include <bsd.lib.mk>
