@@ -46,7 +46,7 @@ static int
 has_target(const struct oe_sysconf *sc)
 {
 
-	return (sc->endpoint[0] != '\0');
+	return (sc->export_file || sc->endpoint[0] != '\0');
 }
 
 static int
@@ -81,7 +81,8 @@ cmd_check(int argc, char **argv)
 		return (3);
 	}
 	if (need_target && !has_target(&sc)) {
-		warnx("no export target: set endpoint in otel.conf");
+		warnx("no export target: set endpoint, or export.target = "
+		    "\"file\", in otel.conf");
 		oe_sysconf_free(&sc);
 		return (4);
 	}
@@ -126,6 +127,10 @@ print_key(const struct oe_sysconf *sc, const char *key)
 		printf("%s\n", sc->spool_dir);
 	else if (strcmp(key, "spool.max_bytes") == 0)
 		printf("%" PRIu64 "\n", sc->spool_max_bytes);
+	else if (strcmp(key, "export.target") == 0)
+		printf("%s\n", sc->export_file ? "file" : "otlp");
+	else if (strcmp(key, "export.directory") == 0)
+		printf("%s\n", sc->export_dir);
 	else
 		return (-1);
 	return (0);
@@ -134,7 +139,7 @@ print_key(const struct oe_sysconf *sc, const char *key)
 static const char *const show_keys[] = {
 	"enable", "endpoint", "protocol", "compression", "timeout_ms",
 	"headers_file", "host_id_file", "spool.directory", "spool.max_bytes",
-	NULL
+	"export.target", "export.directory", NULL
 };
 
 static int

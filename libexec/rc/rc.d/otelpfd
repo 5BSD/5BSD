@@ -25,6 +25,8 @@ if [ -n "${otel_endpoint}" ]; then
 fi
 
 pidfile="${otel_rundir}/${name}.pid"
+# The program itself; newsyslog(8) signals it to reopen the file target.
+child_pidfile="${otel_rundir}/${name}.child.pid"
 command="/usr/sbin/daemon"
 start_precmd="otelpfd_prestart"
 
@@ -34,14 +36,22 @@ otelpfd_prestart()
 		warn "${otelpfd_bin} is not installed"
 		return 1
 	fi
-	# An export target must be configured (otel.conf endpoint, or
-	# otel_endpoint in rc.conf); nothing local receives OTLP.
+	# An export target must be configured (otel.conf endpoint or
+	# export.target, or otel_endpoint in rc.conf); nothing local
+	# receives OTLP.
 	_otel_check="-eqt"
 	[ -n "${otel_endpoint}" ] && _otel_check="-eq"
 	${otelconf_program} check ${_otel_check} || return 1
+	# The file target's directory belongs to _otel (mtree creates the
+	# default one).
+	if [ -z "${otel_endpoint}" ] &&
+	    [ "$(${otelconf_program} get export.target)" = file ]; then
+		install -d -o _otel -g _otel -m 0750 \
+		    "$(${otelconf_program} get export.directory)" || return 1
+	fi
 	install -d -m 0755 "${otel_rundir}" || return 1
 	# otelpfd opens /dev/pf as root, then drops to ${otelpfd_runas}.
-	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \
+	command_args="-f -S -T ${name} -P ${pidfile} -p ${child_pidfile} -r -R 10 \
 ${otelpfd_bin} -u ${otelpfd_runas} ${rc_flags}"
 	rc_flags=""
 }

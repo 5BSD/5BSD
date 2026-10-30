@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt OTELPFD 8
 .Os
 .Sh NAME
@@ -42,16 +42,22 @@ samples.
 By default
 .Nm
 runs until it receives
-.Dv SIGTERM ,
-.Dv SIGINT
+.Dv SIGTERM
 or
-.Dv SIGHUP ,
+.Dv SIGINT ,
 then flushes pending metrics and exits.
+.Dv SIGHUP
+reopens the file of the
+.Xr otel.conf 5
+file target, which
+.Xr newsyslog 8
+rotates.
 .It Fl e Ar endpoint
 Send to
 .Ar endpoint
-instead of the one resolved from the environment and
-.Xr otel.conf 5 .
+instead of the target resolved from the environment and
+.Xr otel.conf 5
+.Pq including its file target .
 Credentials from the
 .Xr otel.conf 5
 headers file are not sent to it.

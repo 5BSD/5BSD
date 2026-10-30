@@ -73,6 +73,8 @@
     heimdal         mode=0700
     ..
     log
+        otel            uname=_otel gname=_otel mode=0750 tags=package=otel
+        ..
     ..
     mail            gname=mail mode=0775
     ..

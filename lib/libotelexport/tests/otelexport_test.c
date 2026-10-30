@@ -3564,6 +3564,345 @@ ATF_TC_BODY(jsonl_metrics, tc)
 	free(out);
 }
 
+/* ---------------------------------------------------------------- */
+/* External rotation (newsyslog) and the otel.conf file target		*/
+
+/* Lines of a file, or 0 when it does not exist. */
+static size_t
+lines_or_zero(const char *path)
+{
+	size_t n = count_lines(path);
+
+	return (n == (size_t)-1 ? 0 : n);
+}
+
+/* What newsyslog(8) does: rename away, then move a new file in place. */
+static void
+newsyslog_rotate(const char *path, const char *to)
+{
+	char tmp[PATH_MAX];
+	int fd;
+
+	ATF_REQUIRE(rename(path, to) == 0);
+	snprintf(tmp, sizeof(tmp), "%s.zXXXXXX", path);
+	fd = mkstemp(tmp);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(fchmod(fd, 0640) == 0);
+	close(fd);
+	ATF_REQUIRE(rename(tmp, path) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(sink_follow_rename);
+ATF_TC_BODY(sink_follow_rename, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *s;
+	struct stat st;
+	char rec[32];
+	int i;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "t.jsonl";
+	sc.durable = 1;
+	sc.mode = 0640;
+	sc.follow = 1;
+	umask(022);
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE(stat("t.jsonl", &st) == 0);
+	ATF_CHECK_EQ(st.st_mode & ALLPERMS, 0640);
+	for (i = 0; i < 3; i++) {
+		snprintf(rec, sizeof(rec), "{\"r\":%d}\n", i);
+		ATF_REQUIRE_EQ(0, oe_sink_write(s, rec, strlen(rec)));
+	}
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	/*
+	 * Rotated without a signal: records written before the next flush
+	 * still go to the open (rotated) file, whole; that flush notices
+	 * the new file and later records go there.
+	 */
+	newsyslog_rotate("t.jsonl", "t.jsonl.0");
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":3}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":4}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK_EQ(4, lines_or_zero("t.jsonl.0"));
+	ATF_CHECK_EQ(1, lines_or_zero("t.jsonl"));
+	/* newsyslog's mode is kept; the file was not recreated by us. */
+	ATF_REQUIRE(stat("t.jsonl", &st) == 0);
+	ATF_CHECK_EQ(st.st_mode & ALLPERMS, 0640);
+
+	/* With the signal: reopened before the very next write. */
+	newsyslog_rotate("t.jsonl", "t.jsonl.1");
+	oe_sink_reopen_request();
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":5}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK_EQ(1, lines_or_zero("t.jsonl.1"));
+	ATF_CHECK_EQ(1, lines_or_zero("t.jsonl"));
+	/* A request is acted on once. */
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":6}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK_EQ(2, lines_or_zero("t.jsonl"));
+
+	/*
+	 * A missing path is the window in which newsyslog has renamed
+	 * the old file but not yet moved the new one in: not created at
+	 * once, so no record lands in a file about to be replaced.  After
+	 * a few flushes it is (someone removed it for good).
+	 */
+	ATF_REQUIRE(rename("t.jsonl", "t.jsonl.2") == 0);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":7}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK(stat("t.jsonl", &st) != 0 && errno == ENOENT);
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK(stat("t.jsonl", &st) != 0 && errno == ENOENT);
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_CHECK(stat("t.jsonl", &st) == 0);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "{\"r\":8}\n", 8));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	ATF_CHECK_EQ(3, lines_or_zero("t.jsonl.2"));
+	ATF_CHECK_EQ(1, lines_or_zero("t.jsonl"));
+	/* Every record exactly once across the files. */
+	ATF_CHECK_EQ(9, lines_or_zero("t.jsonl") + lines_or_zero("t.jsonl.0") +
+	    lines_or_zero("t.jsonl.1") + lines_or_zero("t.jsonl.2"));
+}
+
+ATF_TC_WITHOUT_HEAD(sink_follow_edges);
+ATF_TC_BODY(sink_follow_edges, tc)
+{
+	struct oe_sink_config sc;
+	struct oe_sink *s;
+
+	/* A sink that does not follow ignores requests and renames. */
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "plain.log";
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	ATF_REQUIRE(rename("plain.log", "plain.log.0") == 0);
+	oe_sink_reopen_request();
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "b\n", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	ATF_CHECK_EQ(2, lines_or_zero("plain.log.0"));
+	ATF_CHECK_EQ(0, lines_or_zero("plain.log"));
+
+	/* Explicit reopen: a no-op for streams, a new file otherwise. */
+	memset(&sc, 0, sizeof(sc));
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_CHECK_EQ(0, oe_sink_reopen(s));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	sc.path = "r.log";
+	sc.durable = 1;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	ATF_REQUIRE(rename("r.log", "r.log.0") == 0);
+	ATF_REQUIRE_EQ(0, oe_sink_reopen(s));
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "b\n", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	ATF_CHECK_EQ(1, lines_or_zero("r.log.0"));
+	ATF_CHECK_EQ(1, lines_or_zero("r.log"));
+
+	/*
+	 * A reopen that cannot create the file fails stickily, with the
+	 * records before it kept.
+	 */
+	ATF_REQUIRE(mkdir("d", 0755) == 0);
+	sc.path = "d/x.log";
+	sc.follow = 1;
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	ATF_REQUIRE(rename("d/x.log", "x.log.0") == 0);
+	ATF_REQUIRE(rmdir("d") == 0);
+	oe_sink_reopen_request();
+	ATF_CHECK_EQ(-1, oe_sink_write(s, "b\n", 2));
+	ATF_CHECK_EQ(-1, oe_sink_flush(s));
+	ATF_CHECK_EQ(-1, oe_sink_reopen(s));
+	ATF_CHECK_EQ(-1, oe_sink_close(s));
+	ATF_CHECK_EQ(1, lines_or_zero("x.log.0"));
+	/* The same failure found by a flush (path gone, no signal). */
+	ATF_REQUIRE(mkdir("d", 0755) == 0);
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE(rename("d/x.log", "x.log.1") == 0);
+	ATF_REQUIRE(rmdir("d") == 0);
+	ATF_CHECK_EQ(0, oe_sink_flush(s));
+	ATF_CHECK_EQ(0, oe_sink_flush(s));
+	ATF_CHECK_EQ(-1, oe_sink_flush(s));
+	ATF_CHECK_EQ(-1, oe_sink_close(s));
+	/* A path that cannot be examined is left alone. */
+	ATF_REQUIRE(mkdir("e", 0755) == 0);
+	sc.path = "e/y.log";
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	if (getuid() != 0) {
+		ATF_REQUIRE(chmod("e", 0) == 0);
+		ATF_CHECK_EQ(0, oe_sink_flush(s));
+		ATF_CHECK_EQ(0, oe_sink_flush(s));
+		ATF_CHECK_EQ(0, oe_sink_flush(s));
+		ATF_CHECK_EQ(0, oe_sink_flush(s));
+		ATF_REQUIRE(chmod("e", 0755) == 0);
+	}
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	/* A request seen first by a flush reopens there. */
+	ATF_REQUIRE(rename("e/y.log", "y.log.0") == 0);
+	oe_sink_reopen_request();
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "b\n", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	ATF_CHECK_EQ(1, lines_or_zero("y.log.0"));
+	ATF_CHECK_EQ(1, lines_or_zero("e/y.log"));
+
+	/* Not durable: reopened without directory syncs. */
+	sc.durable = 0;
+	sc.path = "nd.log";
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	newsyslog_rotate("nd.log", "nd.log.0");
+	ATF_REQUIRE_EQ(0, oe_sink_flush(s));
+	ATF_REQUIRE_EQ(0, oe_sink_write(s, "a\n", 2));
+	ATF_REQUIRE_EQ(0, oe_sink_close(s));
+	ATF_CHECK_EQ(1, lines_or_zero("nd.log"));
+
+	/*
+	 * The path now names a file on another file system (a device):
+	 * a different file, and one the sink refuses to write.
+	 */
+	sc.path = "dev.log";
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	ATF_REQUIRE(unlink("dev.log") == 0);
+	ATF_REQUIRE(symlink("/dev/null", "dev.log") == 0);
+	ATF_CHECK_EQ(-1, oe_sink_flush(s));
+	ATF_CHECK_EQ(-1, oe_sink_close(s));
+
+	/* Buffered records that cannot be written fail the reopen. */
+	sc.path = "big.log";
+	s = oe_sink_open(&sc);
+	ATF_REQUIRE(s != NULL);
+	{
+		struct rlimit rl, saved;
+		char big[64];
+
+		signal(SIGXFSZ, SIG_IGN);
+		ATF_REQUIRE(getrlimit(RLIMIT_FSIZE, &saved) == 0);
+		rl = saved;
+		rl.rlim_cur = 16;
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &rl) == 0);
+		memset(big, 'x', sizeof(big));
+		ATF_REQUIRE_EQ(0, oe_sink_write(s, big, sizeof(big)));
+		ATF_CHECK_EQ(-1, oe_sink_reopen(s));
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &saved) == 0);
+	}
+	ATF_CHECK_EQ(-1, oe_sink_close(s));
+}
+
+ATF_TC_WITHOUT_HEAD(file_target_exporter);
+ATF_TC_BODY(file_target_exporter, tc)
+{
+	struct oe_otlp_config cfg;
+	struct oe_env env;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_snapshot sn;
+	struct otlp_counts c;
+	struct stat st;
+	char *text;
+
+	memset(&env, 0, sizeof(env));
+	env.endpoint = OE_DEFAULT_ENDPOINT;
+	env.file_path = "tool.jsonl";
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.profile = "p";
+	cfg.resource = &test_resource;
+	cfg.scope_name = "tool";
+	cfg.batch_size = 2;
+	umask(022);
+	e = oe_exporter_open(&env, &cfg);
+	ATF_REQUIRE(e != NULL);
+	ATF_REQUIRE(stat("tool.jsonl", &st) == 0);
+	ATF_CHECK_EQ(st.st_mode & ALLPERMS, OE_FILE_TARGET_MODE);
+	ATF_REQUIRE_EQ(0, oe_start(e));
+	ev = make_event();
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	sn = make_snapshot(OE_AGG_COUNT, "n");
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	/* A flush writes the pending lines (the services' durability). */
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	ATF_CHECK_EQ(2, lines_or_zero("tool.jsonl"));
+	/* Rotation is followed through the exporter's flush. */
+	newsyslog_rotate("tool.jsonl", "tool.jsonl.0");
+	ATF_REQUIRE_EQ(0, oe_flush(e));
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	/* Shutdown closed the owned sink; free must not close it again. */
+	oe_exporter_free(e);
+	ATF_CHECK_EQ(1, lines_or_zero("tool.jsonl"));
+	text = slurp("tool.jsonl.0", NULL);
+	ATF_REQUIRE(text != NULL);
+	c = check_otlp_lines(tc, text, NULL);
+	ATF_CHECK_EQ(c.logs, 1);
+	ATF_CHECK_EQ(c.metrics, 1);
+	ATF_CHECK(strstr(text, "\"scope\":{\"name\":\"tool\"") != NULL);
+	free(text);
+	text = slurp("tool.jsonl", NULL);
+	c = check_otlp_lines(tc, text, NULL);
+	ATF_CHECK_EQ(c.logs, 1);
+	free(text);
+
+	/* Freed without shutdown: the sink is still closed. */
+	e = oe_exporter_open(&env, &cfg);
+	ATF_REQUIRE(e != NULL);
+	oe_exporter_free(e);
+
+	/* Allocation failures while creating it leave nothing behind. */
+	{
+		int i;
+
+		for (i = 1; i <= 20; i++) {
+			failalloc_arm(i);
+			e = oe_exporter_open(&env, &cfg);
+			failalloc_arm(0);
+			if (e != NULL)
+				oe_exporter_free(e);
+		}
+	}
+
+	/* A write error surfaces at shutdown, which still closes. */
+	e = oe_exporter_open(&env, &cfg);
+	ATF_REQUIRE(e != NULL);
+	{
+		struct rlimit rl, saved;
+
+		signal(SIGXFSZ, SIG_IGN);
+		ATF_REQUIRE(getrlimit(RLIMIT_FSIZE, &saved) == 0);
+		rl = saved;
+		rl.rlim_cur = 0;
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &rl) == 0);
+		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+		ATF_CHECK_EQ(-1, oe_shutdown(e));
+		oe_exporter_free(e);
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &saved) == 0);
+	}
+
+	/* An unopenable file target fails creation. */
+	env.file_path = "nonexistent-dir/tool.jsonl";
+	ATF_CHECK(oe_exporter_open(&env, &cfg) == NULL);
+	/* Without a file target there is no file sink. */
+	env.file_path = NULL;
+	ATF_CHECK(oe_env_sink_open(&env) == NULL);
+	/* ... and the exporter is OTLP/HTTP to the resolved endpoint. */
+	env.endpoint = "http://127.0.0.1:9";
+	e = oe_exporter_open(&env, &cfg);
+	ATF_REQUIRE(e != NULL);
+	oe_exporter_free(e);
+	env.endpoint = "notaurl";
+	ATF_CHECK(oe_exporter_open(&env, &cfg) == NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3636,5 +3975,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, failure_edges);
 	ATF_TP_ADD_TC(tp, exporter_small_edges);
 	ATF_TP_ADD_TC(tp, otlp_batch_alloc);
+	ATF_TP_ADD_TC(tp, sink_follow_rename);
+	ATF_TP_ADD_TC(tp, sink_follow_edges);
+	ATF_TP_ADD_TC(tp, file_target_exporter);
 	return (atf_no_error());
 }

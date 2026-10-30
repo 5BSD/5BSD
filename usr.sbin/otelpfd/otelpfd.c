@@ -38,10 +38,14 @@
 static volatile sig_atomic_t done;
 
 static void
-on_signal(int sig __unused)
+on_signal(int sig)
 {
 
-	done = 1;
+	/* newsyslog(8) rotated the file target: reopen it. */
+	if (sig == SIGHUP)
+		oe_sink_reopen_request();
+	else
+		done = 1;
 }
 
 static void __dead2
@@ -134,6 +138,8 @@ main(int argc, char **argv)
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+	/* SIGHUP only asks for a reopen: interrupted reads restart. */
+	sa.sa_flags = SA_RESTART;
 	sigaction(SIGHUP, &sa, NULL);
 
 	/* Privileged setup: the device, then the configuration. */
@@ -163,6 +169,8 @@ main(int argc, char **argv)
 		clock_gettime(CLOCK_UPTIME, &up);
 		if (pfstat_emit(svc.exporter, &st, &ts, up.tv_sec) < 0)
 			warnx("cannot queue the pf metrics");
+		if (oe_service_flush(&svc) != 0)
+			warnx("cannot write the pf metrics");
 		if (count != 0 && n + 1 == count)
 			break;
 		next.tv_sec += (time_t)interval;

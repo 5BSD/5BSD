@@ -271,6 +271,73 @@ dtrace_system_metrics_body()
 	    cat summary
 }
 
+# Validate every line of an OTLP JSON Lines file on its own.
+validate_lines()
+{
+	rm -rf lines; mkdir lines
+	split -l 1 "$1" lines/l.
+	n=0
+	for l in lines/l.*; do
+		${VALIDATE} "$l" >> lines.out || atf_fail "$1: invalid line"
+		n=$((n + 1))
+	done
+	[ $n -gt 0 ] || atf_fail "$1: no lines"
+}
+
+# What newsyslog(8) does: rename away, put a new file in place, signal.
+newsyslog_like()
+{
+	mv "$1" "$1.0"
+	: > "$1.new"; chmod 0640 "$1.new"; mv "$1.new" "$1"
+	[ -z "$2" ] || kill -HUP "$2"
+}
+
+atf_test_case hwstat_file_target
+hwstat_file_target_head()
+{
+	atf_set "descr" "hwstat writes the otel.conf file target and follows rotation"
+	atf_set "timeout" "120"
+}
+hwstat_file_target_body()
+{
+	[ -x "${HWSTAT}" ] || atf_skip "hwstat is not installed"
+	mkdir logs
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	umask 022
+	"${HWSTAT}" watch --format otel --interval 0.5 --duration 6 \
+	    > hw.out 2> hw.err &
+	pid=$!
+	sleep 2
+	atf_check test -s logs/hwstat.jsonl
+	atf_check -o inline:"640\n" stat -f %Lp logs/hwstat.jsonl
+	# Rotation with the signal (the rc.d service under newsyslog).
+	newsyslog_like logs/hwstat.jsonl $pid
+	sleep 1.5
+	# And without it: noticed at the next once-a-sample flush.
+	mv logs/hwstat.jsonl.0 logs/hwstat.jsonl.1
+	newsyslog_like logs/hwstat.jsonl
+	wait $pid || atf_fail "hwstat failed: $(cat hw.err)"
+	atf_check -o match:"Exporting to $(pwd)/logs/hwstat.jsonl" cat hw.err
+	for f in logs/hwstat.jsonl.1 logs/hwstat.jsonl.0 logs/hwstat.jsonl; do
+		validate_lines $f
+	done
+	atf_check -o match:"^resource service.name=hwstat$" \
+	    -o match:"^resource host.id=11111111-2222-3333-4444-555555555555$" \
+	    -o match:"^metric hwstat\." cat lines.out
+	# Nothing went to the network or the spool.
+	atf_check -o empty ls spool
+	# The environment endpoint wins over the file target.
+	receiver_start -n 1 -t 30
+	atf_check -o ignore -e match:"Exporting to http://127.0.0.1" \
+	    env OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${PORT}" \
+	    "${HWSTAT}" watch --format otel --interval 0.5 --duration 1.2
+	receiver_wait
+	# An unwritable directory is an error, not a silent fallback.
+	config "export { target = \"file\"; directory = \"$(pwd)/nologs\"; }"
+	atf_check -s not-exit:0 -o ignore -e match:"nologs/hwstat.jsonl" \
+	    "${HWSTAT}" watch --format otel --interval 0.5 --duration 0.6
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case hwstat_system_config
@@ -278,6 +345,7 @@ atf_init_test_cases()
 	atf_add_test_case hwstat_percore
 	atf_add_test_case hwstat_precedence
 	atf_add_test_case hwstat_bad_config
+	atf_add_test_case hwstat_file_target
 	atf_add_test_case dtrace_bad_config
 	atf_add_test_case dtrace_profile_renders
 	atf_add_test_case dtrace_system_metrics

@@ -406,6 +406,7 @@ oe_env_free(struct oe_env *env)
 		free(env->sysconf);
 	}
 	free(env->spool_buf);
+	free(env->file_buf);
 	memset(env, 0, sizeof(*env));
 }
 

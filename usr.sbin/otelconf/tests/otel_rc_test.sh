@@ -103,6 +103,11 @@ emitter_cycle()
 	atf_check -o match:"Starting $svc" ./rc_run $svc start
 	wait_for $prog.args
 	atf_check -o inline:"$expect" cat $prog.args
+	# The program's own pid (daemon(8)'s child), for newsyslog(8) to
+	# signal.
+	# (pidfile(3) writes the number without a newline.)
+	atf_check -o inline:"$(pgrep -P "$(cat run/$svc.pid)")" \
+	    cat run/$svc.child.pid
 	atf_check -o match:"is running" ./rc_run $svc status
 	atf_check -o match:"Stopping $svc" ./rc_run $svc stop
 	atf_check -s exit:1 -o match:"is not running" ./rc_run $svc status
@@ -133,6 +138,22 @@ emitters_start_stop_body()
 	    "-u nobody -n\nendpoint=http://e:3\n" \
 	    'otelauditd_runas="nobody"' 'otelauditd_flags="-n"' \
 	    'otel_endpoint="http://e:3"'
+	# The file target: its directory is created for _otel.
+	if id _otel > /dev/null 2>&1; then
+		rc_setup 'otel_enable="YES"'
+		cat > local.conf <<EOF
+host_id_file = "";
+spool { directory = "$(pwd)/spool"; }
+export { target = "file"; directory = "$(pwd)/logs/otel"; }
+EOF
+		fake_program otelpfd
+		echo "otelpfd_bin=\"$(pwd)/otelpfd\"" >> rc.conf.test
+		atf_check -o match:"Starting otelpfd" ./rc_run otelpfd start
+		wait_for otelpfd.args
+		atf_check -o inline:"_otel _otel 750\n" \
+		    stat -f "%Su %Sg %Lp" logs/otel
+		atf_check -o ignore ./rc_run otelpfd stop
+	fi
 	if kldstat -q -m dtrace; then
 		emitter_cycle otel_dtrace bsdinstruments \
 		    "watch system-metrics --format otel --interval 60\nendpoint=http://e:4\n" \

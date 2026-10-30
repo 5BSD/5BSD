@@ -503,6 +503,24 @@ and an invalid
 .Xr otel.conf 5
 is an error; the built-in default endpoint is
 .Ql http://localhost:4318 .
+When
+.Xr otel.conf 5
+selects the file target
+.Pq Ic export.target Qq file
+and neither
+.Fl -endpoint
+nor
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+names an endpoint,
+.Fl -format Cm otel
+writes OTLP JSON Lines to
+.Pa <export.directory>/bsdinstruments.jsonl
+.Pq mode 0640 ,
+synchronized once a second;
+.Dv SIGHUP
+reopens it after
+.Xr newsyslog 8
+rotated it, and a rotation is noticed within a second without it.
 Malformed values are reported and ignored as described in
 .Xr libotelexport 3 .
 Aggregation keys written as clause-local variables

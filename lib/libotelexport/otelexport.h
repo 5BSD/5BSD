@@ -316,12 +316,26 @@ struct oe_sink_config {
 	time_t		 rotate_interval; /* seconds; 0 disables */
 	unsigned	 rotate_keep;	/* rotated files kept; 0 = 7 */
 	int		 durable;	/* fsync on flush/rotate/close */
+	mode_t		 mode;		/* of a created file; 0 = 0644 */
+	/*
+	 * The file is rotated by another program (newsyslog(8)): reopen
+	 * path before the next write after oe_sink_reopen_request(), and
+	 * at a flush that finds path naming another file.
+	 */
+	int		 follow;
 };
 
 struct oe_sink	*oe_sink_open(const struct oe_sink_config *);
 int	 oe_sink_write(struct oe_sink *, const void *, size_t);
 int	 oe_sink_poll(struct oe_sink *);
 int	 oe_sink_flush(struct oe_sink *);
+/* Close and reopen an owned file now (no-op for a stream). */
+int	 oe_sink_reopen(struct oe_sink *);
+/*
+ * Ask every following sink to reopen its file before its next write.
+ * Async-signal-safe: call it from a SIGHUP handler.
+ */
+void	 oe_sink_reopen_request(void);
 FILE	*oe_sink_stream(struct oe_sink *);
 const char *oe_sink_path(const struct oe_sink *);
 int	 oe_sink_close(struct oe_sink *);
@@ -426,6 +440,13 @@ struct oe_env {
 	 * env->endpoint is OE_DEFAULT_ENDPOINT.
 	 */
 	int		 endpoint_default;
+	/*
+	 * The otel.conf(5) file target, set by oe_config_load(): export
+	 * OTLP JSON Lines to <export.directory>/<scope>.jsonl instead of
+	 * OTLP/HTTP.  NULL otherwise.
+	 */
+	const char	*file_path;
+	char		*file_buf;	/* owned file_path */
 	struct oe_sysconf *sysconf;	/* owned otel.conf(5) layer */
 	char		*spool_buf;	/* owned system spool path */
 };
@@ -482,6 +503,26 @@ void	oe_resource_init(struct oe_resource *, const struct oe_env *,
  * are left alone.
  */
 void	oe_otlp_config_env(struct oe_otlp_config *, const struct oe_env *);
+
+/*
+ * The sink of the otel.conf(5) file target (env->file_path): created
+ * mode 0640, durable, and following external rotation by newsyslog(8).
+ * NULL with a message on stderr if it cannot be opened, or when env
+ * has no file target.
+ */
+#define	OE_FILE_TARGET_MODE	0640
+struct oe_sink *oe_env_sink_open(const struct oe_env *);
+
+/*
+ * The exporter resolved settings select: with a file target, an OTLP
+ * JSON Lines exporter that owns the sink of oe_env_sink_open() (its
+ * flush syncs the file and acts on rotation; shutdown closes it);
+ * otherwise an OTLP/HTTP exporter.  cfg gives the profile, resource,
+ * scope, batch size and the OTLP/HTTP tuning; oe_otlp_config_env() is
+ * applied to a copy.  NULL on failure.
+ */
+struct oe_exporter *oe_exporter_open(const struct oe_env *,
+	    const struct oe_otlp_config *cfg);
 
 /*
  * Fill in host.name / host.arch / os.version from the running

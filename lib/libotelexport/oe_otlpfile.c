@@ -26,6 +26,7 @@
 struct oe_otlpfile {
 	struct oe_exporter e;
 	struct oe_sink	*sink;
+	int		 own_sink;	/* closed by shutdown/free */
 	struct oe_otlpenc enc;
 	int		 batch_size;
 	char		**frags[OTLPFILE_NSIGNALS];
@@ -129,8 +130,17 @@ otlpfile_flush(struct oe_exporter *e)
 static int
 otlpfile_shutdown(struct oe_exporter *e)
 {
+	struct oe_otlpfile *f = (struct oe_otlpfile *)e;
+	int ret;
 
-	return (otlpfile_flush(e));
+	ret = otlpfile_flush(e);
+	if (f->own_sink) {
+		if (oe_sink_close(f->sink) != 0)
+			ret = -1;
+		f->sink = NULL;
+		f->own_sink = 0;
+	}
+	return (ret);
 }
 
 static void
@@ -139,6 +149,8 @@ otlpfile_free(struct oe_exporter *e)
 	struct oe_otlpfile *f = (struct oe_otlpfile *)e;
 	int i;
 
+	if (f->own_sink)
+		(void)oe_sink_close(f->sink);
 	for (i = 0; i < OTLPFILE_NSIGNALS; i++)
 		oe_frags_free(f->frags[i], f->nfrags[i]);
 	oe_enc_fini(&f->enc);
@@ -172,4 +184,55 @@ oe_otlpjson_new(const struct oe_otlpjson_config *cfg)
 		return (NULL);
 	}
 	return (&f->e);
+}
+
+/* ---------------------------------------------------------------- */
+/* The otel.conf(5) file target					*/
+
+struct oe_sink *
+oe_env_sink_open(const struct oe_env *env)
+{
+	struct oe_sink_config sc;
+
+	if (env->file_path == NULL) {
+		fprintf(stderr, "otelexport: no file target configured\n");
+		return (NULL);
+	}
+	memset(&sc, 0, sizeof(sc));
+	sc.path = env->file_path;
+	sc.durable = 1;
+	sc.mode = OE_FILE_TARGET_MODE;
+	sc.follow = 1;
+	return (oe_sink_open(&sc));
+}
+
+struct oe_exporter *
+oe_exporter_open(const struct oe_env *env, const struct oe_otlp_config *cfg)
+{
+	struct oe_otlp_config ocfg;
+	struct oe_otlpjson_config jcfg;
+	struct oe_otlpfile *f;
+	struct oe_exporter *e;
+	struct oe_sink *sink;
+
+	if (env->file_path == NULL) {
+		ocfg = *cfg;
+		oe_otlp_config_env(&ocfg, env);
+		return (oe_otlp_new(&ocfg));
+	}
+	if ((sink = oe_env_sink_open(env)) == NULL)
+		return (NULL);
+	memset(&jcfg, 0, sizeof(jcfg));
+	jcfg.sink = sink;
+	jcfg.profile = cfg->profile;
+	jcfg.resource = cfg->resource;
+	jcfg.batch_size = cfg->batch_size;
+	jcfg.scope_name = cfg->scope_name;
+	if ((e = oe_otlpjson_new(&jcfg)) == NULL) {
+		(void)oe_sink_close(sink);
+		return (NULL);
+	}
+	f = (struct oe_otlpfile *)e;
+	f->own_sink = 1;
+	return (e);
 }

@@ -45,9 +45,9 @@ oe_service_open(struct oe_service *svc, const char *service_name,
 	 * port: a service never falls back to it.
 	 */
 	if (svc->env.endpoint_default) {
-		snprintf(err, errlen, "no export target: set endpoint in "
-		    "otel.conf(5) (or OTEL_EXPORTER_OTLP_ENDPOINT, or the "
-		    "endpoint option)");
+		snprintf(err, errlen, "no export target: set endpoint or "
+		    "export.target = \"file\" in otel.conf(5) (or "
+		    "OTEL_EXPORTER_OTLP_ENDPOINT, or the endpoint option)");
 		return (-1);
 	}
 	if (user != NULL && oe_drop_privileges(user, err, errlen) != 0)
@@ -57,16 +57,17 @@ oe_service_open(struct oe_service *svc, const char *service_name,
 	    version);
 
 	memset(&cfg, 0, sizeof(cfg));
-	oe_otlp_config_env(&cfg, &svc->env);
 	cfg.profile = profile;
 	cfg.resource = &svc->resource;
 	cfg.flush_interval = flush_interval;
 	cfg.max_retries = -1;
 	cfg.scope_name = service_name;
-	svc->exporter = oe_otlp_new(&cfg);
+	/* OTLP/HTTP, or the otel.conf file target. */
+	svc->exporter = oe_exporter_open(&svc->env, &cfg);
 	if (svc->exporter == NULL) {
-		snprintf(err, errlen, "cannot create the OTLP exporter for "
-		    "%s", cfg.endpoint);
+		snprintf(err, errlen, "cannot create the exporter for %s",
+		    svc->env.file_path != NULL ? svc->env.file_path :
+		    svc->env.endpoint);
 		return (-1);
 	}
 	if (oe_start(svc->exporter) != 0) {
@@ -74,6 +75,16 @@ oe_service_open(struct oe_service *svc, const char *service_name,
 		return (-1);
 	}
 	return (0);
+}
+
+int
+oe_service_flush(struct oe_service *svc)
+{
+
+	/* OTLP/HTTP batches on its sender thread. */
+	if (svc->exporter == NULL || svc->env.file_path == NULL)
+		return (0);
+	return (oe_flush(svc->exporter));
 }
 
 void

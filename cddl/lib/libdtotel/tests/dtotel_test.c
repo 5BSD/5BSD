@@ -283,7 +283,7 @@ static int
 g_flush(struct oe_exporter *e __unused)
 {
 
-	return (0);
+	return (guest_fail == 3 ? -1 : 0);
 }
 
 static int
@@ -1365,6 +1365,11 @@ ATF_TC_BODY(guest_routing, tc)
 	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 11, NULL));
 	ATF_REQUIRE(!guests[4]->freed);
 	ATF_REQUIRE_EQ(5, nguests);
+	/* Guest exporters are flushed with the host's; failures count. */
+	ATF_REQUIRE_EQ(0, dtotel_flush_guests(d));
+	guest_fail = 3;
+	ATF_REQUIRE_EQ(-1, dtotel_flush_guests(d));
+	guest_fail = 0;
 	ATF_REQUIRE_EQ(0, dtotel_shutdown(d));
 	ATF_REQUIRE(guests[1]->freed && guests[4]->freed);
 	dtotel_close(d);
@@ -2332,6 +2337,109 @@ ATF_TC_BODY(session_system_config, tc)
 	setenv("OTELCONF_FILE", "", 1);
 }
 
+/*
+ * -x otel=otlp with otel.conf's file target: OTLP JSON Lines to
+ * <export.directory>/dtrace.jsonl (host and guest resources in one
+ * file), written each tick, following newsyslog rotation.
+ */
+ATF_TC_WITHOUT_HEAD(session_file_target);
+ATF_TC_BODY(session_file_target, tc)
+{
+	struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	struct dtotel_session *s;
+	struct otlp_counts c;
+	struct stat st;
+	FILE *fp;
+	char err[600], cwd[256], *text;
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE(mkdir("logs", 0750) == 0);
+	fp = fopen("local.conf", "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "endpoint = \"http://127.0.0.1:9\";\nhost_id_file = \"\";\n"
+	    "export { target = \"file\"; directory = \"%s/logs\"; }\n", cwd);
+	fclose(fp);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+	unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+
+	memset(&stub, 0, sizeof(stub));
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "Sun D 1.13";
+	cfg.scope_name = "dtrace";
+	cfg.profile = "script";
+	cfg.hypertrace = 1;
+	umask(022);
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	ATF_REQUIRE(stat("logs/dtrace.jsonl", &st) == 0);
+	ATF_CHECK_EQ(st.st_mode & ALLPERMS, OE_FILE_TARGET_MODE);
+	ATF_REQUIRE_EQ(0, dtotel_guest(dtotel_session_bridge(s), 3, 9, "vm3"));
+	deliver(NULL, "host line\n", 0, 10, 1, 0);
+	deliver_vm(NULL, "guest line\n", 12, 3, 0, "vm3");
+	usleep(1100000);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	ATF_REQUIRE(stat("logs/dtrace.jsonl", &st) == 0 && st.st_size > 0);
+	/* Rotated away (newsyslog without a signal): the next tick follows. */
+	ATF_REQUIRE(rename("logs/dtrace.jsonl", "logs/dtrace.jsonl.0") == 0);
+	fp = fopen("logs/dtrace.jsonl", "w");
+	ATF_REQUIRE(fp != NULL);
+	fclose(fp);
+	usleep(1100000);
+	ATF_REQUIRE_EQ(0, dtotel_session_tick(s));
+	deliver(NULL, "after rotation\n", 0, 20, 1, 0);
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
+	text = read_file("logs/dtrace.jsonl.0");
+	validate_lines(text, &c);
+	ATF_CHECK_EQ(2, c.logs);
+	ATF_CHECK(strstr(text, "hypertrace.vm.name") != NULL);
+	ATF_CHECK(strstr(text, "after rotation") == NULL);
+	free(text);
+	text = read_file("logs/dtrace.jsonl");
+	validate_lines(text, &c);
+	ATF_CHECK(strstr(text, "after rotation") != NULL);
+	free(text);
+
+	/* A write error of a guest's batch fails the tick. */
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	deliver_vm(NULL, "guest again\n", 30, 3, 0, "vm3");
+	dtotel_flush(dtotel_session_bridge(s));
+	{
+		struct rlimit rl, saved;
+
+		signal(SIGXFSZ, SIG_IGN);
+		ATF_REQUIRE(getrlimit(RLIMIT_FSIZE, &saved) == 0);
+		rl = saved;
+		rl.rlim_cur = 1;
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &rl) == 0);
+		ATF_CHECK_EQ(-1, dtotel_session_flush(s));
+		ATF_REQUIRE(setrlimit(RLIMIT_FSIZE, &saved) == 0);
+	}
+	ATF_CHECK_EQ(-1, dtotel_session_close(s, 0));
+
+	/* -x otelendpoint chooses OTLP/HTTP over the file target. */
+	o.endpoint = "http://127.0.0.1:9";
+	s = dtotel_session_open(&cfg, err, sizeof(err));
+	ATF_REQUIRE_MSG(s != NULL, "%s", err);
+	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 0));
+	o.endpoint = NULL;
+	/* An unwritable target fails the session with its path. */
+	fp = fopen("local.conf", "w");
+	ATF_REQUIRE(fp != NULL);
+	fprintf(fp, "host_id_file = \"\";\n"
+	    "export { target = \"file\"; directory = \"%s/none\"; }\n", cwd);
+	fclose(fp);
+	ATF_CHECK(dtotel_session_open(&cfg, err, sizeof(err)) == NULL);
+	ATF_CHECK_MSG(strstr(err, "none/dtrace.jsonl") != NULL, "%s", err);
+	setenv("OTELCONF_FILE", "", 1);
+}
+
 /* More data points and buckets than the first allocations hold. */
 ATF_TC_WITHOUT_HEAD(agg_growth);
 ATF_TC_BODY(agg_growth, tc)
@@ -2477,5 +2585,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, agg_growth);
 	ATF_TP_ADD_TC(tp, firing_identity);
 	ATF_TP_ADD_TC(tp, session_system_config);
+	ATF_TP_ADD_TC(tp, session_file_target);
 	return (atf_no_error());
 }

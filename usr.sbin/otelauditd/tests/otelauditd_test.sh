@@ -45,6 +45,29 @@ EOF
 	export OTELCONF_DEFAULTS OTELCONF_FILE
 }
 
+# Validate every line of an OTLP JSON Lines file on its own; the
+# summaries go to lines.out.
+validate_lines()
+{
+	rm -rf lines; mkdir lines
+	split -l 1 "$1" lines/l.
+	n=0
+	for l in lines/l.*; do
+		"${OTEL_HELPERS}/otlp_json_validate" "$l" >> lines.out ||
+		    atf_fail "$1: invalid line"
+		n=$((n + 1))
+	done
+	[ $n -gt 0 ] || atf_fail "$1: no lines"
+}
+
+# What newsyslog(8) does: rename away, put a new file in place, signal.
+newsyslog_like()
+{
+	mv "$1" "$1.0"
+	: > "$1.new"; chmod 0640 "$1.new"; mv "$1.new" "$1"
+	kill -HUP "$2"
+}
+
 trail()
 {
 	"$(atf_get_srcdir)/mkaudittrail" "$@"
@@ -166,7 +189,7 @@ EOF
 	atf_check -s exit:1 -e match:"is not an http" \
 	    "${OTELAUDITD}" -f trail.bin
 	config
-	atf_check -s exit:1 -e match:"cannot create the OTLP exporter" \
+	atf_check -s exit:1 -e match:"cannot create the exporter" \
 	    "${OTELAUDITD}" -f trail.bin -e "http://[::1"
 	atf_check -s exit:1 -e match:"nonexistent.bin" \
 	    "${OTELAUDITD}" -f nonexistent.bin
@@ -239,6 +262,84 @@ live_pipe_body()
 	wait $pid || atf_fail "otelauditd exited with $? after SIGTERM"
 }
 
+atf_test_case file_target
+file_target_head()
+{
+	atf_set "descr" "otel.conf's file target gets the log records; SIGHUP reopens"
+	atf_set "timeout" "120"
+}
+file_target_body()
+{
+	trail trail.bin
+	mkdir logs
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	umask 022
+	atf_check "${OTELAUDITD}" -f trail.bin
+	atf_check -o inline:"640\n" stat -f %Lp logs/otelauditd.jsonl
+	validate_lines logs/otelauditd.jsonl
+	atf_check -o inline:"4\n" grep -c "^log " lines.out
+	atf_check -o match:"^resource service.name=otelauditd$" \
+	    -o match:"^log 9 \[.*probe=AUE_EXECVE" cat lines.out
+
+	# SIGHUP (newsyslog) reopens the file and does not stop the reader.
+	rm -f logs/* lines.out
+	trail -n trail.bin
+	mkfifo pipe
+	"${OTELAUDITD}" -f pipe &
+	pid=$!
+	(cat trail.bin; sleep 30) > pipe &
+	writer=$!
+	sleep 3
+	newsyslog_like logs/otelauditd.jsonl $pid
+	sleep 1
+	kill -0 $pid || atf_fail "SIGHUP stopped otelauditd"
+	kill -TERM $pid
+	wait $pid || atf_fail "otelauditd exited with $?"
+	kill $writer 2>/dev/null
+	# Records written at exit go to the new file.
+	validate_lines logs/otelauditd.jsonl
+	atf_check -o inline:"4\n" grep -c "^log " lines.out
+}
+
+atf_test_case live_pipe_file_target
+live_pipe_file_target_head()
+{
+	atf_set "descr" "live auditpipe records reach the file target while the pipe idles"
+	atf_set "require.user" "root"
+	atf_set "timeout" "120"
+}
+live_pipe_file_target_body()
+{
+	[ -c /dev/auditpipe ] || atf_skip "audit(4) is not available"
+	mkdir logs
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	# As root: the work directory is not reachable for another user.
+	"${OTELAUDITD}" -F ex &
+	pid=$!
+	# Exec records until the first ones are written; the pipe is quiet
+	# in between, so they are written by the idle flush, not at exit.
+	i=0
+	while [ ! -s logs/otelauditd.jsonl ] && [ $i -lt 60 ]; do
+		/usr/bin/true; /usr/bin/true; /usr/bin/true
+		sleep 0.5
+		i=$((i + 1))
+	done
+	[ -s logs/otelauditd.jsonl ] || {
+		kill $pid
+		atf_skip "no exec audit records arrived (auditing is off?)"
+	}
+	# SIGHUP reopens (newsyslog); it does not stop the reader.
+	newsyslog_like logs/otelauditd.jsonl $pid
+	sleep 1
+	kill -0 $pid || atf_fail "SIGHUP stopped otelauditd"
+	/usr/bin/true; /usr/bin/true
+	sleep 3
+	kill -TERM $pid
+	wait $pid || atf_fail "otelauditd exited with $?"
+	validate_lines logs/otelauditd.jsonl.0
+	atf_check -o match:"^log .*AUE_(EXECVE|EXEC|FEXECVE)" cat lines.out
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case replay_logs
@@ -248,4 +349,6 @@ atf_init_test_cases()
 	atf_add_test_case faults
 	atf_add_test_case device_access
 	atf_add_test_case live_pipe
+	atf_add_test_case file_target
+	atf_add_test_case live_pipe_file_target
 }

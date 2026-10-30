@@ -30,6 +30,7 @@
 #define	OE_SYSCONF_DEFAULT_TIMEOUT_MS	10000
 #define	OE_SYSCONF_DEFAULT_HOSTID_FILE	"/etc/hostid"
 #define	OE_SYSCONF_DEFAULT_SPOOL_DIR	"/var/spool/otel"
+#define	OE_SYSCONF_DEFAULT_EXPORT_DIR	"/var/log/otel"
 #define	OE_SYSCONF_DEFAULT_SPOOL_MAX	(256ULL * 1024 * 1024)
 
 /* Hard limits; files or values beyond them are refused. */
@@ -61,6 +62,12 @@ struct oe_sysconf {
 	size_t		 nresource_attrs;
 	char		*spool_dir;
 	uint64_t	 spool_max_bytes;
+	/*
+	 * Export target: OTLP/HTTP to endpoint, or OTLP JSON Lines files
+	 * <export_dir>/<program>.jsonl.
+	 */
+	int		 export_file;	/* export.target = "file" */
+	char		*export_dir;	/* export.directory */
 
 	char		 error[512];	/* set when a call returns -1 */
 };
@@ -104,9 +111,10 @@ int	oe_env_load_system(struct oe_env *, const struct oe_sysconf *,
 	    const char *cli_endpoint);
 
 /*
- * Base system telemetry services (otelpfd(8), otelauditd(8)): one OTLP
- * exporter configured through all layers by oe_config_load(), refusing
- * to run when the system configuration is disabled.  The service name
+ * Base system telemetry services (otelpfd(8), otelauditd(8)): one
+ * exporter configured through all layers by oe_config_load() (OTLP/HTTP
+ * or the file target), refusing to run when the system configuration is
+ * disabled or names no export target.  The service name
  * is also the instrumentation scope (the metric and attribute prefix)
  * and names the system spool file.
  */
@@ -127,6 +135,14 @@ struct oe_service {
 int	oe_service_open(struct oe_service *, const char *service_name,
 	    const char *version, const char *profile, const char *cli_endpoint,
 	    double flush_interval, const char *user, char *err, size_t errlen);
+/*
+ * Make what svc queued durable now when it exports to the file target
+ * (writes the pending OTLP JSON lines, syncs the file, reopens it
+ * after rotation); a no-op for OTLP/HTTP, which batches on its own
+ * thread.  Call it after each batch of records and at least once a
+ * second while records are pending.  Returns 0 or -1.
+ */
+int	oe_service_flush(struct oe_service *);
 /* Flush, stop and release svc (safe on a zeroed or failed svc). */
 void	oe_service_close(struct oe_service *);
 

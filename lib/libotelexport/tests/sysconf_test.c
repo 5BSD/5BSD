@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -89,6 +90,8 @@ ATF_TC_BODY(builtin_defaults, tc)
 	ATF_CHECK_EQ(sc.nheaders, 0);
 	ATF_CHECK_STREQ(sc.spool_dir, "/var/spool/otel");
 	ATF_CHECK_EQ(sc.spool_max_bytes, 256ULL * 1024 * 1024);
+	ATF_CHECK_EQ(sc.export_file, 0);
+	ATF_CHECK_STREQ(sc.export_dir, "/var/log/otel");
 	oe_sysconf_free(&sc);
 	/* Freeing twice is harmless. */
 	oe_sysconf_free(&sc);
@@ -231,6 +234,13 @@ ATF_TC_BODY(malformed, tc)
 	expect_error("spool { max_bytes = 1000; }", "outside");
 	expect_error("spool { max_bytes = \"x\"; }", "must be an integer");
 	expect_error("spool { size = 1; }", "unknown key spool.size");
+	expect_error("export = 1;", "export must be an object");
+	expect_error("export { target = \"grpc\"; }",
+	    "must be \"otlp\" or \"file\"");
+	expect_error("export { target = 1; }", "must be a single string");
+	expect_error("export { directory = \"rel\"; }", "absolute path");
+	expect_error("export { directory = \"\"; }", "must not be empty");
+	expect_error("export { rotate = 1; }", "unknown key export.rotate");
 	/* The local agent and its keys are gone. */
 	expect_error("agent = 1;", "unknown key agent");
 	expect_error("agent { upstream = \"http://c:4318\"; }",
@@ -243,6 +253,20 @@ ATF_TC_WITHOUT_HEAD(accepted_forms);
 ATF_TC_BODY(accepted_forms, tc)
 {
 	struct oe_sysconf sc;
+
+	/* The export block, layered key by key. */
+	write_file("d.conf", "export { target = \"file\"; "
+	    "directory = \"/var/db/o\"; }\n", 0644);
+	write_file("l.conf", "export { directory = \"/srv/otel\"; }\n", 0644);
+	ATF_REQUIRE_EQ_MSG(oe_sysconf_load(&sc, "d.conf", "l.conf"), 0, "%s",
+	    sc.error);
+	ATF_CHECK_EQ(sc.export_file, 1);
+	ATF_CHECK_STREQ(sc.export_dir, "/srv/otel");
+	oe_sysconf_free(&sc);
+	write_file("l.conf", "export { target = \"otlp\"; }\n", 0644);
+	ATF_REQUIRE_EQ(oe_sysconf_load(&sc, "d.conf", "l.conf"), 0);
+	ATF_CHECK_EQ(sc.export_file, 0);
+	oe_sysconf_free(&sc);
 
 	/* Empty file, explicit protocol, an explicitly empty endpoint. */
 	write_file("empty.conf", "", 0644);
@@ -797,6 +821,53 @@ ATF_TC_BODY(config_load, tc)
 	oe_env_free(&env);
 	clear_env();
 
+	/*
+	 * The file target: one file per tool, no spool, and the system
+	 * endpoint unused; the command line or the environment still
+	 * choose OTLP/HTTP.
+	 */
+	write_file("local.conf", "endpoint = \"http://collector:4318\";\n"
+	    "export { target = \"file\"; directory = \"/var/log/x\"; }\n"
+	    "spool { directory = \"/tmp\"; }\n", 0644);
+	ATF_REQUIRE_EQ_MSG(oe_config_load(&env, &req, err, sizeof(err)), 0,
+	    "%s", err);
+	ATF_CHECK_STREQ(env.file_path, "/var/log/x/tool.jsonl");
+	ATF_CHECK(env.spool_path == NULL);
+	ATF_CHECK_EQ(env.endpoint_default, 0);
+	ATF_CHECK_STREQ(env.endpoint, OE_DEFAULT_ENDPOINT);
+	oe_env_free(&env);
+	ATF_CHECK(env.file_path == NULL && env.file_buf == NULL);
+	req.spool = "cli.spool";
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.file_path, "/var/log/x/tool.jsonl");
+	oe_env_free(&env);
+	req.spool = NULL;
+	req.endpoint = "http://cli:1";
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK(env.file_path == NULL);
+	ATF_CHECK_STREQ(env.endpoint, "http://cli:1");
+	oe_env_free(&env);
+	req.endpoint = NULL;
+	setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://env:1", 1);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK(env.file_path == NULL);
+	ATF_CHECK_STREQ(env.endpoint, "http://env:1");
+	oe_env_free(&env);
+	clear_env();
+	/* Programs that do not read the system layer never see it. */
+	req.system = 0;
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK(env.file_path == NULL);
+	oe_env_free(&env);
+	req.system = 1;
+	/* Nor when it is disabled. */
+	write_file("local.conf", "enable = false;\n"
+	    "export { target = \"file\"; }\n", 0644);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK(env.file_path == NULL);
+	ATF_CHECK_EQ(env.endpoint_default, 1);
+	oe_env_free(&env);
+
 	/* An invalid otel.conf is an error, and env is left empty. */
 	write_file("local.conf", "endpoint = 5;\n", 0644);
 	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), -1);
@@ -812,7 +883,9 @@ ATF_TC_WITHOUT_HEAD(service_open);
 ATF_TC_BODY(service_open, tc)
 {
 	struct oe_service svc;
-	char err[600];
+	struct oe_event ev;
+	struct stat st;
+	char err[600], conf[600], cwd[256], path[512];
 
 	clear_env();
 	setenv("OTELCONF_DEFAULTS", "", 1);
@@ -862,6 +935,47 @@ ATF_TC_BODY(service_open, tc)
 	    NULL, err, sizeof(err)), -1);
 	ATF_CHECK_MSG(strstr(err, "disabled") != NULL, "%s", err);
 	oe_service_close(&svc);
+
+	/* The file target: OTLP JSON Lines written on oe_service_flush(). */
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	ATF_REQUIRE(mkdir("logs", 0750) == 0);
+	snprintf(conf, sizeof(conf), "host_id_file = \"\";\n"
+	    "export { target = \"file\"; directory = \"%s/logs\"; }\n", cwd);
+	write_file("local.conf", conf, 0644);
+	ATF_REQUIRE_EQ_MSG(oe_service_open(&svc, "svc", "1.0", "prof", NULL,
+	    1.0, NULL, err, sizeof(err)), 0, "%s", err);
+	snprintf(path, sizeof(path), "%s/logs/svc.jsonl", cwd);
+	ATF_CHECK_STREQ(svc.env.file_path, path);
+	memset(&ev, 0, sizeof(ev));
+	clock_gettime(CLOCK_REALTIME, &ev.ts);
+	ev.profile = "prof";
+	ev.probe = "p";
+	ev.execname = "";
+	ev.body = "one record";
+	ATF_REQUIRE_EQ(0, oe_event(svc.exporter, &ev));
+	ATF_REQUIRE(stat(path, &st) == 0);
+	ATF_CHECK_EQ(st.st_size, 0);
+	ATF_REQUIRE_EQ(0, oe_service_flush(&svc));
+	ATF_REQUIRE(stat(path, &st) == 0);
+	ATF_CHECK(st.st_size > 0);
+	ATF_CHECK_EQ(st.st_mode & ALLPERMS, OE_FILE_TARGET_MODE);
+	oe_service_close(&svc);
+	/* An unwritable directory fails the service. */
+	snprintf(conf, sizeof(conf), "host_id_file = \"\";\n"
+	    "export { target = \"file\"; directory = \"%s/nologs\"; }\n",
+	    cwd);
+	write_file("local.conf", conf, 0644);
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,
+	    NULL, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "nologs/svc.jsonl") != NULL, "%s", err);
+	oe_service_close(&svc);
+	/* With OTLP/HTTP, oe_service_flush() leaves batching to it. */
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof",
+	    "http://127.0.0.1:9", 1.0, NULL, err, sizeof(err)), 0);
+	ATF_CHECK_EQ(0, oe_service_flush(&svc));
+	oe_service_close(&svc);
+	memset(&svc, 0, sizeof(svc));
+	ATF_CHECK_EQ(0, oe_service_flush(&svc));
 
 	write_file("local.conf", "bogus = 1;\n", 0644);
 	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,

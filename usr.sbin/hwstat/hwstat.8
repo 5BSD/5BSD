@@ -277,6 +277,21 @@ spool directory is writable (root and the
 service), batches the collector could not take are kept in
 .Pa <spool.directory>/hwstat.spool
 and resent later.
+When
+.Xr otel.conf 5
+selects the file target
+.Pq Ic export.target Qq file
+and neither
+.Fl -endpoint
+nor
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+names an endpoint, the metrics are written as OTLP JSON Lines to
+.Pa <export.directory>/hwstat.jsonl
+after every sample;
+.Dv SIGHUP
+reopens that file after
+.Xr newsyslog 8
+rotated it, and a rotation is noticed at the next sample without it.
 The
 .Pa otel_hwstat
 rc.d script runs

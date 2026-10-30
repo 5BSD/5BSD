@@ -47,6 +47,14 @@ signal_handler(int sig __unused)
 	got_signal = 1;
 }
 
+/* newsyslog(8) rotated the otel.conf(5) file target: reopen it. */
+static void
+reopen_handler(int sig __unused)
+{
+
+	oe_sink_reopen_request();
+}
+
 static void
 install_signal_handlers(void)
 {
@@ -58,6 +66,9 @@ install_signal_handlers(void)
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+	sa.sa_handler = reopen_handler;
+	sa.sa_flags = SA_RESTART;
+	sigaction(SIGHUP, &sa, NULL);
 }
 
 static int
@@ -161,6 +172,15 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 	case FORMAT_OTEL:
 		break;
 	}
+	/* The otel.conf(5) file target: OTLP JSON Lines to its sink. */
+	if (sink != NULL) {
+		memset(&jcfg, 0, sizeof(jcfg));
+		jcfg.sink = sink;
+		jcfg.profile = p->name;
+		jcfg.resource = resource;
+		jcfg.scope_name = "bsdinstruments";
+		return (oe_otlpjson_new(&jcfg));
+	}
 	/*
 	 * Endpoint, credentials and spool as oe_config_load() resolved
 	 * them: --endpoint/--spool > OTEL_* > otel.conf(5) > default.
@@ -231,9 +251,13 @@ watch_run(const struct profile *p, const char *rendered,
 	/*
 	 * Every format but otel writes to a sink: standard output by
 	 * default, or a rotating, durable file with --output.  Open it
-	 * before tracing starts so a bad path fails fast.
+	 * before tracing starts so a bad path fails fast.  So does otel
+	 * when otel.conf(5) selects the file target.
 	 */
-	if (wo->format != FORMAT_OTEL) {
+	if (wo->format == FORMAT_OTEL && env.file_path != NULL) {
+		if ((sink = oe_env_sink_open(&env)) == NULL)
+			goto out;
+	} else if (wo->format != FORMAT_OTEL) {
 		memset(&sc, 0, sizeof(sc));
 		sc.path = wo->output;
 		sc.rotate_size = wo->rotate_size;
@@ -378,7 +402,9 @@ watch_run(const struct profile *p, const char *rendered,
 					break;
 			}
 			if ((is_text && oe_sink_poll(sink) != 0) ||
-			    (wo->output != NULL && oe_flush(exporter) != 0))
+			    ((wo->output != NULL ||
+			    oe_sink_path(sink) != NULL) &&
+			    oe_flush(exporter) != 0))
 				break;
 		}
 		/*

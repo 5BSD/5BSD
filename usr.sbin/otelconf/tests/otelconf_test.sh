@@ -38,6 +38,11 @@ shipped_files_body()
 	atf_check -o inline:"/var/spool/otel\n" \
 	    "${OTELCONF}" -d "$(defaults_file)" -f local.conf \
 	    get spool.directory
+	atf_check -o inline:"otlp\n" \
+	    "${OTELCONF}" -d "$(defaults_file)" -f local.conf get export.target
+	atf_check -o inline:"/var/log/otel\n" \
+	    "${OTELCONF}" -d "$(defaults_file)" -f local.conf \
+	    get export.directory
 	atf_check -o match:"^service.namespace=5bsd$" \
 	    -o match:"^deployment.environment.name=production$" \
 	    "${OTELCONF}" -d "$(defaults_file)" -f local.conf get resource
@@ -64,6 +69,9 @@ check_states_body()
 	atf_check -s exit:4 -e match:"no export target" ${OC} check -t
 	echo 'endpoint = "http://c:4318";' > local.conf
 	atf_check -o inline:"otel.conf: OK\n" ${OC} check -et
+	# The file target is a target too.
+	echo 'export { target = "file"; }' > local.conf
+	atf_check -o inline:"otel.conf: OK\n" ${OC} check -t
 	# Disabled wins over a missing target.
 	echo 'enable = false;' > local.conf
 	atf_check -s exit:3 -e match:"disabled" ${OC} check -eqt
@@ -123,6 +131,14 @@ EOF
 	atf_check -o inline:"/nonexistent\n" ${OC} get host_id_file
 	atf_check -o inline:"2097152\n" ${OC} get spool.max_bytes
 	atf_check -o inline:"/var/spool/x\n" ${OC} get spool.directory
+	atf_check -o inline:"otlp\n" ${OC} get export.target
+	atf_check -o inline:"/var/log/otel\n" ${OC} get export.directory
+	printf '%s\n' 'host_id_file = "";' \
+	    'export { target = "file"; directory = "/srv/o"; }' > local.conf
+	atf_check -o inline:"file\n" ${OC} get export.target
+	atf_check -o inline:"/srv/o\n" ${OC} get export.directory
+	atf_check -o match:"^export.target = file$" \
+	    -o match:"^export.directory = /srv/o$" ${OC} show
 	atf_check -o empty ${OC} get resource
 	atf_check -s exit:2 -e match:"unknown key: agent.upstream" \
 	    ${OC} get agent.upstream

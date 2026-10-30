@@ -25,6 +25,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,10 +42,14 @@
 static volatile sig_atomic_t done;
 
 static void
-on_signal(int sig __unused)
+on_signal(int sig)
 {
 
-	done = 1;
+	/* newsyslog(8) rotated the file target: reopen it. */
+	if (sig == SIGHUP)
+		oe_sink_reopen_request();
+	else
+		done = 1;
 }
 
 static void __dead2
@@ -91,6 +96,7 @@ int
 main(int argc, char **argv)
 {
 	struct oe_service svc;
+	struct pollfd pfd;
 	struct auditrec_events events;
 	struct sigaction sa;
 	struct oe_event ev;
@@ -103,7 +109,7 @@ main(int argc, char **argv)
 	FILE *trail;
 	off_t pos;
 	ssize_t r;
-	int ch, fd, len, pipelen, pipeoff;
+	int ch, fd, len, pipelen, pipeoff, pr;
 
 	endpoint = file = flags = user = NULL;
 	count = 0;
@@ -143,6 +149,8 @@ main(int argc, char **argv)
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+	/* SIGHUP only asks for a reopen: interrupted reads restart. */
+	sa.sa_flags = SA_RESTART;
 	sigaction(SIGHUP, &sa, NULL);
 
 	/* Privileged setup: the source, the event table, the exporter. */
@@ -184,6 +192,26 @@ main(int argc, char **argv)
 		} else {
 			/* One read returns as many whole records as fit. */
 			if (pipeoff >= pipelen) {
+				/*
+				 * The file target writes on this thread:
+				 * make pending records durable when the
+				 * pipe stays quiet for a second.
+				 */
+				if (svc.env.file_path != NULL) {
+					pfd.fd = fd;
+					pfd.events = POLLIN;
+					pr = poll(&pfd, 1, 1000);
+					if (pr == -1 && errno != EINTR) {
+						warn("poll");
+						break;
+					}
+					if (pr == 0 &&
+					    oe_service_flush(&svc) != 0)
+						warnx("cannot write the audit "
+						    "records");
+					if (pr <= 0)
+						continue;
+				}
 				r = read(fd, pipebuf, PIPE_RECORD_MAX);
 				if (r == -1 && errno == EINTR)
 					continue;

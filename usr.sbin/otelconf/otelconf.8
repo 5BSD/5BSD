@@ -57,7 +57,12 @@ With
 .Fl t ,
 also fail with exit status 4 when the configuration names no export
 target
-.Pq Ic endpoint
+.Po
+.Ic endpoint ,
+or
+.Ic export.target
+.Qq file
+.Pc
 for the base system services.
 The rc.d services use
 .Fl eqt .
@@ -70,9 +75,10 @@ Print one resolved setting.
 is a key of
 .Xr otel.conf 5
 written with dots, such as
-.Cm endpoint
+.Cm endpoint ,
+.Cm spool.directory
 or
-.Cm spool.directory .
+.Cm export.target .
 The list-valued key
 .Cm resource
 prints one entry per line.

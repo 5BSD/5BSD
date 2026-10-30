@@ -108,6 +108,13 @@ void		 dtotel_drops(struct dtotel *, uint64_t);
 int		 dtotel_guest(struct dtotel *, uint16_t vmid, uint64_t epoch,
 		    const char *name);
 
+/*
+ * Flush the guest exporters (the host's belongs to the consumer):
+ * file output writes their pending batches at the same points as the
+ * host's.  -1 if any flush failed.
+ */
+int		 dtotel_flush_guests(struct dtotel *);
+
 /* Flush, shut down and release the guest exporters. */
 int		 dtotel_shutdown(struct dtotel *);
 

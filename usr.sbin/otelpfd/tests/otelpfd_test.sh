@@ -45,6 +45,40 @@ EOF
 	export OTELCONF_DEFAULTS OTELCONF_FILE
 }
 
+# Validate every line of an OTLP JSON Lines file on its own; the
+# summaries go to lines.out.
+validate_lines()
+{
+	rm -rf lines; mkdir lines
+	split -l 1 "$1" lines/l.
+	n=0
+	for l in lines/l.*; do
+		"${OTEL_HELPERS}/otlp_json_validate" "$l" >> lines.out ||
+		    atf_fail "$1: invalid line"
+		n=$((n + 1))
+	done
+	[ $n -gt 0 ] || atf_fail "$1: no lines"
+}
+
+# Wait (up to a minute, for slow or loaded hosts) for a file to have data.
+wait_nonempty()
+{
+	i=0
+	while [ ! -s "$1" ] && [ $i -lt 600 ]; do
+		sleep 0.1
+		i=$((i + 1))
+	done
+	[ -s "$1" ] || atf_fail "$1 stayed empty"
+}
+
+# What newsyslog(8) does: rename away, put a new file in place, signal.
+newsyslog_like()
+{
+	mv "$1" "$1.0"
+	: > "$1.new"; chmod 0640 "$1.new"; mv "$1.new" "$1"
+	kill -HUP "$2"
+}
+
 mkstatus()
 {
 	"$(atf_get_srcdir)/mkpfstatus" "$@"
@@ -188,7 +222,7 @@ faults_body()
 	atf_check -s exit:1 -e match:"nonexistent.bin" \
 	    "${OTELPFD}" -f nonexistent.bin
 	atf_check -s exit:1 -e match:"read" "${OTELPFD}" -f . -c 1
-	atf_check -s exit:1 -e match:"cannot create the OTLP exporter" \
+	atf_check -s exit:1 -e match:"cannot create the exporter" \
 	    "${OTELPFD}" -f status.bin -e "http://[::1" -c 1
 	atf_check -s exit:2 -e match:"usage" "${OTELPFD}" -x
 	atf_check -s exit:2 -e match:"usage" "${OTELPFD}" extra
@@ -275,6 +309,51 @@ live_pf_body()
 	    "${OTEL_HELPERS}/otlp_json_validate" out/0000.json
 }
 
+atf_test_case file_target
+file_target_head()
+{
+	atf_set "descr" "otel.conf's file target gets one line per sample; SIGHUP reopens"
+	atf_set "timeout" "120"
+}
+file_target_body()
+{
+	mkstatus status.bin 3
+	mkdir logs
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	umask 022
+	atf_check "${OTELPFD}" -f status.bin -i 0.2
+	atf_check -o inline:"640\n" stat -f %Lp logs/otelpfd.jsonl
+	validate_lines logs/otelpfd.jsonl
+	atf_check -o inline:"3\n" grep -c "^point otelpfd.pf.states " lines.out
+	atf_check -o match:"^resource service.name=otelpfd$" cat lines.out
+
+	# Rotated by newsyslog: SIGHUP reopens, it does not stop otelpfd.
+	rm -f logs/* lines.out
+	mkstatus status.bin 100
+	"${OTELPFD}" -f status.bin -i 0.5 &
+	pid=$!
+	wait_nonempty logs/otelpfd.jsonl
+	newsyslog_like logs/otelpfd.jsonl $pid
+	wait_nonempty logs/otelpfd.jsonl
+	kill -0 $pid || atf_fail "SIGHUP stopped otelpfd"
+	kill -TERM $pid
+	wait $pid || atf_fail "otelpfd exited with $?"
+	validate_lines logs/otelpfd.jsonl.0
+	validate_lines logs/otelpfd.jsonl
+	# No sample lost or doubled across the two files.
+	atf_check -o save:states sh -c \
+	    "grep '^point otelpfd.pf.states ' lines.out | awk '{print \$4}'"
+	atf_check -o inline:"0\n" sh -c "sort states | uniq -d | wc -l | tr -d ' '"
+	atf_check -o inline:"100\n" head -1 states
+	atf_check test "$(sort -n states | tail -1)" -eq \
+	    "$((99 + $(wc -l < states)))"
+
+	# No export target at all: refused, with the way out named.
+	echo 'host_id_file = "";' > otel.conf
+	atf_check -s exit:1 -e match:"no export target: set endpoint or export.target" \
+	    "${OTELPFD}" -f status.bin -c 1
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case replay_metrics
@@ -287,4 +366,5 @@ atf_init_test_cases()
 	atf_add_test_case device_access
 	atf_add_test_case drop_privileges
 	atf_add_test_case live_pf
+	atf_add_test_case file_target
 }

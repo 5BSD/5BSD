@@ -78,6 +78,68 @@ Apply this configuration.
 When false, programs ignore the file
 .Pq as if it did not exist
 and the rc.d OpenTelemetry services refuse to start.
+.It Ic export Pq object
+Where telemetry goes:
+.Bl -tag -width "directory"
+.It Ic target Pq string, default Qq otlp
+.Qq otlp
+sends OTLP/HTTP to
+.Ic endpoint .
+.Qq file
+writes OTLP JSON Lines instead: one
+.Li ExportLogsServiceRequest ,
+.Li ExportMetricsServiceRequest
+or
+.Li ExportTraceServiceRequest
+object per line, the format of the OpenTelemetry Collector's file
+exporter, which its
+.Li otlpjsonfile
+receiver reads back.
+Each program writes its own file,
+.Pa <directory>/<program>.jsonl
+.Po
+.Pa dtrace.jsonl
+for
+.Xr dtrace 1
+.Fl x Cm otel=otlp ,
+.Pa bsdinstruments.jsonl
+for
+.Xr bsdinstruments 8
+.Fl -format Cm otel
+and the
+.Pa otel_dtrace
+service,
+.Pa hwstat.jsonl ,
+.Pa otelpfd.jsonl ,
+.Pa otelauditd.jsonl
+.Pc ,
+created with mode 0640 and synchronized to disk at least once a second
+while records arrive.
+An endpoint from the command line or
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+still selects OTLP/HTTP for that program; the spool is not used with
+the file target.
+A file target that cannot be opened is an error, not a fallback.
+.Pp
+.Xr newsyslog 8
+rotates the files
+.Pq Pa /etc/newsyslog.conf.d/otel.conf ,
+and the writers cooperate without losing or splitting a record: the
+services and
+.Xr bsdinstruments 8
+reopen their file on
+.Dv SIGHUP ,
+which newsyslog sends to the process named by
+.Pa /var/run/otel/<service>.child.pid
+before it compresses the rotated file; every writer, including
+.Xr dtrace 1 ,
+also notices within a second that the path names a new file and
+reopens it.
+.It Ic directory Pq path, default Pa /var/log/otel
+Directory of the files, owned by
+.Ql _otel
+with mode 0750; the rc.d services create it when missing.
+.El
 .It Ic endpoint Pq string, default Qq
 Base URL of the OTLP/HTTP receiver, for example an OpenTelemetry
 Collector.
@@ -88,6 +150,10 @@ and
 .Pa /v1/traces
 below it.
 .Pp
+Not used with the
+.Ic export.target
+.Qq file .
+.Pp
 The default is empty: nothing in the base system listens for OTLP, so
 the configuration names no receiver until one is set.
 The rc.d services
@@ -95,7 +161,8 @@ The rc.d services
 .Xr otelpfd 8
 and
 .Xr otelauditd 8
-refuse to start without one
+refuse to start without an export target, an endpoint or the file
+target
 .Po
 .Ql otelconf check -t
 fails
@@ -167,7 +234,8 @@ to
 .Qq production .
 At most 32 attributes are accepted.
 .It Ic spool Pq object
-Persistent buffering of OTLP batches the collector could not take:
+Persistent buffering of OTLP batches the collector could not take
+.Pq the Qq otlp target only :
 .Bl -tag -width "max_bytes"
 .It Ic directory Pq path, default Pa /var/spool/otel
 Every program exporting with OTLP/HTTP
@@ -236,7 +304,12 @@ variables start the telemetry services; all default to off.
 Master switch.
 Each service variable below that is left empty follows it.
 The services need an export target
-.Pq Ic endpoint ,
+.Po
+.Ic endpoint
+or
+.Ic export.target
+.Qq file
+.Pc ,
 or
 .Va otel_endpoint
 in
@@ -275,6 +348,10 @@ default settings
 host UUID
 .It Pa /var/spool/otel
 spool directory
+.It Pa /var/log/otel
+file target directory
+.It Pa /etc/newsyslog.conf.d/otel.conf
+rotation of the file target
 .El
 .Sh EXAMPLES
 Export everything to a remote collector with a bearer token:
@@ -289,11 +366,23 @@ headers_file = "/etc/otel/collector.headers";
 # otelconf check -t
 # sysrc otel_enable=YES
 .Ed
+.Pp
+Keep everything in local files, without a collector:
+.Bd -literal -offset indent
+# /etc/otel.conf
+export { target = "file"; }
+.Ed
+.Bd -literal -offset indent
+# sysrc otel_enable=YES
+# service otelpfd start
+# tail -1 /var/log/otel/otelpfd.jsonl
+.Ed
 .Sh SEE ALSO
 .Xr dtrace 1 ,
 .Xr libotelexport 3 ,
 .Xr libucl 3 ,
 .Xr oe_sysconf 3 ,
+.Xr newsyslog.conf 5 ,
 .Xr rc.conf 5 ,
 .Xr bsdinstruments 8 ,
 .Xr hwstat 8 ,

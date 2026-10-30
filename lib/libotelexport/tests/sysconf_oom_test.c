@@ -230,6 +230,48 @@ ATF_TC_BODY(config_sweep, tc)
 	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
 }
 
+/* The same through the file target (its path is the last allocation). */
+static char err_buf[600];
+
+ATF_TC_WITHOUT_HEAD(config_file_sweep);
+ATF_TC_BODY(config_file_sweep, tc)
+{
+	struct oe_config_request req;
+	struct oe_env env;
+	long n;
+	int r;
+
+	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
+	unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT");
+	unsetenv("OTEL_EXPORTER_OTLP_HEADERS");
+	write_file("local.conf", "host_id_file = \"\";\n"
+	    "export { target = \"file\"; directory = \"/var/log/o\"; }\n",
+	    0644);
+	setenv("OTELCONF_DEFAULTS", "", 1);
+	setenv("OTELCONF_FILE", "local.conf", 1);
+	memset(&req, 0, sizeof(req));
+	req.scope = "tool";
+	req.system = 1;
+	for (n = 0; n < SWEEP_MAX; n++) {
+		failalloc_failures = 0;
+		failalloc_countdown = n;
+		r = oe_config_load(&env, &req, err_buf, sizeof(err_buf));
+		failalloc_countdown = -1;
+		if (failalloc_failures == 0) {
+			ATF_REQUIRE_EQ_MSG(r, 0, "%s", err_buf);
+			ATF_CHECK_STREQ(env.file_path, "/var/log/o/tool.jsonl");
+			oe_env_free(&env);
+			break;
+		}
+		ATF_CHECK_EQ(r, -1);
+		ATF_CHECK_MSG(strstr(err_buf, "out of memory") != NULL,
+		    "allocation %ld: \"%s\"", n, err_buf);
+		ATF_CHECK(env.sysconf == NULL && env.file_buf == NULL);
+		oe_env_free(&env);
+	}
+	ATF_REQUIRE_MSG(n > 5 && n < SWEEP_MAX, "sweep ended at %ld", n);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -237,5 +279,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, init_sweep);
 	ATF_TP_ADD_TC(tp, env_sweep);
 	ATF_TP_ADD_TC(tp, config_sweep);
+	ATF_TP_ADD_TC(tp, config_file_sweep);
 	return (atf_no_error());
 }

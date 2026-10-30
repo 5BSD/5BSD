@@ -20,6 +20,10 @@
 .Nm oe_sink_stream ,
 .Nm oe_sink_path ,
 .Nm oe_sink_close ,
+.Nm oe_sink_reopen ,
+.Nm oe_sink_reopen_request ,
+.Nm oe_env_sink_open ,
+.Nm oe_exporter_open ,
 .Nm oe_start ,
 .Nm oe_event ,
 .Nm oe_snapshot ,
@@ -99,6 +103,14 @@ It is not installed as a shared library.
 .Fn oe_sink_path "const struct oe_sink *sink"
 .Ft int
 .Fn oe_sink_close "struct oe_sink *sink"
+.Ft int
+.Fn oe_sink_reopen "struct oe_sink *sink"
+.Ft void
+.Fn oe_sink_reopen_request void
+.Ft "struct oe_sink *"
+.Fn oe_env_sink_open "const struct oe_env *env"
+.Ft "struct oe_exporter *"
+.Fn oe_exporter_open "const struct oe_env *env" "const struct oe_otlp_config *cfg"
 .Ft int
 .Fn oe_start "struct oe_exporter *e"
 .Ft int
@@ -442,6 +454,8 @@ struct oe_sink_config {
 	time_t		 rotate_interval;
 	unsigned	 rotate_keep;
 	int		 durable;
+	mode_t		 mode;
+	int		 follow;
 };
 .Ed
 .Pp
@@ -458,7 +472,10 @@ Otherwise
 .Fn oe_sink_open
 opens or creates
 .Va path
-for appending; it must be a regular file.
+for appending, with
+.Va mode
+.Pq default 0644, before the umask ;
+it must be a regular file.
 A file rotates before a record that would take it past
 .Va rotate_size
 bytes, and before the first record written
@@ -498,6 +515,71 @@ may return a different stream after a rotation.
 returns the path, or
 .Dv NULL
 for a stream sink.
+.Fn oe_sink_reopen
+closes the file, after flushing it, and opens
+.Va path
+again.
+.Pp
+A file that another program rotates, such as
+.Xr newsyslog 8 ,
+which renames it away and moves a new file into its place, is opened
+with
+.Va follow .
+Such a sink keeps writing whole records to the file it has open, the
+rotated one, and reopens
+.Va path
+before the next write after
+.Fn oe_sink_reopen_request ,
+which is async-signal-safe and meant for a
+.Dv SIGHUP
+handler
+.Pq newsyslog signals once the new file exists and waits before compressing the old one ,
+and at a flush that finds
+.Va path
+naming another file.
+A missing
+.Va path
+is created only after three flushes have found it missing, because
+newsyslog renames the old file before it moves the new one in; creating
+the file in between would put records into a file about to be replaced.
+No record is lost or split either way.
+.Ss File target
+When
+.Xr otel.conf 5
+selects
+.Ic export.target
+.Qq file ,
+.Fn oe_config_load
+sets
+.Va env->file_path
+to
+.Pa <export.directory>/<scope>.jsonl
+instead of resolving a spool, unless the command line or
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+names an endpoint.
+.Fn oe_env_sink_open
+opens that file as a durable, following sink with mode
+.Dv OE_FILE_TARGET_MODE
+.Pq 0640 .
+.Fn oe_exporter_open
+returns the exporter the resolved settings select: an OTLP JSON Lines
+exporter
+.Pq Fn oe_otlpjson_new
+that owns such a sink, whose
+.Fn oe_flush
+writes the pending lines, syncs the file and acts on a rotation and whose
+.Fn oe_shutdown
+closes it; or, without a file target, an OTLP/HTTP exporter
+.Pq Fn oe_otlp_new
+configured from a copy of
+.Fa cfg
+completed by
+.Fn oe_otlp_config_env .
+.Fa cfg
+supplies the profile, resource, scope, batch size and OTLP/HTTP tuning.
+A program that writes the file target on its own thread calls
+.Fn oe_flush
+at least once a second while records are pending.
 The first failure
 .Pq for example Er ENOSPC or Er EFBIG
 is reported once on standard error with the path and the system error,

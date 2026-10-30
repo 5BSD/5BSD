@@ -1157,8 +1157,65 @@ EOF
 	    bsdinstruments watch mock-prof
 }
 
+atf_test_case watch_otel_file_target
+watch_otel_file_target_head()
+{
+	atf_set descr "--format otel writes otel.conf's file target and follows rotation"
+	atf_set require.progs cc
+	atf_set timeout 120
+}
+watch_otel_file_target_body()
+{
+	mock_setup
+	anchored_script
+	cat >> script <<'EOF'
+sleep 1500
+chunk 0 20000 2 late[9]: read\n
+work
+sleep 1500
+work
+done
+EOF
+	v=$(validator)
+	mkdir logs
+	printf 'spool { directory = "%s/no-spool"; }\nexport { target = "file"; directory = "%s/logs"; }\n' \
+	    "$PWD" "$PWD" > otel-test.conf
+	umask 022
+	bsdinstruments watch mock-prof --format otel > bi.out 2> bi.err &
+	pid=$!
+	i=0
+	while [ ! -s logs/bsdinstruments.jsonl ] && [ $i -lt 100 ]; do
+		sleep 0.05; i=$((i + 1))
+	done
+	atf_check -o inline:"640\n" stat -f %Lp logs/bsdinstruments.jsonl
+	# newsyslog: rename, new file, SIGHUP to the service's process.
+	mv logs/bsdinstruments.jsonl logs/bsdinstruments.jsonl.0
+	: > logs/new; chmod 0640 logs/new; mv logs/new logs/bsdinstruments.jsonl
+	kill -HUP $pid
+	wait $pid || atf_fail "bsdinstruments failed: $(cat bi.err)"
+	atf_check -o match:'requests=[1-9]' "$v" logs/bsdinstruments.jsonl.0
+	atf_check -o match:'requests=[1-9]' "$v" logs/bsdinstruments.jsonl
+	# Every record exactly once across the two files.
+	for r in 'nginx\[42\]' 'sshd\[7\]' 'late\[9\]'; do
+		atf_check -o inline:"1\n" -x \
+		    "cat logs/bsdinstruments.jsonl* | grep -o '$r' | wc -l | tr -d ' '"
+	done
+	# The final snapshot of the run is in the new file.
+	atf_check -o match:'resourceMetrics' cat logs/bsdinstruments.jsonl
+	# An endpoint on the command line wins (port 9 refuses: spooled).
+	atf_check -s exit:0 -o empty -e match:'spooled' \
+	    bsdinstruments watch mock-prof --format otel \
+	    --endpoint http://127.0.0.1:9 --spool sp.jsonl
+	# An unwritable target fails before tracing starts.
+	printf 'export { target = "file"; directory = "%s/none"; }\n' "$PWD" \
+	    > otel-test.conf
+	atf_check -s exit:1 -o empty -e match:'none/bsdinstruments.jsonl' \
+	    bsdinstruments watch mock-prof --format otel
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case watch_otel_file_target
 	atf_add_test_case list_basic
 	atf_add_test_case list_json
 	atf_add_test_case generate_render

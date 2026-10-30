@@ -17,6 +17,12 @@ LPDIR=		/etc/newsyslog.conf.d
 CONFS+=		opensm.conf
 .endif
 
+# OpenTelemetry file target (otel.conf(5)), with the rc.d services.
+CONFGROUPS+=	OTEL
+OTEL+=		otel.conf
+OTELPACKAGE=	otel
+OTELDIR=	/etc/newsyslog.conf.d
+
 .if ${MK_PF} != "no"
 CONFGROUPS+=	PF
 PF+=		pf.conf

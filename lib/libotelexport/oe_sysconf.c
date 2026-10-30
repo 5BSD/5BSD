@@ -143,8 +143,10 @@ oe_sysconf_free(struct oe_sysconf *sc)
 	free(sc->host_id_file);
 	oe_attrs_free(sc->resource_attrs, sc->nresource_attrs);
 	free(sc->spool_dir);
+	free(sc->export_dir);
 	sc->endpoint = sc->protocol = sc->compression = NULL;
 	sc->headers_file = sc->host_id_file = sc->spool_dir = NULL;
+	sc->export_dir = NULL;
 	sc->headers = sc->resource_attrs = NULL;
 	sc->nheaders = sc->nresource_attrs = 0;
 }
@@ -162,7 +164,8 @@ oe_sysconf_init(struct oe_sysconf *sc)
 	    set_str(&sc->compression, OE_SYSCONF_DEFAULT_COMPRESSION) != 0 ||
 	    set_str(&sc->headers_file, "") != 0 ||
 	    set_str(&sc->host_id_file, OE_SYSCONF_DEFAULT_HOSTID_FILE) != 0 ||
-	    set_str(&sc->spool_dir, OE_SYSCONF_DEFAULT_SPOOL_DIR) != 0) {
+	    set_str(&sc->spool_dir, OE_SYSCONF_DEFAULT_SPOOL_DIR) != 0 ||
+	    set_str(&sc->export_dir, OE_SYSCONF_DEFAULT_EXPORT_DIR) != 0) {
 		oe_sysconf_free(sc);
 		sc_error(sc, "out of memory");
 		return (-1);
@@ -608,6 +611,53 @@ parse_spool(struct oe_sysconf *sc, const char *file,
 }
 
 static int
+parse_export(struct oe_sysconf *sc, const char *file,
+    const ucl_object_t *obj)
+{
+	static const char *const targets[] = { "otlp", "file", NULL };
+	const ucl_object_t *cur;
+	ucl_object_iter_t it;
+	const char *key, *s;
+	size_t i;
+
+	if (ucl_object_type(obj) != UCL_OBJECT) {
+		sc_error(sc, "%s: export must be an object", file);
+		return (-1);
+	}
+	it = NULL;
+	while ((cur = ucl_object_iterate(obj, &it, true)) != NULL) {
+		key = ucl_object_key(cur);
+		if (strcmp(key, "target") == 0) {
+			if (get_string(sc, file, "export.target", cur,
+			    OE_SYSCONF_KEY_MAX, &s) != 0)
+				return (-1);
+			for (i = 0; targets[i] != NULL; i++)
+				if (strcmp(s, targets[i]) == 0)
+					break;
+			if (targets[i] == NULL) {
+				sc_error(sc, "%s: export.target \"%s\" must be "
+				    "\"otlp\" or \"file\"", file, s);
+				return (-1);
+			}
+			sc->export_file = i == 1;
+		} else if (strcmp(key, "directory") == 0) {
+			if (get_path(sc, file, "export.directory", cur,
+			    &sc->export_dir) != 0)
+				return (-1);
+			if (sc->export_dir[0] == '\0') {
+				sc_error(sc, "%s: export.directory must not "
+				    "be empty", file);
+				return (-1);
+			}
+		} else {
+			sc_error(sc, "%s: unknown key export.%s", file, key);
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+static int
 parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 {
 	static const char *const protocols[] = { "http/json", NULL };
@@ -661,6 +711,9 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 				return (-1);
 		} else if (strcmp(key, "spool") == 0) {
 			if (parse_spool(sc, file, cur) != 0)
+				return (-1);
+		} else if (strcmp(key, "export") == 0) {
+			if (parse_export(sc, file, cur) != 0)
 				return (-1);
 		} else {
 			sc_error(sc, "%s: unknown key %s", file, key);
@@ -849,8 +902,12 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 		env->endpoint = cli_endpoint;
 	if (sc == NULL || !sc->enable)
 		return (0);
-	/* An empty system endpoint is unset (the built-in default applies). */
-	if (env->endpoint == NULL && sc->endpoint[0] != '\0')
+	/*
+	 * An empty system endpoint is unset (the built-in default
+	 * applies), and with the file target the endpoint is not used.
+	 */
+	if (env->endpoint == NULL && sc->endpoint[0] != '\0' &&
+	    !sc->export_file)
 		env->endpoint = sc->endpoint;
 	if (env->compression == NULL)
 		env->compression = sc->compression;
@@ -904,12 +961,28 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 	env->sysconf = sc;
 	if (r != 0)
 		goto nomem;
+	if (sc != NULL && !sc->enable)
+		sc = NULL;
+	if (env->endpoint == NULL && sc != NULL && sc->export_file) {
+		/*
+		 * The file target: no endpoint from the command line or
+		 * the environment.  One file per tool; no spool (the file
+		 * is the durable store).
+		 */
+		len = strlen(sc->export_dir) + strlen(req->scope) +
+		    sizeof("/.jsonl");
+		if ((env->file_buf = malloc(len)) == NULL)
+			goto nomem;
+		snprintf(env->file_buf, len, "%s/%s.jsonl", sc->export_dir,
+		    req->scope);
+		env->file_path = env->file_buf;
+		env->endpoint = OE_DEFAULT_ENDPOINT;	/* unused */
+		return (0);
+	}
 	if (env->endpoint == NULL) {
 		env->endpoint = OE_DEFAULT_ENDPOINT;
 		env->endpoint_default = 1;
 	}
-	if (sc != NULL && !sc->enable)
-		sc = NULL;
 	if (req->spool != NULL) {
 		/* A command line spool takes its bound from the layers. */
 		env->spool_path = req->spool;

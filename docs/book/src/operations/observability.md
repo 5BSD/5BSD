@@ -308,7 +308,7 @@ receiver endpoint, compression, timeout, a separate credentials file (mode
 directory `/var/spool/otel`. The base system ships no collector or agent:
 the programs export straight to the receiver the configuration names. The
 shipped `endpoint` is empty, so the services refuse to start until one is
-set (`otelconf check -t`); a program run by hand with OTLP output then uses
+set or the file target below is chosen (`otelconf check -t`); a program run by hand with OTLP output then uses
 the specification's conventional `http://localhost:4318`, where a collector
 the user runs listens by default. `otelconf(8)` validates the configuration
 with the library's own loader and prints values for rc.d scripts. Every
@@ -319,6 +319,20 @@ endpoint it names. Without a command-line spool, an exporter that may write
 the spool directory keeps undeliverable batches in
 `/var/spool/otel/<tool>.spool` (bounded by `spool.max_bytes`, one owner at a
 time) and resends them when the collector is back.
+
+Without a collector, `export { target = "file"; }` in `/etc/otel.conf`
+keeps everything in local files: each program writes OTLP JSON Lines (the
+Collector file exporter's format, readable by its `otlpjsonfile` receiver)
+to `/var/log/otel/<program>.jsonl` (`dtrace`, `bsdinstruments`, `hwstat`,
+`otelpfd`, `otelauditd`; mode 0640, directory owned by `_otel`, synced at
+least once a second). `newsyslog(8)` rotates them
+(`/etc/newsyslog.conf.d/otel.conf`): the services reopen their file on
+SIGHUP, sent to the program's own pid file
+(`/var/run/otel/<service>.child.pid`, written by `daemon -p`) before the
+rotated file is compressed, and every writer also notices a rotated file
+within a second on its own, so no record is lost or split. An endpoint on
+the command line or in `OTEL_EXPORTER_OTLP_ENDPOINT` still sends that
+program's data over OTLP/HTTP.
 
 With an export target configured, `sysrc otel_enable=YES` starts the
 services; each `*_enable` left empty follows the master switch:

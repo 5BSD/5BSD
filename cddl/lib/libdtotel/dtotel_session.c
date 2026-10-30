@@ -6,7 +6,8 @@
  * A complete OpenTelemetry export session for a DTrace consumer:
  * the "-x otel*" options, the exporter and output sink they select,
  * the OTel resource (detected host, OTEL_* environment, otel.conf(5)
- * for OTLP/HTTP through oe_config_load()), one
+ * for -x otel=otlp through oe_config_load(), including its file
+ * target), one
  * exporter per HyperTrace guest with the guest's own resource, the
  * probe clock program, and orderly shutdown.  dtrace(1) uses it so
  * its own source carries only the hooks.
@@ -180,7 +181,9 @@ make_exporter(struct dtotel_session *s, const struct oe_resource *r,
 	struct oe_otlp_config ocfg;
 	struct oe_otlpjson_config jcfg;
 
-	switch (s->opts.format) {
+	/* -x otel=otlp with the otel.conf(5) file target writes a file. */
+	switch (s->opts.format == DTOTEL_OTLP && s->sink != NULL ?
+	    DTOTEL_OTLPJSON : s->opts.format) {
 	case DTOTEL_JSON:
 		if (jsonres != NULL)
 			return (oe_jsonl_resource_new(s->sink, s->profile,
@@ -299,7 +302,18 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 	}
 	s->resource.service_name = s->service_name;
 	s->resource.service_version = s->service_version;
-	if (s->opts.format != DTOTEL_OTLP) {
+	if (s->opts.format == DTOTEL_OTLP && s->env.file_path != NULL) {
+		/*
+		 * otel.conf(5) selects the file target and neither -x
+		 * otelendpoint nor OTEL_EXPORTER_OTLP_ENDPOINT overrides
+		 * it: OTLP JSON Lines to <export.directory>/<scope>.jsonl.
+		 */
+		if ((s->sink = oe_env_sink_open(&s->env)) == NULL) {
+			seterr(err, errlen, "cannot open the OpenTelemetry "
+			    "file target %s", s->env.file_path);
+			goto fail;
+		}
+	} else if (s->opts.format != DTOTEL_OTLP) {
 		memset(&sc, 0, sizeof(sc));
 		sc.path = cfg->output;
 		sc.rotate_size = s->opts.rotate_size;
@@ -390,17 +404,22 @@ dtotel_session_tick(struct dtotel_session *s)
 	if (dtotel_error(s->bridge))
 		return (-1);
 	/* OTLP/HTTP batches on its own sender thread. */
-	if (s->opts.format == DTOTEL_OTLP)
+	if (s->sink == NULL)
 		return (0);
-	return (oe_flush(s->exporter));
+	return (dtotel_session_flush(s));
 }
 
 int
 dtotel_session_flush(struct dtotel_session *s)
 {
+	int ret;
 
 	dtotel_flush(s->bridge);
-	return (oe_flush(s->exporter));
+	ret = oe_flush(s->exporter);
+	/* HyperTrace guests' records are written at the same points. */
+	if (dtotel_flush_guests(s->bridge) != 0)
+		ret = -1;
+	return (ret);
 }
 
 int

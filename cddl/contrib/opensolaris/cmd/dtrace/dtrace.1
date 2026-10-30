@@ -1475,6 +1475,24 @@ spool
 and an invalid
 .Xr otel.conf 5
 is an error.
+When
+.Xr otel.conf 5
+selects the file target
+.Pq Ic export.target Qq file
+and neither
+.Cm otelendpoint
+nor
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+names an endpoint,
+.Cm otlp
+writes OTLP JSON Lines to
+.Pa <export.directory>/dtrace.jsonl
+.Pq mode 0640 ,
+guest resources included, synchronized once a second; when
+.Xr newsyslog 8
+rotates that file,
+.Nm
+notices the new file within a second and continues in it.
 .Pp
 With
 .Fl E ,

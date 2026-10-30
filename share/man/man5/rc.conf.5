@@ -3114,11 +3114,21 @@ Exporter settings are read from
 the services refuse to start when it is invalid, has
 .Ic enable
 set to false, or names no export target
-.Pq Ic endpoint
+.Po
+.Ic endpoint ,
+or
+.Ic export.target
+.Qq file
+.Pc
 while
 .Va otel_endpoint
 is empty.
 The base system has no local collector.
+With the file target, the services create
+.Ic export.directory
+for
+.Ql _otel
+when it is missing.
 .It Va otel_endpoint
 .Pq Vt str
 If not empty, the OTLP endpoint of the emitter services instead of
@@ -3131,7 +3141,15 @@ credentials are then not sent.
 .It Va otel_rundir
 .Pq Vt str
 Directory for the services' pid files (default
-.Pa /var/run/otel ) .
+.Pa /var/run/otel ) :
+.Pa <service>.pid
+for
+.Xr daemon 8
+and
+.Pa <service>.child.pid
+for the service program itself, which
+.Pa /etc/newsyslog.conf.d/otel.conf
+signals to reopen its file target.
 .It Va otel_hwstat_enable
 .Pq Vt bool
 Export hardware metrics with

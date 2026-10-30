@@ -1004,6 +1004,18 @@ dtotel_exporter_for(struct dtotel *d, uint16_t vmid, const char *target)
 }
 
 int
+dtotel_flush_guests(struct dtotel *d)
+{
+	struct dtotel_guest_state *g;
+	int ret = 0;
+
+	for (g = d->guests; g != NULL; g = g->next)
+		if (g->exporter != NULL && oe_flush(g->exporter) != 0)
+			ret = -1;
+	return (ret);
+}
+
+int
 dtotel_shutdown(struct dtotel *d)
 {
 	struct dtotel_guest_state *g, *next;

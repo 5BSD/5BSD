@@ -34,6 +34,14 @@ signal_handler(int sig __unused)
 	got_signal = 1;
 }
 
+/* newsyslog(8) rotated the otel.conf file target: reopen it. */
+static void
+reopen_handler(int sig __unused)
+{
+
+	oe_sink_reopen_request();
+}
+
 static void
 install_signal_handlers(void)
 {
@@ -45,6 +53,9 @@ install_signal_handlers(void)
 	sigemptyset(&sa.sa_mask);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+	sa.sa_handler = reopen_handler;
+	sa.sa_flags = SA_RESTART;
+	sigaction(SIGHUP, &sa, NULL);
 }
 
 static double
@@ -139,20 +150,23 @@ otel_open(struct otel_ctx *ctx, const char *cli_endpoint, double interval)
 	    HWSTAT_VERSION);
 
 	memset(&ocfg, 0, sizeof(ocfg));
-	oe_otlp_config_env(&ocfg, &ctx->env);
 	ocfg.profile = "hardware";
 	ocfg.resource = &resource;
 	ocfg.batch_size = 50;
 	ocfg.flush_interval = interval;
 	ocfg.max_retries = -1;
 	ocfg.scope_name = "hwstat";
-	ctx->exporter = oe_otlp_new(&ocfg);
+	/* OTLP/HTTP, or the otel.conf(5) file target. */
+	ctx->exporter = oe_exporter_open(&ctx->env, &ocfg);
 	if (ctx->exporter != NULL && oe_start(ctx->exporter) != 0) {
 		oe_exporter_free(ctx->exporter);
 		ctx->exporter = NULL;
 	}
-	if (ctx->exporter != NULL)
-		fprintf(stderr, "Exporting to %s/v1/metrics\n", ocfg.endpoint);
+	if (ctx->exporter != NULL && ctx->env.file_path != NULL)
+		fprintf(stderr, "Exporting to %s\n", ctx->env.file_path);
+	else if (ctx->exporter != NULL)
+		fprintf(stderr, "Exporting to %s/v1/metrics\n",
+		    ctx->env.endpoint);
 	return (ctx->exporter);
 }
 

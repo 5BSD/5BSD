@@ -28,6 +28,7 @@ MLINKS+=	oe_sysconf.3 oe_attrs_free.3
 MLINKS+=	oe_sysconf.3 oe_env_load_system.3
 MLINKS+=	oe_sysconf.3 oe_service_open.3
 MLINKS+=	oe_sysconf.3 oe_service_close.3
+MLINKS+=	oe_sysconf.3 oe_service_flush.3
 MLINKS+=	oe_sysconf.3 oe_drop_privileges.3
 MLINKS+=	libotelexport.3 oe_text_new.3
 MLINKS+=	libotelexport.3 oe_jsonl_new.3
@@ -77,6 +78,10 @@ MLINKS+=	libotelexport.3 oe_buf_appendf.3
 MLINKS+=	libotelexport.3 oe_buf_appendjson.3
 MLINKS+=	libotelexport.3 oe_frame_format.3
 MLINKS+=	libotelexport.3 oe_iso8601.3
+MLINKS+=	libotelexport.3 oe_sink_reopen.3
+MLINKS+=	libotelexport.3 oe_sink_reopen_request.3
+MLINKS+=	libotelexport.3 oe_env_sink_open.3
+MLINKS+=	libotelexport.3 oe_exporter_open.3
 
 # oe_sysconf.c reads otel.conf(5) with libucl.
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include

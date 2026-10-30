@@ -14,6 +14,7 @@
 .Nm oe_attrs_free ,
 .Nm oe_env_load_system ,
 .Nm oe_service_open ,
+.Nm oe_service_flush ,
 .Nm oe_service_close ,
 .Nm oe_drop_privileges
 .Nd system OpenTelemetry configuration layer of libotelexport
@@ -33,6 +34,8 @@
 .Fn oe_env_load_system "struct oe_env *env" "const struct oe_sysconf *sc" "const char *cli_endpoint"
 .Ft int
 .Fn oe_service_open "struct oe_service *svc" "const char *service_name" "const char *version" "const char *profile" "const char *cli_endpoint" "double flush_interval" "const char *user" "char *err" "size_t errlen"
+.Ft int
+.Fn oe_service_flush "struct oe_service *svc"
 .Ft void
 .Fn oe_service_close "struct oe_service *svc"
 .Ft int
@@ -76,6 +79,15 @@ and leaves the built-in defaults in
 .Fn oe_sysconf_free
 releases the strings held by
 .Fa sc .
+Besides the exporter keys,
+.Va sc->export_file
+is set for
+.Ic export.target
+.Qq file
+and
+.Va sc->export_dir
+holds
+.Ic export.directory .
 .Pp
 .Fn oe_headers_file_load
 reads a credentials file
@@ -151,8 +163,26 @@ exporter exists, so the system spool
 .Pa <spool.directory>/<service_name>.spool
 is created by and belongs to that user
 .Pc ,
-and creates and starts an OTLP exporter in
-.Va svc->exporter .
+and creates and starts the exporter the settings select in
+.Va svc->exporter
+.Pq Xr oe_exporter_open 3 :
+OTLP/HTTP, or the OTLP JSON Lines file
+.Pa <export.directory>/<service_name>.jsonl
+of the
+.Xr otel.conf 5
+file target.
+.Fn oe_service_flush
+makes what the service queued durable when it exports to the file
+target: the pending lines are written, the file synced, and a rotation by
+.Xr newsyslog 8
+acted on; it does nothing for OTLP/HTTP, whose batches leave on their
+own thread.
+A service calls it after each batch of records and at least once a
+second while records are pending, and calls
+.Xr oe_sink_reopen_request 3
+from its
+.Dv SIGHUP
+handler.
 The resource comes from
 .Xr oe_resource_init 3 ;
 its
