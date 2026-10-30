@@ -4404,3 +4404,12 @@ installs the native Markdown book as runtime-package content.
 Its explicit chapter inventory rejects missing or unlisted source files and
 is shared with native source ownership for installer test fixtures.
 This target does not assemble the installer test package or run its checks.
+
+.Pp
+The intermediate
+.Cm //usr.sbin/bsdinstall/tests:fixture_archive
+target contains installer test scripts, Kyuafile and source fixtures.
+It excludes the pending generated manual-page and sysctl inventories and is
+not a complete installed test package.
+The parent installer target continues to reject tests=true until those
+inventories are also represented natively.

@@ -20437,3 +20437,26 @@ inventories or installed installer tests are claimed migrated by this change.
 The full installer tests=true restriction remains until its graph is complete.
 Frontend review: existing format-5 explicit targets support the new archive;
 no frontend/backend option change is required. The manual documents its scope.
+
+### Native installer source fixtures and shell tests (2026-10-30)
+
+Added usr.sbin/bsdinstall/tests native ownership: ten maintained ATF shell
+programs, their Kyuafile, and 99 source fixtures (81 shared book chapters,
+14 real kernel headers, the checker, syscall table, vmimage helper and manual).
+The srctree directory artifact declares every input; file exports have scoped
+visibility. No Make invocation occurs in these native actions.
+
+The deliberately partial fixture_archive matches all 132 corresponding Make
+installation records and 110 payload files byte for byte. Its comparator names
+book-man-pages and book-sysctls as the two pending generated files; full-suite
+parity is NOT claimed. The parent installer tests=true incompatibility remains.
+Native and Make wrappers enumerate identical metadata for all 47 ATF cases
+across ten programs using host atf-sh. Test bodies were not run. The native
+source fixtures pass check-book using the two Make-generated inventories;
+this mixed-input check does not qualify native inventory generation.
+Evidence: /usr/obj/usr/src/bazel-installer-fixtures-reference-20261030/tests/
+{install-audit.json,payload-audit.json,runtime-audit.json}; native capture:
+/usr/obj/usr/src/bazel-installer-fixtures-20261030. The full Make reference is
+bazel-bsdinstall-tests-make-20261030-r2 under /usr/obj/usr/src.
+Frontend review: maintained format-5 targets handle these fixture targets;
+no new frontend option or bypass is needed. Manual describes the partial scope.

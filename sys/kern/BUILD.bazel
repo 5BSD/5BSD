@@ -8,7 +8,7 @@ cc_library(name = "sysdecode_syscalls", textual_hdrs = ["syscalls.c"],
 
 exports_files(["subr_stats.c"], visibility = ["//lib/libstats:__pkg__"])
 
-exports_files(["syscalls.master"], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+exports_files(["syscalls.master"], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__", "//usr.sbin/bsdinstall/tests:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
