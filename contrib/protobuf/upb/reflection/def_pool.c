@@ -40,7 +40,7 @@ struct upb_DefPool {
 };
 
 void upb_DefPool_Free(upb_DefPool* s) {
-  upb_Arena_Free(s->arena);
+  if (s->arena) upb_Arena_Free(s->arena);
   upb_gfree(s->scratch_data);
   upb_gfree(s);
 }
@@ -56,7 +56,7 @@ upb_DefPool* upb_DefPool_New(void) {
 
   s->scratch_size = 240;
   s->scratch_data = upb_gmalloc(s->scratch_size);
-  if (!s->scratch_data) goto err;
+  if (!s->arena || !s->scratch_data) goto err;
 
   if (!upb_strtable_init(&s->syms, 32, s->arena)) goto err;
   if (!upb_strtable_init(&s->files, 4, s->arena)) goto err;
@@ -428,6 +428,7 @@ bool _upb_DefPool_LoadDefInitEx(upb_DefPool* s, const _upb_DefPool_Init* init,
   }
 
   arena = upb_Arena_New();
+  if (!arena) return false;
 
   for (; *deps; deps++) {
     if (!_upb_DefPool_LoadDefInitEx(s, *deps, rebuild_minitable)) goto err;

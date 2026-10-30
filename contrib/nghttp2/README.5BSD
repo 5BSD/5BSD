@@ -1,0 +1,25 @@
+5BSD import status
+==================
+
+Upstream:  nghttp2 1.70.0, https://github.com/nghttp2/nghttp2
+Archive:   https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.xz
+SHA256:    e05cb1388eaca3830aded4ccf20044b6e1ac1a61411dcca11b0437c4285c8bc2
+           (equal to the www/libnghttp2 port's distinfo)
+License:   COPYING (MIT).  lib/sfparse.c also carries the MIT notice of
+           Bjoern Hoehrmann's UTF-8 decoder; files from ngtcp2, nghttp3
+           and sfparse are MIT under their contributors' notices.
+
+Trimmed to the library, as the port's --enable-lib-only
+(tools/build/protobuf/trim.py): lib/ and its public headers.  Not
+imported: the applications, tests, examples, bindings, documentation,
+the bundled third-party code (mruby, munit, llhttp, ...) and the build
+system.  The port's Makefile.in patch only limits the build to lib/ and
+has no source counterpart.
+
+Local changes: none.  lib/libnghttp2/config.h (the four macros the
+library sources test) and lib/libnghttp2/nghttp2/nghttp2ver.h (the
+upstream template with version 1.70.0, 0x014600) replace configure.
+
+Built by lib/libnghttp2 as the private library libprivatenghttp2.so.14
+(libtool -version-info 43:5:29).  Installed licence:
+/usr/share/licenses/nghttp2.

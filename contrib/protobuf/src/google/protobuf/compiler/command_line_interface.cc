@@ -283,6 +283,13 @@ void AddDefaultProtoPaths(
     paths->emplace_back("", std::move(include_path));
     return;
   }
+  // 5BSD: the base system installs the well-known types with the private
+  // protobuf headers, under <prefix>/include/private.
+  include_path = absl::StrCat(path, "/include/private");
+  if (IsInstalledProtoPath(include_path)) {
+    paths->emplace_back("", std::move(include_path));
+    return;
+  }
 }
 
 std::string PluginName(absl::string_view plugin_prefix,
