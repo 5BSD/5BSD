@@ -18314,3 +18314,34 @@ no ATF case ran, and direct Bazel execution/VM orchestration is still pending.
 The suite requires root and creates/mounts memory disks, so qualify it in the
 isolated matching VM. Existing build-bsd tests setting selects installation;
 no frontend, signing or publication contract changed.
+
+### Disk utility migration in progress (2026-10-30)
+
+Native diskinfo, trim and snapinfo build/install candidates have been added with
+Make-selected util or ufs linkage and utilities/ufs package tags. Native run
+bazel-disk-tools-20261030 and isolated Make references bazel-<program>-make-20261030
+are in progress. Comparison scripts are prepared under
+/usr/obj/usr/src/bazel-disk-tools-reference-20261030; no parity claim yet.
+
+Diskinfo's legacy Make test target names /dev/ad4 and md50 explicitly. Do not run
+that target as a qualification fixture: future tests must accept an explicit
+disposable VM/device input and bound writes/trim to that fixture. No disk utility
+has been executed, and no host storage was modified. Existing build-bsd explicit
+inputs suffice; no frontend/signing/publication contract changed.
+
+### Disk utility artifact qualification completed (2026-10-30)
+
+Native diskinfo, trim and snapinfo now pass fresh Make build/install comparison.
+Each matches five installation records and three regular payloads, with no
+missing/extra destinations or metadata mismatches. Global/weak symbol inventories,
+ordered dynamic dependencies, exact manual bytes and debuglink CRCs pass.
+Native evidence: /usr/obj/usr/src/bazel-disk-tools-20261030. Fresh Make evidence:
+bazel-{diskinfo,trim,snapinfo}-make-20261030. Comparators/logs reside in
+/usr/obj/usr/src/bazel-disk-tools-reference-20261030 per-program directories.
+
+No application logic changed and no tool ran against host storage. Device/ioctl
+behavior, discard authorization/ranges, UFS snapshots and actual storage
+performance remain isolated VM/device qualification gates. Diskinfo's old fixed-
+device test target was not used. Existing build-bsd explicit target inputs cover
+this work; no frontend/signing/publication contract changed. Component SDK use
+and outstanding full-world/bootstrap/pkgbase/performance limits remain unchanged.

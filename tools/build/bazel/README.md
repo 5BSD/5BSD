@@ -42853,3 +42853,20 @@ no ATF case ran, and direct Bazel execution/VM orchestration is still pending.
 The suite requires root and creates/mounts memory disks, so qualify it in the
 isolated matching VM. Existing build-bsd tests setting selects installation;
 no frontend, signing or publication contract changed.
+
+### Disk utility artifact qualification completed (2026-10-30)
+
+Native diskinfo, trim and snapinfo now pass fresh Make build/install comparison.
+Each matches five installation records and three regular payloads, with no
+missing/extra destinations or metadata mismatches. Global/weak symbol inventories,
+ordered dynamic dependencies, exact manual bytes and debuglink CRCs pass.
+Native evidence: /usr/obj/usr/src/bazel-disk-tools-20261030. Fresh Make evidence:
+bazel-{diskinfo,trim,snapinfo}-make-20261030. Comparators/logs reside in
+/usr/obj/usr/src/bazel-disk-tools-reference-20261030 per-program directories.
+
+No application logic changed and no tool ran against host storage. Device/ioctl
+behavior, discard authorization/ranges, UFS snapshots and actual storage
+performance remain isolated VM/device qualification gates. Diskinfo's old fixed-
+device test target was not used. Existing build-bsd explicit target inputs cover
+this work; no frontend/signing/publication contract changed. Component SDK use
+and outstanding full-world/bootstrap/pkgbase/performance limits remain unchanged.

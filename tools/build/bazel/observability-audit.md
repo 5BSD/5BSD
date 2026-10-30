@@ -7687,3 +7687,15 @@ A scoped scan of the four main source files found no explicit DTrace, audit_ or
 syslog calls. Review audit coverage for quota edits and enabling/disabling limits;
 existing quot UFS1/UFS2 tests require a privileged isolated filesystem fixture.
 Artifact parity does not establish enforcement or accounting correctness.
+
+### Disk inspection, trim and snapshot tools (2026-10-30)
+
+Native candidates preserve diskinfo, trim and snapinfo program sources. Diskinfo
+uses device ioctls for media geometry, identifiers, attributes and flush behavior;
+trim's destructive discard path requires a disposable device fixture. No explicit
+DTrace/audit/syslog hooks were found by the scoped scan of the three main C files.
+Review audit coverage for discard requests and failed device authorization.
+Runtime gates include metadata output, bounded read/write/flush benchmarking,
+discard ranges/error handling and UFS snapshot enumeration. The old diskinfo
+Make test target embeds device names and must not serve as a portable automated
+fixture. None of these tools was executed against host storage.
