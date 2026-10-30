@@ -7527,3 +7527,10 @@ Native private-library artifact/install comparison passes for 45 C++ sources
 and 43 installed headers. No tracing/audit hooks or decoder algorithms changed.
 ETE, ETMv3/4, PTM/STM, frame decoding and image/memory-access error paths remain
 runtime fixture work; no capture integration or decoding performance claim.
+
+### PMC event generation (2026-10-30)
+
+Native execution-platform jevents output matches fresh Make for x86, arm64 and
+powerpc event datasets. These are offline JSON-to-C generation checks; no PMC
+allocation, kernel sampling, trace collection or event accuracy on physical
+processors was exercised. No observability hooks were changed.

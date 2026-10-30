@@ -17546,3 +17546,30 @@ debug-link CRC match. Evidence: install-audit.json and payload-audit.json under
 bazel-libopencsd-reference-20261030, using bazel-libopencsd-20261030-r2 artifacts.
 No live trace decoder, protocol fixture, memory/throughput or hardware capture
 qualification is claimed. Complete world/bootstrap/pkgbase gates remain open.
+
+### Native PMC event-table generator (2026-10-30)
+
+Added native jevents (three explicit C sources) and a declared bsd_pmu_events
+action using cfg=exec for the tool and runtime libraries. The selected architecture
+data tree and shared arch/test tree are source inputs, including newly added
+files through Bazel glob dependency tracking. The rule derives the root from
+the declared architecture mapfile and rejects a mismatched mapfile/architecture.
+No shell wrapper, Make-generated source inventory or prebuilt event table is used.
+
+Both initial Make and native executables failed against the older host libc with
+fts_open@FBSD_1.9 missing. Native actions now explicitly carry native libc/libsys
+execution runtime files; the fresh Make reference runs with its SDK runtime.
+No ABI shim or host upgrade was used. Native bazel-jevents-20261030-r2 produces
+x86 (7,334,658 bytes), arm64 (536,400 bytes) and powerpc (402,104 bytes) tables
+byte-identical to fresh Make-tool outputs. Saved artifact hashes are verified.
+Evidence: make-generation.json and generation-comparison.json under
+bazel-jevents-reference-20261030 in /usr/obj/usr/src; initial startup failures
+remain in logs. Existing build-bsd explicit targets and SDK interfaces suffice,
+with runtime dependencies declared inside the native action rather than a new
+frontend option. No normal workflow is replaced.
+
+This completes generator output parity for those three data architectures.
+Libpmc/libpmcstat compilation, unsupported-architecture empty-table selection,
+input-change/cache tests, kernel PMC operation and complete bootstrap/system
+qualification remain open. Generated arm64/powerpc data does not establish
+cross-compiled executables or hardware-counter operation on those architectures.
