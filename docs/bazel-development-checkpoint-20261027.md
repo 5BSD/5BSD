@@ -17456,3 +17456,24 @@ test.log and test.xml under bazel-libgcc_s-runtime-20261030-r2. Source ABI heade
 and the native shared runtime are used; SDK libc/startup and host loader/kernel
 remain prerequisites. C++ exception propagation, signal frames, sanitizer
 interaction and whole-system/bootstrap qualification remain open.
+
+### Legacy com_err candidate (2026-10-30)
+
+Added a separate native candidate for lib/libcom_err, the legacy Heimdal ABI 5
+implementation. MIT krb5/util/et already has its own ABI 122 component. Maintained
+Make world selects the legacy component only when MITKRB5 is disabled and
+KERBEROS enabled; a future world aggregate must preserve that selection because
+their development paths overlap. Direct component builds remain possible just
+as with Make. Fresh Make reference completes; native comparison is pending.
+Existing build-bsd explicit target selection needs no new interface or backend
+contract. No default MIT installation or host packages are changed.
+
+Legacy libcom_err r2 passes fresh Make comparison at nine installation
+destinations, six regular payloads and one debug link. The initial installation
+comparison caught the shared object's missing lib tag; corrected to preserve
+package=kerberos,lib. Archive member order, global/weak symbols and versions,
+ordered dynamic metadata, header/manual bytes and debug CRC match. Evidence:
+install-audit.json and payload-audit.json under bazel-libcom_err-reference-20261030,
+using bazel-libcom_err-20261030-r2 artifacts. Runtime error-table/hooks and complete
+legacy Kerberos configuration remain unqualified; this does not change the
+default MIT selection or close whole-world/bootstrap/pkgbase gates.

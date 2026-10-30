@@ -7496,3 +7496,10 @@ Bazel backtrace_test passes with explicit native DSO identity checks, three
 ordered caller frames and callback-requested stop. This supplies limited live
 stack-walk evidence beyond ELF/debug inspection. It does not cover exception
 cleanup, signal frames, concurrent walks, sanitizer integration or performance.
+
+### Legacy libcom_err (2026-10-30)
+
+Artifact/install parity passes for the legacy Heimdal error-formatting and table
+library. No runtime authentication decisions occur here, and no new audit/probe
+hooks were added. Hook and error-table runtime behavior remains unqualified;
+MIT com_err qualification is a separate implementation and cannot establish it.
