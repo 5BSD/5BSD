@@ -42325,3 +42325,21 @@ amd64 probe-site counts match Make; both outputs pass instruction/range checks.
 Evidence: install-audit.json, payload-audit.json and dof-comparison.json under
 bazel-libmesh-reference-20261030. No live firing or mesh protocol runtime claim.
 DTrace-off and existing runtime fixture qualification remain next steps.
+
+### libblemesh DTrace-disabled qualification (2026-10-30)
+
+The independent Make and native DTrace-disabled builds pass installation and
+payload comparison: 37 destinations, 34 regular payloads, one debug link. Direct
+ELF section inspection confirms neither shared library contains a SHT_SUNW_dof
+section. The DOF inventory tool intentionally rejects absence of metadata, so
+absence was verified from ELF section types instead of treating its rejection
+as proof. Evidence: install-audit.json, payload-audit.json and no-dof.json under
+bazel-libmesh-nodtrace-reference-20261030; native build-bsd output is
+bazel-libmesh-nodtrace-20261030. Existing typed dtrace input works unchanged;
+no frontend/backend contract changes are needed.
+
+Located maintained Mesh fixtures in tests/usr.sbin/bluetooth/BSDBluetooth,
+including crypto known-answer, network, transport, access, replay protection,
+provisioning and simulator tests. That directory has no local BUILD.bazel yet.
+Migrating those fixtures and their declared dependencies remains next runtime
+work; this configuration check does not claim they have executed.
