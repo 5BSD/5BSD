@@ -7699,3 +7699,11 @@ Runtime gates include metadata output, bounded read/write/flush benchmarking,
 discard ranges/error handling and UFS snapshot enumeration. The old diskinfo
 Make test target embeds device names and must not serve as a portable automated
 fixture. None of these tools was executed against host storage.
+
+### MAC label utilities (2026-10-30)
+
+Native migration preserves mac_from_text/free, file/link label APIs, and
+setpmac's mac_set_proc then execvp sequence. No explicit new DTrace/audit/syslog
+hooks were added. Review kernel audit records and user-visible failures for
+relabeling, symlink handling and denied process transitions on the target policy.
+Build parity does not prove authorization, audit coverage or enforcement.

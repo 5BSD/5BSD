@@ -18345,3 +18345,34 @@ performance remain isolated VM/device qualification gates. Diskinfo's old fixed-
 device test target was not used. Existing build-bsd explicit target inputs cover
 this work; no frontend/signing/publication contract changed. Component SDK use
 and outstanding full-world/bootstrap/pkgbase/performance limits remain unchanged.
+
+### MAC label utility migration in progress (2026-10-30)
+
+Added native setfmac, setpmac and getfmac program/install candidates. Setfsmac is
+a binary hardlink to setfmac with a distinct section-8 manual, preserved explicitly.
+Native run bazel-mac-tools-20261030 and isolated Make references
+bazel-<program>-make-20261030 are running; comparison scripts are under
+/usr/obj/usr/src/bazel-mac-tools-reference-20261030. No parity claim yet.
+
+MAC API calls and program logic are unchanged. No file/process labels were
+modified. Matching-kernel policy/error-path and exec transition tests remain
+runtime gates. Existing build-bsd explicit target inputs suffice; no frontend,
+signing or publication contract changed. This adds no BIP scope.
+
+### MAC label utility artifact qualification completed (2026-10-30)
+
+Native setfmac/setfsmac, setpmac and getfmac pass fresh Make build/install
+comparisons. Setfmac matches seven installation records and four regular
+payloads, including the setfsmac binary hardlink and separate manual. Setpmac
+and getfmac each match five records and three payloads. No missing/extra paths
+or metadata mismatches; symbol inventories, ordered dynamic dependencies,
+manual bytes and all three debuglink CRCs pass.
+
+Native evidence: /usr/obj/usr/src/bazel-mac-tools-20261030. Fresh Make references:
+bazel-{setfmac,setpmac,getfmac}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-mac-tools-reference-20261030, per-program subdirectories.
+No labels were changed and no process label transition was executed. Symlink/
+recursive labeling, policy rejection, process exec and kernel audit behavior
+remain matching-system runtime gates. Existing build-bsd explicit inputs suffice;
+no frontend/signing/publication contract changed. Full system and performance
+qualification remain open; BIP remains excluded.
