@@ -7608,3 +7608,7 @@ Native archive/shared installation matches Make with lex/yacc-generated inputs.
 No resolver behavior or hooks changed. DNSSEC acceptance/rejection, cache behavior,
 resolver cancellation/shutdown and configuration failures need runtime coverage.
 Do not infer DNS security correctness from artifact parity.
+
+Unbound runtime follow-up: verified native shared-library identity, valid/invalid
+configuration parsing and eight context lifecycles with local A/NXDOMAIN/NODATA
+results. No DNSSEC/network/asynchronous behavior or performance claim.

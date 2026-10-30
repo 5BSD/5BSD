@@ -42564,3 +42564,26 @@ Native generated parsers participate in the verified archive/shared artifacts;
 this is not a byte-for-byte generated-C comparison or incremental mutation test.
 Frontend review: existing target inputs and lexer/parser/install helpers suffice;
 no new build-bsd option, signing or publication contract. Nothing installed on host.
+
+### Native Unbound runtime and pause checkpoint (2026-10-30)
+
+Added a native shared-library consumer test with device/inode verification of
+the loaded ub_resolve provider against the declared libprivateunbound artifact.
+The generated configuration parser accepts the valid fixture and rejects the
+invalid directive fixture. Eight independent contexts resolve a configured A
+record with exact RDATA, reject an absent name with NXDOMAIN, and return NODATA
+for an absent AAAA type on an existing name; results and contexts are freed.
+All checks pass in bazel-libunbound-runtime-20261030, with saved test XML/logs.
+The fixture uses a static root local zone and blocks querying all IPv4/IPv6
+addresses; no external DNS service is needed. Assertions remain enabled.
+
+This does not test DNSSEC (the fixture intentionally selects the iterator),
+network DNS transport, asynchronous cancellation, server integration or performance.
+Matching native libc/libsys/thread/TLS dependencies are declared; host loader,
+kernel and staged startup/toolchain remain prerequisites. Existing build-bsd
+explicit target/test inputs and runtime-path support suffice; no frontend,
+staging/signing/publication contract change was needed.
+
+User requested pausing after this unit to merge Hyper Trace into dev. This unit
+is finished; resume by inspecting the post-merge worktree and relevant tracing
+changes before starting another migration or qualification run.

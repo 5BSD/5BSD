@@ -44,3 +44,12 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "runtime_test", srcs = ["runtime_test.c"],
+    deps = [":unbound", "//lib/libc:shared_link_interface"],
+    dynamic_deps = [":unbound_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    copts = ["-UNDEBUG"], linkopts = ["-nodefaultlibs"], features = ["bsd_test_runtime_paths"],
+    data = [":unbound_shared", "runtime-valid.conf", "runtime-invalid.conf"],
+    args = ["$(rootpath :unbound_shared)", "$(rootpath runtime-valid.conf)", "$(rootpath runtime-invalid.conf)"],
+    size = "small", timeout = "moderate", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
