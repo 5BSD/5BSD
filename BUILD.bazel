@@ -11,3 +11,5 @@ cc_library(name = "bhyve_e1000_headers", hdrs = ['sys/dev/e1000/e1000_defines.h'
 cc_library(name = "bhyve_kernemu_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', 'sys/amd64/vmm/io/vioapic.h'], strip_include_prefix = '/sys/amd64', visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 exports_files(['sys/amd64/vmm/vmm_instruction_emul.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "autofs_ioctl_headers", hdrs = ["sys/fs/autofs/autofs_ioctl.h"], strip_include_prefix = "/sys/fs/autofs", visibility = ["//usr.sbin/autofs:__pkg__"])

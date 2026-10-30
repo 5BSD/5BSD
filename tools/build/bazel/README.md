@@ -43012,3 +43012,10 @@ ARP's Netlink-disabled build also passes the Make artifact comparison; evidence
 is under /usr/obj/usr/src/bazel-arp-nonetlink-reference-20261030. Execution-log
 checks confirm WITHOUT_NETLINK and exclusion of arp_netlink.c. Live networking
 qualification remains pending for both backends.
+
+
+Automounter coverage (2026-10-30): native automountd plus automount/autounmountd
+hard links, native lexer generation, four manuals and eight configuration files
+match Make's 20 installation records and 14 regular payloads. Evidence:
+/usr/obj/usr/src/bazel-autofs-reference-20261030. Live mount/helper operation,
+complete system builds and performance remain unqualified.

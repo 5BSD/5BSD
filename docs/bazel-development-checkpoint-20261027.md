@@ -18554,3 +18554,28 @@ execution-log audit verifies exactly one ARP compile action: arp.c with
 This closes the disabled-backend build comparison gap, not live neighbor or
 routing-socket behavior. Existing build-bsd typed settings worked unchanged;
 no frontend/backend/signing/publication change is needed. Make remains default.
+
+### Automounter group (2026-10-30)
+
+Native automountd carries all seven maintained C sources and a declared native
+lex/m4 action for token.l. automount/autounmountd preserve Make's executable
+hard links and distinct manuals. Explicit installation includes auto_master,
+all seven executable /etc/autofs configuration helpers, and four manuals.
+The ioctl header is declared in the existing root Bazel package, avoiding a
+new package boundary across kernel inputs. No program source changed.
+
+Native output: /usr/obj/usr/src/bazel-autofs-20261030-r2; fresh Make reference:
+bazel-autofs-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-autofs-reference-20261030. All 20 installation records
+match, with no missing/extra paths or attribute mismatches; 14 regular payloads
+pass symbol/dynamic dependency inventories, configuration/helper/manual byte
+comparisons and debuglink CRC. Both binary hard links match Make inode identity.
+The first comparison exposed a missing /etc/autofs directory record; native
+metadata now matches Make's configuration-install record (package=utilities).
+
+No daemon, helper or mount operation was executed. Map parsing, kernel requests,
+LDAP/NIS/NFS/media helpers, mount/unmount lifecycle, privilege failures and
+concurrency need isolated matching-system tests. Full world/kernel/bootstrap,
+pkgbase and performance qualification remain open. Existing build-bsd explicit
+targets and SDK inputs handle these actions; no frontend/backend, signing or
+publication contract changed. Make remains the production/default backend.

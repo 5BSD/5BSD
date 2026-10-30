@@ -7770,3 +7770,15 @@ establish runtime audit coverage. Future isolated tests should cover ARP
 add/delete/query, malformed input, privilege denial, both networking backends
 and libxo output; binmiscctl add/remove/enable/disable, interpreter matching,
 invalid registrations and authorization denial. No host state was changed.
+
+
+### Automounter group (2026-10-30)
+
+All maintained sources, lexer generation, command hard links and configuration
+helpers are preserved. Source scan found no direct DTRACE/SDT_PROBE/audit_
+references in the local C/header/lexer sources. Make artifact comparisons pass;
+this is not runtime audit evidence. Qualification should cover map errors,
+helper execution and failures, kernel upcalls, mount authorization denial,
+concurrent requests, reload/shutdown and timed unmounts, including diagnostics.
+LDAP/NIS/NFS/media integration requires isolated fixtures. No host mounts or
+service state were changed.
