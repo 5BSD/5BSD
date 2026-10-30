@@ -42388,3 +42388,27 @@ claim equivalent customization. OpenSSL-disabled libsmutil, database operations,
 locking/safe-file runtime and eventual consumers remain to qualify. Existing
 build-bsd target inputs suffice for these baseline archives; no new install,
 signing or publication contract is introduced. Make remains the default.
+
+### Native libmilter candidate (2026-10-30)
+
+Added the 12 maintained libmilter implementation sources (including libsm's
+errstring/strl), generated FreeBSD sm_os.h interface, declared private headers,
+static archive, ABI-6 shared library and public-header/debug installation.
+INET6_SUPPORT and OpenSSL select NETINET6/STARTTLS through existing typed
+configuration settings. Thread linkage remains the consumer's responsibility,
+matching maintained Make; no extra direct shared dependency is invented.
+
+Fresh Make comparison passes: eight installation destinations, five regular
+payloads and one debug link. Archive member order, global/weak symbols including
+undefined references, ordered shared-library dependencies, exact public-header
+bytes, metadata and debug CRC match. Evidence: install-audit.json and
+payload-audit.json under bazel-libmilter-reference-20261030; native frontend
+output is bazel-libmilter-20261030. No runtime filter session, worker concurrency,
+protocol/socket failure handling or performance claim is made. OpenSSL/IPv6-off
+configuration and custom SENDMAIL_CFLAGS qualification remain open, alongside
+the broader Sendmail world composition.
+
+Frontend review: existing explicit target selection and typed feature options
+support this baseline candidate. No new signing/staging/publication contract is
+introduced. Custom Sendmail compiler-option mapping remains a tracked gap and
+must be completed before declaring full configuration parity.

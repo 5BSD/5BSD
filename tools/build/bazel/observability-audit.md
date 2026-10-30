@@ -7569,3 +7569,11 @@ Internal archive parity is verified; no implementation or probes changed.
 Database/map error handling, file locking and safe-file ownership/permission
 checks need runtime consumer coverage. Review audit needs at Sendmail callers;
 no mail delivery, TLS operation or security-boundary qualification is claimed.
+
+### libmilter (2026-10-30)
+
+Native artifact/install parity passes for the 12-source public filter library.
+No implementation or observability hooks changed. Filter negotiation, malformed
+protocol frames, connection/worker lifecycle, timeouts and shutdown remain
+runtime qualification work. Review audit/logging at service consumers without
+exposing mail contents or credentials.
