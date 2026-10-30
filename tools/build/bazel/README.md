@@ -43611,3 +43611,14 @@ match Make. Evidence: `/usr/obj/usr/src/bazel-newsyslog-reference-20261030`,
 final capture `bazel-newsyslog-20261030-r3`. Maintained build-bsd drives the native
 capture with 16 jobs. TAP runtime execution, other option combinations and live
 probe delivery are still pending; installation parity alone does not prove them.
+
+### newsyslog option coverage follow-up (2026-10-30)
+
+The alternative LPR/SENDMAIL-enabled and OFED/PF/PPP/DTRACE/TESTS-disabled
+configuration also matches fresh Make artifacts: 11 installation records and
+seven regular payloads. Each of the five rotation-fragment toggles is now
+observed both enabled and disabled across two configurations. Explicit audit
+confirms selected fragment sets, test payload presence/absence, and DOF plus
+separated-debug probe symbols in both implementations. This does not claim the
+full option cross-product or runtime test execution. DTrace defaults stay on.
+Evidence: `/usr/obj/usr/src/bazel-newsyslog-options-reference-20261030/`.

@@ -8120,3 +8120,12 @@ is-enabled patched sites. Evidence: `bazel-newsyslog-reference-20261030` under
 Live probe firing and the maintained TAP rotation/compression suite were not
 executed. No direct audit-library integration was added; audit requirements for
 rotation/configuration changes remain a runtime coverage review item.
+
+### 2026-10-30: newsyslog explicit no-DTrace configuration
+
+The optional DTrace-disabled build now matches fresh Make ELF/debug/install
+artifacts. The installed executable has no DOF and its separated debug file
+has no DTrace probe symbols; the default artifacts retain both. Audit evidence:
+`/usr/obj/usr/src/bazel-newsyslog-options-reference-20261030/options-audit.json`.
+This is configuration coverage, not removal of default instrumentation. Live
+probe firing and TAP runtime qualification remain pending.

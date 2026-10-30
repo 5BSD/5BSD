@@ -19431,3 +19431,24 @@ performance qualification. Make remains production/default.
   backend, signing or publication change needed. TAP execution, option-matrix
   variants, live tracing, full-system and performance qualification remain open;
   test installation is not a claim that the test body passed.
+
+### 2026-10-30: newsyslog alternative-option qualification
+
+- Qualified a second explicit configuration: LPR/SENDMAIL/MAIL enabled;
+  OFED/PF/PPP/DTRACE/TESTS disabled. Fresh Make and native captures agree on all
+  11 changed installation records and seven regular payloads, including exact
+  lpr/sendmail configuration bytes and tags, manuals, ELF symbols/dependencies,
+  and debug CRC. Default configuration previously qualified remains unchanged.
+- `options-audit.py` compares both configurations and implementations: default
+  has opensm/pf/ppp fragments, installed TAP test, DOF and DTrace symbols;
+  alternative has only lpr/sendmail fragments, no TAP payload and no DOF/probe
+  symbols. Probe symbols are checked in separated debug files, not assumed to
+  survive stripping in the installed executable. This exercises each of the
+  five fragment toggles both ways; it is not an exhaustive cross-product test.
+- Evidence under `/usr/obj/usr/src`: `bazel-newsyslog-options-reference-20261030`
+  (inputs, Make runner, metadata/payload comparators, options-audit.py/json),
+  `bazel-newsyslog-options-20261030`, `bazel-newsyslog-options-make-20261030`.
+- Existing maintained build-bsd explicit configuration inputs handled the
+  alternative with 16 jobs, requiring no frontend C/backend/policy change.
+  No default was disabled. No host log rotation, live tracing, TAP execution,
+  installation/publication or performance qualification was performed.
