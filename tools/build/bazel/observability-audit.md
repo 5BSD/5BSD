@@ -7853,3 +7853,15 @@ and denied registration/update/removal, not infer authorization from socket mode
 Also qualify supplementary-group/GID/UID dropping, malformed/continued SDP
 requests, disconnect cleanup and diagnostics. No live daemon or controller test
 was run, and artifact parity does not establish runtime audit coverage.
+
+
+### BLE/mesh and virtual HCI control tools (2026-10-30)
+
+bluedctl/meshctl/vhcitool retain maintained source behavior; Make artifact
+comparisons pass. Source scan found no direct DTRACE/SDT_PROBE/audit_ references
+in the three tool directories. Qualification should cover unavailable/denied
+control endpoints, malformed responses, BLE/mesh operation errors, virtual HCI
+create/destroy and packet exchange, permissions and disconnect cleanup. The
+shared test emulator is declared as a source input, not replaced or duplicated.
+No daemon control request or virtual-controller operation was executed; runtime
+audit coverage and end-to-end Bluetooth behavior remain unproven.

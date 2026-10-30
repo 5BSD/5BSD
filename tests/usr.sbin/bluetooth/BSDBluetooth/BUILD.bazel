@@ -14,3 +14,6 @@ _CASES = {'mesh_crypto_test': ['mesh_aes128_e', 'mesh_aes_cmac_rfc4493', 'mesh_h
 test_suite(name = "mesh_native_tests",
     tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases],
     visibility = ["//visibility:public"])
+
+exports_files(["hci_emulator.c"], visibility = ["//usr.sbin/bluetooth/vhcitool:__pkg__"])
+cc_library(name = "hci_emulator_headers", hdrs = ["hci_emulator.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bluetooth/vhcitool:__pkg__"])

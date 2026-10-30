@@ -18716,3 +18716,26 @@ connection lifecycle require isolated runtime tests. Existing build-bsd explicit
 targets and SDK inputs cover the work; no frontend/backend/signing/publication
 contract changed. Full world/kernel/bootstrap/pkgbase/performance qualification
 remains open; Make remains the default production backend.
+
+### BLE/mesh and virtual HCI tools (2026-10-30)
+
+Added native bluedctl, meshctl and vhcitool. BLE/Netgraph dependencies match Make;
+meshctl has no explicit library dependency. vhcitool explicitly reuses the
+maintained tests/usr.sbin/bluetooth/BSDBluetooth/hci_emulator.c and its header,
+plus source-tree ng_hci_virt.h/ng_hci.h. No copied emulator or program source
+changes were introduced.
+
+Native output: /usr/obj/usr/src/bazel-bt-modern-tools-20261030. Fresh Make
+references: bazel-{bluedctl,meshctl,vhcitool}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-modern-tools-reference-20261030. Each command matches
+five install records and three regular payloads. Symbol/dynamic dependency
+inventories, manual bytes and three debuglink CRCs pass. All builds completed.
+No live control requests, virtual controller creation or runtime test occurred.
+
+BLE daemon interaction, mesh control protocol/errors, virtual-controller
+create/destroy, emulator packet exchange and matching-kernel Netgraph lifecycle
+remain runtime gates. The shared emulator is useful for later hardware-free
+Bluetooth tests, but this build result does not qualify those tests. Existing
+build-bsd targets/SDK inputs cover the additions; no frontend/backend/signing/
+publication contract changed. Full system/bootstrap/pkgbase/performance remain
+open; Make remains production/default.

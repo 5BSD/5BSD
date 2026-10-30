@@ -43060,3 +43060,10 @@ match five Make installation records and three regular payloads. Daemon header
 requirements are separate from the control utility's library linkage. Evidence:
 /usr/obj/usr/src/bazel-bt-sdp-reference-20261030. Live protocol, authorization
 and privilege-drop behavior remain unqualified.
+
+
+BLE/mesh/virtual HCI tools (2026-10-30): native bluedctl, meshctl and vhcitool each
+match five Make install records and three regular payloads. vhcitool reuses the
+existing test emulator via explicit source/header dependencies. Evidence:
+/usr/obj/usr/src/bazel-bt-modern-tools-reference-20261030. Live control and
+virtual-controller qualification remain pending.
