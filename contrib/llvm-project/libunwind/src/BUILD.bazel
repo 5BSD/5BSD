@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "headers", hdrs = ['AddressSpace.hpp', 'CompactUnwinder.hpp', 'DwarfInstructions.hpp', 'DwarfParser.hpp', 'EHHeaderParser.hpp', 'FrameHeaderCache.hpp', 'RWMutex.hpp', 'Registers.hpp', 'Unwind-EHABI.h', 'UnwindCursor.hpp', 'assembly.h', 'config.h', 'dwarf2.h', 'libunwind_ext.h', 'shadow_stack_unwind.h'], visibility = ["//lib/libgcc_eh:__pkg__"])
-exports_files(['Unwind-EHABI.cpp', 'Unwind-sjlj.c', 'UnwindLevel1-gcc-ext.c', 'UnwindLevel1.c', 'UnwindRegistersRestore.S', 'UnwindRegistersSave.S', 'libunwind.cpp'], visibility = ["//lib/libgcc_eh:__pkg__"])
+cc_library(name = "headers", hdrs = ['AddressSpace.hpp', 'CompactUnwinder.hpp', 'DwarfInstructions.hpp', 'DwarfParser.hpp', 'EHHeaderParser.hpp', 'FrameHeaderCache.hpp', 'RWMutex.hpp', 'Registers.hpp', 'Unwind-EHABI.h', 'UnwindCursor.hpp', 'assembly.h', 'config.h', 'dwarf2.h', 'libunwind_ext.h', 'shadow_stack_unwind.h'], visibility = ["//lib/libgcc_eh:__pkg__", "//lib/libgcc_s:__pkg__"])
+exports_files(['Unwind-EHABI.cpp', 'Unwind-sjlj.c', 'UnwindLevel1-gcc-ext.c', 'UnwindLevel1.c', 'UnwindRegistersRestore.S', 'UnwindRegistersSave.S', 'libunwind.cpp'], visibility = ["//lib/libgcc_eh:__pkg__", "//lib/libgcc_s:__pkg__"])

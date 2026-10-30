@@ -17391,3 +17391,27 @@ missing or mismatched installation metadata. Evidence: install-audit.json and
 payload-audit.json under bazel-libgcc_eh-reference-20261030, with native artifacts
 from bazel-libgcc_eh-20261030-r4. Runtime exception propagation/unwinding, sanitizer
 configurations, other architectures and independent bootstrap remain unqualified.
+
+### Native libgcc_s candidate (2026-10-30)
+
+Fresh Make reference completes. Native shared runtime uses a common explicit
+builtins inventory with libcompiler_rt, separate default-visibility compilation,
+native unwind/math sources, version map and generated development linker script.
+The source-inventory refactor preserves the existing compiler_rt list exactly.
+Initial native link succeeded but strict symbol comparison rejected missing ABI
+exports: Symbol.map requires architecture macros, unlike the copied version-map
+configuration. Corrected preprocessing for the explicitly amd64-only target;
+native r3 comparison is pending. Existing build-bsd explicit targets/settings
+suffice without frontend contract changes. libc, startup and compiler SDK inputs
+remain staged SDK dependencies. No independent bootstrap or runtime qualification
+is claimed. Evidence: bazel-libgcc_s-reference-20261030 under /usr/obj/usr/src.
+
+Libgcc_s r3 passes strict fresh-Make comparison: four installation destinations,
+three regular payloads and one debug link. Global/weak symbols including ABI
+versions, ordered dynamic metadata, development linker-script bytes and debug CRC
+match. The source inventory extraction is independently checked against its
+previous committed literal list. Evidence: install-audit.json, payload-audit.json
+and inventory-refactor.json in bazel-libgcc_s-reference-20261030. The failed r2
+ABI comparison remains evidence of why architecture-aware preprocessing matters.
+Live exception propagation, stack walks, sanitizer/other-architecture coverage
+and independent bootstrap remain open. Make remains production/default.

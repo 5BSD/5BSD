@@ -7475,3 +7475,10 @@ artifact/install comparisons. No new tracing or audit hooks were introduced.
 The migration preserves the unwind implementation and per-source frame-API
 define; archive parity does not prove live exception propagation, stack walks,
 signal-frame behavior or sanitizer interaction. Those runtime checks remain open.
+
+### libgcc_s (2026-10-30)
+
+Native amd64 shared runtime artifact/install comparison passes, including versioned
+unwind exports. No tracing/audit hooks were added or removed. Live exception
+propagation, signal-frame walks and sanitizer interaction remain unqualified;
+matching ELF exports and debug CRCs are not a runtime unwind test.

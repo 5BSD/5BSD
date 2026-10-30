@@ -5,7 +5,7 @@ load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_m
 load(":sources.bzl", "MATH_SOURCES", "TEXTUAL_SOURCES")
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "headers", hdrs = glob(["src/*.h", "x86/*.h", "ld80/*.h"]),
-    includes = ["x86", "ld80", "amd64", "src"])
+    includes = ["x86", "ld80", "amd64", "src"], visibility = ["//lib/libgcc_s:__pkg__"])
 cc_library(name = "m", srcs = MATH_SOURCES, textual_hdrs = TEXTUAL_SOURCES,
     implementation_deps = [":headers", "//lib/libc/include:math_headers"],
     local_defines = ["_RENAME_FMA", "_RENAME_FMAF"],
@@ -70,4 +70,6 @@ bsd_install_archive(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
 
-exports_files(["src/s_scalbn.c"], visibility = ["//lib/libc/amd64/gen:__pkg__"])
+exports_files(["src/s_scalbn.c"], visibility = ["//lib/libc/amd64/gen:__pkg__", "//lib/libgcc_s:__pkg__"])
+
+exports_files(['src/s_fabs.c', 'src/s_fabsf.c', 'src/s_fabsl.c', 'src/s_fmax.c', 'src/s_fmaxf.c', 'src/s_logb.c', 'src/s_logbf.c', 'src/s_scalbnf.c', 'src/s_fmaxl.c', 'src/s_logbl.c', 'src/s_scalbnl.c'], visibility = ["//lib/libgcc_s:__pkg__"])
