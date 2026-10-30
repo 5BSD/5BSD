@@ -17968,3 +17968,35 @@ staging/signing/publication contract change was needed.
 User requested pausing after this unit to merge Hyper Trace into dev. This unit
 is finished; resume by inspecting the post-merge worktree and relevant tracing
 changes before starting another migration or qualification run.
+
+### Native legacy GSS dispatcher (2026-10-30)
+
+Resumed work after the user's pause was revoked; no Hyper Trace merge was
+performed by this agent. Added all 53 legacy GSS dispatcher sources, explicit
+source legacy GSS header interface, version-map generation, ABI-10 shared library,
+archive and 36 manuals plus five aliases. The legacy header is a declared
+CcInfo dependency instead of relying on the staged SDK's MIT header choice.
+
+Resolved the earlier Make-reference header mismatch by running maintained
+include/gssapi's includes target into an isolated /usr/obj qualification prefix,
+using install -U for unprivileged staging. Its header bytes match source exactly.
+CFLAGS_LAST adds that staged include directory to the reference component; shared
+SDK headers were not replaced. An initial command-line CFLAGS+= attempt displaced
+normal compiler flags and was discarded. Corrected fresh Make r2 retains -O2,
+warning/error, stack protector, debug and dependency flags. This is an explicitly
+staged legacy-header component reference, not a complete legacy world/SDK build.
+
+Native/fresh-Make r2 comparison passes 47 installation destinations, 39 regular
+payloads and one debug link: member order, global/weak symbols, ordered shared
+metadata, manual bytes/aliases, install tags and debug CRC. Evidence under
+bazel-libgssapi-legacy-reference-20261030: header-identity.json,
+headers-command.json, install-audit.json and payload-audit.json. Native run:
+bazel-libgssapi-legacy-20261030-r2; reference: bazel-libgssapi-legacy-make-20261030-r2.
+
+Native configuration selects mitkrb5=false for this qualification. Explicit
+component targets do not yet constitute world selection; future aggregation must
+choose the legacy dispatcher only for the legacy Kerberos configuration and
+avoid overlapping MIT payloads. Authentication/mechanism loading, credentials,
+full configuration SDK and runtime/performance remain unqualified. Existing
+build-bsd explicit targets and typed configuration suffice; no frontend input,
+signing or publication contract changed. Make remains the production default.

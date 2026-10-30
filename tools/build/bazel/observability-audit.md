@@ -7612,3 +7612,10 @@ Do not infer DNS security correctness from artifact parity.
 Unbound runtime follow-up: verified native shared-library identity, valid/invalid
 configuration parsing and eight context lifecycles with local A/NXDOMAIN/NODATA
 results. No DNSSEC/network/asynchronous behavior or performance claim.
+
+### Legacy GSS dispatcher (2026-10-30)
+
+Artifact/install parity now passes with explicitly staged legacy headers.
+No credential or mechanism logic changed. Mechanism loading, context/credential
+lifetimes, malformed tokens and authentication errors require runtime coverage;
+review caller audit behavior without logging secrets.
