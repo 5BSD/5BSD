@@ -43000,3 +43000,10 @@ header/dispatch/XDR actions. Selected amd64 build/install comparisons each
 match five Make records, three regular payloads and debuglink CRCs. Evidence:
 /usr/obj/usr/src/bazel-rpc-tls-reference-20261030. These results do not qualify
 live TLS/kernel RPC operation or a complete world; Make remains default.
+
+
+ARP/binmiscctl coverage (2026-10-30): native targets pass selected amd64 Make
+installation and payload comparisons (six/five records respectively), including
+both ARP manuals and debuglink CRCs. ARP carries the existing netlink_support
+choice; disabled-backend and live behavior qualification remain pending.
+Evidence: /usr/obj/usr/src/bazel-arp-binmisc-reference-20261030.

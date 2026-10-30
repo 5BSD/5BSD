@@ -18519,3 +18519,23 @@ these actions; no build-bsd/backend/signing/publication contract changed.
 Staged SDK dependence, full world/kernel/pkgbase, alternate architectures,
 cache/performance and matching-system runtime qualification remain open.
 Make remains the production/default backend.
+
+### ARP and binary interpreter registration utilities (2026-10-30)
+
+Added native arp and binmiscctl targets. ARP selects arp_netlink.c or
+WITHOUT_NETLINK using the existing typed netlink_support setting and links
+native libxo. Both arp.4 and arp.8 are installed. No program source changed.
+Native build-bsd run: /usr/obj/usr/src/bazel-arp-binmisc-20261030.
+Fresh Make references: bazel-arp-make-20261030 and bazel-binmiscctl-make-20261030.
+Evidence/scripts: /usr/obj/usr/src/bazel-arp-binmisc-reference-20261030.
+ARP matches six installation records and four regular payloads; binmiscctl
+matches five records and three regular payloads. Symbol/dynamic dependency
+inventories, manual bytes and both debuglink CRCs pass. All reference commands
+and the native build completed successfully. No runtime tests were selected.
+
+ARP Netlink-disabled compilation, neighbor updates/routing-socket behavior,
+libxo output modes and binmiscctl interpreter registration remain to qualify.
+No host networking or interpreter configuration was modified. Existing frontend
+explicit targets and typed build settings cover these changes; no frontend,
+backend, signing or publication contract change is required. Full world/kernel,
+bootstrap/pkgbase and performance gates remain open; Make remains default.

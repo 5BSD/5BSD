@@ -7759,3 +7759,14 @@ for kernel RPC upcalls, valid/invalid/expired certificates, trust-store changes,
 mutual authentication, TLS negotiation failures, reconnect/shutdown, concurrent
 requests and diagnostic logging. This build comparison does not establish
 runtime audit coverage, probe firing or network behavior.
+
+
+### ARP and binmiscctl (2026-10-30)
+
+Native builds preserve maintained source and ARP's configurable Netlink backend.
+Source scan found no direct DTRACE, SDT_PROBE or audit_ references in these
+program directories. Make installation/payload comparisons pass; this does not
+establish runtime audit coverage. Future isolated tests should cover ARP
+add/delete/query, malformed input, privilege denial, both networking backends
+and libxo output; binmiscctl add/remove/enable/disable, interpreter matching,
+invalid registrations and authorization denial. No host state was changed.
