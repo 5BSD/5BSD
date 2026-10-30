@@ -43224,3 +43224,28 @@ Frontend review: existing build-bsd explicit targets and SDK inputs cover these
 additions; no frontend/backend/signing/publication contract changed. These are
 selected amd64 artifact results, not full world/kernel/bootstrap/pkgbase or
 performance qualification. Make remains production/default.
+
+
+### policyctl and installed ATF suite (2026-10-30)
+
+Added native policyctl linked to native libcapbundle, preserving package
+switchboardctl. Added configuration-selected installation of its maintained
+ATF shell suite and generated Kyuafile under package switchboardctl-tests.
+Archive enforcement caught a missing test-directory record; the rule now declares
+Make's exact directory ownership/mode/tags. An intermediate BUILD dictionary
+syntax error was corrected before the successful build.
+
+Native run: /usr/obj/usr/src/bazel-policyctl-20261030-r3. Fresh Make reference:
+/usr/obj/usr/src/bazel-policyctl-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-policyctl-reference-20261030/policyctl. Eight installation
+records match with no missing/extra/metadata differences. Five regular payloads
+pass symbol/dynamic inventory, debuglink CRC and byte comparisons, including
+the installed test script, Kyuafile and manual. The host ATF interpreter lists
+all five expected cases from the native-installed script; test bodies were not
+executed. Bazel test execution with declared tools/libraries remains outstanding,
+as does qualification with test installation disabled.
+
+Frontend review: existing build-bsd explicit target, typed tests option and SDK
+inputs cover the additions; no frontend/backend/signing/publication contract
+changed. This does not establish signing, verified boot, live authorization or
+whole-system/bootstrap/pkgbase/performance qualification. Make remains default.

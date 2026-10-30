@@ -7970,3 +7970,12 @@ Review kernel audit coverage for PCI writes/mapping and memory-range attribute
 changes; qualify privilege failures and malformed arguments on suitable isolated
 systems. PCI decoding and memory-range operation behavior remain runtime gaps.
 No host device operation was executed.
+
+
+### policyctl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in policyctl.c. Native
+artifacts and installed tests match Make; test enumeration succeeds. Test bodies
+for roundtrip policy, empty attributes, rejected inputs, providers and invalid
+bundles still need execution with the native binary and declared runtime. No
+policy activation, installed-system changes or signing operations were performed.
