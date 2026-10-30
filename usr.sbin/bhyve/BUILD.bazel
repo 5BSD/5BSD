@@ -6,3 +6,59 @@ cc_library(name = "snapshot_headers", hdrs = ["snapshot.h", "snapshot_identity.h
 
 exports_files(["config.c"], visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])
 cc_library(name = "config_headers", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load(":sources.bzl", "COMMON_SOURCES", "SNAPSHOT_SOURCES", "AMD64_BEFORE_KERNEMU", "AMD64_AFTER_KERNEMU", "ENGINE_HEADERS")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "vsock_provider.d", output = "vsock_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = False,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+_SNAPSHOT = "//tools/build/bazel/config:bhyve_snapshot_enabled"
+_NETGRAPH = "//tools/build/bazel/config:netgraph_support_enabled"
+_OPENSSL = "//tools/build/bazel/config:openssl_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_LIBS = ['//lib/libvmmapi:vmmapi', '//lib/libmd:md_link', '//lib/libnv:nv', '//lib/libuvmem:uvmem', '//lib/librt:rt', '//lib/libz:z', '//lib/libutil:util', '//lib/libsbuf:sbuf', '//lib/libcam:cam', '//lib/lib9p:ninep'] + select({_SNAPSHOT: ["//lib/libucl:ucl", "//lib/libxo/libxo:xo"], "//conditions:default": []}) + select({_NETGRAPH: ["//lib/libnetgraph:netgraph"], "//conditions:default": []}) + select({_OPENSSL: ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}) + ["//lib/libthr:thr"]
+_DYNAMIC = ['//lib/libvmmapi:vmmapi_shared', '//lib/libmd:md_shared', '//lib/libnv:nv_shared', '//lib/libuvmem:uvmem_shared', '//lib/librt:rt_shared', '//lib/libz:z_shared', '//lib/libutil:util_shared', '//lib/libsbuf:sbuf_shared', '//lib/libcam:cam_shared', '//lib/lib9p:ninep_shared'] + select({_SNAPSHOT: ["//lib/libucl:ucl_shared", "//lib/libxo/libxo:xo_shared"], "//conditions:default": []}) + select({_NETGRAPH: ["//lib/libnetgraph:netgraph_shared"], "//conditions:default": []}) + select({_OPENSSL: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) + ["//lib/libthr:thr_shared"]
+cc_library(name = "engine_headers", hdrs = ENGINE_HEADERS, strip_include_prefix = ".", deps = ['//sys/amd64/include:bhyve_engine_headers', '//sys/amd64/vmm/intel:bhyve_engine_headers', '//:bhyve_engine_headers', '//sys/cam:bhyve_engine_headers', '//sys/dev/mii:bhyve_engine_headers', '//sys/dev/mmc:bhyve_engine_headers', '//sys/dev/nvme:bhyve_engine_headers', '//sys/dev/nvmf:bhyve_engine_headers', '//sys/dev/pci:bhyve_engine_headers', '//sys/dev/usb/controller:bhyve_engine_headers', '//sys/dev/usb:bhyve_engine_headers', '//sys/dev/virtio:bhyve_engine_headers', '//sys/dev/virtio/pci:bhyve_engine_headers', '//sys/dev/vmm:bhyve_engine_headers', '//sys/net:bhyve_engine_headers', '//sys/netgraph:bhyve_engine_headers', '//sys/netinet:bhyve_engine_headers', '//sys/netinet6:bhyve_engine_headers', '//sys/sys:bhyve_engine_headers', '//sys/vm:bhyve_engine_headers', '//sys/x86/include:bhyve_engine_headers', '//:bhyve_e1000_headers', '//sys/dev/mii:bhyve_mii_headers', '//sys/dev/usb/controller:bhyve_xhci_headers', '//contrib/lib9p:headers', '//contrib/libucl:headers'])
+_DEPS = _LIBS + [":engine_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []})
+_DEFINES = ["BHYVE_GDB"] + select({_SNAPSHOT: ["BHYVE_SNAPSHOT"], "//conditions:default": []}) + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}) + select({_OPENSSL: ["OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": ["NO_OPENSSL"]}) + select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) + select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []})
+cc_library(name = "before_kernemu", srcs = COMMON_SOURCES + select({_SNAPSHOT: SNAPSHOT_SOURCES, "//conditions:default": []}) + AMD64_BEFORE_KERNEMU,
+    deps = _DEPS, local_defines = _DEFINES, copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkstatic = True, alwayslink = True)
+cc_library(name = "kernemu", srcs = ["amd64/kernemu_dev.c"], deps = _DEPS + ['//:bhyve_kernemu_headers'], local_defines = _DEFINES, copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkstatic = True, alwayslink = True)
+cc_library(name = "after_kernemu", srcs = AMD64_AFTER_KERNEMU + ["gdb.c"] + select({_NETGRAPH: ["net_backend_netgraph.c"], "//conditions:default": []}),
+    deps = _DEPS, local_defines = _DEFINES, copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkstatic = True, alwayslink = True)
+_OBJECTS = [":before_kernemu", ":kernemu", ":after_kernemu"]
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = _OBJECTS, provider = ":provider", provider_object = "vsock_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _LIBS, alwayslink = True)
+cc_binary(name = "bhyve", deps = select({_TRACE: [":traced"], "//conditions:default": _OBJECTS}), dynamic_deps = _DYNAMIC,
+    linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+bsd_compress(name = "config_manual_gzip", src = "bhyve_config.5", output = "bhyve_config.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual", src = ":config_manual_gzip", destination = "/usr/share/man/man5/bhyve_config.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bhyve-man"], "//conditions:default": ["package=bhyve"]}))
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "bhyve", manual = "bhyve.8", package = "bhyve", bindir = "/usr/sbin", man_section = "8", extra_entries = [":config_manual"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", visibility = ["//visibility:public"],
+    manifests = [":install_manifest", "//usr.sbin/bhyve/slirp:install_manifest", "//usr.sbin/bhyve/gdb:install_manifest", "//usr.sbin/bhyve/kbdlayout:install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]} | {
+        "/usr/lib/debug/usr/sbin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve","dbg"]}',
+        "/usr/share/bhyve/gdb": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve"]}',
+        "/usr/share/bhyve/kbdlayout": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve"]}',
+    },
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

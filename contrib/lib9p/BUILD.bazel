@@ -15,5 +15,5 @@ cc_library(
     ],
     strip_include_prefix = ".",
     deps = ["//lib/libcasper/libcasper:headers"],
-    visibility = ["//lib/lib9p:__pkg__"],
+    visibility = ["//lib/lib9p:__pkg__", "//usr.sbin/bhyve:__pkg__"],
 )

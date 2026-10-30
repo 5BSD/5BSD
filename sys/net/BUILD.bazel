@@ -19,3 +19,6 @@ cc_library(name = "radix_headers", hdrs = ["radix.h"], includes = [".."], visibi
 
 cc_library(name = "netmap_user_headers", hdrs = ["netmap.h", "netmap_user.h", "netmap_legacy.h"],
     strip_include_prefix = ".", include_prefix = "net", visibility = ["//visibility:public"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['ethernet.h', 'ieee_oui.h', 'if.h', 'if_tap.h', 'if_tun.h', 'netmap.h', 'netmap_legacy.h', 'netmap_user.h', 'netmap_virt.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

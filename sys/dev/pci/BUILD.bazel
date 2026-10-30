@@ -5,3 +5,6 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "register_headers", hdrs = ["pcireg.h"], includes = ["../.."], visibility = ["//sys/dev/iommu:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['pcireg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

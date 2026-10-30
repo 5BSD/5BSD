@@ -5,3 +5,6 @@ cc_library(name = "headers", hdrs = glob(["*.h", "controller/*.h"]), strip_inclu
 cc_library(name = "private_headers", hdrs = ["nvmf_tcp.h", "controller/nvmft_subr.h"], includes = [".", "controller"],
     deps = [":headers"], visibility = ["//lib/libnvmf:__pkg__"])
 exports_files(["controller/nvmft_subr.c"], visibility = ["//lib/libnvmf:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['nvmf.h', 'nvmf_proto.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

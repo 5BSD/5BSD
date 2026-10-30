@@ -68,3 +68,5 @@ amd64_generic_kernel_objects(name = "generic_x86_crc", srcs = ["x86/crc32_sse42.
 filegroup(name = "generic_object_files", srcs = [":generic_common_object_files", ":generic_random_object_files", ":generic_x86_crc_object_files"], visibility = ["//visibility:public"])
 
 exports_files(["explicit_bzero.c"], visibility = ["//lib/libc/string:__pkg__"])
+
+exports_files(['crc16.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])

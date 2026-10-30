@@ -18,3 +18,6 @@ cc_library(name = "tcp_wire_headers", hdrs = ["tcp.h"], includes = [".."], visib
 
 # Source-header closure for the maintained truss build on amd64.
 cc_library(name = "truss_headers", hdrs = ['in.h', 'sctp.h', 'sctp_uio.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['in.h', 'tcp.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

@@ -7439,3 +7439,13 @@ Slirp helper native candidate preserves maintained sources; no DTrace generation
 is declared by its Makefile. GDB descriptions and keyboard layouts are data.
 The engine's vsock_provider.d remains required in subsequent native engine work.
 No helper network sandbox, guest or tracing runtime was exercised here.
+
+### bhyve engine default amd64 (2026-10-30)
+
+Native provider generation/object rewriting preserves default Make DOF metadata:
+164 probe schemas, 278 ordinary sites and 95 is-enabled sites. Function bounds
+and patched instruction bytes validate independently in native/Make binaries.
+Registration-only engine objects require alwayslink to retain Make's direct-object
+semantics; strict symbol comparison detected and corrected their initial omission.
+Live provider registration/firing and VM workload performance remain unqualified.
+Evidence: bazel-bhyve-reference-20261030/*dof*.json.

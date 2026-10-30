@@ -8,3 +8,6 @@ cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps =
 
 # Source-header closure for the maintained truss build on amd64.
 cc_library(name = "truss_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
