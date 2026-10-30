@@ -43432,3 +43432,38 @@ The maintained test bodies/support suites, helper runtime, tests-disabled varian
 static-library probe retention, complete bootstrap/world/kernel/pkgbase and
 resource/performance qualification remain open. Building the frontend with Bazel
 does not establish that it can build a complete Bazel system yet.
+
+
+### Frontend helper runtime and native frontend reuse (2026-10-30)
+
+Ran maintained ucl_policy_json_test.py against both captured native and fresh
+Make bsd-ucl-json: both test methods pass, including valid/duplicate/nested/macro/
+NUL/size/object inputs, literal variable handling, and composition binding hashes.
+Evidence: bazel-build-frontend-reference-20261030/{native,make}-ucl-tests.log and
+ucl-runtime.json. These runs use host Python and are not Bazel test executions.
+
+The maintained Capsule static_only CLI case initially failed identically with
+both bsd-capsule-validate binaries: its supposedly valid fixture retained removed
+storage attachment/content fields. Corrected the fixture to current cfg_storage
+keys, retained an invalid-right rejection, and added independent rejection checks
+for each removed field. No production parser or authority behavior changed.
+Both helpers now pass the full maintained static_only case, including malformed/
+missing/symlink/directory/writable inputs, explicit manager report, invalid CLI
+and absence of forbidden PID/socket creation. Original failures remain in
+{native,make}-validator-runtime; corrected results are in corresponding -r2
+folders and validator-runtime-r2.json. Host ATF/tools were used, not Bazel ATF.
+
+The captured Bazel-built build-bsd then successfully drove bazel-test for its own
+complete installation (16 jobs): /usr/obj/usr/src/bazel-build-frontend-20261030-r2.
+Fresh Make reference: /usr/obj/usr/src/bazel-bsd-build-make-20261030-r2. Comparison
+evidence: bazel-build-frontend-reference-20261030/bsd-build-r2. All 74 records and
+65 regular payloads still pass, including corrected installed test bytes.
+This is native frontend reuse with the existing prepared SDK, not independent
+bootstrap or a complete Bazel-built world/kernel.
+
+Frontend review: corrected shared test source is consumed by both maintained
+Make and native installation rules; no C/backend/publication changes are needed.
+Native Bazel execution of these suites, matching-kernel tests, all option variants,
+static probe retention, complete bootstrap/pkgbase and resource/performance gates
+remain open. No installation, publication, signing, daemon activation or reboot
+occurred. Make remains production/default.

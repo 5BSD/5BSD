@@ -25,7 +25,7 @@ control_socket="$PWD/forbidden.sock";
 hostuuid="57061ee3-7587-4a12-9447-2ac2b0e947fe";
 storage=[{recipient="test.Store/provider"; pool="testpool"; pool_guid="1";
  dataset="testpool/state"; dataset_guid="2"; devices=["/dev/nonexistent-test-device"];
- rights=[props_read,event,mount]; attachment="/state"; content=ordinary;}];
+ rights=[props_read,event,mount];}];
 EOF
     chmod 600 candidate.conf
     atf_check -s exit:0 -o match:'syntax and static constraints only' -e empty "$tool" -n -f "$PWD/candidate.conf"
@@ -45,9 +45,15 @@ EOF
     cp candidate.conf writable.conf
     chmod 666 writable.conf
     atf_check -s not-exit:0 -o empty -e match:'configuration error' "$tool" -n -j -f "$PWD/writable.conf"
+    # Removed storage fields must not silently regain policy meaning.
+    for obsolete in 'attachment="/state"' 'content=ordinary'; do
+        sed "s|rights=|$obsolete; rights=|" candidate.conf > obsolete.conf
+        chmod 600 obsolete.conf
+        atf_check -s not-exit:0 -o empty -e match:'configuration error' "$tool" -n -f "$PWD/obsolete.conf"
+    done
     [ ! -e forbidden.pid ] || atf_fail 'validation created pidfile'
     [ ! -e forbidden.sock ] || atf_fail 'validation created control socket'
-    sed 's/content=ordinary/content=unrecognized/' candidate.conf > invalid.conf
+    sed 's/props_read,event,mount/props_read,event,unrecognized/' candidate.conf > invalid.conf
     chmod 600 invalid.conf
     atf_check -s not-exit:0 -o empty -e match:'configuration error' "$tool" -n -f "$PWD/invalid.conf"
     atf_check -s not-exit:0 -o empty -e match:'usage:' "$tool" -n

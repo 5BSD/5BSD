@@ -8038,3 +8038,13 @@ compared on the host. Helper/parser test execution and static-library DTrace
 retention remain unqualified; the earlier static service archive discrepancy
 must not be generalized into a pass here. No publication, signing, deployment,
 policy activation or host system change was executed.
+
+
+### Frontend policy helper runtime follow-up (2026-10-30)
+
+Native and Make UCL normalization tests and corrected Capsule static_only CLI
+case pass using host test interpreters/tools. The stale fixture had removed
+attachment/content fields; current-schema fixture and explicit removed-field
+rejections now pass without changing parser behavior. No PID/socket or daemon
+activation occurred. Bazel-run suites and matching-kernel/live authority tests
+remain separate requirements. Evidence is in the frontend reference directory.
