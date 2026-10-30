@@ -18452,3 +18452,21 @@ DTrace-disabled and rescue/bootstrap chroot variants, authorization, credential
 changes, child exec, priority limits and routing behavior remain runtime/config
 qualification gaps. Existing build-bsd explicit inputs suffice; no frontend,
 signing or publication contract changed. Full-system gates remain open.
+
+### Power, watchdog and state utility artifact qualification (2026-10-30)
+
+Native powerd, watchdogd/watchdog and pstat/swapinfo pass fresh Make build/install
+comparisons. Powerd matches five installation records and three regular payloads;
+watchdogd matches seven records and four payloads (separate watchdog manual);
+pstat matches seven records and three payloads, including swapinfo binary/manual
+hardlinks. No missing/extra paths or metadata mismatches. Symbols, ordered
+dynamic dependencies, manual bytes and all three debuglink CRCs pass.
+
+Native evidence: /usr/obj/usr/src/bazel-host-tools-20261030. Fresh Make references:
+bazel-{powerd,watchdogd,pstat}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-host-tools-reference-20261030 per-program directories.
+No application logic changed. No daemon started and no watchdog was armed.
+Power/frequency behavior, watchdog timeout/recovery and matching-kernel state
+queries remain isolated runtime gates. Existing build-bsd explicit inputs suffice;
+no frontend/signing/publication contract changed. Full-world/bootstrap/pkgbase,
+cache and performance qualification remain outstanding.

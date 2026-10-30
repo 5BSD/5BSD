@@ -7729,3 +7729,13 @@ enabled sites match emitted Make metadata and instruction checks. No explicit
 DTrace/audit/syslog hooks were found in the scoped setfib/rtprio source scan.
 Review kernel audit coverage for root, FIB and scheduling transitions, failures
 and subsequent exec. Live policy and probe behavior remain unqualified.
+
+### Power, watchdog and kernel-state utilities (2026-10-30)
+
+Native candidates preserve powerd, watchdogd/watchdog and pstat/swapinfo sources.
+Watchdogd retains syslog diagnostics for checks that run too long, including
+existing timing handling around logging. No explicit DTrace/audit hooks were
+found in the scoped three-program scan. Review audit coverage for watchdog
+arming/disarming and power changes, and qualification of state-query access.
+Never execute watchdogd's old Make test target on the host as build validation;
+use an isolated VM watchdog with explicit recovery and timeout expectations.
