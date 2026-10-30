@@ -18539,3 +18539,18 @@ No host networking or interpreter configuration was modified. Existing frontend
 explicit targets and typed build settings cover these changes; no frontend,
 backend, signing or publication contract change is required. Full world/kernel,
 bootstrap/pkgbase and performance gates remain open; Make remains default.
+
+### ARP without Netlink (2026-10-30)
+
+Qualified the existing netlink_support=false choice against a fresh Make
+WITHOUT_NETLINK_SUPPORT=1 build. Native output:
+/usr/obj/usr/src/bazel-arp-nonetlink-20261030; Make reference:
+bazel-arp-nonetlink-make-20261030. Scripts and comparison evidence:
+/usr/obj/usr/src/bazel-arp-nonetlink-reference-20261030.
+Six installation records and four regular payloads match, including symbol and
+dynamic dependency inventories, both manual bytes and debuglink CRC. The saved
+execution-log audit verifies exactly one ARP compile action: arp.c with
+-DWITHOUT_NETLINK, excluding arp_netlink.c. Both build processes exited zero.
+This closes the disabled-backend build comparison gap, not live neighbor or
+routing-socket behavior. Existing build-bsd typed settings worked unchanged;
+no frontend/backend/signing/publication change is needed. Make remains default.

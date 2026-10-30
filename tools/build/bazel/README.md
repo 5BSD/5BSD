@@ -43007,3 +43007,8 @@ installation and payload comparisons (six/five records respectively), including
 both ARP manuals and debuglink CRCs. ARP carries the existing netlink_support
 choice; disabled-backend and live behavior qualification remain pending.
 Evidence: /usr/obj/usr/src/bazel-arp-binmisc-reference-20261030.
+
+ARP's Netlink-disabled build also passes the Make artifact comparison; evidence
+is under /usr/obj/usr/src/bazel-arp-nonetlink-reference-20261030. Execution-log
+checks confirm WITHOUT_NETLINK and exclusion of arp_netlink.c. Live networking
+qualification remains pending for both backends.
