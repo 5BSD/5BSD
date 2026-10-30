@@ -8,6 +8,8 @@ action with the matching maintained Make command and fails on unexplained
 drift, so changes in share/mk are detected instead of silently diverging.
 """
 
+load(":cc_compat.bzl", "bsd_cc_binary", "bsd_cc_library")
+
 BSD_CFLAGS = ["-O2", "-pipe", "-fno-common"]
 BSD_DEBUG_CFLAGS = ["-g", "-gz=zlib"]
 BSD_CSTD = ["-std=gnu17", "-Wno-format-zero-length"]
@@ -96,14 +98,14 @@ def bsd_internal_library(name, srcs, hdrs = [], warns = 6, deps = [], local_cfla
     other INTERNALLIBs in _DP_<name>; the PIE variant links their _pie
     archives, as src.libnames.mk selects ${PIE_SUFFIX}.
     """
-    native.cc_library(name = name, srcs = srcs, hdrs = hdrs,
-                      deps = deps + internal_libs,
-                      copts = bsd_cflags(warns, local = local_cflags),
-                      linkopts = linkopts, linkstatic = True)
-    native.cc_library(name = name + "_pie", srcs = srcs, hdrs = hdrs,
-                      deps = deps + [x + "_pie" for x in internal_libs],
-                      copts = bsd_cflags(warns, pieo = True, local = local_cflags),
-                      linkopts = linkopts, linkstatic = True)
+    bsd_cc_library(name = name, srcs = srcs, hdrs = hdrs,
+                   deps = deps + internal_libs,
+                   copts = bsd_cflags(warns, local = local_cflags),
+                   linkopts = linkopts, linkstatic = True)
+    bsd_cc_library(name = name + "_pie", srcs = srcs, hdrs = hdrs,
+                   deps = deps + [x + "_pie" for x in internal_libs],
+                   copts = bsd_cflags(warns, pieo = True, local = local_cflags),
+                   linkopts = linkopts, linkstatic = True)
 
 def bsd_program(name, srcs, warns = 6, deps = [], local_cflags = [], linkopts = [],
                 testonly = False):
@@ -114,11 +116,11 @@ def bsd_program(name, srcs, warns = 6, deps = [], local_cflags = [], linkopts = 
     are -fPIC -DPIC; Make compiles program objects with -fpie -DPIC only
     (bsd_cflags), so the toolchain "pic" flags are disabled for programs.
     """
-    native.cc_binary(name = name, srcs = srcs, deps = deps, testonly = testonly,
-                     features = ["-pic"],
-                     copts = bsd_cflags(warns, pieo = True, prog = True, local = local_cflags),
-                     linkstatic = True,
-                     linkopts = BSD_DEBUG_LINKOPTS + BSD_PROG_PIE_LINKOPTS + linkopts)
+    bsd_cc_binary(name = name, srcs = srcs, deps = deps, testonly = testonly,
+                  features = ["-pic"],
+                  copts = bsd_cflags(warns, pieo = True, prog = True, local = local_cflags),
+                  linkstatic = True,
+                  linkopts = BSD_DEBUG_LINKOPTS + BSD_PROG_PIE_LINKOPTS + linkopts)
 
 def bsd_atf_test_c(name, srcs, warns = 6, deps = [], local_cflags = [], linkopts = []):
     """ATF_TESTS_C program linked with the SDK's private ATF C library (bsd.test.mk)."""

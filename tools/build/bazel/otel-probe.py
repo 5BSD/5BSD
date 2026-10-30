@@ -39,11 +39,13 @@ EXPLAINED_BAZEL_TOKENS = {
                'Make relies on the including file\'s directory, which clang searches first in both.',
     '-isystem bazel-out': 'generated-file twin of each declared include directory; empty for the OTel '
                           'targets; for libdtrace it holds dt_grammar.h, where Make has -I${.OBJDIR} '
-                          '(recorded as outside the source tree and also left out of the comparison).',
+                          '(recorded as outside the source tree and also left out of the comparison). '
+                          'Bazel 9 passes the same twin as -Ibazel-out/<cfg>/bin/<dir>.',
     '-nostdinc/-isystem SDK': 'explicit staged clang resource and sysroot include directories; '
                               'Make reaches the same directories through --sysroot defaults.',
-    '-I vs -isystem': 'Bazel `includes` produces -isystem; with Make policy -Wsystem-headers the '
-                      'diagnostics are unchanged and the search order is preserved and verified.',
+    '-I vs -isystem': 'Bazel 5 `includes` produces -isystem (Bazel 9 with rules_cc: -I, as Make); '
+                      'with Make policy -Wsystem-headers the diagnostics are unchanged and the '
+                      'search order is preserved and verified.',
     '-fdebug-compilation-dir=.': 'toolchain feature: Bazel sandboxes each action in a numbered '
                                  'directory that would otherwise be recorded as DW_AT_comp_dir, making '
                                  'debug output differ between identical rebuilds. Make records its '
@@ -214,14 +216,18 @@ def normalize_bazel_compile(tokens):
                 includes.append(path)
             i += 2
             continue
-        if t == '-I':
-            includes.append(tokens[i + 1])
-            i += 2
+        if t == '-I' or t.startswith('-I'):
+            path = tokens[i + 1] if t == '-I' else t[2:]
+            if path.startswith('bazel-out/'):
+                # Bazel 9 (rules_cc) passes `includes` as -I, with the same
+                # generated-file twin that Bazel 5 passed with -isystem.
+                dropped.append('-I' + path)
+            else:
+                # Bazel 9 `includes`, or copts -I: a component's own include
+                # directory that Make adds for its objects only.
+                includes.append(path)
+            i += 2 if t == '-I' else 1
             continue
-        if t.startswith('-I'):
-            # copts -I: a component's own include directory that Make adds
-            # for its objects only (not propagated to dependents).
-            includes.append(t[2:])
         elif t.startswith('-frandom-seed=') or t in ('-MD', '-nostdinc', '-fdebug-compilation-dir=.'):
             dropped.append(t)
         elif not (t.startswith('--target=') or t.startswith('--sysroot=')):
@@ -248,11 +254,45 @@ def link_summary(tokens, archive_dirs=()):
             'libraries': sorted(ordered), 'objects': objects}
 
 
-def params_file(bazel_bin, artifact):
+def params_file(bazel_bin, artifact, link_arguments=None):
+    """Arguments of the link/archive action that writes `artifact`.
+
+    Bazel 5 materialized a params file for every link and archive action.
+    Bazel 9 (rules_cc) passes short archive command lines directly, so the
+    arguments then come from the action graph (`link_arguments`).
+    """
     found = sorted(bazel_bin.glob(artifact + '-*.params'))
-    if len(found) != 1:
-        raise ValueError('expected one Bazel params file for ' + artifact)
-    return found[0].read_text().split('\n')
+    if len(found) == 1:
+        return found[0].read_text().split('\n')
+    matches = [v for k, v in (link_arguments or {}).items() if k.endswith('/bin/' + artifact)]
+    if not found and len(matches) == 1:
+        return matches[0]
+    raise ValueError('expected one Bazel params file for ' + artifact)
+
+
+def link_action_arguments(aquery):
+    """Map output exec paths of link/archive actions (aquery jsonproto with
+    --include_param_files) to their arguments: the params file contents when
+    the action uses one, otherwise the command line after the tool."""
+    fragments = {x['id']: x for x in aquery.get('pathFragments', [])}
+
+    def path(fragment_id):
+        parts = []
+        while fragment_id:
+            fragment = fragments[fragment_id]
+            parts.append(fragment['label'])
+            fragment_id = fragment.get('parentId')
+        return '/'.join(reversed(parts))
+
+    artifacts = {x['id']: path(x['pathFragmentId']) for x in aquery.get('artifacts', [])}
+    result = {}
+    for action in aquery.get('actions', []):
+        params = action.get('paramFiles', [])
+        arguments = ([a for x in params for a in x['arguments']] if params
+                     else action['arguments'][1:])
+        for output in action.get('outputIds', []):
+            result[artifacts[output]] = arguments
+    return result
 
 
 def key_shape(value):
@@ -279,7 +319,10 @@ def main():
     p.add_argument('--jobs', type=int, default=os.cpu_count())
     p.add_argument('--skip-host-runtime', action='store_true',
                    help='do not execute the built programs on this host')
+    bsd_toolchain.add_bazel_mode_arguments(p)
     a = p.parse_args()
+    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
+    bsd_toolchain.apply_bazel_environment(bzlmod)
     if platform.system() != 'FreeBSD' or platform.machine() != 'amd64':
         p.error('native FreeBSD amd64 only; cross compilation is unqualified')
     if a.jobs < 1:
@@ -311,6 +354,7 @@ def main():
     checker = load('elf_artifact_check', 'elf-artifact-check.py')
     probe_inputs = sorted([Path(__file__).resolve(), HERE / 'bsd_toolchain.py',
                            HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
+                           HERE / 'cc_compat.bzl', HERE / 'cc_compat_bzlmod.bzl',
                            HERE / 'bsd_generate.bzl',
                            HERE / 'elf-artifact-check.py', HERE / 'elf-artifact-check-test.py',
                            manifest_path,
@@ -394,7 +438,7 @@ def main():
         ws = out / 'workspace'
         ws.mkdir()
         bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
-                                      a.target, a.cpu, a.clang_version)
+                                      a.target, a.cpu, a.clang_version, bzlmod)
         for component in manifest['components']:
             shutil.copytree(src / component['path'], ws / component['path'],
                             symlinks=False, dirs_exist_ok=True,
@@ -418,18 +462,22 @@ def main():
             destination = ws / build_file.relative_to(overlay)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(build_file, destination)
-        (ws / 'WORKSPACE').write_text('workspace(name="bsd_otel_pilot")\n')
+        bsd_toolchain.write_workspace(ws, 'bsd_otel_pilot', bzlmod)
         snapshot = {str(f.relative_to(ws)): sha(f) for f in sorted(ws.rglob('*')) if f.is_file()}
         (out / 'inputs.json').write_text(json.dumps(snapshot, indent=2) + '\n')
         result['inputs_sha256'] = sha(out / 'inputs.json')
 
         prefix = [bazel, '--batch', '--output_user_root=' + str(out / 'cache'), '--ignore_all_rc_files']
-        flags = bsd_toolchain.build_flags(a.cpu, a.jobs) + ['--compilation_mode=opt', '--strip=never']
+        flags = bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
         artifacts = [dict(x, component=c['name']) for c in manifest['components'] for x in c['artifacts']]
         labels = [x['label'] for x in artifacts]
         build = prefix + ['build'] + flags + labels
         result['bazel_version'] = rec.run(prefix + ['version'], cwd=ws)[1]
+        result['bazel_mode'] = bsd_toolchain.mode_record(bzlmod)
         rec.run(build, cwd=ws)
+        if bzlmod:
+            result['bazel_mode']['lockfile_unchanged'] = (
+                sha(ws / 'MODULE.bazel.lock') == sha(Path(bzlmod['lockfile'])))
         bazel_bin = ws / 'bazel-bin'
         outputs = {x['bazel']: sha(bazel_bin / x['bazel']) for x in artifacts}
         result['bazel_outputs'] = outputs
@@ -438,7 +486,7 @@ def main():
         def srcs_check():
             report = {}
             for item in artifacts:
-                _, listed, _ = rec.run(prefix + ['query', 'labels(srcs, %s)' % item['label']], cwd=ws)
+                _, listed, _ = rec.run(prefix + ['query'] + bsd_toolchain.query_flags(bzlmod) + ['labels(srcs, %s)' % item['label']], cwd=ws)
                 bazel_srcs = [x.rsplit(':', 1)[1] for x in listed.split() if x.endswith('.c')]
                 # Generated sources (protoc-gen.mk protogen/<set>/...) come
                 # from a rule target; protobuf-probe.py compares them.
@@ -475,11 +523,16 @@ def main():
         for action in json.loads(aquery)['actions']:
             argv = action['arguments']
             compile_actions[argv[argv.index('-o') + 1]] = argv
+        _, laquery, _ = rec.run(prefix + ['aquery'] + flags +
+                                ['--include_param_files',
+                                 'mnemonic("CppArchive|CppLink", %s)' % ' + '.join(labels),
+                                 '--output=jsonproto'], cwd=ws)
+        link_arguments = link_action_arguments(json.loads(laquery))
         flag_report = {}
         scratch = out / 'scratch'
         scratch.mkdir()
         for item in artifacts:
-            listed = params_file(bazel_bin, item['bazel'])
+            listed = params_file(bazel_bin, item['bazel'], link_arguments)
             objects = [x for x in listed if x.endswith('.o')]
             dry = make_info[item['component']]['dry_run']
             per_object = {}
@@ -555,7 +608,7 @@ def main():
                 argv = list(mlink)
                 argv[argv.index('-o') + 1] = str(relinked)
                 bazel_objects = {re.sub(r'(\.pic)?\.o$', '', Path(x).name): ws / x
-                                 for x in params_file(bazel_bin, item['bazel']) if x.endswith('.o')}
+                                 for x in params_file(bazel_bin, item['bazel'], link_arguments) if x.endswith('.o')}
                 lib_dirs = {'-L' + str(out / 'make' / name): '-L' + str(bazel_bin / lib['bazel_dir'])
                             for name, lib in private_libs.items()}
                 for index, token in enumerate(argv):

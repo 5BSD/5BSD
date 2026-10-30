@@ -2182,6 +2182,12 @@ probe
 and the Protocol Buffers, Abseil and nghttp2 probe
 .Pa tools/build/bazel/protobuf-probe.py
 are not part of this action.
+The action runs the probes in their WORKSPACE mode;
+their separate Bzlmod mode for Bazel 9 with rules_cc
+.Pq Fl -bzlmod-inputs ,
+described in
+.Pa tools/build/bazel/README.md ,
+is not selected by this action.
 The action also builds and stages a Make-only libmd installation reference
 under its private output directory, preserving the selected world profile,
 source layout, debug splitting and METALOG package metadata.

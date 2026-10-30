@@ -204,7 +204,8 @@ TEXTUAL_SRCS.b_tgamma.c= ${.CURDIR}/bsdsrc/b_log.c ${.CURDIR}/bsdsrc/b_exp.c
 .if ${LDBL_PREC} == 64
 TEXTUAL_SRCS.b_tgammal.c= ${.CURDIR}/ld80/b_logl.c ${.CURDIR}/ld80/b_expl.c
 .elif ${LDBL_PREC} == 113
-TEXTUAL_SRCS.b_tgammal.c= ${.CURDIR}/ld128/tgamma128.c
+TEXTUAL_SRCS.b_tgammal.c= ${SRCTOP}/contrib/arm-optimized-routines/math/tgamma128.c \
+			   ${SRCTOP}/contrib/arm-optimized-routines/math/tgamma128.h
 .endif
 .if ${MACHINE_CPUARCH} == "arm"
 TEXTUAL_SRCS.fenv-softfp.c= ${.CURDIR}/arm/fenv.c

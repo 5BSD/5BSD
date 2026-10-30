@@ -179,7 +179,10 @@ def main():
     p.add_argument('--jobs', type=int, default=os.cpu_count())
     p.add_argument('--skip-negative', action='store_true',
                    help='skip the negative dependency suite (development only)')
+    bsd_toolchain.add_bazel_mode_arguments(p)
     a = p.parse_args()
+    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
+    bsd_toolchain.apply_bazel_environment(bzlmod)
     if platform.system() != 'FreeBSD' or platform.machine() != 'amd64':
         p.error('native FreeBSD amd64 only')
     if a.jobs < 1:
@@ -210,6 +213,7 @@ def main():
     checker = load('elf_artifact_check', 'elf-artifact-check.py')
     probe_inputs = sorted([Path(__file__).resolve(), HERE / 'otel-probe.py', HERE / 'bsd_toolchain.py',
                            HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
+                           HERE / 'cc_compat.bzl', HERE / 'cc_compat_bzlmod.bzl',
                            HERE / 'bsd_generate.bzl', HERE / 'stdout_redirect.c',
                            HERE / 'elf-artifact-check.py',
                            *sorted((HERE / 'targets').rglob('BUILD.bazel'))])
@@ -289,7 +293,7 @@ def main():
         ws = out / 'workspace'
         ws.mkdir()
         bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
-                                      a.target, a.cpu, a.clang_version)
+                                      a.target, a.cpu, a.clang_version, bzlmod)
         for directory in COPY_DIRS + OTEL_SOURCE_TREES:
             # Test directories are not inputs of these targets.
             shutil.copytree(src / directory, ws / directory, symlinks=False, dirs_exist_ok=True,
@@ -327,17 +331,21 @@ def main():
             destination = ws / build_file.relative_to(overlay)
             if destination.parent == ws or destination.parent.is_dir():
                 shutil.copy2(build_file, destination)
-        (ws / 'WORKSPACE').write_text('workspace(name="bsd_dtrace_pilot")\n')
+        bsd_toolchain.write_workspace(ws, 'bsd_dtrace_pilot', bzlmod)
         snapshot = {str(f.relative_to(ws)): sha(f) for f in sorted(ws.rglob('*')) if f.is_file()}
         (out / 'inputs.json').write_text(json.dumps(snapshot, indent=2) + '\n')
         result['inputs_sha256'] = sha(out / 'inputs.json')
 
         prefix = [bazel, '--batch', '--output_user_root=' + str(out / 'cache'), '--ignore_all_rc_files']
-        flags = bsd_toolchain.build_flags(a.cpu, a.jobs) + ['--compilation_mode=opt', '--strip=never']
+        flags = bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
         labels = [LIB_LABEL, PROG_LABEL] + GEN_LABELS
         build = prefix + ['build'] + flags + labels
         result['bazel_version'] = rec.run(prefix + ['version'], cwd=ws)[1]
+        result['bazel_mode'] = bsd_toolchain.mode_record(bzlmod)
         rec.run(build, cwd=ws)
+        if bzlmod:
+            result['bazel_mode']['lockfile_unchanged'] = (
+                sha(ws / 'MODULE.bazel.lock') == sha(Path(bzlmod['lockfile'])))
         bazel_bin = ws / 'bazel-bin'
         lib_out = bazel_bin / 'cddl/lib/libdtrace/libdtrace.so.2'
         prog_out = bazel_bin / 'cddl/usr.sbin/dtrace/dtrace'
@@ -361,7 +369,7 @@ def main():
         result['generated_parity'] = parity
 
         # ---- Source list, compile flags and objects against Make. ----
-        _, listed, _ = rec.run(prefix + ['query', 'labels(srcs, %s)' % LIB_LABEL], cwd=ws)
+        _, listed, _ = rec.run(prefix + ['query'] + bsd_toolchain.query_flags(bzlmod) + ['labels(srcs, %s)' % LIB_LABEL], cwd=ws)
         names = [Path(x.rsplit(':', 1)[1]).name for x in listed.split()]
         bazel_srcs = sorted(x for x in names if x.endswith(('.c', '.cc')) and
                             x != 'ccompile.h')

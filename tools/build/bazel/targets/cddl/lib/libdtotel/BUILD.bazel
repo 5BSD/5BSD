@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Make reference: cddl/lib/libdtotel/Makefile (INTERNALLIB, WARNS 3,
-# LIBADD/_DP_dtotel dtrace jail otelexport).  libdtrace is linked from the
+# LIBADD/_DP_dtotel dtrace jail m otelexport; m for sqrtl, a libm call where
+# long double is 128 bits).  libdtrace is linked from the
 # staged SDK by name; its headers come from the declared source trees.
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_internal_library")
 
 package(default_visibility = ["//visibility:public"])
@@ -39,7 +41,7 @@ bsd_internal_library(
         "//lib/libotelexport:headers",
     ],
     internal_libs = ["//lib/libotelexport:otelexport"],
-    linkopts = ["-ldtrace", "-ljail"],
+    linkopts = ["-ldtrace", "-ljail", "-lm"],
 )
 
 # Consumers' CFLAGS+=-I${SRCTOP}/cddl/lib/libdtotel; the unit test also

@@ -8,6 +8,7 @@
 # -I contrib/protobuf/upb/reflection/cmake and the generated sources with
 # CWARNFLAGS -Wno-cast-qual -Wno-cast-align).  otel-probe.py fails if SRCS
 # differ; protobuf-probe.py compares the generated files with Make's.
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_protoc")
 
 package(default_visibility = ["//visibility:public"])

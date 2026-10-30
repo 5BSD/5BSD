@@ -2,6 +2,10 @@
 # Workspace root: header-only bundles for source directories that Make reaches
 # through -I flags.  Each glob is a declared input set; `includes` keeps Make's
 # search order and is relative to this package (no absolute -I paths).
+# The probes share this package but each stages only its own header trees,
+# so a pattern may match nothing in one probe (Bazel 9 rejects empty globs
+# unless allow_empty is set; Bazel 5 accepted them).
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 package(default_visibility = ["//visibility:public"])
 
 # cddl/usr.sbin/bsdinstruments CFLAGS order.  Make also lists
@@ -14,7 +18,7 @@ cc_library(
         "cddl/compat/opensolaris/include/**/*.h",
         "cddl/contrib/opensolaris/head/**/*.h",
         "cddl/contrib/opensolaris/lib/libdtrace/common/**/*.h",
-    ]),
+    ], allow_empty = True),
     includes = [
         "sys/contrib/openzfs/include",
         "sys/contrib/openzfs/lib/libspl/include",
@@ -32,7 +36,7 @@ cc_library(
 # linked from the staged SDK.
 cc_library(
     name = "libtracecmp_headers",
-    hdrs = glob(["lib/libtracecmp/*.h"]),
+    hdrs = glob(["lib/libtracecmp/*.h"], allow_empty = True),
     includes = ["lib/libtracecmp"],
 )
 
@@ -43,7 +47,7 @@ cc_library(
 # not propagated to their dependents, matching Make.
 filegroup(
     name = "libucl_hdrs",
-    srcs = glob(["contrib/libucl/include/*.h"]),
+    srcs = glob(["contrib/libucl/include/*.h"], allow_empty = True),
 )
 
 # cddl/lib/libdtrace CFLAGS order, split where Make inserts -I${.OBJDIR}
@@ -51,7 +55,7 @@ filegroup(
 # //cddl/lib/libdtrace:objdir_headers between these two bundles).
 cc_library(
     name = "libdtrace_spl_headers",
-    hdrs = glob(["sys/**/*.h"]),
+    hdrs = glob(["sys/**/*.h"], allow_empty = True),
     includes = [
         "sys/contrib/openzfs/include",
         "sys/contrib/openzfs/lib/libspl/include",
@@ -70,7 +74,7 @@ cc_library(
         "cddl/contrib/opensolaris/lib/libdtrace/common/*.h",
         "cddl/contrib/opensolaris/lib/libdtrace/common/*.hh",
         "usr.sbin/dtraced/*.h",
-    ]),
+    ], allow_empty = True),
     includes = [
         "sys/cddl/dev/dtrace/amd64",
         "sys/cddl/dev/kinst",
@@ -90,7 +94,7 @@ cc_library(
 # order of dtrace_userland_headers.
 cc_library(
     name = "dtraced_headers",
-    hdrs = glob(["usr.sbin/dtraced/*.h"]),
+    hdrs = glob(["usr.sbin/dtraced/*.h"], allow_empty = True),
     includes = ["usr.sbin/dtraced"],
 )
 
@@ -111,4 +115,4 @@ exports_files(glob([
     "sys/cddl/contrib/opensolaris/uts/common/sys/dtrace.h",
     "cddl/contrib/opensolaris/lib/libdtrace/common/dt_errtags.h",
     "sys/sys/priv.h",
-]))
+], allow_empty = True))

@@ -27,7 +27,8 @@ CFLAGS+=	-I${SRCTOP}/sys/cddl/compat/opensolaris \
 CFLAGS+=	-DHAVE_ISSETUGID
 CFLAGS+=	-I${SRCTOP}/lib/libotelexport
 
-LIBADD=		dtrace jail otelexport
+# m: sqrtl() is a libm call where long double is 128 bits (arm64, riscv64).
+LIBADD=		dtrace jail m otelexport
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

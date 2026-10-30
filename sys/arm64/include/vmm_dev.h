@@ -31,6 +31,7 @@
 #include <sys/hypertrace.h>
 
 #include <machine/vmm.h>
+#include <machine/vmm_snapshot.h>
 
 #include <dev/vmm/vmm_param.h>
 #include <dev/vmm/vmm_dirty_log_request.h>
@@ -309,8 +310,6 @@ enum {
 #define VM_GET_ATTESTATION \
 	_IOR('v', IOCNUM_GET_ATTESTATION, struct hypertrace_vm_attestation)
 
-struct vm_snapshot_meta;
-struct vm_snapshot_session;
 #define	VM_SNAPSHOT_REQ \
 	_IOWR('v', IOCNUM_SNAPSHOT_REQ, struct vm_snapshot_meta)
 #define	VM_SNAPSHOT_SESSION \

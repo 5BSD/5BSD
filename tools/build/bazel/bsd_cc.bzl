@@ -18,7 +18,7 @@ contrib Makefiles that use these rules print them (checked by the probes;
 an unexplained difference fails them).
 """
 
-load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
+load(":cc_compat.bzl", "BSD_CC_TOOLCHAINS", "BSD_CC_TOOLCHAIN_ATTRS", CcInfo = "bsd_CcInfo", cc_common = "bsd_cc_common", find_cpp_toolchain = "bsd_find_cc_toolchain")
 
 _BASE = ["-O2", "-pipe", "-fno-common"]
 _DEBUG = ["-g", "-gz=zlib"]
@@ -194,8 +194,8 @@ _COMMON_ATTRS = {
     "per_file_cwarn": attr.string_list_dict(),
     "generated_includes": attr.string_list(),
     "linkopts": attr.string_list(),
-    "_cc_toolchain": attr.label(default = Label("@bazel_tools//tools/cpp:current_cc_toolchain")),
 }
+_COMMON_ATTRS.update(BSD_CC_TOOLCHAIN_ATTRS)
 
 bsd_cc_archive = rule(
     implementation = _archive_impl,
@@ -210,6 +210,7 @@ bsd_cc_archive = rule(
         "public_includes": attr.string_list(),
     }),
     fragments = ["cpp"],
+    toolchains = BSD_CC_TOOLCHAINS,
 )
 
 def _link(ctx, cc_toolchain, features, objects, output_type, link_deps, flags, extra):
@@ -260,6 +261,7 @@ bsd_cc_shared = rule(
         "version_script": attr.label(allow_single_file = True),
     }),
     fragments = ["cpp"],
+    toolchains = BSD_CC_TOOLCHAINS,
 )
 
 def _program_impl(ctx):
@@ -289,6 +291,7 @@ bsd_cc_program = rule(
     }),
     executable = True,
     fragments = ["cpp"],
+    toolchains = BSD_CC_TOOLCHAINS,
 )
 
 def _protoc_impl(ctx):
