@@ -471,3 +471,7 @@ config_setting(name = "servicesdb_enabled", flag_values = {":servicesdb": "true"
 
 # nscd Make PREFIX controls the compiled configuration search path.
 string_flag(name = "nscd_prefix", build_setting_default = "", visibility = ["//visibility:public"])
+
+# mptutil Make DEBUG variant, separate from production defaults.
+bool_flag(name = "mptutil_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "mptutil_debug_enabled", flag_values = {":mptutil_debug": "true"}, visibility = ["//visibility:public"])

@@ -4347,3 +4347,12 @@ As in maintained Make, this setting does not relocate the installed
 /etc/nscd.conf payload or change the relative fallback nscd.conf lookup.
 Default and /opt/5bsd configurations have artifact parity on amd64;
 this does not establish live NSS/cache or daemon runtime behavior.
+
+.Ss Native mptutil debug variant
+.Cm //usr.sbin/mptutil:install_archive
+supports the format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mptutil_debug
+(default false), corresponding to defining DEBUG in maintained Make.
+It enables additional controller commands and diagnostic code, not merely debug
+symbols. Both variants have amd64 installation/artifact parity; no controller
+operations were executed during qualification.

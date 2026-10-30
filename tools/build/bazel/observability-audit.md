@@ -8327,3 +8327,11 @@ preserve CAM/mt/util/thread dependencies. Private regular-file copy checks pass;
 CAM completion latency, queue depth/error reporting and device-access audit
 attribution need runtime review with suitable hardware/VM fixtures. File-copy
 correctness is not evidence of device performance or complete I/O observability.
+
+### 2026-10-30: mptutil
+
+No local DTrace provider or direct libbsm integration is declared. Both normal
+and DEBUG source branches are compiled and artifact-compared; DEBUG retains
+additional administrative operations and diagnostics. Controller event handling,
+configuration/volume changes and authorization/audit attribution require runtime
+review. No controller command was executed during these checks.

@@ -19967,3 +19967,24 @@ performance qualification. Make remains production/default.
 - Frontend review: existing maintained build-bsd bazel-test target handling with
   16 jobs suffices; no frontend C/backend/signing/publication contract changes.
   Full-world/kernel/package/VM/performance gates remain open; Make stays default.
+
+### 2026-10-30: mptutil default and DEBUG builds
+
+- Added native mptutil with the eight maintained sources and explicit MPI
+  controller headers. mpt_flash.c remains excluded exactly as in Make's source
+  list. Native CAM/util dependencies preserve the reference linkage.
+- Added typed mptutil_debug boolean (default false), matching Make's defined
+  DEBUG variant. Both builds pass fresh Make parity: five metadata records,
+  three regular payloads and one debug link each, including global/weak symbols,
+  ordered dynamic dependencies, manual bytes and debug CRCs.
+- Actual compile records verify all eight sources exactly once in each build
+  and DEBUG defined only in the selected variant. This option enables additional
+  controller operations/diagnostics; it is not a debug-symbol-only setting.
+- Evidence under /usr/obj/usr/src: bazel-mptutil-reference-20261030 and
+  bazel-mptutil-debug-reference-20261030 comparisons, variant-audit.py/json;
+  bazel-mptutil-20261030 and bazel-mptutil-debug-20261030 captures; corresponding
+  fresh Make stages. No controller operations ran.
+- Frontend review: existing build-bsd typed format-5 settings and 16-job
+  bazel-test handle both variants; manual documents the setting. No frontend C,
+  backend/signing/publication contract change. Controller runtime, native Bazel
+  behavioral tests, cross builds and full-system/performance gates remain open.

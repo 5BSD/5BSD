@@ -437,3 +437,5 @@ cc_library(name = "firewire_user_headers", hdrs = ["sys/dev/firewire/firewire.h"
 cc_library(name = "dcons_user_headers", hdrs = ["sys/dev/dcons/dcons.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/dconschat:__pkg__"])
 
 cc_library(name = "mlx_user_headers", hdrs = ["sys/dev/mlx/mlxio.h", "sys/dev/mlx/mlxreg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlxcontrol:__pkg__"])
+
+cc_library(name = "mpt_user_headers", hdrs = ["sys/dev/mpt/mpilib/mpi_type.h", "sys/dev/mpt/mpilib/mpi.h", "sys/dev/mpt/mpilib/mpi_cnfg.h", "sys/dev/mpt/mpilib/mpi_raid.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mptutil:__pkg__"])
