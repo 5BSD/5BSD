@@ -8397,3 +8397,14 @@ Makefile. Native MIT builds preserve all RPC sources and byte-identical generate
 protocol code. Kernel GSS upcalls, credential-cache/keytab lifecycle, principal
 mapping, authentication failures and NFS security-context observability require
 runtime qualification. No daemon or credential operation was executed here.
+
+### 2026-10-30: networkcmpctl
+
+The command declares no local provider/direct libbsm linkage. Shared production
+linkage preserves libnetworkcmp. Its static test helper exposes the unresolved
+archive DOF difference: 79 native versus 26 Make schemas; all 26 unchanged,
+53 extra native schemas; instruction/function-bound checks pass. Live service,
+policy attribution, state/resolve tracing and audit behavior remain unqualified.
+Twelve of fourteen maintained host ATF executions pass. Both unavailable cases
+SIGSYS at cap_process (source syscall 1011 versus installed host header 636).
+Matching-kernel qualification is required; the expectation was not weakened.

@@ -44277,3 +44277,41 @@ Heimdal and runtime performance remain unqualified. Existing build-bsd explicit
 targets and typed mitkrb5 configuration handle this addition; no new frontend C,
 manual option, staging/signing/verification or publication contract is required.
 Make remains production/default; full-system gates remain open.
+
+### Native networkcmpctl capability bundle and tests (2026-10-30)
+
+Added the native networkcmpctl command, declared embedded policy generation from
+its maintained Unit.ucl, NetworkControl.cap bundle files/directories, absolute
+/usr/sbin command symlink, and installed maintained ATF suite/static helpers.
+The first install comparison caught a relative-versus-absolute symlink difference;
+the target now preserves Make's exact absolute link. No source behavior or policy
+contents were changed. Unit.ucl export retains Switchboard-test visibility and
+adds only the command package; Bundle.ucl is exported to that package.
+
+Evidence: /usr/obj/usr/src/bazel-networkcmpctl-reference-20261030; fresh Make
+reference bazel-networkcmpctl-make-20261030; final native capture
+bazel-networkcmpctl-20261030-r2. All 27 installation records match. Eleven regular
+payloads pass symbol/dependency/manual/policy/script checks and three debuglink
+CRCs. The .5bsd.policy section is byte-identical to Make and maintained Unit.ucl;
+this is unsigned embedded policy parity, not signing or authorization evidence.
+
+All seven maintained ATF cases ran for each build using host ATF/tools and the
+captured static helpers: twelve passes, two failures (unavailable in each).
+Symbolized native and Make core traces identify SIGSYS at process_context's
+SYS_cap_process invocation. Source sys/syscall.h defines 1011, installed host
+sys/syscall.h defines 636, and host kern.features.cap_process=1. The unavailable
+case therefore needs a matching-kernel run; no syscall-number workaround, skipped
+case or weakened expectation was introduced. The other six cases, including
+maintained fake-service command/error/state-watch/resolve-selection cases, pass
+for both builds. These executions are not Bazel-registered tests or live service
+qualification. No host network configuration was changed.
+
+The static real helper's inherited DOF remains a qualification gap: native has
+79 schemas/101 ordinary/31 enabled sites; Make has 26/30/31. All 26 Make schemas
+are unchanged, with 53 extra native schemas. Both instruction/function-bound
+checks pass. Full difference JSON is retained. This is consistent with the open
+experimental static-archive provider-retention discrepancy, not exact DOF parity.
+Live service authorization, normal attributed execution, provider firing and
+performance remain unqualified. Existing build-bsd format-5/test inputs cover
+these additions; no frontend C, policy semantics, signing/publication contract or
+new manual option changed. Make remains production/default.
