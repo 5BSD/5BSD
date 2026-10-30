@@ -437,3 +437,5 @@ amd64_generic_kernel_objects(name = "generic_process_metadata", srcs = ["kern_pr
 exports_files(["subr_acl_nfs4.c"], visibility = ["//lib/libc/posix1e:__pkg__"])
 
 exports_files(["subr_capability.c"], visibility = ["//lib/libc/capability:__pkg__"])
+
+exports_files(["subr_vmem.c"], visibility = ["//lib/libuvmem:__pkg__"])

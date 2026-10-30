@@ -7405,3 +7405,10 @@ Native daemon and command candidates preserve maintained sources and backend
 dynamic exports. Their Makefiles declare no DTrace provider; the Bluetooth
 backend owns the carried-forward btaudio probes. CUSE/device interactions and
 end-to-end audio execution remain qualification work, not implied by linkage.
+
+### libuvmem (2026-10-30)
+
+Native candidate compiles the existing userland branch of sys/kern/subr_vmem.c,
+without changing production behavior or enabling its kernel-only code. Make
+declares no library DTrace provider. Allocator correctness, contention and memory
+consumption remain runtime/performance qualification work.

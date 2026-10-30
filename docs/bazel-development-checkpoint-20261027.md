@@ -17134,3 +17134,22 @@ subtrees on both MK_CUSE and MK_SOUND. Those gates must be represented when the
 parent world graph is added; these subtree targets intentionally match invoking
 their own Makefiles directly. No complete world, package publication or live
 audio result is claimed. Existing frontend target/configuration inputs suffice.
+
+### Native libuvmem candidate (2026-10-30)
+
+Added a native archive/shared library using the userland branch of maintained
+sys/kern/subr_vmem.c, explicit vmem/hash headers, pthread dependency and generated
+FBSD_1.9 symbol map. ABI 1, runtime package ownership, manual and debug installation
+follow Make; this library does not own installation of sys/vmem.h. Fresh Make
+reference completes. Native bazel-libuvmem-20261030 is pending through build-bsd
+with 16 jobs. Existing explicit target/settings interfaces require no frontend
+contract changes. Allocation runtime and performance remain unqualified.
+
+Libuvmem artifact result: bazel-libuvmem-20261030 passes. Independent fresh Make
+comparison matches seven installation destinations, with zero missing/extra paths
+or metadata mismatches. Four regular payloads match archive member order,
+global/weak symbol inventories including versions, ordered dynamic dependencies,
+manual bytes and one debug-link CRC. Evidence: install-audit.json and
+payload-audit.json under bazel-libuvmem-reference-20261030, plus saved artifacts
+and native receipt. No allocation/runtime or performance claim is made.
+Full world/kernel/bootstrap/pkgbase qualification remains open.
