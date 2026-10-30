@@ -8408,3 +8408,11 @@ policy attribution, state/resolve tracing and audit behavior remain unqualified.
 Twelve of fourteen maintained host ATF executions pass. Both unavailable cases
 SIGSYS at cap_process (source syscall 1011 versus installed host header 636).
 Matching-kernel qualification is required; the expectation was not weakened.
+
+### 2026-10-30: sndctl, prometheus_sysctl_exporter and mld6query
+
+No local DTrace providers or direct libbsm linkage are declared by these Make
+components. Native targets preserve their sources, libraries and IPSEC definition.
+Read-only exporter metric/filter/HTTP checks pass; sound-device changes, multicast
+transmission/response handling, socket privilege attribution and latency require
+separate runtime review. No such device/network operations were performed here.

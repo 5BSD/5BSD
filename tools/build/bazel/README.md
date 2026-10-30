@@ -44315,3 +44315,38 @@ Live service authorization, normal attributed execution, provider firing and
 performance remain unqualified. Existing build-bsd format-5/test inputs cover
 these additions; no frontend C, policy semantics, signing/publication contract or
 new manual option changed. Make remains production/default.
+
+### World declaration review and three utility additions (2026-10-30)
+
+Revalidated the existing complete configured Make component metadata with
+world-native-survey.py against the current tree. The final snapshot is
+/usr/obj/usr/src/bazel-world-components-refresh-20261030/native-package-survey-monitor-tools.json:
+2,103 configured directories, 1,339 local BUILD declarations and 764 with only
+an ancestor package. Program-bearing directory counts are 794 local/187 ancestor;
+library-bearing counts 335/80. These are directory/declaration counts, NOT built
+program totals, missing-binary counts or completion percentages. Ancestor ownership
+and aggregate action/install mappings still need review. The saved Make input
+hashes verified; the full-world build/install/package gate remains open. Remaining
+review groups include NTP, WPA, syslogd, storage services, installer tools, LLDB,
+PMC, and test directories.
+
+Added native sndctl (sound package; nv/mixer/xo/sbuf),
+prometheus_sysctl_exporter (m/z), and mld6query (maintained mld6.c with IPSEC).
+Evidence: /usr/obj/usr/src/bazel-monitor-tools-reference-20261030; native capture
+bazel-monitor-tools-20261030. Fresh Make references use the component names:
+bazel-sndctl-make-20261030, bazel-prometheus_sysctl_exporter-make-20261030,
+bazel-mld6query-make-20261030. Each matches five install records, three regular
+payload symbol/dependency/manual checks and one debuglink CRC.
+
+Ten exporter runtime checks pass across native and Make binaries: read-only
+hw.ncpu output versus sysctl, inclusion/exclusion filters, HTTP content length
+and payload, and -g HTTP output (decompressed when the exporter chooses gzip).
+The small response can remain uncompressed; this does not establish full gzip
+coverage. Captured executables/native loader/native or staged Make libraries
+were copied and hashed and library closure checked. No listener, audio mutation
+or multicast transmission was performed. Sound-device control, MLD network/IPsec
+behavior, other sysctl types and performance remain unqualified.
+
+Existing build-bsd explicit target inputs cover the additions with no new
+frontend C/manual options, staging/security policy or publication requirements.
+Make remains production/default; the whole-system gates are unchanged.
