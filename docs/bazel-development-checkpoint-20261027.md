@@ -17813,3 +17813,27 @@ or custom SENDMAIL_CFLAGS. The latter remains a configuration implementation gap
 Existing build-bsd typed OpenSSL/IPv6 inputs function without frontend changes;
 no staging, signing or publication changes are introduced. Runtime Sendmail
 sessions and system-wide/cache/performance qualification remain open.
+
+### Native libvgl and nss_tacplus candidates (2026-10-30)
+
+Libvgl now builds all six sources as its native archive and ABI-6 shared library,
+with its public header, manual and all 32 manual aliases. Fresh Make comparison
+passes for 40 installation destinations, five regular payloads and one debug
+link. Evidence: install-audit.json/payload-audit.json under
+bazel-libvgl-reference-20261030, native output bazel-libvgl-20261030.
+
+NSS TACACS+ now builds its ABI-1 module against native libtacplus. Maintained
+MK_INSTALLLIB=no is respected: no installed static library or public headers.
+The shared-module symlink and section-8 manual retain utilities package tags.
+Fresh Make comparison passes for six installation destinations, three regular
+payloads and one debug link. Evidence: install-audit.json/payload-audit.json under
+bazel-nss_tacplus-reference-20261030, native output bazel-nss_tacplus-20261030.
+
+Comparisons include installation metadata, global/weak symbol inventories,
+ordered dynamic dependencies, exact header/manual bytes, archive order where
+applicable and debug CRC. No console takeover/framebuffer, keyboard/mouse, NSS
+lookup, TACACS server/authentication or performance tests were performed. These
+are amd64 candidates; runtime and cross-architecture qualification remain open.
+Frontend review: existing build-bsd target/typed inputs suffice; both use normal
+installation archive helpers. No signing or publication contract changed and
+nothing was installed on the host.

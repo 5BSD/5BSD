@@ -7577,3 +7577,10 @@ No implementation or observability hooks changed. Filter negotiation, malformed
 protocol frames, connection/worker lifecycle, timeouts and shutdown remain
 runtime qualification work. Review audit/logging at service consumers without
 exposing mail contents or credentials.
+
+### libvgl and NSS TACACS+ (2026-10-30)
+
+Native artifacts/install metadata match Make; no implementation/hooks changed.
+Libvgl needs console acquisition/restoration, framebuffer and input runtime
+coverage. NSS TACACS+ needs lookup results, thread lifecycle, service failure
+and credential/server policy coverage. Neither is established by ABI comparison.
