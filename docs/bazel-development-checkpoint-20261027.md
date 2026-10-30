@@ -20040,3 +20040,36 @@ qualification. These are Clang builds, not GCC qualification or performance test
 Existing build-bsd format-5 targets/settings handle this addition; the maintained
 manual documents the new setting. No frontend C, signing, staging or publication
 contract change is needed. Whole-system gates remain open and Make stays default.
+
+### Native fifolog subtree (2026-10-30)
+
+Added explicit native targets for the internal ordinary/PIE fifolog archives and
+fifolog_create, fifolog_writer and fifolog_reader. The five library members
+include getdate.c generated from maintained getdate.y by the native exec yacc
+through a declared BSDYacc action. The internal library remains uninstalled.
+The create component owns fifolog.1 and its three maintained manual hardlinks;
+the reader/writer do not invent separate manuals. The parent installation set
+includes all three programs.
+
+Evidence: /usr/obj/usr/src/bazel-fifolog-reference-20261030; fresh Make subtree
+build/install/installconfig bazel-fifolog-make-20261030; final native capture
+bazel-fifolog-20261030-r2. The first native build exposed a libutil/zlib dependency
+order difference in fifolog_create. Its dependency order was corrected to match
+Make; the failed first comparison/capture remains available.
+
+All twelve installation records match with no missing/extra destinations or
+metadata mismatches. Seven regular payloads pass symbol/dependency/manual checks,
+three manual hardlinks match, and all three debuglink CRCs validate. Both internal
+archives match five ordered members and 95 global/weak symbol records each.
+Runtime evidence in runtime/audit.json records 24 passing checks: native/Make,
+compression levels 0 and 9, create/write/read, regex filtering, date-range parsing
+and invalid-date rejection. Executables, native loader, and native or staged Make
+libraries were copied and hashed; shared-library dependencies were checked for
+closure. All log files are private. These are host-kernel correctness checks,
+not Bazel-registered tests, wraparound/crash-recovery qualification or performance
+measurements. Full world/kernel/pkgbase and runtime gates remain open.
+
+Existing build-bsd format-5 explicit targets accept the subtree and both archive
+targets without a frontend C or policy change. No new user-facing build setting,
+staging/signing/verification requirement or publication contract was introduced.
+Make remains production/default; no host installation was performed.

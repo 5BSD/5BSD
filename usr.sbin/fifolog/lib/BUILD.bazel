@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
+bsd_yacc(name = "date_parser", src = "getdate.y", output = "getdate.c", yacc = "//usr.bin/yacc:yacc")
+[cc_library(name = "fifolog" + suffix,
+    srcs = ["fifolog_int.c", "fifolog_create.c", "fifolog_write_poll.c", "fifolog_reader.c", ":date_parser"],
+    hdrs = ["fifolog.h", "fifolog_write.h", "libfifolog.h", "libfifolog_int.h", "miniobj.h"],
+    strip_include_prefix = ".", deps = ["//lib/libz:z"],
+    copts = ["-fPIE"] if suffix else [], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//usr.sbin/fifolog:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":fifolog"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":fifolog_pie"], visibility = ["//visibility:public"])

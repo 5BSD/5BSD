@@ -8352,3 +8352,12 @@ registration. The repaired legacy debug dump lookup is device-specific; runtime
 sysctl availability remains unqualified. Firmware writes, volume/configuration
 changes, event retrieval and authorization/audit attribution require controller
 runtime review. No controller operations were executed during artifact checks.
+
+### 2026-10-30: fifolog
+
+The three utilities/internal library declare no local DTrace provider or direct
+libbsm integration in Make. The native graph retains all library members and the
+generated date parser. Private-file compression/round-trip/filter checks pass
+for native and Make binaries. Circular wraparound, corruption handling, crash
+recovery, write/sync latency and attribution of log-file access remain review
+items. These correctness checks do not establish I/O performance.
