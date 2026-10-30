@@ -11,12 +11,6 @@
 #ifndef _OE_OTLPENC_H_
 #define	_OE_OTLPENC_H_
 
-enum oe_signal {
-	OE_SIGNAL_LOGS,
-	OE_SIGNAL_METRICS,
-	OE_SIGNAL_TRACES
-};
-
 struct oe_otlpenc {
 	char		*scope;		/* instrumentation scope name */
 	char		*version;
@@ -31,6 +25,14 @@ void	 oe_enc_fini(struct oe_otlpenc *);
 char	*oe_enc_log_record(const struct oe_otlpenc *, const struct oe_event *);
 char	*oe_enc_metric(const struct oe_otlpenc *, const struct oe_snapshot *);
 char	*oe_enc_span(const struct oe_otlpenc *, const struct oe_span *);
+/*
+ * A complete ExportProfilesServiceRequest for one profile (profiles
+ * carry a request-wide dictionary, so they are not batched as
+ * fragments); malloc'd, NULL on allocation failure; *lenp excludes the
+ * NUL.  See oe_otlpprof.c.
+ */
+char	*oe_enc_profile(const struct oe_otlpenc *, const struct oe_profile *,
+	    size_t *lenp);
 
 /* Append one typed attribute as an OTLP KeyValue. */
 void	 oe_enc_kv(struct oe_buf *, const struct oe_kv *, int *first);
@@ -48,7 +50,9 @@ void	 oe_enc_context(struct oe_buf *, pid_t, const char *execname,
 char	*oe_enc_request(const struct oe_otlpenc *, enum oe_signal,
 	    char **frags, size_t nfrags, size_t *lenp);
 
-/* URL path ("v1/logs", ...) for a signal. */
+/*
+ * URL path ("v1/logs", ..., "v1development/profiles") for a signal.
+ */
 const char *oe_enc_path(enum oe_signal);
 
 /*

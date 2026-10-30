@@ -171,6 +171,25 @@ struct oe_exphist {
 };
 
 /*
+ * An exemplar: one measurement that contributed to a data point,
+ * with the trace it was made in (OpenTelemetry Exemplar).  The value
+ * is an integer, or with is_double a floating-point number; "attrs"
+ * are the measurement's attributes that the data point's own
+ * attributes do not already carry (filteredAttributes).  An all-zero
+ * trace id means none.
+ */
+struct oe_exemplar {
+	struct timespec	 ts;
+	int		 is_double;
+	int64_t		 ivalue;
+	double		 dvalue;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+};
+
+/*
  * One data point of one aggregation snapshot: a scalar (or, with
  * is_double, a floating-point value), explicit histogram buckets
  * (is_histogram with buckets), an exponential histogram (is_histogram
@@ -197,6 +216,9 @@ struct oe_datapoint {
 	 * the snapshot's start.
 	 */
 	struct timespec	 start;
+	/* Exemplars of the point (OTLP exporters; others ignore them). */
+	const struct oe_exemplar *exemplars;
+	size_t		 nexemplars;
 };
 
 struct oe_snapshot {
@@ -307,6 +329,60 @@ struct oe_span {
 };
 
 /*
+ * Profiles (experimental): the OTLP profiles signal of
+ * opentelemetry-proto 1.10 (package
+ * opentelemetry.proto.profiles.v1development), whose schema and
+ * Collector support are still in development.
+ *
+ * One sample: a stack (kernel frames, then the user frames that
+ * called into the kernel, each leaf first), and either a value of the
+ * profile's sample type (has_value) or the times of the observations
+ * (timestamps, each an observation of value 1), with the process and
+ * thread context, extra attributes and an optional trace link.
+ * Samples of one profile with the same stack, attributes and link are
+ * merged by the encoder.
+ */
+struct oe_profile_sample {
+	const struct oe_frame *stack;	/* kernel frames or NULL */
+	size_t		 nstack;
+	const struct oe_frame *ustack;	/* user frames or NULL */
+	size_t		 nustack;
+	int		 has_value;
+	int64_t		 value;
+	const struct timespec *timestamps;
+	size_t		 ntimestamps;
+	pid_t		 pid;		/* 0 if unknown */
+	const char	*execname;	/* NULL or "" if unknown */
+	struct oe_context ctx;
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];	/* zero: no link */
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+};
+
+/*
+ * One profile: what its values measure (sample_type and unit, e.g.
+ * "samples" and "count"), the sampling period (period_type and unit,
+ * e.g. "cpu" and "nanoseconds", and period; NULL type omits it), the
+ * time range it covers and its samples.  Strings are borrowed for the
+ * duration of the call.
+ */
+struct oe_profile {
+	const char	*profile;	/* profile / tool name */
+	const char	*sample_type;
+	const char	*sample_unit;
+	const char	*period_type;	/* NULL: no period */
+	const char	*period_unit;
+	int64_t		 period;
+	struct timespec	 start;		/* time_unix_nano */
+	struct timespec	 end;		/* start + duration_nano */
+	const struct oe_profile_sample *samples;
+	size_t		 nsamples;
+	const struct oe_kv *attrs;	/* profile attributes */
+	size_t		 nattrs;
+};
+
+/*
  * OTel resource attributes attached to every record.  "custom" (for
  * example OTEL_RESOURCE_ATTRIBUTES) replaces a built-in attribute of
  * the same key, except service.name: the tool resolves that one.
@@ -368,6 +444,7 @@ struct oe_exporter_ops {
 	int	(*shutdown)(struct oe_exporter *);
 	void	(*free)(struct oe_exporter *);
 	int	(*span)(struct oe_exporter *, const struct oe_span *);
+	int	(*profile)(struct oe_exporter *, const struct oe_profile *);
 };
 
 struct oe_exporter {
@@ -380,6 +457,9 @@ struct oe_exporter {
 /* Exporters without span support accept and ignore spans. */
 #define	oe_span(e, sp)		((e)->ops->span != NULL ?		\
 				    (e)->ops->span((e), (sp)) : 0)
+/* So do exporters without profile support (experimental signal). */
+#define	oe_profile(e, pr)	((e)->ops->profile != NULL ?		\
+				    (e)->ops->profile((e), (pr)) : 0)
 #define	oe_flush(e)		((e)->ops->flush(e))
 #define	oe_shutdown(e)		((e)->ops->shutdown(e))
 #define	oe_exporter_free(e)	((e)->ops->free(e))
@@ -463,6 +543,38 @@ struct oe_otlpjson_config {
 struct oe_exporter *oe_otlpjson_new(const struct oe_otlpjson_config *);
 
 /*
+ * The OTLP signals, in the order of the per-signal settings below.
+ * Profiles are experimental.
+ */
+enum oe_signal {
+	OE_SIGNAL_LOGS,
+	OE_SIGNAL_METRICS,
+	OE_SIGNAL_TRACES,
+	OE_SIGNAL_PROFILES
+};
+#define	OE_NSIGNALS	4
+
+/* "logs", "metrics", "traces" or "profiles". */
+const char *oe_signal_name(enum oe_signal);
+
+/*
+ * Settings of one signal that differ from the exporter's: a signal
+ * endpoint used as-is (OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT: the full
+ * URL of the signal, to which nothing is appended), its own protocol,
+ * headers (replacing the exporter's), timeout and compression.  NULL
+ * (or 0, or has_headers 0) inherits the exporter's setting.
+ */
+struct oe_otlp_signal_config {
+	const char	*endpoint;
+	const char	*protocol;
+	const struct oe_attr *headers;
+	size_t		 nheaders;
+	int		 has_headers;
+	double		 timeout;	/* seconds */
+	const char	*compression;
+};
+
+/*
  * Configuration for the OTLP exporter: OTLP/HTTP with JSON or protobuf
  * bodies, or OTLP/gRPC.
  */
@@ -498,6 +610,15 @@ struct oe_otlp_config {
 	 * sets the resolved protocol, http/protobuf by default.
 	 */
 	const char	*protocol;
+	/* Per-signal settings, indexed by enum oe_signal. */
+	struct oe_otlp_signal_config signals[OE_NSIGNALS];
+	/*
+	 * The caller exports profiles: creation fails when the profiles
+	 * signal resolves to http/json (profiles are sent as protobuf
+	 * only).  Without it, profiles over http/json are dropped with a
+	 * warning.
+	 */
+	int		 profiles;
 };
 
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);
@@ -519,6 +640,21 @@ int	oe_traceparent_parse(const char *, size_t len,
  * OTEL_EXPORTER_OTLP_TIMEOUT, OTEL_EXPORTER_OTLP_PROTOCOL).
  */
 struct oe_sysconf;
+
+/*
+ * One signal's resolved settings (oe_config_load()): every member is
+ * set.  endpoint_exact says the endpoint is a signal endpoint, used
+ * as-is; otherwise /v1/<signal> is appended for OTLP/HTTP.
+ */
+struct oe_env_signal {
+	const char	*endpoint;
+	int		 endpoint_exact;
+	const char	*protocol;
+	const char	*compression;	/* NULL: the exporter's default */
+	int		 timeout_ms;	/* -1: the exporter's default */
+	struct oe_attr	*headers;	/* owned */
+	size_t		 nheaders;
+};
 
 struct oe_env {
 	const char	*service_name;	/* NULL if unset */
@@ -552,6 +688,14 @@ struct oe_env {
 	 * oe_config_load() (default http/protobuf).
 	 */
 	const char	*protocol;
+	/*
+	 * The signal-specific OTEL_EXPORTER_OTLP_<SIGNAL>_* variables
+	 * (oe_env_load(): NULL, -1 or no headers when unset), and after
+	 * oe_config_load() each signal's resolved settings.
+	 */
+	struct oe_env_signal signals[OE_NSIGNALS];
+	int		 signal_headers_set[OE_NSIGNALS];
+	int		 signals_resolved;
 };
 
 /*
@@ -610,6 +754,13 @@ void	oe_resource_init(struct oe_resource *, const struct oe_env *,
  * are left alone.
  */
 void	oe_otlp_config_env(struct oe_otlp_config *, const struct oe_env *);
+/*
+ * Only the per-signal settings (cfg->signals): each signal's resolved
+ * endpoint (a signal endpoint as-is, else the general one), protocol,
+ * headers, timeout and compression.  Settings that oe_config_load() did
+ * not resolve leave every signal inheriting the general settings.
+ */
+void	oe_otlp_config_signals(struct oe_otlp_config *, const struct oe_env *);
 
 /*
  * The sink of the otel.conf(5) file target (env->file_path): created

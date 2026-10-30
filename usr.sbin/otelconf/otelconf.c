@@ -46,7 +46,16 @@ static int
 has_target(const struct oe_sysconf *sc)
 {
 
-	return (sc->export_file || sc->endpoint[0] != '\0');
+	int i;
+
+	if (sc->export_file || sc->endpoint[0] != '\0')
+		return (1);
+	/* A signal block's endpoint is a target for that signal. */
+	for (i = 0; i < OE_NSIGNALS; i++)
+		if (sc->signals[i].endpoint != NULL &&
+		    sc->signals[i].endpoint[0] != '\0')
+			return (1);
+	return (0);
 }
 
 static int
@@ -103,6 +112,49 @@ print_list(const struct oe_attr *a, size_t n, int redact)
 		    a[i].value);
 }
 
+/*
+ * <signal>.endpoint, .protocol, .compression, .timeout_ms, .headers_file
+ * of a signal block; unset ones print empty (the general key applies).
+ */
+static int
+print_signal_key(const struct oe_sysconf *sc, const char *key)
+{
+	const struct oe_sysconf_signal *ss;
+	const char *dot, *v;
+	size_t len;
+	int i;
+
+	if ((dot = strchr(key, '.')) == NULL)
+		return (-1);
+	len = (size_t)(dot - key);
+	for (i = 0; i < OE_NSIGNALS; i++)
+		if (strlen(oe_signal_name((enum oe_signal)i)) == len &&
+		    strncmp(key, oe_signal_name((enum oe_signal)i), len) == 0)
+			break;
+	if (i == OE_NSIGNALS)
+		return (-1);
+	ss = &sc->signals[i];
+	if (strcmp(dot + 1, "timeout_ms") == 0) {
+		if (ss->timeout_ms > 0)
+			printf("%d\n", ss->timeout_ms);
+		else
+			printf("\n");
+		return (0);
+	}
+	if (strcmp(dot + 1, "endpoint") == 0)
+		v = ss->endpoint;
+	else if (strcmp(dot + 1, "protocol") == 0)
+		v = ss->protocol;
+	else if (strcmp(dot + 1, "compression") == 0)
+		v = ss->compression;
+	else if (strcmp(dot + 1, "headers_file") == 0)
+		v = ss->headers_file;
+	else
+		return (-1);
+	printf("%s\n", v != NULL ? v : "");
+	return (0);
+}
+
 static int
 print_key(const struct oe_sysconf *sc, const char *key)
 {
@@ -132,7 +184,7 @@ print_key(const struct oe_sysconf *sc, const char *key)
 	else if (strcmp(key, "export.directory") == 0)
 		printf("%s\n", sc->export_dir);
 	else
-		return (-1);
+		return (print_signal_key(sc, key));
 	return (0);
 }
 
@@ -154,6 +206,26 @@ cmd_show(int argc, char **argv __unused)
 	for (i = 0; show_keys[i] != NULL; i++) {
 		printf("%s = ", show_keys[i]);
 		(void)print_key(&sc, show_keys[i]);
+	}
+	/* The signal blocks' settings, the ones that are set. */
+	for (i = 0; i < OE_NSIGNALS; i++) {
+		static const char *const skeys[] = { "endpoint", "protocol",
+		    "compression", "timeout_ms", "headers_file" };
+		const struct oe_sysconf_signal *ss = &sc.signals[i];
+		const char *set[] = { ss->endpoint, ss->protocol,
+		    ss->compression, ss->timeout_ms > 0 ? "" : NULL,
+		    ss->headers_file };
+		char key[64];
+		size_t k;
+
+		for (k = 0; k < nitems(skeys); k++) {
+			if (set[k] == NULL)
+				continue;
+			snprintf(key, sizeof(key), "%s.%s",
+			    oe_signal_name((enum oe_signal)i), skeys[k]);
+			printf("%s = ", key);
+			(void)print_key(&sc, key);
+		}
 	}
 	printf("# headers (%zu, values redacted)\n", sc.nheaders);
 	print_list(sc.headers, sc.nheaders, 1);

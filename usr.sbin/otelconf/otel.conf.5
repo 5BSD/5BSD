@@ -40,9 +40,13 @@ the program's command line;
 .It
 the standard
 .Ev OTEL_*
-environment variables;
+environment variables, a signal's own variable
+.Pq Ev OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+before the general one
+.Pq Ev OTEL_EXPORTER_OTLP_ENDPOINT ;
 .It
-.Pa /etc/otel.conf ;
+.Pa /etc/otel.conf ,
+a signal block's key before the general key;
 .It
 .Pa /etc/defaults/otel.conf ;
 .It
@@ -117,10 +121,18 @@ service,
 .Pc ,
 created with mode 0640 and synchronized to disk at least once a second
 while records arrive.
-An endpoint from the command line or
+An endpoint from the command line,
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT
-still selects OTLP export for that program; the spool is not used with
-the file target.
+or a signal's
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ENDPOINT
+still selects OTLP export for that program; the endpoints of the signal
+blocks are not used, and the spool is not used, with the file target.
+Profiles
+.Pq experimental
+are written as whole
+.Li ExportProfilesServiceRequest
+lines, whose JSON form is at Development maturity in opentelemetry-proto
+1.10 and may change with it.
 A file target that cannot be opened is an error, not a fallback.
 .Pp
 .Xr newsyslog 8
@@ -253,6 +265,46 @@ and
 to
 .Qq production .
 At most 32 attributes are accepted.
+.It Ic logs , metrics , traces , profiles Pq object
+Settings of one signal, overriding the general keys for it, so each
+signal may use its own collector and transport:
+.Bl -tag -width "headers_file"
+.It Ic endpoint Pq string
+The signal's full URL, used as-is: OTLP/HTTP requests of the signal go
+to its path exactly, with nothing appended
+.Pq OTLP/gRPC uses its host and port .
+.It Ic protocol Pq string
+As the general key.
+Profiles are sent with
+.Qq http/protobuf
+or
+.Qq grpc
+only.
+.It Ic compression Pq string
+As the general key.
+.It Ic timeout_ms Pq integer
+1 to 600000.
+.It Ic headers_file Pq path
+A credentials file, with the same checks as the general one, whose
+headers are sent only to this block's
+.Ic endpoint .
+A block with an
+.Ic endpoint
+but no
+.Ic headers_file
+sends the general file's headers to it.
+.El
+.Pp
+A key the block does not set comes from the general keys; an
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING
+or general
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SETTING
+variable, or the command line, overrides the block's setting, and the
+general file's headers go only to the general
+.Ic endpoint
+and to the endpoints of blocks without a
+.Ic headers_file
+of their own.
 .It Ic spool Pq object
 Persistent buffering of OTLP batches the collector could not take
 .Pq the Qq otlp target only :
@@ -385,6 +437,20 @@ headers_file = "/etc/otel/collector.headers";
 # echo 'Authorization: Bearer TOKEN' > /etc/otel/collector.headers
 # otelconf check -t
 # sysrc otel_enable=YES
+.Ed
+.Pp
+Send traces to a separate collector over OTLP/gRPC with their own
+token, and the other signals to the general endpoint:
+.Bd -literal -offset indent
+# /etc/otel.conf
+endpoint = "https://collector.example.org:4318";
+headers_file = "/etc/otel/collector.headers";
+traces {
+	endpoint = "https://traces.example.org:4317";
+	protocol = "grpc";
+	headers_file = "/etc/otel/traces.headers";
+}
+profiles { protocol = "http/protobuf"; }
 .Ed
 .Pp
 Keep everything in local files, without a collector:

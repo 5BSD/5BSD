@@ -25,9 +25,11 @@ PROTO_FILES.otlpcpp= \
 		opentelemetry/proto/logs/v1/logs.proto \
 		opentelemetry/proto/metrics/v1/metrics.proto \
 		opentelemetry/proto/trace/v1/trace.proto \
+		opentelemetry/proto/profiles/v1development/profiles.proto \
 		opentelemetry/proto/collector/logs/v1/logs_service.proto \
 		opentelemetry/proto/collector/metrics/v1/metrics_service.proto \
-		opentelemetry/proto/collector/trace/v1/trace_service.proto
+		opentelemetry/proto/collector/trace/v1/trace_service.proto \
+		opentelemetry/proto/collector/profiles/v1development/profiles_service.proto
 .include "${SRCTOP}/lib/protobuf/protoc-gen.mk"
 
 # Generated code and the protobuf/abseil headers are not -W clean at

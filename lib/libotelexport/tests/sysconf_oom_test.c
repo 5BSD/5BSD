@@ -186,11 +186,15 @@ ATF_TC_BODY(config_sweep, tc)
 	snprintf(conf, sizeof(conf), "endpoint = \"http://collector:4318\";\n"
 	    "headers_file = \"%s/creds\";\nhost_id_file = \"\";\n"
 	    "resource { a = \"1\"; }\n"
-	    "spool { directory = \"%s/spool\"; }\n", cwd, cwd);
+	    "spool { directory = \"%s/spool\"; }\n"
+	    "traces { endpoint = \"http://t:1/x\"; protocol = \"grpc\";\n"
+	    "    headers_file = \"%s/creds\"; }\n", cwd, cwd, cwd);
 	write_file("local.conf", conf, 0644);
 	setenv("OTELCONF_DEFAULTS", "", 1);
 	setenv("OTELCONF_FILE", "local.conf", 1);
 	setenv("OTEL_RESOURCE_ATTRIBUTES", "b=2", 1);
+	/* Signals copy the general headers and add their credentials. */
+	setenv("OTEL_EXPORTER_OTLP_HEADERS", "h=1", 1);
 	memset(&req, 0, sizeof(req));
 	req.scope = "tool";
 	req.system = 1;
@@ -210,7 +214,9 @@ ATF_TC_BODY(config_sweep, tc)
 			ATF_REQUIRE_EQ_MSG(r, 0, "%s", err);
 			ATF_CHECK(env.spool_path != NULL);
 			ATF_CHECK_EQ(env.nresource_attrs, 2);
-			ATF_CHECK_EQ(env.nheaders, 1);
+			ATF_CHECK_EQ(env.nheaders, 2);
+			ATF_CHECK_EQ(env.signals[OE_SIGNAL_TRACES].nheaders, 2);
+			ATF_CHECK_EQ(env.signals[OE_SIGNAL_LOGS].nheaders, 2);
 			oe_env_free(&env);
 			break;
 		}
@@ -228,6 +234,7 @@ ATF_TC_BODY(config_sweep, tc)
 	}
 	ATF_REQUIRE_MSG(n > 10 && n < SWEEP_MAX, "sweep ended at %ld", n);
 	unsetenv("OTEL_RESOURCE_ATTRIBUTES");
+	unsetenv("OTEL_EXPORTER_OTLP_HEADERS");
 }
 
 /* The same through the file target (its path is the last allocation). */

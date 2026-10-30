@@ -14,6 +14,11 @@ struct oe_url {
 	int	 port;
 	char	 host[256];
 	char	 basepath[512];
+	/*
+	 * The path exactly as given ("/" when none), for a signal
+	 * endpoint used as-is.
+	 */
+	char	 rawpath[512];
 };
 
 struct oe_http_response {
@@ -31,7 +36,10 @@ int	oe_http_post(const struct oe_url *, const char *path,
 	    const struct oe_attr *headers, size_t nheaders,
 	    const char *user_agent, const void *body, size_t bodylen,
 	    int gzipped, int timeout_ms, struct oe_http_response *);
-/* The same with a Content-Type (oe_http_post(): application/json). */
+/*
+ * The same with a Content-Type (oe_http_post(): application/json).  A
+ * NULL path posts to the URL's own path (u->rawpath).
+ */
 int	oe_http_post_type(const struct oe_url *, const char *path,
 	    const char *content_type, const struct oe_attr *headers,
 	    size_t nheaders, const char *user_agent, const void *body,

@@ -292,11 +292,13 @@ environment:
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (default), `grpc` or `http/json` (dtrace `-x otelprotocol=`, bsdinstruments `--protocol` override) |
 | `OTEL_SERVICE_NAME` | `service.name` resource attribute |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_<SETTING>` | One signal's endpoint, protocol, headers, timeout or compression (see below) |
 
 The C entry points are `oe_text_new()`, `oe_jsonl_new()`,
 `oe_collapsed_new()`, `oe_otlpjson_new()`, `oe_otlp_new()`,
 `oe_exporter_open()`, `oe_config_load()`, `oe_resource_init()`,
-`oe_otlp_config_env()` and `oe_traceparent_parse()` in `<otelexport.h>`.
+`oe_otlp_config_env()`, `oe_otlp_config_signals()`, `oe_profile()` and
+`oe_traceparent_parse()` in `<otelexport.h>`.
 Log records from BSDLog are not exported over OTLP; only DTrace and
 telemetry data are.
 
@@ -332,6 +334,89 @@ policy (UNAVAILABLE and the other transient codes, RESOURCE_EXHAUSTED
 only with a RetryInfo delay). Partial-success responses are reported for
 every protocol. The default endpoint is `http://localhost:4318`, or
 `http://localhost:4317` for `grpc`.
+
+### Per-signal endpoints and protocols
+
+Each signal (logs, metrics, traces, profiles) may go to its own collector
+over its own transport, as the OTLP exporter specification provides:
+`OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES,PROFILES}_{ENDPOINT,PROTOCOL,HEADERS,TIMEOUT,COMPRESSION}`
+and the `logs`, `metrics`, `traces` and `profiles` blocks of `otel.conf(5)`
+(`endpoint`, `protocol`, `compression`, `timeout_ms`, `headers_file`). Each
+setting comes from the first layer that has it: the command line
+(`-x otelendpoint`/`otelprotocol`, `--endpoint`/`--protocol`, which apply to
+every signal), the signal's variable, the general `OTEL_EXPORTER_OTLP_*`
+variable, the signal's `otel.conf` block, the general `otel.conf` keys, the
+default. A signal endpoint is that signal's full URL and is used as-is:
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://t:4318/custom/traces` posts to
+exactly that path, while a general endpoint gets `/v1/<signal>` appended. A
+signal's headers replace the general headers. Credentials from an
+`otel.conf` headers file only go to the endpoint they belong to: a block's
+file to that block's endpoint (the general file when the block has none),
+the general file to the general endpoint, never to an endpoint taken from
+the environment or the command line. Signals with the same settings share
+one transport; one with a different protocol gets its own, so traces can go
+over gRPC while logs use OTLP/HTTP. With the `otel.conf` file target the
+blocks' endpoints are ignored, but a signal endpoint from the environment
+selects OTLP export for that program.
+
+### Exemplars
+
+DTrace aggregations keep no per-measurement context, so a data point cannot
+name the trace of a measurement by itself. A D program that knows the
+trace prints an `\037otel.exemplar` record in the firing that updates the
+aggregation: `agg=<name>`, `value=<integer>`, `key=<k>` once per key in key
+order (as `%d`/`%s` print them), and either `traceparent=` or the firing's
+`\037otel.trace` record (printed before or after it), plus filtered
+attributes `a.s.<key>=` and `a.i.<key>=`. The exemplar goes out on that
+series' data point with the next snapshot, on every metric kind (sums,
+gauges, histograms, exponential histograms); the four most recent per
+series and 1024 series per snapshot are kept, an exemplar whose series is
+not in the snapshot is dropped with a warning, and all are cleared once
+exported. The protobuf form carries the trace and span ids as bytes, as
+every OTLP back end expects.
+
+```d
+myapp*:::request-done
+{
+	@lat[execname] = quantize(arg1);
+	printf("\037otel.exemplar\037agg=lat\037value=%d\037key=%s"
+	    "\037traceparent=%s\n", arg1, execname, copyinstr(arg0));
+}
+```
+
+### Profiles (experimental)
+
+`dtrace -x otelprofiles` (with `-x otel=otlp` or `otlp-json`) and
+`bsdinstruments watch --profiles` (with `--format otel` or `otlp-json`)
+export the OTLP profiles signal of opentelemetry-proto 1.10
+(`opentelemetry.proto.profiles.v1development`), which is still in
+development upstream: its schema, its JSON form and the Collector's support
+may change, so the option is off by default and marked experimental. A
+firing that prints only `stack()`/`ustack()` output is a timestamped sample
+of its probe's profile; `profile-N` and `tick-N` give the period (CPU
+nanoseconds between samples). These profiles go out every 10 seconds, at
+each aggregation snapshot and at exit. Stack-keyed `count()` and `sum()`
+aggregations become profiles of each series' growth since the previous
+snapshot, with the other keys as sample attributes, instead of metrics.
+Frames are function-level and symbolized as libdtrace provides them;
+HyperTrace guest stacks are guest addresses under the mapping
+`guest[<vmid>]` on the guest's own resource. The request carries the
+1.10 `ProfilesDictionary` (strings, mappings, locations, functions,
+stacks, links, attributes, each starting with its zero value, without
+duplicates), and the scope names the proto package and release
+(`otlp.profiles.package`, `otlp.proto.version`). Profiles travel as
+protobuf only: `POST /v1development/profiles` or the
+`ProfilesService/Export` gRPC method; a profiles signal resolved to
+`http/json` is refused at start (`OTEL_EXPORTER_OTLP_PROFILES_PROTOCOL`
+can move just this signal to `http/protobuf`). The file target and
+`otlp-json` write each profile as one `ExportProfilesServiceRequest` JSON
+line. Bounds: 65536 distinct samples and about a million observations per
+interval, beyond which firings are dropped with a warning. The
+OpenTelemetry Collector accepts profiles only with its profiles feature
+gate (`service.profilesSupport`) enabled; that compatibility is documented
+here, not tested, since the base system ships no Collector. The tests
+check every request with an independent C++ protobuf decoder that
+resolves the samples through the dictionary.
 
 ### Protocol Buffers in the base system
 

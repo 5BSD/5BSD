@@ -96,9 +96,11 @@ _PROTOGEN_FILES.${_s}=	${_PROTOGEN_OUT.${_s}:S/^/protogen\/${_s}\//}
 
 # One protoc run writes the whole set; the first output stands for it.
 # The inputs include the generator binaries, so a rebuilt protoc
-# regenerates the set.
+# regenerates the set, and the Makefile naming the set, so files added to
+# PROTO_FILES are generated in an existing object tree too.
 _PROTOGEN_STAMP.${_s}=	protogen/${_s}/.stamp
-${_PROTOGEN_STAMP.${_s}}: ${PROTO_FILES.${_s}:S/^/${PROTO_ROOT.${_s}}\//}
+${_PROTOGEN_STAMP.${_s}}: ${PROTO_FILES.${_s}:S/^/${PROTO_ROOT.${_s}}\//} \
+		${.CURDIR}/Makefile
 	@rm -rf ${PROTOGEN.${_s}}
 	@mkdir -p ${PROTOGEN.${_s}}
 	${PROTOC} ${PROTOC_PLUGINS} -I${PROTO_ROOT.${_s}} \

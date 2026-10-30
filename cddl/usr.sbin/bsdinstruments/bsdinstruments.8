@@ -37,6 +37,7 @@
 .Op Fl -protocol Ar grpc | http/protobuf | http/json
 .Op Fl -spool Ar file
 .Op Fl -spool-max Ar size
+.Op Fl -profiles
 .Op Fl -bufsize Ar size
 .Op Fl -switchrate Ar rate
 .Nm
@@ -261,7 +262,11 @@ and
 .Li \e037otel.trace
 records and span
 .Cm traceparent
-fields join the application's W3C trace.
+fields join the application's W3C trace;
+.Li \e037otel.exemplar
+records attach exemplars, a measurement with its trace, to the data
+point of the aggregation series they name
+.Pq see Xr dtrace 1 .
 The protocol is
 .Fl -protocol ,
 else
@@ -437,6 +442,47 @@ Records are never split across files.
 Text output rotates at the next once-a-second check.
 A write error, such as a full disk, stops the trace with exit status 1
 and a message naming the file.
+.Ss Profiles (experimental)
+With
+.Fl -format Cm otel
+or
+.Cm otlp-json ,
+.Fl -profiles
+also exports OTLP profiles
+.Pq opentelemetry-proto 1.10, package opentelemetry.proto.profiles.v1development ,
+a signal whose schema and Collector support are still in development.
+Firings that print only stacks, such as those of
+.Fl -with-stack
+and
+.Fl -with-ustack
+profiles of
+.Li profile- Ns Ar N
+probes, become timestamped samples of their probe's profile, emitted
+every 10 seconds, at each
+.Fl -interval
+snapshot and at exit; stack-keyed
+.Fn count
+and
+.Fn sum
+aggregations become profiles of their growth since the previous snapshot
+instead of metrics.
+Profiles are sent over
+.Ql http/protobuf
+or
+.Ql grpc
+only:
+.Nm
+refuses to start when the profiles signal would use
+.Ql http/json
+.Po
+for instance
+.Ev OTEL_EXPORTER_OTLP_PROFILES_PROTOCOL Ns = Ns Ql http/protobuf
+keeps the other signals on
+.Ql http/json
+.Pc .
+The semantics, period, guest attribution and bounds are those of
+.Xr dtrace 1
+.Fl x Cm otelprofiles .
 .Ss Collector outages
 With
 .Fl -format Cm otel ,
@@ -537,7 +583,23 @@ The OTLP exporter honors the standard OpenTelemetry variables
 .Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
 .Ev OTEL_EXPORTER_OTLP_PROTOCOL ,
 and
-.Ev OTEL_EXPORTER_OTLP_TIMEOUT .
+.Ev OTEL_EXPORTER_OTLP_TIMEOUT ,
+and their per-signal forms
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING
+.Po
+.Ar SIGNAL
+one of
+.Ev LOGS , METRICS , TRACES , PROFILES ;
+.Ar SETTING
+one of
+.Ev ENDPOINT , PROTOCOL , HEADERS , TIMEOUT , COMPRESSION
+.Pc ,
+which give one signal its own collector and transport
+.Pq a signal endpoint is used as-is ;
+see
+.Xr libotelexport 3
+and the signal blocks of
+.Xr otel.conf 5 .
 Explicit
 .Fl -endpoint
 and
@@ -545,7 +607,8 @@ and
 flags take precedence over
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT
 and
-.Ev OTEL_EXPORTER_OTLP_PROTOCOL .
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
+and their per-signal forms.
 With
 .Fl -format Cm otel ,
 settings given neither on the command line nor in the environment come

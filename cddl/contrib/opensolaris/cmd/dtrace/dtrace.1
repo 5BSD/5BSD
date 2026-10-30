@@ -1359,7 +1359,14 @@ and
 frames attach to the line of their firing as the array attributes
 .Ql dtrace.stack
 and
-.Ql dtrace.ustack .
+.Ql dtrace.ustack ;
+the frames of a
+.Fn ustack
+or
+.Fn jstack
+record are user frames
+.Pq Ql dtrace.ustack
+whichever program printed them.
 The action behind a line is its
 .Ql dtrace.action
 attribute
@@ -1557,6 +1564,45 @@ myapp*:::request-start {
 resource attributes of a HyperTrace guest, such as
 .Cm host.name ,
 printed by one of its probes.
+.It Li otel.exemplar
+.Cm agg ,
+the aggregation's name,
+.Cm value ,
+an integer measurement,
+.Cm key
+repeated once per aggregation key in key order, as
+.Ql %d
+and
+.Ql %s
+print them, an optional
+.Cm traceparent ,
+and filtered attributes
+.Cm a.s.\& Ns Ar key Ns = Ns Ar string
+and
+.Cm a.i.\& Ns Ar key Ns = Ns Ar integer :
+an exemplar of the series
+.Li @ Ns Ar agg Ns Bq Ar key , ... ,
+exported on that series' data point with the next snapshot.
+Without
+.Cm traceparent ,
+the trace is that of the
+.Li otel.trace
+record of the same firing, printed before or after it.
+DTrace aggregations keep no per-measurement context, so the D program
+prints this record in the firing that updates the aggregation.
+Every metric kind carries exemplars; the four most recent per series and
+1024 series per snapshot are kept, exemplars of a series missing from the
+snapshot are dropped with a warning, and all are cleared once exported.
+Stack-keyed aggregations exported as profiles carry none.
+.Bd -literal -offset indent
+myapp*:::request-done {
+	this->tp = copyinstr(arg0);
+	@lat[execname] = quantize(arg1);
+	printf("\e037otel.exemplar\e037agg=lat\e037value=%d"
+	    "\e037key=%s\e037traceparent=%s\en", arg1, execname,
+	    this->tp);
+}
+.Ed
 .El
 .Pp
 Records carry the probe's own wall-clock time:
@@ -1589,7 +1635,11 @@ The
 and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT
 environment variables are honored as described in
-.Xr libotelexport 3 .
+.Xr libotelexport 3 ,
+as are their per-signal forms
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING ;
+see
+.Sx ENVIRONMENT .
 With
 .Cm otlp ,
 settings given neither as
@@ -1712,6 +1762,50 @@ of
 .Xr otel.conf 5 ,
 else 64m
 .Pc .
+.It Cm otelprofiles Ns Op = Ns Cm on | off
+.Em Experimental :
+export OTLP profiles
+.Pq opentelemetry-proto 1.10, package opentelemetry.proto.profiles.v1development ,
+a signal whose schema and Collector support are still in development.
+It needs
+.Fl x Cm otel Ns = Ns Cm otlp
+or
+.Cm otlp-json ;
+profiles are sent over
+.Ql http/protobuf
+.Pq Pa /v1development/profiles
+or
+.Ql grpc
+only, and
+.Nm
+refuses to start when the profiles signal would use
+.Ql http/json .
+A firing that prints only
+.Fn stack
+and
+.Fn ustack
+output is a timestamped sample of its probe's profile;
+.Li profile- Ns Ar N
+and
+.Li tick- Ns Ar N
+probes give the profile its period
+.Pq CPU nanoseconds between samples, from Ar N with its unit, hertz without one .
+These profiles are emitted every 10 seconds, at each aggregation
+snapshot and at exit, each covering the time since the previous one.
+Stack-keyed
+.Fn count
+and
+.Fn sum
+aggregations become profiles of each series' growth since the
+previous snapshot
+.Pq a reset counts in full ,
+the other keys sample attributes, and are no longer exported as metrics.
+Frames are function-level, symbolized as libdtrace provides them; a
+HyperTrace guest's stacks are guest addresses under the mapping
+.Ql guest[ Ns Ar vmid Ns Ql \&]
+on the guest's resource.
+At most 65536 distinct samples and 1048576 observations are kept per
+interval; further firings are dropped with a warning.
 .It Cm otelrotatesize Ns = Ns Ar size , Cm otelrotatetime Ns = Ns Ar time , Cm otelrotatekeep Ns = Ns Ar n
 rotate the
 .Fl o
@@ -1754,6 +1848,33 @@ When defined,
 .Nm
 will output debug log messages to
 .Xr stderr 4 .
+.It Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING
+With
+.Fl x Cm otel Ns = Ns Cm otlp ,
+the settings of one signal:
+.Ar SIGNAL
+is
+.Ev LOGS , METRICS , TRACES
+or
+.Ev PROFILES ,
+.Ar SETTING
+is
+.Ev ENDPOINT , PROTOCOL , HEADERS , TIMEOUT
+or
+.Ev COMPRESSION ,
+so each signal may use its own collector and transport.
+A signal endpoint is that signal's full URL, used as-is
+.Pq nothing is appended ;
+a signal's headers replace the general headers.
+Each setting comes from the first of:
+.Cm otelendpoint
+and
+.Cm otelprotocol ,
+the signal's variable, the general
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SETTING ,
+the signal's block of
+.Xr otel.conf 5 ,
+its general keys, the built-in default.
 .El
 .Sh FILES
 .Bl -tag -width /boot/dtrace.dof -compact

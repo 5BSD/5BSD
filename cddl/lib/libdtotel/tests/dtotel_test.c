@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,9 +28,46 @@
 #include "dtotel.h"
 #include "dtotel_session.h"
 #include "dtotel_impl.h"
+#include "oe_otlpenc.h"
 #include "otlp_validate.h"
 #include "otel_testutil.h"
 #include "dtrace_stub.h"
+
+/* stderr into a file for the duration of a test step. */
+static int saved_stderr = -1;
+
+static void
+capture_start(void)
+{
+	int fd;
+
+	fflush(stderr);
+	saved_stderr = dup(STDERR_FILENO);
+	fd = open("stderr.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	dup2(fd, STDERR_FILENO);
+	close(fd);
+}
+
+static char *
+capture_end(void)
+{
+	char *s;
+	FILE *fp;
+	long n;
+
+	fflush(stderr);
+	dup2(saved_stderr, STDERR_FILENO);
+	close(saved_stderr);
+	ATF_REQUIRE((fp = fopen("stderr.txt", "r")) != NULL);
+	fseek(fp, 0, SEEK_END);
+	n = ftell(fp);
+	rewind(fp);
+	ATF_REQUIRE((s = calloc(1, (size_t)n + 1)) != NULL);
+	ATF_REQUIRE_EQ((size_t)n, fread(s, 1, (size_t)n, fp));
+	fclose(fp);
+	fprintf(stderr, "%s", s);
+	return (s);
+}
 
 /* ---------------------------------------------------------------- */
 /* Capturing exporter						 	*/
@@ -63,6 +101,17 @@ struct cap_point {
 	int		 is_double;
 	double		 dvalue;
 	struct timespec	 start;
+	char		*ex;		/* "value@sec/trace/span{attrs};..." */
+};
+
+/* One profile: "frames|attrs|v<value> or t<observations>" per sample. */
+struct cap_prof {
+	char		*type;		/* "type/unit" */
+	int64_t		 period;
+	char		*attrs;
+	size_t		 nsamples;
+	char		*samples;
+	struct timespec	 start, end;
 };
 
 struct cap_span {
@@ -98,8 +147,11 @@ struct capture {
 	int		 nsnaps;
 	struct cap_span	 spans[CAP_MAX];
 	int		 nspans;
+	struct cap_prof	 profs[CAP_MAX];
+	int		 nprofs;
 	uint64_t	 drops;
 	int		 fail;
+	int		 ignore_events;
 };
 
 static char *
@@ -126,6 +178,8 @@ cap_event(struct oe_exporter *e, const struct oe_event *ev)
 
 	if (c->fail)
 		return (-1);
+	if (c->ignore_events)
+		return (0);
 	ATF_REQUIRE(c->nevents < CAP_MAX);
 	ce = &c->events[c->nevents++];
 	ce->ctx = ev->ctx;
@@ -239,7 +293,105 @@ cap_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 		cs->points[i].is_double = sn->points[i].is_double;
 		cs->points[i].dvalue = sn->points[i].dvalue;
 		cs->points[i].start = sn->points[i].start;
+		oe_buf_init(&b);
+		oe_buf_appendstr(&b, "");
+		for (j = 0; j < sn->points[i].nexemplars; j++) {
+			const struct oe_exemplar *x =
+			    &sn->points[i].exemplars[j];
+			char t[33], sid[17];
+			size_t k;
+
+			oe_id_hex(x->trace_id, OE_TRACE_ID_LEN, t);
+			oe_id_hex(x->span_id, OE_SPAN_ID_LEN, sid);
+			oe_buf_appendf(&b, "%jd@%jd/%s/%s{",
+			    (intmax_t)x->ivalue, (intmax_t)x->ts.tv_sec, t,
+			    sid);
+			for (k = 0; k < x->nattrs; k++) {
+				if (x->attrs[k].type == OE_VAL_INT)
+					oe_buf_appendf(&b, "%s=%jd,",
+					    x->attrs[k].key,
+					    (intmax_t)x->attrs[k].i);
+				else
+					oe_buf_appendf(&b, "%s=%s,",
+					    x->attrs[k].key, x->attrs[k].s);
+			}
+			oe_buf_appendstr(&b, "};");
+		}
+		cs->points[i].ex = strdup(b.data != NULL ? b.data : "");
+		oe_buf_free(&b);
 	}
+	return (0);
+}
+
+static void
+cap_frames(struct oe_buf *b, const struct oe_frame *f, size_t n)
+{
+	char buf[256];
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		oe_frame_format(&f[i], buf, sizeof(buf));
+		oe_buf_appendf(b, "%s,", buf);
+	}
+}
+
+static int
+cap_profile(struct oe_exporter *e, const struct oe_profile *pr)
+{
+	struct capture *c = (struct capture *)e;
+	struct cap_prof *cp;
+	struct oe_kv ctx[OE_CONTEXT_MAXKV];
+	struct oe_buf b;
+	char jid[16];
+	size_t i, j, n;
+
+	if (c->fail)
+		return (-1);
+	ATF_REQUIRE(c->nprofs < CAP_MAX);
+	cp = &c->profs[c->nprofs++];
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "%s/%s", pr->sample_type, pr->sample_unit);
+	cp->type = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	cp->period = pr->period_type != NULL ? pr->period : -1;
+	cp->start = pr->start;
+	cp->end = pr->end;
+	oe_buf_init(&b);
+	for (i = 0; i < pr->nattrs; i++)
+		oe_buf_appendf(&b, "%s=%s;", pr->attrs[i].key, pr->attrs[i].s);
+	cp->attrs = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	cp->nsamples = pr->nsamples;
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "");
+	for (i = 0; i < pr->nsamples; i++) {
+		const struct oe_profile_sample *s = &pr->samples[i];
+
+		cap_frames(&b, s->stack, s->nstack);
+		oe_buf_appendstr(&b, "+");
+		cap_frames(&b, s->ustack, s->nustack);
+		oe_buf_appendstr(&b, "|");
+		n = oe_context_kvs(s->pid, s->execname, &s->ctx, ctx, jid);
+		for (j = 0; j < n; j++) {
+			if (ctx[j].type == OE_VAL_INT)
+				oe_buf_appendf(&b, "%s=%jd,", ctx[j].key,
+				    (intmax_t)ctx[j].i);
+			else
+				oe_buf_appendf(&b, "%s=%s,", ctx[j].key,
+				    ctx[j].s);
+		}
+		for (j = 0; j < s->nattrs; j++)
+			oe_buf_appendf(&b, "%s=%s,", s->attrs[j].key,
+			    s->attrs[j].s);
+		if (!oe_id_is_zero(s->trace_id, OE_TRACE_ID_LEN))
+			oe_buf_appendf(&b, "link=%02x..,", s->trace_id[0]);
+		if (s->has_value)
+			oe_buf_appendf(&b, "|v%jd\n", (intmax_t)s->value);
+		else
+			oe_buf_appendf(&b, "|t%zu\n", s->ntimestamps);
+	}
+	cp->samples = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
 	return (0);
 }
 
@@ -327,6 +479,7 @@ static const struct oe_exporter_ops cap_ops = {
 	.shutdown = cap_flush,
 	.free = cap_free,
 	.span = cap_span,
+	.profile = cap_profile,
 };
 
 static struct capture cap;
@@ -339,7 +492,7 @@ static struct capture cap;
 struct guest_cap {
 	struct oe_exporter e;
 	char		 ident[256];	/* vmid/epoch/name[/k=v...] */
-	int		 events, spans, snaps, started, shutdown;
+	int		 events, spans, snaps, started, shutdown, profiles;
 	char		 lastbody[64];
 	int		 freed;
 };
@@ -404,10 +557,22 @@ g_free(struct oe_exporter *e)
 	((struct guest_cap *)e)->freed = 1;
 }
 
+static int
+g_profile(struct oe_exporter *e, const struct oe_profile *pr)
+{
+	struct guest_cap *g = (struct guest_cap *)e;
+
+	g->profiles++;
+	if (pr->nsamples > 0 && pr->samples[0].nstack > 0)
+		strlcpy(g->lastbody, pr->samples[0].stack[0].module != NULL ?
+		    pr->samples[0].stack[0].module : "?", sizeof(g->lastbody));
+	return (0);
+}
+
 static const struct oe_exporter_ops guest_ops = {
 	.start = g_start, .event = g_event, .snapshot = g_snapshot,
 	.flush = g_flush, .shutdown = g_shutdown, .free = g_free,
-	.span = g_span,
+	.span = g_span, .profile = g_profile,
 };
 
 static struct oe_exporter *
@@ -3323,6 +3488,766 @@ ATF_TC_BODY(typed_print_and_actions, tc)
 	dtotel_close(d);
 }
 
+
+/* ---------------------------------------------------------------- */
+/* Profiles								*/
+
+static dtrace_probedesc_t prof_pdesc = {
+	.dtpd_provider = "profile",
+	.dtpd_mod = "",
+	.dtpd_func = "",
+	.dtpd_name = "profile-997",
+};
+
+/* Deliver a chunk of a probe's firing, with the record's action. */
+static int
+deliver_probe(const char *text, int cpu, uint64_t hrtime,
+    const dtrace_probedesc_t *pdesc, dtrace_actkind_t act, uint16_t vmid)
+{
+	dtrace_bufdata_t bd;
+	dtrace_probedata_t pd;
+	dtrace_eprobedesc_t ed;
+	dtrace_recdesc_t rec;
+
+	memset(&bd, 0, sizeof(bd));
+	memset(&pd, 0, sizeof(pd));
+	memset(&ed, 0, sizeof(ed));
+	memset(&rec, 0, sizeof(rec));
+	ed.dtepd_epid = 7;
+	ed.dtepd_vmid = vmid;
+	rec.dtrd_action = act;
+	pd.dtpda_cpu = cpu;
+	pd.dtpda_timestamp = hrtime;
+	pd.dtpda_edesc = &ed;
+	pd.dtpda_pdesc = __DECONST(dtrace_probedesc_t *, pdesc);
+	bd.dtbda_buffered = text;
+	bd.dtbda_probe = &pd;
+	bd.dtbda_recdesc = act != 0 ? &rec : NULL;
+	return (stub.bufhandler(&bd, stub.bufarg));
+}
+
+static void
+busy_firing(int cpu, uint64_t hrtime)
+{
+
+	deliver_probe("\n              kernel`spin+0x1\n"
+	    "              kernel`loop+0x2\n", cpu, hrtime, &prof_pdesc,
+	    DTRACEACT_STACK, 0);
+	deliver_probe("\n              a.out`busy+0x4\n"
+	    "              0x7fff00\n", cpu, hrtime, &prof_pdesc,
+	    DTRACEACT_USTACK, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(profile_firings);
+ATF_TC_BODY(profile_firings, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	d->profiles = 1;
+	busy_firing(0, 100);
+	busy_firing(0, 200);
+	busy_firing(1, 300);
+	/* A context record makes the process known to its sample. */
+	deliver_probe("\037otel.ctx\037pid=42\037ppid=1\037tid=7\037uid=0"
+	    "\037ruid=0\037gid=0\037rgid=0\037jid=0\037execname=busy\n", 1,
+	    400, &prof_pdesc, DTRACEACT_PRINTF, 0);
+	busy_firing(1, 400);
+	/* A firing with text stays a log record, not a sample. */
+	deliver_probe("hello\n", 0, 500, &prof_pdesc, DTRACEACT_PRINTF, 0);
+	deliver_probe("              kernel`spin+0x1\n", 0, 500, &prof_pdesc,
+	    DTRACEACT_STACK, 0);
+	/* A trace record gives the firing's sample its link. */
+	deliver_probe("\037otel.trace\037traceparent=00-"
+	    "0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01\n", 0, 600,
+	    &prof_pdesc, DTRACEACT_PRINTF, 0);
+	busy_firing(0, 600);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_REQUIRE_EQ(1, cap.nprofs);
+	ATF_CHECK_STREQ("samples/count", cap.profs[0].type);
+	ATF_CHECK_EQ(1003009, cap.profs[0].period);
+	ATF_CHECK_STREQ("dtrace.profile.source=firings;"
+	    "dtrace.probe=profile:::profile-997;", cap.profs[0].attrs);
+	ATF_CHECK_EQ(4, cap.profs[0].nsamples);
+	ATF_CHECK_STREQ(
+	    "kernel`spin+0x1,kernel`loop+0x2,+a.out`busy+0x4,0x00000000007fff00,|"
+	    "cpu.logical_number=0,|t2\n"
+	    "kernel`spin+0x1,kernel`loop+0x2,+a.out`busy+0x4,0x00000000007fff00,|"
+	    "cpu.logical_number=1,|t1\n"
+	    "kernel`spin+0x1,kernel`loop+0x2,+a.out`busy+0x4,0x00000000007fff00,|"
+	    "process.pid=42,process.parent_pid=1,process.executable.name=busy,"
+	    "process.user.id=0,process.real_user.id=0,process.group.id=0,"
+	    "process.real_group.id=0,thread.id=7,cpu.logical_number=1,|t1\n"
+	    "kernel`spin+0x1,kernel`loop+0x2,+a.out`busy+0x4,0x00000000007fff00,|"
+	    "cpu.logical_number=0,link=0a..,|t1\n", cap.profs[0].samples);
+	/* Emitted once: nothing new, no profile. */
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_CHECK_EQ(1, cap.nprofs);
+	/* Firings still accumulated go out at shutdown. */
+	busy_firing(0, 700);
+	ATF_REQUIRE_EQ(0, dtotel_shutdown(d));
+	ATF_CHECK_EQ(2, cap.nprofs);
+	ATF_CHECK_EQ(1, cap.profs[1].nsamples);
+	dtotel_close(d);
+}
+
+/* The period from profile-N and tick-N names, and none for others. */
+ATF_TC_WITHOUT_HEAD(profile_periods);
+ATF_TC_BODY(profile_periods, tc)
+{
+	static const struct {
+		const char *prov, *name;
+		int64_t period;
+	} cases[] = {
+		{ "profile", "profile-1ms", 1000000 },
+		{ "profile", "tick-5s", 5000000000LL },
+		{ "profile", "profile-100hz", 10000000 },
+		{ "profile", "profile-2000000000", 1 },
+		{ "profile", "tick-3min", 180000000000LL },
+		{ "profile", "profile-10usec", 10000 },
+		{ "profile", "profile-7xyz", -1 },
+		{ "profile", "profile-abc", -1 },
+		{ "profile", "profile-0", -1 },
+		{ "profile", "profile-99999999999999999999", -1 },
+		{ "profile", "tick-9999999999d", -1 },
+		{ "profile", "other-1s", -1 },
+		{ "sched", "off-cpu", -1 },
+	};
+	dtrace_probedesc_t pd;
+	struct dtotel *d;
+	size_t i;
+
+	for (i = 0; i < nitems(cases); i++) {
+		d = open_bridge(NULL);
+		d->profiles = 1;
+		memset(&pd, 0, sizeof(pd));
+		strlcpy(pd.dtpd_provider, cases[i].prov,
+		    sizeof(pd.dtpd_provider));
+		strlcpy(pd.dtpd_name, cases[i].name, sizeof(pd.dtpd_name));
+		deliver_probe("              kernel`spin+0x1\n", 0, 10, &pd,
+		    DTRACEACT_STACK, 0);
+		dtotel_flush(d);
+		/* The report tick emits once the interval has passed. */
+		dtotel_report(d, 0);
+		ATF_CHECK_EQ(0, cap.nprofs);
+		d->prof_interval = 0;
+		dtotel_report(d, 0);
+		ATF_REQUIRE_EQ_MSG(1, cap.nprofs, "%s", cases[i].name);
+		ATF_CHECK_EQ_MSG(cases[i].period, cap.profs[0].period, "%s",
+		    cases[i].name);
+		dtotel_close(d);
+	}
+}
+
+static struct fake_agg *lat_agg(const char *, int64_t);
+
+static void
+stack_agg(struct fake_agg **fa, const char *name, dtrace_actkind_t kind,
+    int64_t value, uint64_t pid, uint16_t vmid)
+{
+	uint64_t k[3] = { 0x1110, 0x1220, 0 };
+	uint64_t u[4] = { 0, 0x400110, 0x800010, 0x999 };
+	char exec[16] = "busy";
+
+	u[0] = pid;
+	*fa = fake_new(name, 3);
+	fake_rec(*fa, DTRACEACT_DIFEXPR, 0, exec, sizeof(exec));
+	fake_rec(*fa, DTRACEACT_STACK, vmid != 0 ?
+	    HYPERTRACE_STACK_ENCODE(vmid, 3) : 3, k, sizeof(k));
+	fake_rec(*fa, DTRACEACT_USTACK, 3, u, sizeof(u));
+	fake_rec(*fa, kind, 0, &value, sizeof(value));
+	if (vmid != 0) {
+		static dtrace_eprobedesc_t ed;
+
+		memset(&ed, 0, sizeof(ed));
+		ed.dtepd_vmid = vmid;
+		(*fa)->ad.dtada_edesc = &ed;
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(profile_aggregations);
+ATF_TC_BODY(profile_aggregations, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[3];
+	int64_t one = 4;
+	uint64_t pid = 9;
+
+	d = open_bridge("@oncpu[execname, stack(), ustack()] = count();");
+	d->profiles = 1;
+	stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 5, 42, 0);
+	stack_agg(&fa[1], "bytes", DTRACEAGG_SUM, 300, 0, 0);
+	/* A count() without a stack key stays a metric. */
+	fa[2] = fake_new("plain", 1);
+	fake_rec(fa[2], DTRACEACT_DIFEXPR, 0, &pid, sizeof(pid));
+	fake_rec(fa[2], DTRACEAGG_COUNT, 0, &one, sizeof(one));
+	run_aggs(d, fa, 3);
+	ATF_REQUIRE(find_snap("plain") != NULL);
+	ATF_CHECK(find_snap("oncpu") == NULL);
+	ATF_REQUIRE_EQ(2, cap.nprofs);
+	/* Groups are emitted newest first. */
+	ATF_CHECK_STREQ("bytes/1", cap.profs[0].type);
+	ATF_CHECK_STREQ("samples/count", cap.profs[1].type);
+	ATF_CHECK_EQ(-1, cap.profs[1].period);
+	ATF_CHECK_STREQ("dtrace.profile.source=aggregation;"
+	    "dtrace.aggregation=oncpu;", cap.profs[1].attrs);
+	ATF_CHECK_STREQ("kernel`fn1+0x10,kernel`fn2+0x20,+"
+	    "a.out`ufn1+0x10,libc.so.7`0x800010,0x0000000000000999,|"
+	    "process.pid=42,"
+	    "process.executable.name=busy,|v5\n", cap.profs[1].samples);
+	/* The pid-less ustack stays addresses (an exited process). */
+	ATF_CHECK(strstr(cap.profs[0].samples, "+0x0000000000400110,"
+	    "0x0000000000800010,0x0000000000000999,|key.0=busy,|v300") !=
+	    NULL);
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+	/* Growth since the last snapshot; a reset counts in full. */
+	stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 8, 42, 0);
+	run_aggs(d, fa, 1);
+	ATF_REQUIRE_EQ(3, cap.nprofs);
+	ATF_CHECK(strstr(cap.profs[2].samples, "|v3\n") != NULL);
+	fake_free(fa[0]);
+	stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 8, 42, 0);
+	run_aggs(d, fa, 1);
+	ATF_CHECK_EQ(3, cap.nprofs);	/* no growth, no profile */
+	fake_free(fa[0]);
+	stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 2, 42, 0);
+	run_aggs(d, fa, 1);
+	ATF_REQUIRE_EQ(4, cap.nprofs);
+	ATF_CHECK(strstr(cap.profs[3].samples, "|v2\n") != NULL);
+	fake_free(fa[0]);
+	fake_free(fa[2]);
+	dtotel_close(d);
+}
+
+/* A guest's stacks are guest addresses on the guest's exporter. */
+ATF_TC_WITHOUT_HEAD(profile_guests);
+ATF_TC_BODY(profile_guests, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[1];
+
+	d = open_guest_bridge();
+	d->profiles = 1;
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 1, "vm3"));
+	stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 5, 42, 3);
+	run_aggs(d, fa, 1);
+	ATF_CHECK_EQ(0, cap.nprofs);
+	ATF_REQUIRE_EQ(1, nguests);
+	ATF_CHECK_EQ(1, guests[0]->profiles);
+	ATF_CHECK_STREQ("guest[3]", guests[0]->lastbody);
+	fake_free(fa[0]);
+	/* Guest firings likewise. */
+	deliver_probe("              guest[3]`0xdead\n", 0, 10, &prof_pdesc,
+	    DTRACEACT_STACK, 3);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(0, dtotel_shutdown(d));
+	ATF_CHECK_EQ(2, guests[0]->profiles);
+	dtotel_close(d);
+}
+
+/* Bounds: distinct samples per interval, with one warning. */
+ATF_TC(profile_bounds);
+ATF_TC_HEAD(profile_bounds, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr", "bounds of a profile interval: "
+	    "65536 samples, a million observations");
+	/* A million firings take minutes on an emulated CPU. */
+	atf_tc_set_md_var(tc, "timeout", "1800");
+}
+ATF_TC_BODY(profile_bounds, tc)
+{
+	struct dtotel *d;
+	char line[64];
+	int i;
+
+	d = open_bridge(NULL);
+	d->profiles = 1;
+	cap.ignore_events = 1;
+	for (i = 0; i < 65536 + 3; i++) {
+		snprintf(line, sizeof(line), "              kernel`f%d\n", i);
+		deliver_probe(line, 0, (uint64_t)i + 1, &prof_pdesc,
+		    DTRACEACT_STACK, 0);
+	}
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_REQUIRE_EQ(1, cap.nprofs);
+	ATF_CHECK_EQ(65536, cap.profs[0].nsamples);
+	/* Observations per interval: one sample, a million firings. */
+	for (i = 0; i < 1024 * 1024 + 2; i++)
+		deliver_probe("              kernel`f\n", 0, (uint64_t)i + 1,
+		    &prof_pdesc, DTRACEACT_STACK, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_REQUIRE_EQ(2, cap.nprofs);
+	ATF_CHECK(strstr(cap.profs[1].samples, "|t1048576\n") != NULL);
+	dtotel_close(d);
+}
+
+/* The less common shapes of firings, keys and groups. */
+ATF_TC_WITHOUT_HEAD(profile_edges);
+ATF_TC_BODY(profile_edges, tc)
+{
+	dtrace_probedesc_t other = prof_pdesc;
+	struct dtotel *d;
+	struct fake_agg *fa[6];
+	uint64_t k[20], z[2] = { 0, 0 }, u[3] = { 7, 0x400110, 0 };
+	uint64_t ushort = 1, j[3] = { 7, 0x400120, 0x400130 };
+	int64_t v = 3, big = 9;
+	char e[16] = "x";
+	int i;
+
+	d = open_bridge("@named[execname] = count();");
+	d->profiles = 1;
+	/* A report tick before any sample: nothing to emit. */
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(0, cap.nprofs);
+	/* Two probes: two groups; another clause's empty print. */
+	strlcpy(other.dtpd_name, "tick-1s", sizeof(other.dtpd_name));
+	deliver_probe("              kernel`spin+0x1\n", 0, 10, &prof_pdesc,
+	    DTRACEACT_STACK, 0);
+	deliver_probe("              kernel`spin+0x1\n", 0, 11, &other,
+	    DTRACEACT_STACK, 0);
+	deliver_rec("\n", 0, 12, 2, DTRACEACT_DIFEXPR, 3);
+	dtotel_flush(d);
+	/* A tick with nothing accumulated (only aggregation state). */
+	d->prof_interval = 0;
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(2, cap.nprofs);
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(2, cap.nprofs);
+	/*
+	 * Keys: a deep stack (grown arrays, an address that does not
+	 * resolve), a zero stack (no frames), a stack of the wrong frame
+	 * size (skipped), a jstack, a short ustack, a ustack with a frame
+	 * limit, a key beyond the source's names, anonymous sum().
+	 */
+	for (i = 0; i < 20; i++)
+		k[i] = 0x1000 + (uint64_t)i * 0x10;
+	k[19] = 0x5000;
+	fa[0] = fake_new("named", 2);
+	fake_rec(fa[0], DTRACEACT_STACK, 20, k, sizeof(k));
+	fake_rec(fa[0], DTRACEACT_DIFEXPR, 0, e, sizeof(e));
+	fake_rec(fa[0], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	fa[1] = fake_new("zero", 2);
+	fake_rec(fa[1], DTRACEACT_STACK, 2, z, sizeof(z));
+	fake_rec(fa[1], DTRACEACT_STACK, 3, z, sizeof(z));
+	fake_rec(fa[1], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	fa[2] = fake_new("j", 2);
+	fake_rec(fa[2], DTRACEACT_JSTACK, 0, j, sizeof(j));
+	fake_rec(fa[2], DTRACEACT_USTACK, 0, &ushort, 4);
+	fake_rec(fa[2], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+	fa[3] = fake_new("", 3);
+	fake_rec(fa[3], DTRACEACT_USTACK, 1, u, sizeof(u));
+	/* An empty string key, a stack record without a frame count. */
+	memset(e, 0, sizeof(e));
+	fake_rec(fa[3], DTRACEACT_DIFEXPR, 0, e, sizeof(e));
+	fake_rec(fa[3], DTRACEACT_STACK, 0, z, sizeof(z));
+	fake_rec(fa[3], DTRACEAGG_SUM, 0, &big, sizeof(big));
+	/* With profiles on, other kinds and short values stay metrics. */
+	fa[4] = fake_new("m", 1);
+	fake_rec(fa[4], DTRACEACT_STACK, 2, z, sizeof(z));
+	fake_rec(fa[4], DTRACEAGG_MAX, 0, &v, sizeof(v));
+	fa[5] = fake_new("short", 1);
+	fake_rec(fa[5], DTRACEACT_STACK, 2, z, sizeof(z));
+	fake_rec(fa[5], DTRACEAGG_COUNT, 0, &v, 4);
+	run_aggs(d, fa, 6);
+	ATF_CHECK(find_snap("m") != NULL);
+	ATF_CHECK(find_snap("short") != NULL);
+	ATF_REQUIRE_EQ(6, cap.nprofs);
+	for (i = 2; i < 6; i++) {
+		if (strcmp(cap.profs[i].type, "sum/1") == 0)
+			ATF_CHECK_STREQ("+a.out`ufn1+0x10,|process.pid=7,"
+			    "key.1=,|v9\n", cap.profs[i].samples);
+		if (strstr(cap.profs[i].attrs, "=named;") != NULL) {
+			ATF_CHECK(strstr(cap.profs[i].samples,
+			    "kernel`fn1+0x20,0x0000000000005000,+|key.1=x,|v3")
+			    != NULL);
+		}
+		if (strstr(cap.profs[i].attrs, "=zero;") != NULL)
+			ATF_CHECK_STREQ("+||v3\n", cap.profs[i].samples);
+		if (strstr(cap.profs[i].attrs, "=j;") != NULL)
+			ATF_CHECK(strstr(cap.profs[i].samples,
+			    "+a.out`ufn1+0x20,a.out`ufn1+0x30,|") != NULL);
+	}
+	for (i = 0; i < 6; i++)
+		fake_free(fa[i]);
+	/* A deep ustack that ends early: a zero after 20 frames. */
+	{
+		uint64_t deep[24];
+
+		deep[0] = 7;
+		for (i = 1; i < 22; i++)
+			deep[i] = 0x400100 + (uint64_t)i * 0x100;
+		deep[22] = 0;
+		deep[23] = 0x400100;
+		fa[0] = fake_new("deep", 1);
+		fake_rec(fa[0], DTRACEACT_USTACK, 0, deep, sizeof(deep));
+		fake_rec(fa[0], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+		run_aggs(d, fa, 1);
+		ATF_REQUIRE_EQ(7, cap.nprofs);
+		ATF_CHECK(strstr(cap.profs[6].samples, ",|process.pid=7,|v3")
+		    != NULL);
+		fake_free(fa[0]);
+	}
+	/* The same probe on the host and in a guest: two groups. */
+	deliver_probe("              kernel`spin+0x1\n", 0, 30, &prof_pdesc,
+	    DTRACEACT_STACK, 0);
+	deliver_probe("              kernel`spin+0x1\n", 0, 31, &prof_pdesc,
+	    DTRACEACT_STACK, 5);
+	dtotel_flush(d);
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(9, cap.nprofs);
+	/* A failing exporter is an error of the bridge. */
+	deliver_probe("              kernel`spin+0x1\n", 0, 20, &prof_pdesc,
+	    DTRACEACT_STACK, 0);
+	dtotel_flush(d);
+	cap.fail = 1;
+	dtotel_report(d, 0);
+	ATF_CHECK(dtotel_error(d));
+	cap.fail = 0;
+	dtotel_close(d);
+}
+
+/* Enough series that hash chains are walked. */
+ATF_TC_WITHOUT_HEAD(profile_many_series);
+ATF_TC_BODY(profile_many_series, tc)
+{
+	struct dtotel *d;
+	struct fake_agg **fa;
+	const dtrace_aggdata_t **ads;
+	uint64_t k[2];
+	int64_t v = 1;
+	int i, n = 1500;
+
+	d = open_bridge(NULL);
+	d->profiles = 1;
+	ATF_REQUIRE((fa = calloc((size_t)n, sizeof(*fa))) != NULL);
+	ATF_REQUIRE((ads = calloc((size_t)n, sizeof(*ads))) != NULL);
+	for (i = 0; i < n; i++) {
+		k[0] = 0x100000 + (uint64_t)i;
+		k[1] = 0;
+		fa[i] = fake_new("many", 1);
+		fake_rec(fa[i], DTRACEACT_STACK, 2, k, sizeof(k));
+		fake_rec(fa[i], DTRACEAGG_COUNT, 0, &v, sizeof(v));
+		ads[i] = &fa[i]->ad;
+	}
+	stub.aggs = ads;
+	stub.naggs = (size_t)n;
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_REQUIRE_EQ(1, cap.nprofs);
+	ATF_CHECK_EQ((size_t)n, cap.profs[0].nsamples);
+	/* Unchanged: no growth anywhere, no profile. */
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_CHECK_EQ(1, cap.nprofs);
+	stub.aggs = NULL;
+	stub.naggs = 0;
+	for (i = 0; i < n; i++)
+		fake_free(fa[i]);
+	free(fa);
+	free(ads);
+	dtotel_close(d);
+}
+
+/* Allocation failures on the profile paths are survived. */
+ATF_TC_WITHOUT_HEAD(profile_alloc_failure);
+ATF_TC_BODY(profile_alloc_failure, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[2];
+	int i, n, hit;
+
+	for (n = 1; n < 400; n++) {
+		d = open_bridge("@oncpu[execname, stack(), ustack()] = "
+		    "count();");
+		d->profiles = 1;
+		stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 5, 42, 0);
+		fa[1] = lat_agg("busy", 4);
+		fa[1]->desc->dtagd_name = __DECONST(char *, "plain");
+		failalloc_arm(n);
+		busy_firing(0, 100);
+		deliver_probe("\037otel.ctx\037pid=42\037ppid=1\037tid=7"
+		    "\037uid=0\037ruid=0\037gid=0\037rgid=0\037jid=3"
+		    "\037execname=busy\n", 1, 400, &prof_pdesc,
+		    DTRACEACT_PRINTF, 0);
+		busy_firing(1, 400);
+		busy_firing(0, 500);
+		/* Enough timestamps on one sample to grow its array. */
+		for (i = 0; i < 10; i++)
+			busy_firing(0, 600 + (uint64_t)i);
+		deliver(d, "\037otel.exemplar\037agg=plain\037value=3"
+		    "\037key=busy\n", 0, 599, 1, 0);
+		deliver(d, "\037otel.exemplar\037agg=oncpu\037value=3"
+		    "\037key=busy\037a.s.r=/x\037a.i.n=2\n", 0, 600, 1, 0);
+		deliver(d, "\037otel.exemplar\037agg=other\037value=3"
+		    "\037key=busy\n", 0, 601, 1, 0);
+		dtotel_flush(d);
+		stub.aggs = (const dtrace_aggdata_t *[]){ &fa[0]->ad,
+		    &fa[1]->ad };
+		stub.naggs = 2;
+		(void)dtotel_aggregate(d);
+		stub.aggs = NULL;
+		stub.naggs = 0;
+		hit = failalloc_hit();
+		failalloc_arm(0);
+		dtotel_close(d);
+		fake_free(fa[0]);
+		fake_free(fa[1]);
+		if (!hit)
+			break;
+	}
+	ATF_CHECK(n > 20);
+	/* Aggregations alone (the first profile state comes from them). */
+	for (n = 1; n < 200; n++) {
+		d = open_bridge(NULL);
+		d->profiles = 1;
+		stack_agg(&fa[0], "oncpu", DTRACEAGG_COUNT, 5, 42, 0);
+		failalloc_arm(n);
+		stub.aggs = (const dtrace_aggdata_t *[]){ &fa[0]->ad };
+		stub.naggs = 1;
+		(void)dtotel_aggregate(d);
+		stub.aggs = NULL;
+		stub.naggs = 0;
+		hit = failalloc_hit();
+		failalloc_arm(0);
+		dtotel_close(d);
+		fake_free(fa[0]);
+		if (!hit)
+			break;
+	}
+}
+
+/* ---------------------------------------------------------------- */
+/* Exemplars								*/
+
+static struct fake_agg *
+lat_agg(const char *exec, int64_t v)
+{
+	struct fake_agg *f;
+	char e[16];
+
+	memset(e, 0, sizeof(e));
+	strlcpy(e, exec, sizeof(e));
+	f = fake_new("lat", 1);
+	fake_rec(f, DTRACEACT_DIFEXPR, 0, e, sizeof(e));
+	fake_rec(f, DTRACEAGG_SUM, 0, &v, sizeof(v));
+	return (f);
+}
+
+ATF_TC_WITHOUT_HEAD(exemplar_records);
+ATF_TC_BODY(exemplar_records, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[2];
+	const struct cap_snap *sn;
+	char rec[256], *err;
+	int i;
+
+	d = open_bridge("@lat[execname] = sum(this->d);");
+	deliver(d, "\037otel.clock\037wall=1700000000000000000\037ts=0\n", 0,
+	    1, 1, 0);
+	/* Inline traceparent, filtered attributes. */
+	deliver(d, "\037otel.exemplar\037agg=lat\037value=100\037key=nginx"
+	    "\037traceparent=00-0af7651916cd43dd8448eb211c80319c-"
+	    "b7ad6b7169203331-01\037a.s.http.route=/x\037a.i.n=3\n", 0,
+	    1000000000, 2, 0);
+	/* The trace record of the firing, before... */
+	deliver(d, "\037otel.trace\037traceparent=00-"
+	    "11111111111111111111111111111111-2222222222222222-01\n", 1,
+	    2000000000, 3, 0);
+	deliver(d, "\037otel.exemplar\037agg=lat\037value=7\037key=sh\n", 1,
+	    2000000000, 3, 0);
+	/* ...or after it. */
+	deliver(d, "\037otel.exemplar\037agg=lat\037value=8\037key=sh\n", 1,
+	    3000000000, 3, 0);
+	deliver(d, "\037otel.trace\037traceparent=00-"
+	    "33333333333333333333333333333333-4444444444444444-01\n", 1,
+	    3000000000, 3, 0);
+	/* A second trace record does not replace the first. */
+	deliver(d, "\037otel.trace\037traceparent=00-"
+	    "55555555555555555555555555555555-6666666666666666-01\n", 1,
+	    3000000000, 3, 0);
+	/* A line of the firing that carries the trace. */
+	deliver(d, "\037otel.trace\037traceparent=00-"
+	    "77777777777777777777777777777777-8888888888888888-01\n", 0,
+	    4000000000, 4, 0);
+	deliver(d, "a line\n", 0, 4000000000, 4, 0);
+	deliver(d, "\037otel.exemplar\037agg=lat\037value=9\037key=sh\n", 0,
+	    4000000000, 4, 0);
+	/* A series that is not in the snapshot. */
+	deliver(d, "\037otel.exemplar\037agg=lat\037value=1\037key=nope\n", 0,
+	    5000000000, 5, 0);
+	fa[0] = lat_agg("nginx", 100);
+	fa[1] = lat_agg("sh", 24);
+	capture_start();
+	run_aggs(d, fa, 2);
+	err = capture_end();
+	ATF_CHECK(strstr(err, "exemplars of 1 series matched no data point")
+	    != NULL);
+	free(err);
+	ATF_REQUIRE((sn = find_snap("lat")) != NULL);
+	ATF_REQUIRE_EQ(2, sn->npoints);
+	ATF_CHECK_STREQ("100@1700000001/0af7651916cd43dd8448eb211c80319c/"
+	    "b7ad6b7169203331{http.route=/x,n=3,};", sn->points[0].ex);
+	ATF_CHECK_STREQ("7@1700000002/11111111111111111111111111111111/"
+	    "2222222222222222{};"
+	    "8@1700000003/33333333333333333333333333333333/"
+	    "4444444444444444{};"
+	    "9@1700000004/77777777777777777777777777777777/"
+	    "8888888888888888{};", sn->points[1].ex);
+	/* Cleared once exported. */
+	run_aggs(d, fa, 2);
+	sn = &cap.snaps[cap.nsnaps - 1];
+	for (i = cap.nsnaps - 1; i >= 0; i--)
+		if (strcmp(cap.snaps[i].name, "lat") == 0) {
+			sn = &cap.snaps[i];
+			break;
+		}
+	ATF_CHECK_STREQ("", sn->points[0].ex);
+	/* The most recent four per series. */
+	for (i = 0; i < 6; i++) {
+		snprintf(rec, sizeof(rec), "\037otel.exemplar\037agg=lat"
+		    "\037value=%d\037key=sh\n", i);
+		deliver(d, rec, 0, 6000000000 + (uint64_t)i, 6, 0);
+	}
+	run_aggs(d, fa, 2);
+	for (i = cap.nsnaps - 1; i >= 0; i--)
+		if (strcmp(cap.snaps[i].name, "lat") == 0) {
+			sn = &cap.snaps[i];
+			break;
+		}
+	ATF_CHECK(strncmp(sn->points[1].ex, "2@", 2) == 0);
+	ATF_CHECK(strstr(sn->points[1].ex, ";5@") != NULL);
+	ATF_CHECK(strstr(sn->points[1].ex, ";1@") == NULL);
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+	dtotel_close(d);
+}
+
+ATF_TC_WITHOUT_HEAD(exemplar_malformed);
+ATF_TC_BODY(exemplar_malformed, tc)
+{
+	static const char *const bad[] = {
+		"\037otel.exemplar\037agg=lat\037novalue\n",
+		"\037otel.exemplar\037value=1\n",
+		"\037otel.exemplar\037agg=lat\037value=x\n",
+		"\037otel.exemplar\037agg=lat\037value=1\037a.i.n=z\n",
+		"\037otel.exemplar\037agg=lat\037value=1\037traceparent=bad\n",
+		"\037otel.exemplar\037agg=lat\037a.s.x=1\n",
+		"\037otel.exemplar\037agg=lat\037a.s.=1\n",
+		"\037otel.exemplar\037agg=lat\037value=\n",
+		"\037otel.exemplar\037agg=lat\037value=99999999999999999999\n",
+		"\037otel.exemplar\037agg=lat\037value=1\037a.i.n=\n",
+		("\037otel.exemplar\037agg=lat\037value=1"
+		    "\037a.i.n=99999999999999999999\n"),
+	};
+	struct dtotel *d;
+	char rec[128], *err;
+	size_t i;
+
+	d = open_bridge(NULL);
+	capture_start();
+	for (i = 0; i < nitems(bad); i++)
+		deliver(d, bad[i], 0, 10 + i, 1, 0);
+	err = capture_end();
+	ATF_CHECK(strstr(err, "exemplar record ignored") != NULL);
+	free(err);
+	ATF_CHECK_EQ(0, d->nexseries);
+	/* Extra keys and attributes beyond the bounds are ignored. */
+	deliver(d, "\037otel.exemplar\037agg=a\037value=1\037future=1"
+	    "\037key=1\037key=2\037key=3\037key=4\037key=5\037key=6"
+	    "\037key=7\037key=8\037key=9\037key=10\037key=11\037key=12"
+	    "\037key=13\037key=14\037key=15\037key=16\037key=17"
+	    "\037a.s.1=a\037a.s.2=a\037a.s.3=a\037a.s.4=a\037a.s.5=a"
+	    "\037a.s.6=a\037a.s.7=a\037a.s.8=a\037a.s.9=a\n", 0, 50, 1, 0);
+	ATF_CHECK_EQ(1, d->nexseries);
+	/* The series bound: one warning, the rest dropped. */
+	capture_start();
+	for (i = 0; i < 1100; i++) {
+		snprintf(rec, sizeof(rec), "\037otel.exemplar\037agg=a"
+		    "\037value=1\037key=%zu\n", i);
+		deliver(d, rec, 0, 100 + i, 1, 0);
+	}
+	err = capture_end();
+	ATF_CHECK(strstr(err, "1024 exemplar series") != NULL);
+	free(err);
+	ATF_CHECK_EQ(1024, d->nexseries);
+	capture_start();
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	err = capture_end();
+	ATF_CHECK(strstr(err, "exemplars dropped since the last snapshot") !=
+	    NULL);
+	free(err);
+	ATF_CHECK_EQ(0, d->nexseries);
+	dtotel_close(d);
+}
+
+/* -x otelprofiles and its checks. */
+ATF_TC_WITHOUT_HEAD(session_profiles_option);
+ATF_TC_BODY(session_profiles_option, tc)
+{
+	struct dtotel_options o;
+	char err[256];
+
+	memset(&o, 0, sizeof(o));
+	ATF_CHECK_EQ(1, dtotel_option(&o, "otelprofiles", NULL, err,
+	    sizeof(err)));
+	ATF_CHECK_EQ(1, o.profiles);
+	ATF_CHECK_EQ(1, dtotel_option(&o, "otelprofiles", "off", err,
+	    sizeof(err)));
+	ATF_CHECK_EQ(0, o.profiles);
+	ATF_CHECK_EQ(1, dtotel_option(&o, "otelprofiles", "on", err,
+	    sizeof(err)));
+	ATF_CHECK_EQ(-1, dtotel_option(&o, "otelprofiles", "maybe", err,
+	    sizeof(err)));
+	ATF_CHECK(strstr(err, "expected on or off") != NULL);
+	/* Needs -x otel=otlp or otlp-json. */
+	ATF_CHECK_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	o.format = DTOTEL_JSON;
+	ATF_CHECK_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "-x otelprofiles needs") != NULL);
+	o.format = DTOTEL_OTLPJSON;
+	ATF_CHECK_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
+}
+
+/* A session with profiles over http/json is refused at once. */
+ATF_TC_WITHOUT_HEAD(session_profiles_json);
+ATF_TC_BODY(session_profiles_json, tc)
+{
+	struct dtotel_options o;
+	struct dtotel_session_config cfg;
+	struct dtotel_session *s;
+	char err[256];
+
+	memset(&o, 0, sizeof(o));
+	o.format = DTOTEL_OTLP;
+	o.profiles = 1;
+	o.protocol = "http/json";
+	o.endpoint = "http://127.0.0.1:1";
+	memset(&stub, 0, sizeof(stub));
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.options = &o;
+	cfg.dtp = (dtrace_hdl_t *)&stub;
+	cfg.service_name = "dtrace";
+	cfg.service_version = "1";
+	cfg.scope_name = "dtrace";
+	cfg.profile = "p";
+	ATF_CHECK((s = dtotel_session_open(&cfg, err, sizeof(err))) == NULL);
+	ATF_CHECK(strstr(err, "cannot create the OpenTelemetry exporter") !=
+	    NULL);
+	/* http/protobuf for the profiles signal alone is enough. */
+	setenv("OTEL_EXPORTER_OTLP_PROFILES_PROTOCOL", "http/protobuf", 1);
+	o.protocol = NULL;
+	setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json", 1);
+	ATF_REQUIRE((s = dtotel_session_open(&cfg, err, sizeof(err))) !=
+	    NULL);
+	ATF_CHECK_EQ(0, dtotel_session_close(s, 0));
+	unsetenv("OTEL_EXPORTER_OTLP_PROFILES_PROTOCOL");
+	unsetenv("OTEL_EXPORTER_OTLP_PROTOCOL");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3382,5 +4307,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, trace_context_records);
 	ATF_TP_ADD_TC(tp, span_trace_context);
 	ATF_TP_ADD_TC(tp, typed_print_and_actions);
+	ATF_TP_ADD_TC(tp, profile_firings);
+	ATF_TP_ADD_TC(tp, profile_periods);
+	ATF_TP_ADD_TC(tp, profile_aggregations);
+	ATF_TP_ADD_TC(tp, profile_guests);
+	ATF_TP_ADD_TC(tp, profile_bounds);
+	ATF_TP_ADD_TC(tp, profile_edges);
+	ATF_TP_ADD_TC(tp, profile_many_series);
+	ATF_TP_ADD_TC(tp, profile_alloc_failure);
+	ATF_TP_ADD_TC(tp, exemplar_records);
+	ATF_TP_ADD_TC(tp, exemplar_malformed);
+	ATF_TP_ADD_TC(tp, session_profiles_option);
+	ATF_TP_ADD_TC(tp, session_profiles_json);
 	return (atf_no_error());
 }

@@ -133,7 +133,11 @@ main(int argc, char **argv)
 		free(glines[i]);
 	free(glines);
 	printf("requests=%zu logs=%zu metrics=%zu datapoints=%zu "
-	    "spans=%zu\n", c.requests, c.logs, c.metrics, c.datapoints,
+	    "spans=%zu", c.requests, c.logs, c.metrics, c.datapoints,
 	    c.spans);
+	/* Experimental profiles, only when there are any. */
+	if (c.profiles > 0)
+		printf(" profiles=%zu samples=%zu", c.profiles, c.samples);
+	printf("\n");
 	return (0);
 }

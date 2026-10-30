@@ -505,6 +505,17 @@ dtrace_lookup_by_addr(dtrace_hdl_t *dtp, GElf_Addr addr, GElf_Sym *symp,
 	return (-1);
 }
 
+/* User addresses stay addresses (the profiles of stack-keyed aggregations). */
+int
+dtrace_uaddr2str(dtrace_hdl_t *dtp, pid_t pid, uint64_t addr, char *buf,
+    int len)
+{
+
+	(void)dtp;
+	(void)pid;
+	return (snprintf(buf, (size_t)len, "0x%jx", (uintmax_t)addr));
+}
+
 int
 dtrace_str2desc(dtrace_hdl_t *dtp, dtrace_probespec_t spec, const char *s,
     dtrace_probedesc_t *pdp)

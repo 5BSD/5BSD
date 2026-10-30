@@ -65,6 +65,28 @@ dtrace_lookup_by_addr(dtrace_hdl_t *dtp, GElf_Addr addr, GElf_Sym *symp,
 	return (0);
 }
 
+/*
+ * User addresses: STUB_USYM_LO..HI symbolize as a.out`ufnN+0xoff (N from
+ * bits 8..11), STUB_UOBJ_LO..HI as an object without a symbol
+ * (libc.so.7`0xaddr), anything else stays an address; pid 0 never
+ * symbolizes, as for an exited process.
+ */
+int
+dtrace_uaddr2str(dtrace_hdl_t *dtp, pid_t pid, uint64_t addr, char *buf,
+    int len)
+{
+
+	(void)dtp;
+	stub.uaddr_lookups++;
+	if (pid != 0 && addr >= STUB_USYM_LO && addr < STUB_USYM_HI)
+		return (snprintf(buf, (size_t)len, "a.out`ufn%d+0x%jx",
+		    (int)((addr >> 8) & 0xf), (uintmax_t)(addr & 0xff)));
+	if (pid != 0 && addr >= STUB_UOBJ_LO && addr < STUB_UOBJ_HI)
+		return (snprintf(buf, (size_t)len, "libc.so.7`0x%jx",
+		    (uintmax_t)addr));
+	return (snprintf(buf, (size_t)len, "0x%jx", (uintmax_t)addr));
+}
+
 int
 dtrace_aggregate_snap(dtrace_hdl_t *dtp)
 {

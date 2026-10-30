@@ -107,6 +107,17 @@ dtotel_option(struct dtotel_options *o, const char *name, const char *value,
 			    "otlp-json or json", value));
 		return (1);
 	}
+	if (strcmp(name, "otelprofiles") == 0) {
+		/* Experimental: off unless asked for. */
+		if (value == NULL || strcmp(value, "on") == 0)
+			o->profiles = 1;
+		else if (strcmp(value, "off") == 0)
+			o->profiles = 0;
+		else
+			return (seterr(err, errlen, "-x otelprofiles=%s: "
+			    "expected on or off", value));
+		return (1);
+	}
 	if (value == NULL || value[0] == '\0')
 		return (seterr(err, errlen, "-x %s needs a value", name));
 	if (strcmp(name, "otelendpoint") == 0)
@@ -151,9 +162,12 @@ dtotel_options_check(const struct dtotel_options *o, const char *output,
     char *err, size_t errlen)
 {
 
+	if (o->format == DTOTEL_JSON && o->profiles)
+		return (seterr(err, errlen, "-x otelprofiles needs -x otel=otlp "
+		    "or -x otel=otlp-json"));
 	if (o->format == DTOTEL_OFF) {
 		if (o->endpoint != NULL || o->protocol != NULL ||
-		    o->spool != NULL ||
+		    o->spool != NULL || o->profiles ||
 		    o->spool_max != 0 || o->rotate_size != 0 ||
 		    o->rotate_interval != 0 || o->rotate_keep != 0)
 			return (seterr(err, errlen, "-x otel* options need "
@@ -216,6 +230,8 @@ make_exporter(struct dtotel_session *s, const struct oe_resource *r,
 	 * resolved.
 	 */
 	oe_otlp_config_env(&ocfg, &s->env);
+	/* Refuses profiles over http/json up front. */
+	ocfg.profiles = s->opts.profiles;
 	ocfg.profile = s->profile;
 	ocfg.resource = r;
 	ocfg.max_retries = -1;
@@ -352,6 +368,7 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 	dcfg.exporter = s->exporter;
 	dcfg.profile = s->profile;
 	dcfg.source = cfg->source;
+	dcfg.profiles = s->opts.profiles;
 	if (cfg->hypertrace) {
 		dcfg.guest_exporter = guest_exporter;
 		dcfg.guest_arg = s;

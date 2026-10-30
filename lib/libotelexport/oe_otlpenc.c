@@ -188,10 +188,22 @@ oe_enc_path(enum oe_signal sig)
 		return ("v1/logs");
 	case OE_SIGNAL_METRICS:
 		return ("v1/metrics");
+	case OE_SIGNAL_PROFILES:
+		return ("v1development/profiles");
 	case OE_SIGNAL_TRACES:
 		break;
 	}
 	return ("v1/traces");
+}
+
+const char *
+oe_signal_name(enum oe_signal sig)
+{
+	static const char *const names[OE_NSIGNALS] = {
+		"logs", "metrics", "traces", "profiles"
+	};
+
+	return ((unsigned)sig < OE_NSIGNALS ? names[sig] : "unknown");
 }
 
 int
@@ -204,6 +216,8 @@ oe_enc_classify(const char *line)
 		return (OE_SIGNAL_METRICS);
 	if (strncmp(line, "{\"resourceSpans\":", 17) == 0)
 		return (OE_SIGNAL_TRACES);
+	if (strncmp(line, "{\"resourceProfiles\":", 20) == 0)
+		return (OE_SIGNAL_PROFILES);
 	return (-1);
 }
 
@@ -618,6 +632,51 @@ enc_expbuckets(struct oe_buf *b, const char *key,
 	oe_buf_appendstr(b, "]}");
 }
 
+/*
+ * "exemplars":[...], of a point: each with its time, value, trace and
+ * span id when it has a trace, and filtered attributes.
+ */
+static void
+enc_exemplars(struct oe_buf *b, const struct oe_datapoint *dp)
+{
+	const struct oe_exemplar *ex;
+	char tid[2 * OE_TRACE_ID_LEN + 1], sid[2 * OE_SPAN_ID_LEN + 1];
+	size_t i, j;
+	int first;
+
+	if (dp->nexemplars == 0)
+		return;
+	oe_buf_appendstr(b, "\"exemplars\":[");
+	for (i = 0; i < dp->nexemplars; i++) {
+		ex = &dp->exemplars[i];
+		oe_buf_appendf(b, "%s{\"timeUnixNano\":\"%ju\",",
+		    i > 0 ? "," : "", (uintmax_t)ts_unix_nano(&ex->ts));
+		if (ex->is_double) {
+			oe_buf_appendstr(b, "\"asDouble\":");
+			enc_double(b, ex->dvalue);
+		} else
+			oe_buf_appendf(b, "\"asInt\":\"%jd\"",
+			    (intmax_t)ex->ivalue);
+		if (!oe_id_is_zero(ex->trace_id, OE_TRACE_ID_LEN)) {
+			oe_id_hex(ex->trace_id, OE_TRACE_ID_LEN, tid);
+			oe_buf_appendf(b, ",\"traceId\":\"%s\"", tid);
+			if (!oe_id_is_zero(ex->span_id, OE_SPAN_ID_LEN)) {
+				oe_id_hex(ex->span_id, OE_SPAN_ID_LEN, sid);
+				oe_buf_appendf(b, ",\"spanId\":\"%s\"", sid);
+			}
+		}
+		if (ex->nattrs > 0) {
+			oe_buf_appendstr(b, ",\"filteredAttributes\":[");
+			first = 1;
+			for (j = 0; j < ex->nattrs; j++)
+				oe_enc_kv(b, &ex->attrs[j], &first);
+			oe_buf_appendstr(b, "]");
+		}
+		oe_buf_appendstr(b, "}");
+	}
+	oe_buf_appendstr(b, "],");
+}
+
 /* Explicit-bounds buckets (and count/sum) of one histogram point. */
 static int
 enc_explicit(struct oe_buf *b, const struct oe_datapoint *dp)
@@ -842,6 +901,7 @@ oe_enc_metric(const struct oe_otlpenc *enc, const struct oe_snapshot *sn)
 			break;
 		}
 		firstdp = 0;
+		enc_exemplars(&b, dp);
 		oe_buf_appendstr(&b, "\"attributes\":[");
 		build_dimension_attrs(&b, dp);
 		oe_buf_appendstr(&b, "]}");

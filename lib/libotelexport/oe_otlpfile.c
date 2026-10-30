@@ -112,6 +112,30 @@ otlpfile_span(struct oe_exporter *e, const struct oe_span *sp)
 	return (otlpfile_queue(f, OE_SIGNAL_TRACES, oe_enc_span(&f->enc, sp)));
 }
 
+/*
+ * A profile is a whole ExportProfilesServiceRequest (its dictionary is
+ * request-wide): one line of its own, written at once.
+ */
+static int
+otlpfile_profile(struct oe_exporter *e, const struct oe_profile *pr)
+{
+	struct oe_otlpfile *f = (struct oe_otlpfile *)e;
+	char *req;
+	size_t len;
+	int ret;
+
+	if (pr->nsamples == 0)
+		return (0);
+	if ((req = oe_enc_profile(&f->enc, pr, &len)) == NULL) {
+		fprintf(stderr, "otlpjson: out of memory\n");
+		return (-1);
+	}
+	req[len] = '\n';
+	ret = oe_sink_write(f->sink, req, len + 1);
+	free(req);
+	return (ret);
+}
+
 static int
 otlpfile_flush(struct oe_exporter *e)
 {
@@ -165,6 +189,7 @@ static const struct oe_exporter_ops otlpfile_ops = {
 	.shutdown = otlpfile_shutdown,
 	.free = otlpfile_free,
 	.span = otlpfile_span,
+	.profile = otlpfile_profile,
 };
 
 struct oe_exporter *

@@ -47,12 +47,14 @@ main(int argc, char **argv)
 				forced = OE_SIGNAL_METRICS;
 			else if (strcmp(optarg, "traces") == 0)
 				forced = OE_SIGNAL_TRACES;
+			else if (strcmp(optarg, "profiles") == 0)
+				forced = OE_SIGNAL_PROFILES;
 			else
 				errx(2, "unknown signal %s", optarg);
 			break;
 		default:
 			fprintf(stderr, "usage: otlppb_encode [-f] "
-			    "[-s logs|metrics|traces]\n");
+			    "[-s logs|metrics|traces|profiles]\n");
 			return (2);
 		}
 	}

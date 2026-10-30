@@ -52,11 +52,14 @@
 #include "opentelemetry/proto/collector/logs/v1/logs_service.upbdefs.h"
 #include "opentelemetry/proto/collector/metrics/v1/metrics_service.upbdefs.h"
 #include "opentelemetry/proto/collector/trace/v1/trace_service.upbdefs.h"
+#include "opentelemetry/proto/collector/profiles/v1development/profiles_service.upbdefs.h"
 #pragma GCC diagnostic pop
 
 #include "otelexport.h"
 #include "oe_otlpenc.h"
 #include "oe_otlppb.h"
+
+_Static_assert(OE_NSIGNALS_PB == OE_NSIGNALS, "one definition per signal");
 
 /* Deepest JSON nesting accepted (AnyValue arrays and lists nest). */
 #define	OTLPPB_MAX_DEPTH	64
@@ -111,19 +114,22 @@ oe_otlppb_defs_init(struct oe_otlppb_defs *d)
 	d->response[OE_SIGNAL_TRACES] =
 	    SVCDEF(trace, ExportTraceServiceResponse);
 #undef SVCDEF
+	/* The experimental profiles signal (opentelemetry-proto 1.10). */
+#define	PROFDEF(msg)							\
+	opentelemetry_proto_collector_profiles_v1development_##msg##_getmsgdef(p)
+	d->request[OE_SIGNAL_PROFILES] = PROFDEF(ExportProfilesServiceRequest);
+	d->response[OE_SIGNAL_PROFILES] =
+	    PROFDEF(ExportProfilesServiceResponse);
+#undef PROFDEF
 	/*
 	 * The definitions are compiled in; only allocation can fail, and a
 	 * failed load leaves its messages (and its dependents') unfound.
 	 */
-	if (d->request[OE_SIGNAL_LOGS] == NULL ||
-	    d->response[OE_SIGNAL_LOGS] == NULL ||
-	    d->request[OE_SIGNAL_METRICS] == NULL ||
-	    d->response[OE_SIGNAL_METRICS] == NULL ||
-	    d->request[OE_SIGNAL_TRACES] == NULL ||
-	    d->response[OE_SIGNAL_TRACES] == NULL) {
-		oe_otlppb_defs_fini(d);
-		return (-1);
-	}
+	for (int i = 0; i < OE_NSIGNALS; i++)
+		if (d->request[i] == NULL || d->response[i] == NULL) {
+			oe_otlppb_defs_fini(d);
+			return (-1);
+		}
 	return (0);
 }
 

@@ -168,6 +168,7 @@ struct common_args {
 	const char	*spool;
 	uint64_t	 spool_max;
 	time_t		 interval;
+	int		 profiles;
 };
 
 enum {
@@ -184,6 +185,7 @@ enum {
 	OPT_FORMAT,
 	OPT_ENDPOINT,
 	OPT_PROTOCOL,
+	OPT_PROFILES,
 	OPT_BUFSIZE,
 	OPT_SWITCHRATE,
 	OPT_BROKER,
@@ -210,6 +212,7 @@ static const struct option watch_opts[] = {
 	{ "format", required_argument, NULL, OPT_FORMAT },
 	{ "endpoint", required_argument, NULL, OPT_ENDPOINT },
 	{ "protocol", required_argument, NULL, OPT_PROTOCOL },
+	{ "profiles", no_argument, NULL, OPT_PROFILES },
 	{ "bufsize", required_argument, NULL, OPT_BUFSIZE },
 	{ "switchrate", required_argument, NULL, OPT_SWITCHRATE },
 	{ "broker", no_argument, NULL, OPT_BROKER },
@@ -445,6 +448,12 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 				    optarg);
 			ca->protocol = optarg;
 			break;
+		case OPT_PROFILES:
+			/* Experimental: the OTLP profiles signal. */
+			if (!is_watch)
+				usage_fn();
+			ca->profiles = 1;
+			break;
 		case OPT_ENDPOINT:
 		case OPT_BUFSIZE:
 		case OPT_SWITCHRATE:
@@ -529,7 +538,7 @@ watch_usage(void)
 	    "            [--rotate-keep n]]\n"
 	    "           [--endpoint url [--spool file [--spool-max size]]]\n"
 	    "           [--protocol grpc|http/protobuf|http/json]\n"
-	    "           [--bufsize size] [--switchrate rate]\n");
+	    "           [--profiles] [--bufsize size] [--switchrate rate]\n");
 	exit(2);
 }
 
@@ -562,6 +571,9 @@ cmd_watch(int argc, char **argv)
 	if (ca.interval != 0 && (ca.format == FORMAT_TEXT ||
 	    ca.format == FORMAT_COLLAPSED))
 		errx(2, "--interval needs --format json, otel or otlp-json");
+	if (ca.profiles && ca.format != FORMAT_OTEL &&
+	    ca.format != FORMAT_OTLPJSON)
+		errx(2, "--profiles needs --format otel or otlp-json");
 
 	rendered = render_from_args(&ca, &p);
 	if (rendered == NULL)
@@ -583,6 +595,7 @@ cmd_watch(int argc, char **argv)
 	wo.spool = ca.spool;
 	wo.spool_max = ca.spool_max;
 	wo.interval = ca.interval;
+	wo.profiles = ca.profiles;
 
 	ret = watch_run(p, rendered, &wo);
 	free(rendered);

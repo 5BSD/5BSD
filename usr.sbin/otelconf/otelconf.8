@@ -59,6 +59,8 @@ also fail with exit status 4 when the configuration names no export
 target
 .Po
 .Ic endpoint ,
+a signal block's
+.Ic endpoint ,
 or
 .Ic export.target
 .Qq file
@@ -67,7 +69,9 @@ for the base system services.
 The rc.d services use
 .Fl eqt .
 .It Cm show
-Print every resolved setting.
+Print every resolved setting, and the settings the signal blocks
+.Pq Ic logs , metrics , traces , profiles
+set.
 Header values are redacted.
 .It Cm get Ar key
 Print one resolved setting.
@@ -76,9 +80,12 @@ is a key of
 .Xr otel.conf 5
 written with dots, such as
 .Cm endpoint ,
-.Cm spool.directory
+.Cm spool.directory ,
+.Cm export.target
 or
-.Cm export.target .
+.Cm traces.endpoint .
+A signal block key that the block does not set prints an empty line:
+the general key applies.
 The list-valued key
 .Cm resource
 prints one entry per line.

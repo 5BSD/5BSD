@@ -47,6 +47,7 @@
 #include "oe_http.h"
 #include "oe_otlpenc.h"
 #include "oe_otlppb.h"
+#include "oe_sysconf.h"
 
 #define	OTLP_DEFAULT_BATCH	200
 #define	OTLP_DEFAULT_FLUSH	0.5
@@ -54,6 +55,7 @@
 #define	OTLP_DEFAULT_TIMEOUT	10.0
 #define	OTLP_DEFAULT_SPOOL	(64ULL * 1024 * 1024)
 #define	OTLP_SPOOL_RETRY	5	/* idle replay cadence, seconds */
+/* Profiles are sent as whole requests (jobs), never as fragments. */
 #define	OTLP_NSIGNALS		3
 
 enum post_result {
@@ -72,21 +74,36 @@ struct post_job {
 	size_t		 len;
 };
 
-struct oe_otlp {
-	struct oe_exporter e;
-
+/*
+ * Where one or more signals go: the endpoint (a base URL, or with
+ * "exact" a signal endpoint used as-is), protocol, headers, timeout and
+ * compression.  Signals with the same settings share a destination.
+ */
+struct otlp_dest {
+	char		*endpoint;
 	struct oe_url	 url;
-	struct oe_otlpenc enc;
-	char		 user_agent[64];
-	int		 batch_size;
-	double		 flush_interval;
-	int		 max_retries;
+	int		 exact;
+	int		 protocol;	/* enum oe_otlp_protocol */
 	int		 timeout_ms;
 	int		 use_gzip;
 	struct oe_attr	*headers;
 	size_t		 nheaders;
 	/* http/protobuf and grpc (oe_otlppb.h); NULL for http/json. */
 	struct oe_otlppb *pb;
+};
+
+struct oe_otlp {
+	struct oe_exporter e;
+
+	struct oe_otlpenc enc;
+	char		 user_agent[64];
+	int		 batch_size;
+	double		 flush_interval;
+	int		 max_retries;
+	struct otlp_dest dests[OE_NSIGNALS];
+	int		 ndests;
+	int		 dest_of[OE_NSIGNALS];	/* by enum oe_signal */
+	int		 warned_json_profiles;
 
 	pthread_mutex_t	 lock;
 	pthread_cond_t	 cv;
@@ -210,6 +227,7 @@ post_with_retry(struct oe_otlp *o, enum oe_signal sig, const char *body,
     size_t len)
 {
 	struct oe_http_response resp;
+	struct otlp_dest *dst;
 	enum post_result result;
 	const char *path;
 	void *gz;
@@ -218,16 +236,25 @@ post_with_retry(struct oe_otlp *o, enum oe_signal sig, const char *body,
 	double backoff_ms, retry_after;
 	int attempt, gzipped;
 
+	dst = &o->dests[o->dest_of[sig]];
 	/* The protobuf transports send and retry on their own. */
-	if (o->pb != NULL)
-		return ((enum post_result)oe_otlppb_post(o->pb, sig, body,
+	if (dst->pb != NULL)
+		return ((enum post_result)oe_otlppb_post(dst->pb, sig, body,
 		    len));
-	path = oe_enc_path(sig);
+	if (sig == OE_SIGNAL_PROFILES) {
+		/* Profiles travel as protobuf only (experimental signal). */
+		if (!o->warned_json_profiles++)
+			fprintf(stderr, "otlp: profiles need the http/protobuf "
+			    "or grpc protocol; dropped over http/json\n");
+		return (POST_REJECTED);
+	}
+	/* Messages show the path after a "/". */
+	path = dst->exact ? dst->url.rawpath + 1 : oe_enc_path(sig);
 	gz = NULL;
 	gzipped = 0;
 	payload = body;
 	paylen = len;
-	if (o->use_gzip) {
+	if (dst->use_gzip) {
 		gz = gzip_body(body, len, &paylen);
 		if (gz != NULL) {
 			payload = gz;
@@ -251,9 +278,9 @@ post_with_retry(struct oe_otlp *o, enum oe_signal sig, const char *body,
 			sleep_seconds(retry_after);
 		}
 
-		if (oe_http_post(&o->url, path, o->headers, o->nheaders,
-		    o->user_agent, payload, paylen, gzipped, o->timeout_ms,
-		    &resp) != 0) {
+		if (oe_http_post(&dst->url, dst->exact ? NULL : path,
+		    dst->headers, dst->nheaders, o->user_agent, payload, paylen,
+		    gzipped, dst->timeout_ms, &resp) != 0) {
 			retry_after = -1.0;
 			if (attempt == o->max_retries)
 				fprintf(stderr, "otlp: POST /%s failed: %s "
@@ -722,17 +749,53 @@ otlp_span(struct oe_exporter *e, const struct oe_span *sp)
 	return (otlp_queue(o, OE_SIGNAL_TRACES, oe_enc_span(&o->enc, sp), 1));
 }
 
+/*
+ * One profile: a whole ExportProfilesServiceRequest with its own
+ * dictionary, handed to the sender at once.
+ */
+static int
+otlp_profile(struct oe_exporter *e, const struct oe_profile *pr)
+{
+	struct oe_otlp *o = (struct oe_otlp *)e;
+	char *body;
+	size_t len;
+
+	if (pr->nsamples == 0)
+		return (0);
+	if ((body = oe_enc_profile(&o->enc, pr, &len)) == NULL) {
+		fprintf(stderr, "otlp: out of memory\n");
+		return (-1);
+	}
+	pthread_mutex_lock(&o->lock);
+	enqueue_job(o, OE_SIGNAL_PROFILES, body, len);
+	pthread_mutex_unlock(&o->lock);
+	return (0);
+}
+
 static int
 otlp_flush(struct oe_exporter *e)
 {
 	struct oe_otlp *o = (struct oe_otlp *)e;
+	struct post_job *job;
 	char **frags[OTLP_NSIGNALS];
 	size_t nfrags[OTLP_NSIGNALS];
 
 	pthread_mutex_lock(&o->lock);
 	take_batches(o, frags, nfrags);
+	/* Without a sender thread, queued requests go out here. */
+	job = o->started ? NULL : o->jobs_head;
+	if (job != NULL)
+		o->jobs_head = o->jobs_tail = NULL;
 	pthread_mutex_unlock(&o->lock);
 	post_batches(o, frags, nfrags);
+	while (job != NULL) {
+		struct post_job *next = job->next;
+
+		deliver(o, job->sig, job->body, job->len);
+		free(job->body);
+		free(job);
+		job = next;
+	}
 	return (0);
 }
 
@@ -767,12 +830,13 @@ otlp_free(struct oe_exporter *e)
 	}
 	for (i = 0; i < OTLP_NSIGNALS; i++)
 		oe_frags_free(o->frags[i], o->nfrags[i]);
-	for (i = 0; i < o->nheaders; i++) {
-		free(__DECONST(char *, o->headers[i].name));
-		free(__DECONST(char *, o->headers[i].value));
+	for (i = 0; i < (size_t)o->ndests; i++) {
+		struct otlp_dest *dst = &o->dests[i];
+
+		oe_attrs_free(dst->headers, dst->nheaders);
+		oe_otlppb_free(dst->pb);
+		free(dst->endpoint);
 	}
-	oe_otlppb_free(o->pb);
-	free(o->headers);
 	free(o->spool_path);
 	if (o->spool_lockfd >= 0)
 		close(o->spool_lockfd);
@@ -791,6 +855,7 @@ static const struct oe_exporter_ops otlp_ops = {
 	.shutdown = otlp_shutdown,
 	.free = otlp_free,
 	.span = otlp_span,
+	.profile = otlp_profile,
 };
 
 static int
@@ -856,12 +921,107 @@ spool_open(struct oe_otlp *o, const struct oe_otlp_config *cfg)
 	return (0);
 }
 
+/* Do two header lists hold the same headers in the same order? */
+static int
+same_headers(const struct oe_attr *a, size_t na, const struct oe_attr *b,
+    size_t nb)
+{
+	size_t i;
+
+	if (na != nb)
+		return (0);
+	for (i = 0; i < na; i++)
+		if (strcmp(a[i].name, b[i].name) != 0 ||
+		    strcmp(a[i].value, b[i].value) != 0)
+			return (0);
+	return (1);
+}
+
+/*
+ * The destination of one signal: its own settings over the exporter's.
+ * An existing destination with the same settings is shared.  Returns
+ * its index, or -1 with a message on stderr.
+ */
+static int
+dest_for(struct oe_otlp *o, const struct oe_otlp_config *cfg,
+    enum oe_signal sig)
+{
+	const struct oe_otlp_signal_config *sc = &cfg->signals[sig];
+	const struct oe_attr *headers;
+	struct otlp_dest *dst;
+	const char *endpoint, *protocol, *compression;
+	size_t nheaders, i;
+	int exact, proto, timeout_ms, gzip, d;
+
+	endpoint = sc->endpoint != NULL ? sc->endpoint : cfg->endpoint;
+	exact = sc->endpoint != NULL;
+	protocol = sc->protocol != NULL ? sc->protocol : cfg->protocol;
+	/* NULL is http/json for callers that predate the setting. */
+	proto = protocol == NULL ? OE_PROTO_HTTP_JSON :
+	    oe_otlp_protocol_parse(protocol);
+	if (proto < 0) {
+		fprintf(stderr, "otlp: unknown protocol \"%s\" (expected "
+		    "grpc, http/protobuf or http/json)\n", protocol);
+		return (-1);
+	}
+	headers = sc->has_headers ? sc->headers : cfg->headers;
+	nheaders = sc->has_headers ? sc->nheaders : cfg->nheaders;
+	timeout_ms = (int)((sc->timeout > 0 ? sc->timeout : cfg->timeout > 0 ?
+	    cfg->timeout : OTLP_DEFAULT_TIMEOUT) * 1000.0);
+	compression = sc->compression != NULL ? sc->compression :
+	    cfg->compression;
+	/* Default to gzip; honor "none" to disable. */
+	gzip = compression == NULL || strcasecmp(compression, "none") != 0;
+	for (d = 0; d < o->ndests; d++) {
+		dst = &o->dests[d];
+		if (strcmp(dst->endpoint, endpoint) == 0 &&
+		    dst->exact == exact && dst->protocol == proto &&
+		    dst->timeout_ms == timeout_ms && dst->use_gzip == gzip &&
+		    same_headers(dst->headers, dst->nheaders, headers,
+		    nheaders))
+			return (d);
+	}
+	dst = &o->dests[o->ndests++];
+	if ((dst->endpoint = strdup(endpoint)) == NULL)
+		goto nomem;
+	if (oe_url_parse(endpoint, &dst->url) != 0) {
+		fprintf(stderr, "otlp: invalid %sendpoint URL '%s'\n",
+		    exact ? "signal " : "", endpoint);
+		return (-1);
+	}
+	dst->exact = exact;
+	dst->protocol = proto;
+	dst->timeout_ms = timeout_ms;
+	dst->use_gzip = gzip;
+	if (nheaders > 0) {
+		if ((dst->headers = calloc(nheaders,
+		    sizeof(*dst->headers))) == NULL)
+			goto nomem;
+		for (i = 0; i < nheaders; i++) {
+			dst->headers[i].name = strdup(headers[i].name);
+			dst->headers[i].value = strdup(headers[i].value);
+			dst->nheaders = i + 1;
+			if (dst->headers[i].name == NULL ||
+			    dst->headers[i].value == NULL)
+				goto nomem;
+		}
+	}
+	if (oe_otlppb_open(oe_otlp_protocol_name(proto), &dst->url, exact,
+	    dst->headers, dst->nheaders, o->user_agent, timeout_ms,
+	    o->max_retries, gzip, &dst->pb) != 0)
+		return (-1);
+	return (o->ndests - 1);
+nomem:
+	fprintf(stderr, "otlp: out of memory\n");
+	return (-1);
+}
+
 struct oe_exporter *
 oe_otlp_new(const struct oe_otlp_config *cfg)
 {
 	struct oe_otlp *o;
 	const struct oe_resource *r = cfg->resource;
-	size_t i;
+	int sig;
 
 	o = calloc(1, sizeof(*o));
 	if (o == NULL)
@@ -871,14 +1031,11 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 	pthread_mutex_init(&o->lock, NULL);
 	pthread_mutex_init(&o->spool_lock, NULL);
 	pthread_cond_init(&o->cv, NULL);
-	if (oe_url_parse(cfg->endpoint, &o->url) != 0) {
-		fprintf(stderr, "otlp: invalid endpoint URL '%s'\n",
-		    cfg->endpoint);
+	if (oe_enc_init(&o->enc, r, cfg->scope_name) != 0) {
+		fprintf(stderr, "otlp: out of memory\n");
 		otlp_free(&o->e);
 		return (NULL);
 	}
-	if (oe_enc_init(&o->enc, r, cfg->scope_name) != 0)
-		goto fail;
 	snprintf(o->user_agent, sizeof(o->user_agent),
 	    "OTel-OTLP-Exporter-C/%s", r->service_version);
 	o->batch_size = cfg->batch_size > 0 ? cfg->batch_size :
@@ -887,27 +1044,16 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 	    OTLP_DEFAULT_FLUSH;
 	o->max_retries = cfg->max_retries >= 0 ? cfg->max_retries :
 	    OTLP_DEFAULT_RETRIES;
-	o->timeout_ms = (int)((cfg->timeout > 0 ? cfg->timeout :
-	    OTLP_DEFAULT_TIMEOUT) * 1000.0);
-	/* Default to gzip; honor "none" to disable. */
-	o->use_gzip = cfg->compression == NULL ||
-	    strcasecmp(cfg->compression, "none") != 0;
-	if (cfg->nheaders > 0) {
-		o->headers = calloc(cfg->nheaders, sizeof(*o->headers));
-		if (o->headers == NULL)
-			goto fail;
-		for (i = 0; i < cfg->nheaders; i++) {
-			o->headers[i].name = strdup(cfg->headers[i].name);
-			o->headers[i].value = strdup(cfg->headers[i].value);
-			o->nheaders = i + 1;
-			if (o->headers[i].name == NULL ||
-			    o->headers[i].value == NULL)
-				goto fail;
+	for (sig = 0; sig < OE_NSIGNALS; sig++)
+		if ((o->dest_of[sig] = dest_for(o, cfg,
+		    (enum oe_signal)sig)) < 0) {
+			otlp_free(&o->e);
+			return (NULL);
 		}
-	}
-	if (oe_otlppb_open(cfg->protocol, &o->url, o->headers, o->nheaders,
-	    o->user_agent, o->timeout_ms, o->max_retries, o->use_gzip,
-	    &o->pb) != 0) {
+	if (cfg->profiles &&
+	    o->dests[o->dest_of[OE_SIGNAL_PROFILES]].pb == NULL) {
+		fprintf(stderr, "otlp: profiles are sent with the "
+		    "http/protobuf or grpc protocol only, not http/json\n");
 		otlp_free(&o->e);
 		return (NULL);
 	}
@@ -919,9 +1065,4 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 		fprintf(stderr, "otlp: continuing without a spool\n");
 	}
 	return (&o->e);
-
-fail:
-	fprintf(stderr, "otlp: out of memory\n");
-	otlp_free(&o->e);
-	return (NULL);
 }

@@ -45,6 +45,20 @@
 #define	OE_SYSCONF_TIMEOUT_MAX_MS	600000
 
 /*
+ * The settings of one signal's block (logs, metrics, traces, profiles):
+ * NULL, 0 or "" when unset.  endpoint is a signal endpoint, used as-is.
+ */
+struct oe_sysconf_signal {
+	char		*endpoint;
+	char		*protocol;
+	char		*compression;
+	int		 timeout_ms;
+	char		*headers_file;
+	struct oe_attr	*headers;	/* loaded from headers_file */
+	size_t		 nheaders;
+};
+
+/*
  * Resolved system configuration.  All strings are owned by the object
  * and released by oe_sysconf_free().
  */
@@ -68,6 +82,8 @@ struct oe_sysconf {
 	 */
 	int		 export_file;	/* export.target = "file" */
 	char		*export_dir;	/* export.directory */
+	/* Per-signal blocks, indexed by enum oe_signal. */
+	struct oe_sysconf_signal signals[OE_NSIGNALS];
 
 	char		 error[512];	/* set when a call returns -1 */
 };
