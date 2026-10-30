@@ -8198,3 +8198,13 @@ review should cover configuration rejection, IPsec setup, renumbering send/retry
 and receive handling, plus privilege failures in isolated networking. No daemon
 was started and no renumbering packet was sent. Kernel audit attribution remains
 a runtime question; absence of userland libbsm alone does not answer it.
+
+### 2026-10-30: hwstat and reclaimstat
+
+No local DTrace provider or direct audit-library integration is declared by these
+programs. hwstat retains its native otelexport dependency and existing export
+formats; reclaimstat consumes the maintained capreclaim interface header.
+Mocked sensor/metrics/RAPL C tests passed for both implementations, including
+counter rollover/failure cases. This is not evidence of real counter accuracy,
+live export delivery, or kernel audit attribution. Hardware access denials,
+reclaim visibility and external export behavior remain runtime review items.

@@ -19604,3 +19604,27 @@ performance qualification. Make remains production/default.
 - Frontend review: maintained Bazel-built build-bsd bazel-test consumed existing
   explicit targets with 16 jobs. No frontend C/backend/staging/signing/publication
   update needed. Full-system/bootstrap/runtime/performance gates remain open.
+
+### 2026-10-30: native hardware/reclaim statistics tools
+
+- Added reclaimstat with its declared capreclaim header (no invented library
+  linkage), plus hwstat/native otelexport and complete five-C/one-shell test
+  installation. Test-included implementation sources are declared textual inputs;
+  shared linked sources and native libraries are explicit.
+- Fresh Make parity passes reclaimstat five records/three regular payloads and
+  hwstat with tests 21 records/15 regular payloads/six debug links. Full metadata,
+  package tags, exact manuals/shell/Kyuafile, ELF symbols/ordered dependencies,
+  and debug CRCs agree. Initial missing test-directory policy and libthr ordering
+  were caught and corrected from maintained Make behavior; failed captures remain.
+- Ran all cases from sensors_test (5), metrics_test (5) and rapl_test (13) for
+  both captured native and Make builds: 46 executions passed. These use maintained
+  mocks for sensor/RAPL operations and host loader/libraries, not Bazel test
+  execution. Sampling/exec-timing and shell-test runtime remain pending; all their
+  installed binaries/scripts were compared. No hardware-management action ran.
+- Evidence under `/usr/obj/usr/src`: `bazel-hwstat-tools-reference-20261030`
+  (comparators, runtime-audit.py/json, individual logs), final native capture
+  `bazel-hwstat-tools-20261030-r3`, fresh reclaimstat/hwstat Make stages.
+- Frontend review: maintained Bazel-built build-bsd bazel-test used existing
+  explicit targets/tests setting with 16 jobs; no new frontend C/backend/staging,
+  signing/publication requirements. Full-system/VM/Bazel-runtime/performance
+  qualification remains open, as do tests-disabled installation variants here.

@@ -43720,3 +43720,18 @@ manual bytes, ELF symbols/dependencies and debug CRCs. Evidence:
 `/usr/obj/usr/src/bazel-rrenumd-reference-20261030`; maintained build-bsd drove
 the capture with 16 jobs. The developer YACCDEBUG variant remains pending.
 No renumbering packets were sent or live daemon behavior exercised.
+
+### Hardware/reclaim statistics tools (2026-10-30)
+
+`//usr.sbin/reclaimstat:install_archive` matches fresh Make's five installation
+records/three payloads. `//usr.sbin/hwstat:install_archive` with tests enabled
+matches 21 records/15 payloads, including five C tests, one shell test, Kyuafile,
+manual, and six separated debug files. Explicit libthr dependency preserves
+Make's deferred thread-library link order after libm.
+
+Captured native and Make sensors/metrics/RAPL test programs passed all 23 cases
+apiece (46 executions) with maintained mocks and host runtime libraries. These
+are host-run C tests, not Bazel tests or live hardware qualification. Sampling,
+exec-timing and shell test bodies, plus tests-disabled installation, remain open.
+Evidence: `/usr/obj/usr/src/bazel-hwstat-tools-reference-20261030`; final native
+capture `bazel-hwstat-tools-20261030-r3` used maintained build-bsd with 16 jobs.
