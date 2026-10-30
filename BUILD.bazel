@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["COPYRIGHT"])
 
+# Vendor licence installed by lib/libotelexport (OTLP_LICENSES); the vendor
+# tree itself carries no BUILD file.
+exports_files(["contrib/opentelemetry-proto/LICENSE"], visibility = ["//lib/libotelexport:__pkg__"])
+
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.

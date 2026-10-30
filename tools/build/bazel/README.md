@@ -43116,6 +43116,28 @@ libotelexport's protobuf closure: the Make reference builds
 library and does not build the current one (sysconf, service, file target,
 OTLP protobuf/gRPC); the declared probes, not that file, cover it.
 
+Native libotelexport made explicitly unavailable (2026-10-30)
+-------------------------------------------------------------
+The native graph has no protoc, upb plugin, libupb, nghttp2 or
+Abseil/protobuf targets, so it cannot generate or link the 48 OTLP binding
+files and the runtime the current libotelexport (15 sources, LIBADD z ssl
+crypto pthread ucl upb nghttp2) needs.  Instead of building the stale
+six-source archives, `//lib/libotelexport:otelexport{,_pie}`,
+`:static_archive` and `:pie_archive` are now `bsd_unavailable` targets
+(`tools/build/bazel/bsd_unavailable.bzl`): analysis of them, or of anything
+depending on them (`//usr.sbin/hwstat:hwstat`, the native
+`lib/libotelexport/tests` cases), fails with the reason and points to the
+declared probes.  The installation targets stay native and now match Make:
+both manuals (`libotelexport.3`, `oe_sysconf.3`) with all 62 MLINKS and
+`/usr/share/licenses/opentelemetry-proto/LICENSE` (package utilities; the
+root package exports the vendor file, since the vendor tree has no BUILD
+file).  Format-5 runs of `native-qualify.py` on the experimental tree
+(evidence `/usr/obj/5BSD-otel-validation/fix4-native/`): `install_archive`
+passed, its 66 records equal Make's METALOG destinations, modes and package
+tags; `static_archive` and `hwstat` fail at analysis with the message.
+Making the archives native again needs native protobuf/upb/nghttp2 targets
+(the probe's `targets/` are the reference) and the generated-source rules.
+
 ### Local-Unbound program group (2026-10-30)
 
 Native targets now build local-unbound, local-unbound-anchor,

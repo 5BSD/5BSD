@@ -2168,6 +2168,13 @@ and their test programs
 and compares their compile and link flags, archive members, symbols
 and program ELF metadata with independent Make builds of the same sources.
 These programs are not executed by this action.
+The maintained native graph does not yet provide the OTLP protobuf
+closure (protoc with the upb plugins, libupb, nghttp2) that the current
+.Pa lib/libotelexport
+needs: its native archive targets fail analysis with that reason, as do
+native targets depending on them such as
+.Pa usr.sbin/hwstat ,
+while its native installation targets (manuals, licence) remain buildable.
 The separate libdtrace and
 .Xr dtrace 1
 probe
