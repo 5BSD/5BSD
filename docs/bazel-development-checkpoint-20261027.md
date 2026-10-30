@@ -18137,3 +18137,44 @@ These component builds use the existing staged SDK; independent bootstrap,
 world/pkgbase, sandbox/cache and comparative performance gates remain open.
 Existing build-bsd explicit targets suffice; no frontend, signing or publication
 contract changed. Make remains production/default.
+
+### Cron migration in progress (2026-10-30)
+
+Native internal cron library and cron/crontab program candidates have been added.
+The daemon graph includes conditional native DTrace provider/header/object actions
+and PAM/util dependencies. Initial compile run is
+/usr/obj/usr/src/bazel-cron-programs-20261030; independent Make build/install/
+installconfig reference is bazel-cron-programs-make-20261030. Both were still
+running at this checkpoint; no success or parity claim is made.
+
+Next: finish crontab installation with mode 4555, its section-1/5 manuals,
+aggregate both programs/configuration, inspect library dependency propagation,
+and compare generated probes and artifact/install outputs. Qualify DTrace-off
+configuration too. No scheduler or setuid program has been executed. Existing
+build-bsd explicit targets suffice; no frontend/signing/publication input change.
+
+### Cron build/install and emitted DTrace qualification (2026-10-30)
+
+The native cron/crontab graph and internal ordinary/PIE archives now pass their
+initial Make comparison. Internal cron code requires OpenPAM headers, not a PAM
+link dependency; the first link failure exposed over-propagation of PAM into
+crontab. The corrected graph keeps PAM linkage on the daemon. No source behavior
+was changed. Crontab installation preserves root ownership, mode 4555 and schg;
+the comparison checks file flags in both the manifest and tar PAX metadata.
+
+Final native run: /usr/obj/usr/src/bazel-cron-programs-20261030-r2.
+Fresh Make build/install/installconfig: bazel-cron-programs-make-20261030.
+Evidence: /usr/obj/usr/src/bazel-cron-programs-reference-20261030.
+All 12 install records match with no missing/extra destinations or metadata
+mismatches; eight regular payloads pass symbol/dynamic dependency inventories,
+exact configuration/manual bytes and two debuglink CRCs. Both internal archives
+match three ordered members and 117 global/weak symbols. DTrace inventories
+match six probe schemas; both binaries pass instruction/function-range checks
+for seven ordinary and seven enabled sites. This is not live firing evidence.
+
+The DTrace-disabled variant remains to qualify. Scheduler execution, PAM,
+setuid crontab operations, spool permissions, credential transitions, concurrent
+edits and runtime probes still need matching-system tests. No daemon or setuid
+program was executed. Full world/bootstrap/pkgbase and performance remain open.
+Existing build-bsd explicit inputs cover the work; no frontend/signing/publication
+contract changed. Make remains production/default.

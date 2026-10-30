@@ -7647,3 +7647,13 @@ No additional DTrace/audit hooks were introduced. Matching-kernel tests still
 need to verify child audit identity, failed transitions, TLS authorization,
 trail recovery and privilege-separated worker behavior. Artifact comparison
 alone establishes none of those security behaviors.
+
+### Cron and crontab (2026-10-30)
+
+Native daemon generation preserves six DTrace probe schemas and seven ordinary/
+enabled sites, with emitted instruction/range checks against Make. Existing
+PAM and job privilege code is unchanged. Live job launch, exec failure and child
+wait probes remain untested. Review audit coverage for crontab edits, failed PAM
+sessions, credential changes and spool access; preserving probes does not prove
+audit completeness. Setuid mode and schg are checked in installation metadata;
+no privileged executable was run on the host.
