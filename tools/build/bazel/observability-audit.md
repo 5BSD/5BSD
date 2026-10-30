@@ -7930,3 +7930,13 @@ runtime-tested. Source scan found no direct DTRACE/SDT_PROBE/audit_ references i
 these directories. Qualify disposable-image boot-sector writes, authorization
 failures and readback, malformed BTX/ELF inputs, and command failure/boot logging.
 No host disk write or boot-state change was performed.
+
+
+### cpucontrol (2026-10-30)
+
+Native cpucontrol retains maintained sources, including shared ucode_subr.c.
+No direct DTRACE/SDT_PROBE/audit_ references were found in these sources.
+Build/install comparisons pass; no device operations were executed. Runtime
+qualification must cover authorization failures, malformed microcode inputs,
+update errors and diagnostics on supported hardware. This does not establish
+audit coverage or live probe behavior.

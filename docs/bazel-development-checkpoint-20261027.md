@@ -18910,3 +18910,22 @@ runtime qualification. No disk or boot configuration was changed, and no utility
 was executed. Existing build-bsd explicit target/SDK inputs cover the additions;
 no frontend/backend/signing/publication contract changed. Full system/bootstrap,
 pkgbase and performance remain open; Make remains production/default.
+
+
+### cpucontrol (2026-10-30)
+
+Added native cpucontrol with explicit local sources/headers and a narrowly
+exported shared sys/x86/x86/ucode_subr.c source. Program behavior is unchanged.
+Native build: /usr/obj/usr/src/bazel-cpucontrol-20261030. Fresh Make reference:
+/usr/obj/usr/src/bazel-cpucontrol-make-20261030. Comparison scripts and evidence:
+/usr/obj/usr/src/bazel-cpucontrol-reference-20261030/cpucontrol.
+Both builds completed; all five install records match with no missing, extra or
+mismatched entries. Three regular payloads pass symbol/dynamic dependency,
+manual-byte and debuglink CRC comparisons. This is selected amd64 artifact
+qualification, not runtime or whole-system qualification. No microcode/device
+operation was executed. Privileged ioctls, malformed microcode handling and
+hardware update behavior remain runtime checks.
+
+Frontend review: existing build-bsd explicit target/SDK inputs cover this rule;
+no frontend/backend/signing/publication contract changed. Make remains production
+default. Full world/kernel/bootstrap/pkgbase and performance gates remain open.
