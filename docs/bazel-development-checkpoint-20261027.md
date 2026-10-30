@@ -18999,3 +18999,22 @@ target inputs work through build-bsd. No frontend/backend/signing/publication
 contract changed. These are component configuration results, not whole-system,
 runtime, bootstrap, package publication or performance qualification. Make
 remains production/default.
+
+
+### memcontrol and pciconf (2026-10-30)
+
+Added native rules with explicit sources and local pciconf headers. Maintained
+program behavior is unchanged. Native build:
+/usr/obj/usr/src/bazel-pci-memory-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{memcontrol,pciconf}-make-20261030. Scripts and evidence:
+/usr/obj/usr/src/bazel-pci-memory-reference-20261030, per-program directories.
+Both builds pass five installation records and three regular payload comparisons:
+no missing/extra/metadata differences, matching symbol/dynamic inventories,
+manual bytes and debuglink CRC. No utility was executed and no hardware state
+was changed. PCI configuration read/write/mapping, capability decoding and
+memory-range attribute operations still need runtime qualification.
+
+Frontend review: existing build-bsd explicit targets and SDK inputs cover these
+additions; no frontend/backend/signing/publication contract changed. These are
+selected amd64 artifact results, not full world/kernel/bootstrap/pkgbase or
+performance qualification. Make remains production/default.

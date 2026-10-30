@@ -7960,3 +7960,13 @@ but checksum failure diagnostics, malformed CIS parsing and netgraph access
 failures/flow decoding need runtime qualification. Review existing kernel audit
 coverage before deciding whether additional userland instrumentation is needed.
 No device or netgraph operations were executed.
+
+
+### memcontrol and pciconf (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in these utility sources.
+Native builds preserve the maintained sources and pass Make artifact comparisons.
+Review kernel audit coverage for PCI writes/mapping and memory-range attribute
+changes; qualify privilege failures and malformed arguments on suitable isolated
+systems. PCI decoding and memory-range operation behavior remain runtime gaps.
+No host device operation was executed.
