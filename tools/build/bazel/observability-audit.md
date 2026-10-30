@@ -8335,3 +8335,11 @@ and DEBUG source branches are compiled and artifact-compared; DEBUG retains
 additional administrative operations and diagnostics. Controller event handling,
 configuration/volume changes and authorization/audit attribution require runtime
 review. No controller command was executed during these checks.
+
+### 2026-10-30: mpsutil and mprutil
+
+No local DTrace provider or direct libbsm integration is declared. Native builds
+retain debug/diagnostic sources and invocation-name interface selection. Alias
+argument/version checks pass without opening controllers. Firmware updates,
+controller event/configuration operations and their authorization/audit attribution
+remain runtime review items; artifact parity does not establish those behaviors.

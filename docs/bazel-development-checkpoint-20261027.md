@@ -19988,3 +19988,27 @@ performance qualification. Make remains production/default.
   bazel-test handle both variants; manual documents the setting. No frontend C,
   backend/signing/publication contract change. Controller runtime, native Bazel
   behavioral tests, cross builds and full-system/performance gates remain open.
+
+### 2026-10-30: mpsutil/mprutil aliases and debug configuration
+
+- Added the native seven-source mpsutil target with explicit MPS/MPR ioctl/MPI
+  headers. Preserved the executable and manual hardlinks for mprutil: controller
+  interface selection depends on the invoked name. USE_MPT_IOCTLS is retained.
+- Added typed mpsutil_debug boolean (default false). Both normal/debug variants
+  pass fresh Make comparison: seven metadata records, three regular payloads,
+  two hardlinks and one debug link each. Symbols, ordered dependencies, manuals,
+  link identity/content and debug CRCs match.
+- Actual compile records confirm all seven sources, USE_MPT_IOCTLS in both
+  variants, and DEBUG only in the selected variant. Sixteen safe host-runtime
+  checks cover both builds/variants/names with matching versus mismatched device
+  name prefixes and the version dispatcher. All pass and match Make output.
+  Source review confirms these paths do not open a controller. Runs use host
+  loader/libc and captured binaries, not native Bazel test execution.
+- Evidence under /usr/obj/usr/src: bazel-mpsutil-reference-20261030 and
+  bazel-mpsutil-debug-reference-20261030 artifact audits; variant-audit.py/json,
+  runtime-audit.py and runtime/audit.json/per-command logs; corresponding native
+  captures and fresh Make stages. No controller/firmware operation was run.
+- Frontend review: maintained build-bsd format-5 settings and 16-job bazel-test
+  suffice; manual documents aliases and debug selection. No frontend C/backend,
+  signing or publication contract changes. Controller runtime, native Bazel
+  tests, cross builds and full-world/kernel/package/performance gates remain open.

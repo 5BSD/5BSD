@@ -439,3 +439,5 @@ cc_library(name = "dcons_user_headers", hdrs = ["sys/dev/dcons/dcons.h"], strip_
 cc_library(name = "mlx_user_headers", hdrs = ["sys/dev/mlx/mlxio.h", "sys/dev/mlx/mlxreg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlxcontrol:__pkg__"])
 
 cc_library(name = "mpt_user_headers", hdrs = ["sys/dev/mpt/mpilib/mpi_type.h", "sys/dev/mpt/mpilib/mpi.h", "sys/dev/mpt/mpilib/mpi_cnfg.h", "sys/dev/mpt/mpilib/mpi_raid.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mptutil:__pkg__"])
+
+cc_library(name = "mps_user_headers", hdrs = ["sys/dev/mps/mpi/mpi2_type.h", "sys/dev/mps/mpi/mpi2.h", "sys/dev/mps/mpi/mpi2_cnfg.h", "sys/dev/mps/mpi/mpi2_raid.h", "sys/dev/mps/mpi/mpi2_ioc.h", "sys/dev/mps/mpi/mpi2_init.h", "sys/dev/mps/mpi/mpi2_tool.h", "sys/dev/mps/mpi/mpi2_sas.h", "sys/dev/mpr/mpi/mpi2_type.h", "sys/dev/mpr/mpi/mpi2.h", "sys/dev/mpr/mpi/mpi2_cnfg.h", "sys/dev/mpr/mpi/mpi2_sas.h", "sys/dev/mps/mps_ioctl.h", "sys/dev/mpr/mpr_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mpsutil:__pkg__"])

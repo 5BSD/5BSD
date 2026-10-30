@@ -4356,3 +4356,14 @@ supports the format-5 build-settings boolean
 It enables additional controller commands and diagnostic code, not merely debug
 symbols. Both variants have amd64 installation/artifact parity; no controller
 operations were executed during qualification.
+
+.Ss Native MPS and MPR utilities
+.Cm //usr.sbin/mpsutil:install_archive
+installs mpsutil and the mprutil executable/manual hardlinks.
+The executable selects the controller interface from its invoked name.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:mpsutil_debug
+(default false) matches Make's defined DEBUG variant.
+USE_MPT_IOCTLS remains defined in both configurations.
+Artifact and version/argument-dispatch checks cover both names and variants;
+controller and firmware operations remain unqualified.
