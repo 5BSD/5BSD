@@ -405,7 +405,9 @@ services; each `*_enable` left empty follows the master switch:
 
 otelpfd and otelauditd open their device as root, limit its capability
 rights, read the configuration and credentials, and then run as `_otel`
-(uid 830) before their exporter and spool exist. otelpfd uses `network.type` (`ipv4`/`ipv6`) and `network.io.direction`
+(uid and gid 830, "OpenTelemetry Exporters"; the 5BSD ports tree reserves
+830 in its `UIDs` and `GIDs` so no port claims it) before their exporter
+and spool exist. otelpfd uses `network.type` (`ipv4`/`ipv6`) and `network.io.direction`
 for pf's address families and directions and starts its cumulative sums at
 pf's own enable time. otelauditd exports a successful event as INFO, a
 failed one as WARN, and a failed login or authentication (`lo`, `aa`
