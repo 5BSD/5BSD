@@ -8217,3 +8217,17 @@ Make/native timing cases additionally cover child exit, failure, signals, masks,
 poll intervals and reaping. These exercise maintained measurement logic but do
 not demonstrate real hardware-counter accuracy, live export delivery or kernel
 audit coverage. The shell suite remains unexecuted.
+
+### 2026-10-30: logctl static helper provider discrepancy
+
+logctl introduces no local provider; it consumes the existing logging libraries.
+The real static test helper retains all 26 Make probe schemas unchanged but has
+74 additional schemas from fidl_bsd, libchannel, logcmp, service_ambient,
+service_runtime and shmring in the native experimental traced-archive build.
+Both binaries pass patched amd64 site validation; exact provider/schema parity
+fails and remains explicitly open. No probes were disabled to make comparisons
+pass. Evidence and comparison scripts are in
+/usr/obj/usr/src/bazel-logctl-reference-20261030/dof-difference.json and adjacent
+scripts; strict dof-audit.py retains its failure. Host shell runtime passes use
+maintained fake service responses and do not establish live probe firing,
+logging-service authorization or kernel audit attribution.

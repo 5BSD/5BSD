@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_library(name = "fake_inputs", textual_hdrs = ["//usr.sbin/logctl:logctl.c", "//usr.sbin/BSDLog:config.c"], deps = ["//usr.sbin/BSDLog:config_headers", "//lib/liblogcmp:headers", "//lib/libucl:ucl"])
+cc_binary(name = "logctl_test_bin", srcs = ["//usr.sbin/logctl:logctl.c", "//usr.sbin/BSDLog:config.c"], deps = ["//usr.sbin/BSDLog:config_headers", "//lib/liblogcmp:logcmp", "//lib/libucl:ucl"], linkopts = ["-static"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_binary(name = "logctl_success_bin", srcs = ["logctl_success_impl.c", "logcmp_config_success_impl.c", "fake_logcmp.c"], deps = [":fake_inputs", "//lib/libucl:ucl"], linkopts = ["-static"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+utility_installation(name = "install_real", program = "logctl_test_bin", manual = None, package = "bsdlog-tests", bindir = "/usr/tests/usr.sbin/logctl")
+utility_installation(name = "install_fake", program = "logctl_success_bin", manual = None, package = "bsdlog-tests", bindir = "/usr/tests/usr.sbin/logctl")
+bsd_script_wrapper(name = "logctl_test", body = "logctl_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_shell", src = ":logctl_test", destination = "/usr/tests/usr.sbin/logctl/logctl_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsdlog-tests"])
+[bsd_install_file(name = "install_" + n, src = n + ".conf", destination = "/usr/tests/usr.sbin/logctl/" + n + ".conf", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdlog-tests"]) for n in ["valid", "invalid"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["logctl_test"], interfaces = {"logctl_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/logctl/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdlog-tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_valid", ":install_invalid", ":install_kyuafile"], visibility = ["//visibility:public"])

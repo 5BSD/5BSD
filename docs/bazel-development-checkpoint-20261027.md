@@ -19653,3 +19653,33 @@ performance qualification. Make remains production/default.
   runtime dependency declarations and 16-job execution suffice. No frontend C,
   backend/publication change needed. This closes bounded native test coverage,
   not complete-world/runtime/VM/performance gates.
+
+### 2026-10-30: logctl native build and bounded qualification
+
+- Added native logctl plus both maintained static test helpers, shell suite,
+  fixtures and Kyuafile. Shared BSDLog configuration parser inputs are explicit
+  with narrow visibility; no parser copy or alternate implementation added.
+- Fresh Make comparison covers 17 metadata records and 11 regular payloads,
+  including three debug links, global/weak symbols, ordered dynamic dependencies,
+  and exact manual/configuration/test-script bytes. This is not byte-identical
+  ELF or exact DTrace parity.
+- Eight maintained shell cases passed for each build (16 executions) using host
+  ATF/tools and captured static helpers. Service commands use the maintained
+  fake service. Native Bazel test execution and live service behavior remain open.
+- Static logctl_test_bin has a recorded DOF difference: native 100 schemas,
+  134 ordinary/31 enabled sites; Make 26 schemas, 30 ordinary/31 enabled sites.
+  All 26 Make schemas are preserved unchanged. Additional native providers are
+  fidl_bsd, libchannel, logcmp, service_ambient, service_runtime and shmring.
+  Patched amd64 instruction sites validate for both. Strict dof-audit.py still
+  fails exact parity; dof-difference.py records the discrepancy without masking
+  it. The experimental static-provider extraction difference needs resolution
+  before claiming full tracing qualification; live firing remains untested.
+- Evidence: /usr/obj/usr/src/bazel-logctl-reference-20261030 (installation,
+  payload, runtime and DOF audits), bazel-logctl-20261030-r2 native capture and
+  bazel-logctl-make-20261030 fresh Make stage. Initial analysis failure from a
+  duplicate config.c export was corrected while preserving BSDLog test access.
+- Frontend integration reviewed: maintained build-bsd bazel-test with existing
+  explicit targets, tests/DTrace settings and 16 jobs handles this component.
+  No frontend C, backend, signing or publication contract change is required.
+  Tests-disabled installation, full-world/kernel/package/runtime/performance
+  qualification remain open. Make remains production default.

@@ -63,10 +63,14 @@ load("//usr.sbin/BSDLog/tests:installation.bzl", TEST_DIRECTORIES = "DIRECTORIES
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"]) for name, include_tests in [("daemon_install_archive", False), ("install_archive", True)]]
 
-exports_files(["config.c", "session.c", "store.c"], visibility = ["//usr.sbin/BSDLog/tests:__pkg__"])
+exports_files(["session.c", "store.c"], visibility = ["//usr.sbin/BSDLog/tests:__pkg__"])
 cc_library(name = "test_headers", hdrs = ["config.h", "store.h", "session.h", "storage.h", "logcmp_test.h", "bsdlog_probes.h"],
     textual_hdrs = ["store.c", "storage.c", "logcmp.c", "session.c"], strip_include_prefix = ".",
     deps = ["//lib/liblogcmp:headers", "//lib/libshmring:headers"],
     visibility = ["//usr.sbin/BSDLog/tests:__pkg__"])
 
 exports_files(["BSDLog.8", "bsdlog_provider.d", "capbundle/bsdlog.conf"], visibility = ["//usr.sbin/BSDLog/tests:__pkg__"])
+
+# Operator tool uses the same strict parser as the daemon.
+exports_files(["config.c"], visibility = ["//usr.sbin/BSDLog/tests:__pkg__", "//usr.sbin/logctl:__pkg__", "//usr.sbin/logctl/tests:__pkg__"])
+cc_library(name = "config_headers", hdrs = ["config.h", "store.h"], strip_include_prefix = ".", deps = ["//lib/liblogcmp:headers"], visibility = ["//usr.sbin/logctl:__pkg__", "//usr.sbin/logctl/tests:__pkg__"])
