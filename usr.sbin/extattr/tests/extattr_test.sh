@@ -340,7 +340,6 @@ atf_init_test_cases() {
 	atf_add_test_case noattrs
 	atf_add_test_case nonexistent_file
 	atf_add_test_case null
-	atf_add_test_case symlink_nofollow
 	atf_add_test_case one_user_attr
 	atf_add_test_case one_system_attr
 	atf_add_test_case stdin

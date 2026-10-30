@@ -42913,3 +42913,20 @@ permission and error-path runtime checks remain qualification gaps. No host
 attributes were changed. Existing build-bsd explicit targets/configuration cover
 this work; no frontend/signing/publication contract changed. Full system,
 bootstrap, cache and performance gates remain open.
+
+### Extended-attribute ATF discovery correction (2026-10-30)
+
+Removed the duplicate symlink_nofollow registration from the maintained source
+suite; all case bodies remain unchanged. Shell syntax passes. Host atf-sh list-
+only discovery verifies all 19 defined cases are registered exactly once, both
+from source and from the extracted Bazel installation payload. No test body ran.
+
+Rebuilt native archive: /usr/obj/usr/src/bazel-extattr-discovery-20261030.
+Fresh Make reference: bazel-extattr-discovery-make-20261030. Evidence:
+/usr/obj/usr/src/bazel-extattr-discovery-reference-20261030, including
+source-discovery.txt, installed-discovery.txt and discovery.json (script hash,
+case inventory and host-interpreter limitation). All 13 installation records and
+five regular payloads still match Make, including exact corrected test/Kyuafile
+bytes and binary/debug checks. This closes duplicate discovery, not native ATF
+execution, filesystem permission coverage or live probe qualification. Existing
+build-bsd tests configuration suffices; no frontend/signing/publication change.

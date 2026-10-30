@@ -7717,3 +7717,7 @@ permissions and failed mutation audit coverage require runtime qualification.
 Extattrctl has no explicit probes in the scanned main source. Maintained ATF
 installation matches, but duplicate symlink_nofollow registration needs repair
 before test discovery/execution can be claimed complete.
+
+Extattr follow-up: duplicate symlink_nofollow registration is removed. All 19
+source-defined cases are discovered exactly once in the installed native script
+using host ATF list-only mode. Actual case execution and live probes remain open.
