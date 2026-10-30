@@ -18009,10 +18009,13 @@ public loader trust anchor used by the previous survey. Evidence:
 /usr/obj/usr/src/bazel-world-inventory-refresh-20261030/inventory.json.
 This discovers Make recursion only, not native compile/install coverage.
 
-A new maintained world-components.py query is running with 16 jobs against that
-inventory, output bazel-world-components-refresh-20261030. On completion, inspect
-summary failures before invoking world-native-survey.py; do not reuse stale
-metadata or turn BUILD-file presence into completion counts. The root still has
+The maintained world-components.py query completed all 2,103 directories with
+16 jobs and no failed components in 282 seconds. The subsequent hash-checked
+world-native-survey.py run succeeded. Evidence is under
+/usr/obj/usr/src/bazel-world-components-refresh-20261030. It finds 1,156 local
+BUILD directories and 947 ancestor-only directories; among the latter, 350 have
+program metadata and 82 have library metadata. These are review queues, not
+missing binary counts or qualified completion counts. The root still has
 no complete world installation aggregate, and current library component parity
 does not imply a world/kernel/pkgbase build has succeeded.
 
@@ -18024,3 +18027,56 @@ transformations, preserving package tags; qualify before wiring into a future
 world aggregate. Existing native libunbound now supplies their main dependency.
 This diagnostic changes no frontend or production build contract; normal
 build-bsd remains unchanged and Make remains default.
+
+### Package completeness gate clarified (2026-10-30)
+
+Use three independent comparisons for the migration: configured Make component
+metadata, installation METALOG records, and generated package manifests. Bind
+comparisons to the same source revision, architecture, kernel configuration and
+build options. Include internal libraries and build tools in component coverage
+even when they are absent from installed packages. Include kernel/modules and
+separately built hardware in the final repository qualification.
+
+The existing release/scripts/check-world-package-coverage.sh queries active
+package SUBDIR and _ALLPACKAGES, rejects duplicate targets and conflicting
+directory metadata, and rejects staged plists lacking active targets. Its
+comm -23 comparison is intentionally one-way: it does not prove every expected
+package was produced. Do not reuse its success as a complete Make/Bazel package
+parity gate. That gate must compare both missing and unexpected actual packages,
+then dependencies, payload paths, metadata, links, debug files and applicable
+artifact contents. Empty conditional package targets require explicit accounting
+against the configured Make reference, not an assumed package count.
+
+No complete package comparison was run in this inventory refresh. No frontend,
+staging, signing or publication inputs changed; build-bsd stays unchanged.
+
+### Local-Unbound program group (2026-10-30)
+
+Native targets now build local-unbound, local-unbound-anchor,
+local-unbound-checkconf and local-unbound-control using maintained explicit source
+lists and native libunbound/dependencies. Expat's original vendor API headers are
+explicit inputs to anchor, matching Make's vendor include path; the first build
+caught that missing dependency. No staged-header fallback was added.
+
+Five manuals use the maintained Make sed expressions as declared actions with
+explicit tool/runtime inputs. The setup script installs without its .sh suffix.
+The aggregate includes stripped executables, separate debug files, manual
+compression, package tags and the script-owned /usr/sbin directory record.
+The first install comparison caught that missing directory declaration; it is
+now included. No host setup script or daemon was run.
+
+Final native evidence: /usr/obj/usr/src/bazel-unbound-programs-20261030-r4.
+Fresh Make reference: /usr/obj/usr/src/bazel-unbound-programs-make-20261030.
+Comparison scripts/results: /usr/obj/usr/src/bazel-unbound-programs-reference-20261030.
+All 17 installation records match, with no missing/extra destinations or metadata
+mismatches. All 14 regular payloads pass: ELF global/weak symbol inventories,
+ordered dynamic dependencies, exact five compressed manuals and setup script,
+and four debuglink CRCs. The development reference uses the existing staged SDK;
+this is not independent world/bootstrap or production package qualification.
+
+Runtime configuration checks for these programs, live daemon/control behavior,
+anchor fetching/DNSSEC, option/cross-architecture coverage, cache invalidation
+and comparative performance remain open. Existing native libunbound runtime
+checks do not establish those program-level behaviors. Existing build-bsd
+explicit targets cover this work; no frontend input, signing or publication
+contract changed. Make remains production/default.

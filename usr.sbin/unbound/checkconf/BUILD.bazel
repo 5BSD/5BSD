@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = "local-unbound-checkconf",
+    srcs = ["//contrib/unbound:util/ub_event.c", "//contrib/unbound:smallapp/unbound-checkconf.c", "//contrib/unbound:smallapp/worker_cb.c"],
+    deps = ["//lib/libunbound:unbound", "//lib/libthr:thr", "//lib/libunbound:config_headers", "//contrib/unbound:headers", "//contrib/ldns:headers"],
+    dynamic_deps = ["//lib/libunbound:unbound_shared", "//lib/libthr:thr_shared"],
+    copts = ["-fPIE", "-Wno-thread-safety-analysis"],
+    linkopts = ["-pie"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_filter_fixture(name = "local-unbound-checkconf.8_generated", src = "//contrib/unbound:doc/unbound-checkconf.8", output = "local-unbound-checkconf.8",
+    tool = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"],
+    arguments = ["-E", "-e", "s/\\<(fI)?u(nbound\\>[^.])/\\1local-u\\2/g", "-e", "s/\\<(fI)?U(nbound\\>[^.])/\\1Local-u\\2/g", "-e", "s/\\/local-unbound/\\/unbound/g"])
+utility_installation(name = "install_manifest", program = "local-unbound-checkconf", manual = ":local-unbound-checkconf.8_generated", package = "local-unbound", bindir = "/usr/sbin", man_section = "8", extra_entries = [])

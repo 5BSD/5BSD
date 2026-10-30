@@ -7619,3 +7619,13 @@ Artifact/install parity now passes with explicitly staged legacy headers.
 No credential or mechanism logic changed. Mechanism loading, context/credential
 lifetimes, malformed tokens and authentication errors require runtime coverage;
 review caller audit behavior without logging secrets.
+
+### Local-Unbound programs (2026-10-30)
+
+Four executables and their manuals/setup script now have native build/install
+parity with Make. No DTrace or audit calls were found by the scoped source scan
+of vendor daemon/smallapp directories. This is not a whole-library hook audit.
+Review startup/shutdown, configuration rejection, privilege changes and remote
+control authorization/logging when qualifying live runtime; do not log DNS
+secrets or treat symbol parity as DNSSEC or authentication evidence. No source
+behavior or observability hooks were changed in this migration.

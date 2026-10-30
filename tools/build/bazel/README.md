@@ -17,19 +17,19 @@ verify unsigned inputs; signing and runtime trust qualification remain separate.
 
 The current configured metadata survey covers **2,103 directories with no query
 failures**. The maintained `world-native-survey.py` verifies the recorded input
-hashes and maps those directories to package-file presence. Its 2026-10-29 run
-finds **1,099 directories with local BUILD files** and **1,004 with ancestor
+hashes and maps those directories to package-file presence. Its 2026-10-30 run
+finds **1,156 directories with local BUILD files** and **947 with ancestor
 packages only**. This is not a completion percentage or a qualified product count.
-Among the ancestor-only directories, 364 have program metadata and 120 have
+Among the ancestor-only directories, 350 have program metadata and 82 have
 library metadata. Test helpers and aggregates are included; these are not missing
 binary counts. Parent packages may own outputs, and local packages may only export
 files or omit build/test/install behavior.
 
-The root BUILD.bazel currently exports COPYRIGHT only. It does not supply a world
-aggregate. Of the ancestor-only directories, 536 resolve to this root package;
+The root BUILD.bazel exports COPYRIGHT and bhyve source/header inputs. It does not
+supply a world aggregate. Of the ancestor-only directories, 478 resolve to this root package;
 that is package membership, not evidence of implementation. The earlier 596/1,507
 survey and statement that no root BUILD file existed were stale. Fresh evidence:
-`/usr/obj/usr/src/bazel-world-components-refresh-20261029/native-package-survey.json`.
+`/usr/obj/usr/src/bazel-world-components-refresh-20261030/native-package-survey.json`.
 
 Native libchannel, libcapability and libfidl runtime graphs now exist, together
 with native FIDL generation/compiler work, Capsule/Switchboard candidates and
@@ -42643,3 +42643,34 @@ transformations, preserving package tags; qualify before wiring into a future
 world aggregate. Existing native libunbound now supplies their main dependency.
 This diagnostic changes no frontend or production build contract; normal
 build-bsd remains unchanged and Make remains default.
+
+### Local-Unbound program group (2026-10-30)
+
+Native targets now build local-unbound, local-unbound-anchor,
+local-unbound-checkconf and local-unbound-control using maintained explicit source
+lists and native libunbound/dependencies. Expat's original vendor API headers are
+explicit inputs to anchor, matching Make's vendor include path; the first build
+caught that missing dependency. No staged-header fallback was added.
+
+Five manuals use the maintained Make sed expressions as declared actions with
+explicit tool/runtime inputs. The setup script installs without its .sh suffix.
+The aggregate includes stripped executables, separate debug files, manual
+compression, package tags and the script-owned /usr/sbin directory record.
+The first install comparison caught that missing directory declaration; it is
+now included. No host setup script or daemon was run.
+
+Final native evidence: /usr/obj/usr/src/bazel-unbound-programs-20261030-r4.
+Fresh Make reference: /usr/obj/usr/src/bazel-unbound-programs-make-20261030.
+Comparison scripts/results: /usr/obj/usr/src/bazel-unbound-programs-reference-20261030.
+All 17 installation records match, with no missing/extra destinations or metadata
+mismatches. All 14 regular payloads pass: ELF global/weak symbol inventories,
+ordered dynamic dependencies, exact five compressed manuals and setup script,
+and four debuglink CRCs. The development reference uses the existing staged SDK;
+this is not independent world/bootstrap or production package qualification.
+
+Runtime configuration checks for these programs, live daemon/control behavior,
+anchor fetching/DNSSEC, option/cross-architecture coverage, cache invalidation
+and comparative performance remain open. Existing native libunbound runtime
+checks do not establish those program-level behaviors. Existing build-bsd
+explicit targets cover this work; no frontend input, signing or publication
+contract changed. Make remains production/default.
