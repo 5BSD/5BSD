@@ -19586,3 +19586,21 @@ performance qualification. Make remains production/default.
   build-bsd bazel-test, 16 jobs, no new C/backend/signing/publication changes.
   No multicast membership, neighbor cache, routing state or host network setting
   was changed. Packet behavior/runtime/performance qualification remains open.
+
+### 2026-10-30: native router renumbering daemon
+
+- Added rrenumd with native lex/m4/yacc generation, declared parser C/token
+  header dependencies, native libipsec and the maintained IPSEC define. Both
+  section-8 and configuration section-5 manuals retain utilities package tags.
+- Fresh Make/native comparison passes six changed installation records and
+  four regular payloads, complete metadata/tags, exact manuals, global/weak ELF
+  symbols and ordered dependencies, and separated debug CRC.
+- Evidence: `/usr/obj/usr/src/bazel-rrenumd-reference-20261030`, native capture
+  `bazel-rrenumd-20261030`, fresh `bazel-rrenumd-make-20261030`.
+- Default installed program is qualified at artifact level. Make's optional
+  developer YACCDEBUG variant remains unimplemented/unqualified in native rules.
+  Parser/network behavior, IPsec configuration and renumbering packet handling
+  remain runtime work; no daemon or network mutation was executed on the host.
+- Frontend review: maintained Bazel-built build-bsd bazel-test consumed existing
+  explicit targets with 16 jobs. No frontend C/backend/staging/signing/publication
+  update needed. Full-system/bootstrap/runtime/performance gates remain open.

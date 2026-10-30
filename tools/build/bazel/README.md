@@ -43710,3 +43710,13 @@ Evidence: `/usr/obj/usr/src/bazel-multicast-tools-reference-20261030` and
 `bazel-multicast-options-reference-20261030`. Maintained build-bsd captured both
 using 16 jobs. No live network state was modified; artifact checks do not qualify
 multicast membership, neighbor-cache operations or protocol runtime behavior.
+
+### Router renumbering daemon artifacts (2026-10-30)
+
+`//usr.sbin/rrenumd:install_archive` uses declared native lexer/parser actions,
+generated token headers, native libipsec and both maintained manuals. Six
+installation records and four regular payloads match fresh Make metadata,
+manual bytes, ELF symbols/dependencies and debug CRCs. Evidence:
+`/usr/obj/usr/src/bazel-rrenumd-reference-20261030`; maintained build-bsd drove
+the capture with 16 jobs. The developer YACCDEBUG variant remains pending.
+No renumbering packets were sent or live daemon behavior exercised.

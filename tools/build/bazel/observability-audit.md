@@ -8189,3 +8189,12 @@ cover multicast join/leave/source filtering, neighbor add/delete/flush, permissi
 denials, and both ndp backend paths with kernel audit attribution. No multicast
 or neighbor-state mutation was executed on the host. Artifact parity and feature
 selection checks do not establish live observability coverage.
+
+### 2026-10-30: rrenumd
+
+No userland DTrace provider or direct audit-library dependency is declared in
+maintained rrenumd inputs. Native compilation preserves that behavior. Runtime
+review should cover configuration rejection, IPsec setup, renumbering send/retry
+and receive handling, plus privilege failures in isolated networking. No daemon
+was started and no renumbering packet was sent. Kernel audit attribution remains
+a runtime question; absence of userland libbsm alone does not answer it.
