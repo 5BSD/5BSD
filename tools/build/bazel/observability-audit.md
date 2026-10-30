@@ -8389,3 +8389,11 @@ policy evaluation. Private tcpdmatch allow/deny verdict checks pass for both
 builds. Policy diagnostic coverage, name-service behavior, and tcpsso socket-option
 attribution/error paths need further runtime review; no host socket control was
 performed. These checks establish no performance result.
+
+### 2026-10-30: gssd
+
+No local DTrace provider or direct libbsm dependency is declared in the daemon's
+Makefile. Native MIT builds preserve all RPC sources and byte-identical generated
+protocol code. Kernel GSS upcalls, credential-cache/keytab lifecycle, principal
+mapping, authentication failures and NFS security-context observability require
+runtime qualification. No daemon or credential operation was executed here.

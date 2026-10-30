@@ -16,7 +16,7 @@ cc_library(name = "krb5profile",
     srcs = ["//crypto/krb5/src/util/profile:" + f for f in ["prof_file.c", "prof_get.c", "prof_init.c", "prof_parse.c", "prof_set.c", "prof_tree.c"]] + [":error_source"],
     deps = [":headers", "//krb5/util/et:com_err", "//krb5/util/support:krb5support"],
     local_defines = ["HAS_STDARG", 'LIBDIR=\\"/usr/lib\\"'], copts = ["-fPIC"],
-    linkstatic = True, visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"],
+    linkstatic = True, visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__", "//usr.sbin/gssd:__pkg__"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 # Make declares INTERNALLIB: consumed by Kerberos, not installed as a DSO.
 bsd_component_archive(name = "static_archive", groups = [":krb5profile"], visibility = ["//visibility:public"])
