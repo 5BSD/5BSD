@@ -2,9 +2,9 @@ PACKAGE= pam-tests
 TESTSDIR= ${TESTSBASE}/lib/libpam
 .PATH: ${SRCTOP}/contrib/openpam/lib/libpam
 ATF_TESTS_C+= kerberos_config_pam_test
-TEST_METADATA.kerberos_config_pam_test+= required_config="module"
+TEST_METADATA.kerberos_config_pam_test+= required_configs="module"
 ATF_TESTS_C+= basic_dispatch_test
-TEST_METADATA.basic_dispatch_test+= required_config="permit_module deny_module"
+TEST_METADATA.basic_dispatch_test+= required_configs="permit_module deny_module"
 ATF_TESTS_C+= module_resolution_test
 SRCS.module_resolution_test= module_resolution_test.c openpam_dynamic.c openpam_load.c openpam_static.c openpam_check_owner_perms.c
 ATF_TESTS_C+= policy_include_test
