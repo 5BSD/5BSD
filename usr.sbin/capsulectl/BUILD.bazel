@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_capimage.bzl", "bsd_capimage_policy")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_BUNDLE = "/Capabilities/System/CapsuleControl.cap"
+_UNIT = _BUNDLE + "/Units/capsulectl.unit"
+bsd_capimage_policy(name = "policy_assembly", src = "//usr.sbin/capsulectl/capbundle:Unit.ucl")
+cc_binary(name = "capsulectl", srcs = ["capsulectl.c", ":policy_assembly"],
+    deps = ["//lib/libservice:service", "//lib/libcapsulert:headers"], dynamic_deps = ["//lib/libservice:service_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_library(name = "test_source", hdrs = ["capsulectl.c"], visibility = ["//usr.sbin/capsulectl/tests:__pkg__"])
+exports_files(["capsulectl.c"], visibility = ["//usr.sbin/capsulectl/tests:__pkg__"])
+[bsd_install_file(name = name, src = "//usr.sbin/capsulectl/capbundle:" + file,
+    destination = destination, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=capsulectl"])
+ for name, file, destination in [("bundle_manifest", "Bundle.ucl", _BUNDLE + "/Bundle.ucl"), ("unit_manifest", "Unit.ucl", _UNIT + "/Unit.ucl")]]
+bsd_install_link(name = "compat_link", destination = "/usr/sbin/capsulectl", target = "../.." + _UNIT + "/bin/capsulectl", kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=capsulectl"])
+utility_installation(name = "install_manifest", program = "capsulectl", manual = "capsulectl.8", man_section = "8", package = "capsulectl", bindir = _UNIT + "/bin", keep_sections = [".5bsd.policy"], extra_entries = [":bundle_manifest", ":unit_manifest", ":compat_link"])
+_DIRECTORIES = ({d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsulectl"]}' for d in [_BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin"]} |
+        {"/usr/lib/debug" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsulectl","dbg"]}' for d in ["/Capabilities", "/Capabilities/System", _BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin"]})
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/capsulectl/tests:install_extra", "//usr.sbin/capsulectl/tests:install_test", "//usr.sbin/capsulectl/tests:install_success"], "//conditions:default": []}),
+    directories = select({"//tools/build/bazel/config:tests_enabled": _DIRECTORIES | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsulectl-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/usr.sbin", "/usr/lib/debug/usr/tests/usr.sbin/capsulectl"]} | {"/usr/tests/usr.sbin/capsulectl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=capsulectl-tests"]}'}, "//conditions:default": _DIRECTORIES}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

@@ -1,4 +1,3 @@
 # SPDX-License-Identifier: BSD-2-Clause
-
-# Source fixtures shipped with Switchboard contract tests.
-exports_files(['Unit.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+exports_files(["Unit.ucl"], visibility = ["//usr.sbin/switchboard/tests:__pkg__", "//usr.sbin/capsulectl:__pkg__"])
+exports_files(["Bundle.ucl"], visibility = ["//usr.sbin/capsulectl:__pkg__"])

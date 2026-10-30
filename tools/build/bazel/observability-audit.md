@@ -7998,3 +7998,14 @@ C sources. Artifact comparisons pass; no signing/test body ran. Runtime work mus
 cover invalid keys, tampered ELF/policies, no-clobber/stage failures and the actual
 kernel signature consumers. Review signing-event diagnostics/audit coverage.
 Build parity does not establish trust enforcement or verified boot.
+
+
+### capsulectl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls in capsulectl.c. Native static real-service
+test helper retains service/channel providers absent from the staged Make link:
+52 versus 26 schemas, all Make schemas retained unchanged. Both instruction-site
+checks pass; strict DTrace equality fails and live firing remains open. Evidence:
+/usr/obj/usr/src/bazel-capsulectl-reference-20261030/dof-difference.json.
+Qualify production lifecycle authorization and control failures separately from
+the maintained fake-service fixture. No live control operations were performed.

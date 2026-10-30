@@ -19103,3 +19103,39 @@ Frontend review: existing build-bsd explicit target, typed tests and SDK inputs
 cover this addition. Maintained stage scripts are consumed unchanged; no frontend,
 backend, signing or publication contract changed. Full world/kernel/bootstrap,
 pkgbase and performance remain unqualified; Make remains production/default.
+
+
+### capsulectl attributed bundle and tests (2026-10-30)
+
+Added native capsulectl with native service linkage and declared capsulert headers.
+Preserves CapsuleControl.cap layout, Bundle.ucl/Unit.ucl, embedded .5bsd.policy,
+/usr/sbin compatibility symlink, and all maintained test installation: shell suite,
+Kyuafile, static real-service helper and static fake-service helper. Narrow exports
+preserve Switchboard's existing Unit.ucl fixture visibility. No source behavior
+changed. One initial BUILD multiline syntax error was corrected.
+
+Native run: /usr/obj/usr/src/bazel-capsulectl-20261030-r2. Fresh Make reference:
+/usr/obj/usr/src/bazel-capsulectl-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-capsulectl-reference-20261030. All 27 install records and
+11 regular payload comparisons pass, including symbol/dynamic dependency
+inventories, three debuglink CRCs, manual/test/manifest bytes and symlink metadata.
+policy-audit.py verifies maintained Unit.ucl bytes in both stripped executables.
+
+DTrace exact parity does NOT pass for the static capsulectl_test_bin. Native
+experimental section archives retain service_ambient/service_runtime/libchannel
+providers absent from the staged Make-linked executable. Make's 26 schemas are
+all retained unchanged among 52 native schemas. Native has 63 ordinary/31 enabled
+sites; Make has 30 ordinary/31 enabled sites; both pass instruction-site checks.
+The staged Make libservice.a stores DOF in a separate provider member while code
+members have weak probe symbols, consistent with static archive extraction losing
+the provider. This is an unresolved structural difference, not full DTrace parity.
+Original dof-audit.py fails the strict provider comparison; native-dof.json,
+make-dof.json and dof-difference.json retain the evidence. No probes were removed
+to match the reference. Live provider registration/firing remains unqualified.
+
+Test bodies, production control requests, tests-disabled configuration and runtime
+authorization remain open. Prior host Capsicum ABI mismatch also remains open.
+Frontend review: existing typed tests/explicit target/SDK inputs cover this rule;
+no frontend/backend/signing/publication contract changed. Embedded policy bytes
+are not signing or verified-boot qualification. Whole-system/bootstrap/pkgbase and
+performance remain open; Make remains production/default.
