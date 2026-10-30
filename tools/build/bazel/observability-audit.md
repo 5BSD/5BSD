@@ -7919,3 +7919,14 @@ match Make installation, with no execution. Interactive configuration writes,
 service enable/disable and failure/recovery behavior still need isolated tests.
 Aggregate build success adds no live audit/probe/controller evidence. No host
 configuration, service or device was changed.
+
+
+### Boot support utilities (2026-10-30)
+
+boot0cfg/boottrace/btxld native builds retain maintained source behavior and pass
+Make artifact comparisons. boottrace has existing BOOTTRACE calls around command
+execution; these are separate from DTrace provider instrumentation and were not
+runtime-tested. Source scan found no direct DTRACE/SDT_PROBE/audit_ references in
+these directories. Qualify disposable-image boot-sector writes, authorization
+failures and readback, malformed BTX/ELF inputs, and command failure/boot logging.
+No host disk write or boot-state change was performed.

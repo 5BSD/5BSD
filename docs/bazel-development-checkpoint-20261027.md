@@ -18890,3 +18890,23 @@ through build-bsd; no frontend/backend/signing/publication contract changed.
 The script's interactive configuration changes, Bluetooth service/hardware/
 virtual-controller behavior and complete system gates remain open. Make remains
 production/default. No host configuration or service was changed.
+
+### Boot support utilities (2026-10-30)
+
+Added native boot0cfg, boottrace and btxld with explicit local source/header lists
+and native GEOM linkage for boot0cfg. No program source changed; boottrace's
+maintained BOOTTRACE calls remain intact.
+
+Native run: /usr/obj/usr/src/bazel-boot-tools-20261030. Fresh Make references:
+bazel-{boot0cfg,boottrace,btxld}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-boot-tools-reference-20261030. All builds completed.
+Each utility matches five install records and three regular payloads, including
+symbol/dynamic dependency inventories, manual bytes and debuglink CRC. No paths
+or metadata differ. These are selected amd64 build/install results only.
+
+Boot-sector update/readback on disposable images, btxld valid/malformed object
+handling and boot execution, and boottrace command/status/kernel logging need
+runtime qualification. No disk or boot configuration was changed, and no utility
+was executed. Existing build-bsd explicit target/SDK inputs cover the additions;
+no frontend/backend/signing/publication contract changed. Full system/bootstrap,
+pkgbase and performance remain open; Make remains production/default.

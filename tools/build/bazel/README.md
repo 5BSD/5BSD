@@ -43110,3 +43110,9 @@ the existing usb setting. Exact archive selection matches evaluated Make SUBDIR:
 records match Make. Evidence: /usr/obj/usr/src/bazel-bluetooth-config-reference-20261030.
 These are subtree build/selection results; runtime, world and combined pkgbase
 qualification remain open.
+
+
+Boot support utility coverage (2026-10-30): boot0cfg, boottrace and btxld native
+builds each match five Make installation records and three regular payloads.
+Evidence: /usr/obj/usr/src/bazel-boot-tools-reference-20261030. Boot-sector/image,
+linker-output execution and boottrace runtime tests remain pending.
