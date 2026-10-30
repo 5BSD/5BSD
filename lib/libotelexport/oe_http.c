@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -257,30 +258,69 @@ oe_http_post(const struct oe_url *u, const char *path,
 	    nheaders, user_agent, body, bodylen, gzipped, timeout_ms, resp));
 }
 
+/* The CRLF ending the line at p, searched in [p, end); NULL if none. */
+static char *
+crlf(char *p, const char *end)
+{
+
+	for (; end - p >= 2; p++)
+		if (p[0] == '\r' && p[1] == '\n')
+			return (p);
+	return (NULL);
+}
+
 /*
- * Undo chunked transfer coding in place (RFC 9112 7.1); returns the
- * decoded length.  A truncated or malformed chunk ends the body there.
+ * Undo chunked transfer coding in place (RFC 9112 7.1).  Returns the
+ * decoded length, or -1 when the coding is malformed: a chunk size that
+ * is not hexadecimal digits or does not fit in a size_t, anything but a
+ * chunk extension between the size and its CRLF, a size line or chunk
+ * data not ended by CRLF, data shorter than its size, or a missing last
+ * chunk or trailer section end.  Extensions and trailer fields are
+ * skipped.  Only [data, data + len) is read.
  */
-static size_t
+static ssize_t
 dechunk(char *data, size_t len)
 {
-	char *in, *end, *out, *ext;
-	unsigned long n;
+	char *in, *end, *out, *eol;
+	size_t n;
+	int digits, d;
 
 	in = out = data;
 	end = data + len;
-	while (in < end) {
-		n = strtoul(in, &ext, 16);
-		if (ext == in || (ext = memchr(ext, '\n', (size_t)(end -
-		    ext))) == NULL || n == 0 || n > (size_t)(end - ext - 1))
+	for (;;) {
+		n = 0;
+		for (digits = 0; in < end; in++, digits++) {
+			if (*in >= '0' && *in <= '9')
+				d = *in - '0';
+			else if (*in >= 'a' && *in <= 'f')
+				d = *in - 'a' + 10;
+			else if (*in >= 'A' && *in <= 'F')
+				d = *in - 'A' + 10;
+			else
+				break;
+			if (n > SIZE_MAX >> 4)
+				return (-1);
+			n = n << 4 | (size_t)d;
+		}
+		if (digits == 0 || (eol = crlf(in, end)) == NULL ||
+		    (eol != in && *in != ';'))
+			return (-1);
+		in = eol + 2;
+		if (n == 0)
 			break;
-		memmove(out, ext + 1, n);
+		if (n > (size_t)(end - in) || (size_t)(end - in) - n < 2 ||
+		    in[n] != '\r' || in[n + 1] != '\n')
+			return (-1);
+		memmove(out, in, n);
 		out += n;
-		in = ext + 1 + n;
-		if (in + 2 <= end && in[0] == '\r' && in[1] == '\n')
-			in += 2;
+		in += n + 2;
 	}
-	return ((size_t)(out - data));
+	/* The trailer section: field lines, then an empty line. */
+	while ((eol = crlf(in, end)) != NULL && eol != in)
+		in = eol + 2;
+	if (eol == NULL)
+		return (-1);
+	return (out - data);
 }
 
 int
@@ -293,7 +333,7 @@ oe_http_post_type(const struct oe_url *u, const char *path,
 	struct conn c;
 	struct oe_buf req, in;
 	char chunk[4096], *hdrend, *line, *next;
-	ssize_t n;
+	ssize_t n, decoded;
 	size_t i, off;
 	int ret, chunked;
 
@@ -391,8 +431,11 @@ oe_http_post_type(const struct oe_url *u, const char *path,
 		 * checks: text for JSON, binary for protobuf.
 		 */
 		off = (size_t)(in.data + in.len - (hdrend + 4));
-		if (chunked)
-			off = dechunk(hdrend + 4, off);
+		/* A malformed chunked body is not used at all. */
+		if (chunked) {
+			decoded = dechunk(hdrend + 4, off);
+			off = decoded < 0 ? 0 : (size_t)decoded;
+		}
 		resp->body_len = MIN(off, sizeof(resp->body) - 1);
 		memcpy(resp->body, hdrend + 4, resp->body_len);
 		resp->body[resp->body_len] = '\0';

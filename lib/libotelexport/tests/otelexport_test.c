@@ -3467,6 +3467,110 @@ ATF_TC_BODY(http_transport_errors, tc)
 	unsetenv("RES_OPTIONS");
 }
 
+/*
+ * Chunked response bodies (RFC 9112 7.1): well-formed codings decode,
+ * with extensions, upper-case hexadecimal, leading zeros, binary data and
+ * trailer fields; every malformed one leaves no body at all (the status
+ * still counts), and the decoder reads nothing past the response.
+ */
+static void
+chunked_post(const char *body, size_t len, struct oe_http_response *resp)
+{
+	static const char head[] = "HTTP/1.1 200 OK\r\n"
+	    "Transfer-Encoding: chunked\r\n\r\n";
+	struct collector co;
+	struct coll_reply rep;
+	struct oe_url u;
+	char url[64], *raw;
+
+	raw = malloc(sizeof(head) - 1 + len);
+	ATF_REQUIRE(raw != NULL);
+	memcpy(raw, head, sizeof(head) - 1);
+	memcpy(raw + sizeof(head) - 1, body, len);
+	ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
+	memset(&rep, 0, sizeof(rep));
+	coll_script(&co, &rep, 1);
+	coll_script_raw(&co, 0, raw, sizeof(head) - 1 + len);
+	snprintf(url, sizeof(url), "http://127.0.0.1:%d", co.port);
+	ATF_REQUIRE_EQ(0, oe_url_parse(url, &u));
+	ATF_REQUIRE_EQ(0, oe_http_post(&u, "v1/logs", NULL, 0, "t", "{}", 2,
+	    0, 5000, resp));
+	ATF_REQUIRE_EQ(1, coll_nreqs(&co));
+	coll_stop(&co);
+	free(raw);
+	ATF_CHECK_EQ(200, resp->status);
+}
+
+#define	CHUNKED(s)	(s), sizeof(s) - 1
+
+ATF_TC_WITHOUT_HEAD(http_chunked_bodies);
+ATF_TC_BODY(http_chunked_bodies, tc)
+{
+	static const struct {
+		const char *in;
+		size_t inlen;
+		const char *out;
+		size_t outlen;
+	} good[] = {
+		{ CHUNKED("5\r\nhello\r\n6;name=v\r\n world\r\n0\r\n\r\n"),
+		    CHUNKED("hello world") },
+		{ CHUNKED("A\r\n0123456789\r\na\r\nabcdefghij\r\n0\r\n\r\n"),
+		    CHUNKED("0123456789abcdefghij") },
+		{ CHUNKED("0003\r\nabc\r\n000;last\r\n\r\n"), CHUNKED("abc") },
+		{ CHUNKED("3\r\nabc\r\n0\r\nX-T: 1\r\nY: 2\r\n\r\n"),
+		    CHUNKED("abc") },
+		/* Data may hold NUL and CRLF; only the size counts. */
+		{ CHUNKED("4\r\na\0\r\n\r\n0\r\n\r\n"), CHUNKED("a\0\r\n") },
+		{ CHUNKED("0\r\n\r\n"), CHUNKED("") },
+	};
+	static const struct {
+		const char *in;
+		size_t inlen;
+	} bad[] = {
+		{ CHUNKED("") },			/* no last chunk */
+		{ CHUNKED("\r\nabc\r\n0\r\n\r\n") },	/* no size */
+		{ CHUNKED("zz\r\nabc\r\n0\r\n\r\n") },	/* not hex */
+		{ CHUNKED("0x3\r\nabc\r\n0\r\n\r\n") },	/* no 0x prefix */
+		{ CHUNKED(" 3\r\nabc\r\n0\r\n\r\n") },	/* no blanks */
+		{ CHUNKED("+3\r\nabc\r\n0\r\n\r\n") },	/* no sign */
+		{ CHUNKED("-1\r\nabc\r\n0\r\n\r\n") },
+		{ CHUNKED("3 \r\nabc\r\n0\r\n\r\n") },	/* text after it */
+		{ CHUNKED("3\nabc\r\n0\r\n\r\n") },	/* bare LF */
+		{ CHUNKED("3") },			/* no CRLF */
+		{ CHUNKED("3;ext") },			/* extension, no CRLF */
+		{ CHUNKED("3\r\nab") },			/* short data */
+		{ CHUNKED("3\r\nabc") },		/* no CRLF after data */
+		{ CHUNKED("3\r\nabc\r") },		/* half of one */
+		{ CHUNKED("3\r\nabcX\r\n0\r\n\r\n") },	/* data too long */
+		{ CHUNKED("3\r\nabc\n\r0\r\n\r\n") },	/* LF CR */
+		{ CHUNKED("3\r\nabc\rX0\r\n\r\n") },	/* CR, no LF */
+		{ CHUNKED("3\rx\r\nabc\r\n0\r\n\r\n") }, /* CR in size line */
+		/* More than 64 bits, and a size past the response. */
+		{ CHUNKED("10000000000000000\r\nabc\r\n0\r\n\r\n") },
+		{ CHUNKED("FFFFFFFFFFFFFFFF\r\nabc\r\n0\r\n\r\n") },
+		{ CHUNKED("3\r\nabc\r\n") },		/* no last chunk */
+		{ CHUNKED("3\r\nabc\r\n0\r\n") },	/* no final CRLF */
+		{ CHUNKED("3\r\nabc\r\n0\r\nX-T: 1\r\n") }, /* open trailers */
+		{ CHUNKED("3\r\nabc\r\n0\r\nX-T: 1") },
+	};
+	struct oe_http_response resp;
+	size_t i;
+
+	for (i = 0; i < nitems(good); i++) {
+		chunked_post(good[i].in, good[i].inlen, &resp);
+		ATF_CHECK_EQ_MSG(good[i].outlen, resp.body_len, "good %zu", i);
+		ATF_CHECK_MSG(resp.body_len == good[i].outlen &&
+		    memcmp(resp.body, good[i].out, good[i].outlen) == 0 &&
+		    resp.body[resp.body_len] == '\0', "good %zu", i);
+	}
+	for (i = 0; i < nitems(bad); i++) {
+		chunked_post(bad[i].in, bad[i].inlen, &resp);
+		ATF_CHECK_EQ_MSG(0, resp.body_len, "bad %zu: %zu bytes", i,
+		    resp.body_len);
+		ATF_CHECK_EQ_MSG('\0', resp.body[0], "bad %zu", i);
+	}
+}
+
 /* A host name buffer too small for the name gets the fallback, cut. */
 ATF_TC_WITHOUT_HEAD(host_name_small);
 ATF_TC_BODY(host_name_small, tc)
@@ -4441,6 +4545,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, severity_text);
 	ATF_TP_ADD_TC(tp, log_severity_attrs);
 	ATF_TP_ADD_TC(tp, http_transport_errors);
+	ATF_TP_ADD_TC(tp, http_chunked_bodies);
 	ATF_TP_ADD_TC(tp, id_derive_wide);
 	ATF_TP_ADD_TC(tp, host_name_small);
 	ATF_TP_ADD_TC(tp, jsonl_metrics);
