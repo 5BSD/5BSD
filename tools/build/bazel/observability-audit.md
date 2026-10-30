@@ -8057,3 +8057,12 @@ sources. Native artifact comparisons pass; runtime device authorization, transfe
 errors and parameter boundaries remain open. Preserve pwm's Capsicum setup and
 qualify with a compatible kernel. Review underlying ioctl audit/probe coverage
 before adding instrumentation. No bus operation or device write was performed.
+
+
+### rmt, utx, tcpdrop and wake (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in these utility sources. Native
+artifact comparisons pass. Runtime checks remain for protocol/input errors, utmpx
+changes, connection-drop authorization and BPF wake packet operations. Review
+existing kernel/library audit coverage for these operations before adding probes.
+No device, accounting, connection or packet operation was executed.

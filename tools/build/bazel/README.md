@@ -43489,3 +43489,29 @@ Frontend review: existing explicit target/SDK inputs cover these additions and
 the native frontend successfully drives them; no frontend/backend/signing or
 publication contract changed. Full world/kernel/bootstrap/pkgbase and performance
 gates remain open. Make remains production/default.
+
+
+### rmt, utx, tcpdrop and wake (2026-10-30)
+
+Added native rules preserving maintained sources and utx's acct package identity.
+rmt includes /etc/rmt -> ../usr/sbin/rmt, matching the maintained etc-rmt target
+called by etc/Makefile. Its fresh Make reference invokes that actual target in
+addition to all/install/installconfig, rather than synthesizing a reference link.
+No program behavior changed.
+
+Native build through the captured Bazel-built frontend:
+/usr/obj/usr/src/bazel-session-tools-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{rmt,utx,tcpdrop,wake}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-session-tools-reference-20261030, per-program directories.
+rmt matches six install records; each other utility matches five. All four match
+three regular payloads apiece: no missing/extra/metadata differences, matching
+symbol/dynamic inventories, compressed manual bytes and debuglink CRC. rmt link
+metadata and target also match. These are selected amd64 artifact checks.
+
+No utility was executed. Remote tape protocol/device failure paths, accounting
+updates, TCP selection/drop authorization and wake packet construction/transmission
+remain runtime work. No account, connection, device or network operation occurred.
+Frontend review: existing explicit targets/SDK inputs cover these additions;
+no frontend/backend/signing/publication contract changed. Full world/kernel,
+bootstrap, pkgbase, runtime and resource/performance gates remain open. Make
+remains production/default.
