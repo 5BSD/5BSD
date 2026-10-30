@@ -464,3 +464,7 @@ label_flag(name = "pkg_repository_config", build_setting_default = "//usr.sbin/p
 # outside the initial native bhyvectl target's compatibility set.
 bool_flag(name = "bhyve_snapshot", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "bhyve_snapshot_enabled", flag_values = {":bhyve_snapshot": "true"}, visibility = ["//visibility:public"])
+
+# Installed services database follows MK_SERVICESDB.
+bool_flag(name = "servicesdb", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "servicesdb_enabled", flag_values = {":servicesdb": "true"}, visibility = ["//visibility:public"])

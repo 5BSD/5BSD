@@ -8278,3 +8278,11 @@ access path. Controller reset/configuration, DMA/console access and associated
 authorization/audit attribution need runtime review with appropriate fixtures.
 Current evidence covers build/install artifacts only; no host device or kernel
 memory operation was executed.
+
+### 2026-10-30: services_mkdb
+
+No local DTrace provider or direct libbsm integration is declared. The native
+database generator preserves maintained parsing/storage code and matches fresh
+Make output bytes. This does not establish installed NSS lookup tracing or audit
+attribution of configuration/database replacement. Database generation ran only
+inside the build action; no host /etc/services or /var/db/services.db was changed.

@@ -43921,3 +43921,35 @@ with 16 jobs and existing explicit input settings.
   handle both archives. No frontend C/backend/signing/publication contract
   changes required. Hardware/VM behavior, native Bazel behavioral tests,
   cross-target builds and full-system/performance qualification remain open.
+
+### 2026-10-30: services_mkdb and conditional database generation
+
+- Added the native utility, services configuration and manual, plus a declared
+  generation action using native execution-platform services_mkdb, rtld and
+  libc/libsys. Database input/output and byte order are explicit; current amd64
+  target selects little endian with no host-endian or unknown-target fallback.
+- Added config:servicesdb (true by default, matching MK_SERVICESDB). False omits
+  both database action dependency and installed database. Existing format-5
+  typed settings carry the choice through maintained build-bsd; its manual now
+  documents the option and limitations. No frontend C/backend/signing contract
+  change is necessary.
+- Fresh Make parity passes in both configurations: enabled eight metadata records
+  and five payloads; disabled seven records and four payloads; one debug link in
+  each. Symbols, ordered dynamic dependencies, manual/configuration bytes and
+  generated database bytes match. The sole payload-path difference is services.db.
+  Database size is 2097920 bytes, SHA256
+  ba71f56b901aa4ceee950df50d309a342c25355771051f034a3c1a8613dd7054.
+- Archive validation caught missing /var/db policy; added maintained BSD.var.dist
+  rather than ad hoc directory attributes. /etc retains Make package metadata.
+  Make emits no package tag for services.db; native metadata preserves that.
+  The evidence comparator now interprets absent tags as an empty set rather than
+  a singleton empty string. Whole-pkgbase ownership/update treatment of this
+  generated mutable database remains a separate integration gate.
+- Evidence under /usr/obj/usr/src: bazel-services_mkdb-reference-20261030 and
+  bazel-services_mkdb-off-reference-20261030 (comparators/results and options
+  audit), final native bazel-services_mkdb-20261030-r2 and
+  bazel-services_mkdb-off-20261030, fresh corresponding Make stages. The original
+  archive-policy failure remains retained. No host configuration was installed.
+- Database generation executes native code, but installed NSS lookups, native
+  Bazel behavioral tests, cross builds, complete world/kernel/pkgbase and
+  performance qualification remain open. Make remains production default.

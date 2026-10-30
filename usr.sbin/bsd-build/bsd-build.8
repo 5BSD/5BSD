@@ -4318,3 +4318,19 @@ composes the complete maintained amd64 compiler-runtime installation from 27
 component manifests, including headers, ignorelists and shared-runtime debug data.
 It is an installation artifact, not an independently bootstrapped toolchain or
 a complete pkgbase transaction. Other architectures remain unqualified.
+
+.Ss Native services database generation
+.Cm //usr.sbin/services_mkdb:install_archive
+includes the utility, manual and services configuration.
+The format-5 build-settings boolean
+.Cm //tools/build/bazel/config:servicesdb
+mirrors MK_SERVICESDB and defaults to true.
+When enabled, the archive also includes services.db generated from the declared
+services source using the native execution-platform services_mkdb, loader and
+libraries. Byte order is selected from the target configuration; unsupported
+architectures fail selection instead of using the execution host's byte order.
+The current utility target is qualified only for amd64.
+Setting the boolean false omits database generation and installation while
+retaining the utility and configuration.
+This component archive does not establish installed NSS behavior or complete
+pkgbase ownership/update handling for the generated database.
