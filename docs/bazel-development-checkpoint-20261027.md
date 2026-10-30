@@ -18178,3 +18178,17 @@ edits and runtime probes still need matching-system tests. No daemon or setuid
 program was executed. Full world/bootstrap/pkgbase and performance remain open.
 Existing build-bsd explicit inputs cover the work; no frontend/signing/publication
 contract changed. Make remains production/default.
+
+### Cron DTrace-disabled variant (2026-10-30)
+
+Native dtrace=false and fresh Make WITHOUT_DTRACE=1 builds now pass the same
+installation/payload/archive comparison. Evidence:
+/usr/obj/usr/src/bazel-cron-nodtrace-reference-20261030; native run
+bazel-cron-nodtrace-20261030; Make reference bazel-cron-nodtrace-make-20261030.
+All 12 records, eight regular payloads, two debuglink CRCs and both internal
+three-member/117-symbol archives match. Crontab setuid mode and schg archive flags
+remain checked. ELF section-table checks verify zero SHT_SUNW_dof sections in
+both cron and crontab from both builds (no-dof.json). This closes the disabled
+build variant gap recorded above, not the live scheduler/PAM/privilege tests.
+Existing typed dtrace configuration needed no frontend/backend changes; no host
+installation, scheduler execution or privilege-state change was performed.

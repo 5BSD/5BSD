@@ -7657,3 +7657,7 @@ wait probes remain untested. Review audit coverage for crontab edits, failed PAM
 sessions, credential changes and spool access; preserving probes does not prove
 audit completeness. Setuid mode and schg are checked in installation metadata;
 no privileged executable was run on the host.
+
+Cron follow-up: DTrace-disabled native and Make variants now match installation
+and payloads; actual ELF section tables contain no DOF for cron or crontab.
+Enabled live firing and scheduler/audit behavior remain unqualified.
