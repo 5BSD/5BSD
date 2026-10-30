@@ -7551,3 +7551,10 @@ Ordinary and PIE internal archives match fresh Make member/symbol inventories.
 No probes or audit hooks changed. Runtime coverage still needs sampled event/log
 processing, process lifecycle, ELF image/symbol resolution, malformed logs and
 error cleanup on a matching system. Archive parity does not prove those paths.
+
+### libblemesh (2026-10-30)
+
+Native library carries the maintained mesh provider and source-retained anchor.
+DOF schemas/providers and patched amd64 site counts match Make; function bounds
+and instruction bytes are checked. No live probe firing or protocol simulation
+was exercised yet. Existing key-material exclusion policy is unchanged.

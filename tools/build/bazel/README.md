@@ -42296,3 +42296,32 @@ to the pre-change Make generator's empty table; x86 and arm64 outputs also remai
 byte-identical to their fresh Make references. Evidence: riscv-generation-comparison.json
 under bazel-jevents-reference-20261030. This completes the empty-table generation
 case only; cross-architecture library/kernel/runtime qualification remains open.
+
+### Native libblemesh candidate (2026-10-30, qualification pending)
+
+Added lib/libmesh native targets for all 30 maintained sources and 30 public
+headers, native libcrypto, the existing Version.map, DTrace processing and
+bluetooth package installation/debug metadata. Make's fresh reference passes in
+bazel-libmesh-make-20261030. Initial native links exposed a required source-retained
+DTrace provider anchor. The candidate now enables the anchor and uses ordinary
+object-plus-provider composition, matching Make; experimental per-member DOF
+composition cannot satisfy this library's anchor contract and is not selected.
+No probe macros or library implementation were changed to bypass that contract.
+
+Native r3 is running under bazel-libmesh-20261030-r3; install/payload comparisons
+are prepared under bazel-libmesh-reference-20261030. No artifact/runtime parity
+claim yet. Probe-schema/site comparison, DTrace-off configuration and existing
+Bluetooth Mesh runtime fixtures remain to qualify. Initial target is amd64.
+Frontend review: existing build-bsd explicit targets and typed dtrace setting
+suffice; no new option, signing, staging or publication contract is introduced.
+
+Libblemesh r3 now builds and passes fresh Make comparison: 37 installation
+destinations, 34 regular payloads and one debug link. Symbol comparison normalizes
+only DTrace's documented object-path hash ($dtrace<key>.<function>); archive member
+comparison normalizes .nopic.o to .o. Bindings, visibility, function identities,
+symbol multiplicities and member order remain checked. Exact header/manual bytes,
+dynamic metadata and debug CRC pass. Emitted DOF schemas/providers and patched
+amd64 probe-site counts match Make; both outputs pass instruction/range checks.
+Evidence: install-audit.json, payload-audit.json and dof-comparison.json under
+bazel-libmesh-reference-20261030. No live firing or mesh protocol runtime claim.
+DTrace-off and existing runtime fixture qualification remain next steps.
