@@ -33,7 +33,7 @@ void *dtrace_open(int version, int flags, int *errp) {
 subprocess.run(['/usr/bin/cc','-shared','-fPIC','-o',str(out/'nodev.so'),str(shim)],check=True)
 env=os.environ.copy()
 env['LD_PRELOAD']=str(out/'nodev.so')
-env['LD_LIBRARY_PATH']=':'.join(str(obj/p) for p in ('cddl/lib/libdtrace','cddl/lib/libctf','lib/libproc','lib/librtld_db'))
+env['LD_LIBRARY_PATH']=':'.join(str(obj/p) for p in ('cddl/lib/libdtrace','cddl/lib/libctf','lib/libproc','lib/librtld_db','lib/libnghttp2'))
 # Explicit list: never run tracing, daemon connection or process-control modes.
 cases=[
  ('version',['-V'],0,'dtrace:', ''),

@@ -69,7 +69,9 @@ def maintained_commands(objtop):
 def snapshot_libraries(objtop, snap):
     for rel, pattern in (('cddl/lib/libdtrace', 'libdtrace.so.2'),
                          ('cddl/lib/libctf', 'libctf.so.2'), ('lib/libproc', 'libproc.so.5'),
-                         ('lib/librtld_db', 'librtld_db.so.*'), ('cddl/lib/drti', 'drti.o')):
+                         ('lib/librtld_db', 'librtld_db.so.*'), ('cddl/lib/drti', 'drti.o'),
+                         # libotelexport's OTLP/gRPC transport (dtrace links it).
+                         ('lib/libnghttp2', 'libprivatenghttp2.so.*')):
         (snap/rel).mkdir(parents=True)
         for source in sorted((objtop/rel).glob(pattern)):
             for _ in range(10):
@@ -102,7 +104,7 @@ def build(out, objtop, libtop):
     # this binary with the shared (read-only) libraries.
     farm = out/'objtop'
     for rel in ('cddl/lib/libdtrace', 'cddl/lib/libctf', 'lib/libproc', 'lib/librtld_db',
-                'cddl/lib/drti'):
+                'cddl/lib/drti', 'lib/libnghttp2'):
         (farm/rel).parent.mkdir(parents=True, exist_ok=True)
         (farm/rel).symlink_to(libtop/rel)
     (farm/'cddl/usr.sbin/dtrace').mkdir(parents=True)
@@ -114,7 +116,7 @@ def runtime_env(objtop, profile_dir):
     env = os.environ.copy()
     env['LD_LIBRARY_PATH'] = ':'.join(str(objtop/p) for p in
                                       ('cddl/lib/libdtrace', 'cddl/lib/libctf', 'lib/libproc',
-                                       'lib/librtld_db'))
+                                       'lib/librtld_db', 'lib/libnghttp2'))
     env['LLVM_PROFILE_FILE'] = str(profile_dir/'%p-%m.profraw')
     # Keep -x otel=otlp cases independent of the host's otel.conf(5).
     env['OTELCONF_DEFAULTS'] = ''
@@ -293,8 +295,14 @@ def load_cases():
 # branches more, all covered).  A changed denominator needs an explicit baseline
 # review; floors allow a small tolerance for interleaving-dependent paths
 # (session-stop exits in the worker).
+# dtrace.c re-baselined 2026-10-30 (merge2) for the -x otel error, drop-kind
+# and exit hooks (+6 executable lines, +4 branch halves, all covered).  Review:
+# the code that existed before them still has 3304/3477 lines and 1633/1861
+# branch halves covered (old floors 3295 and 1619), so nothing regressed;
+# evidence /usr/obj/5BSD-otel-validation/merge2-cli-combined (newcode.txt).
+# Observed 3310/3483 and 1637/1865; the floors keep the old tolerance.
 REGRESSION = {
-    'dtrace.c': {'lines': (3295, 3478), 'branches': (1619, 1861), 'functions': (84, 84)},
+    'dtrace.c': {'lines': (3304, 3483), 'branches': (1627, 1865), 'functions': (84, 84)},
     'dtrace_identifiers.h': {'lines': (53, 57), 'branches': (33, 46), 'functions': (3, 3)},
     'hypertrace_frame.h': {'lines': (47, 48), 'branches': (47, 60), 'functions': (2, 2)},
 }

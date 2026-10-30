@@ -2339,6 +2339,42 @@ case('otel-drops', ['-b', '64', '-x', 'otel=json', '-x', 'switchrate=10ms', '-n'
      check=lambda d, out, err, slog, dlog: [] if out.count('"body"') >= 1 else ['no records'])
 
 
+# dtrace.c's error handler with OpenTelemetry: the fault is still printed,
+# and it is also an ERROR event (dtrace.error) with the errors counter
+# (dtrace.errors in OTLP; "errors" in the JSON format).
+def check_otel_error(d, stdout):
+    errors = []
+    if '"event":"dtrace.error"' not in stdout:
+        errors.append('no dtrace.error event')
+    if '"name":"errors"' not in stdout or '"dtrace.fault":"badaddr"' not in stdout:
+        errors.append('no errors counter by dtrace.fault')
+    return errors
+
+
+case('otel-error-handler', ['-x', 'otel=json'] + FAST + ['-n', 'BEGIN { trace(1); }'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:1 ; go 0 dtrace:::ERROR n:1 n:1 n:8 n:1 n:16',
+     signals=[('ROUND 2', signal.SIGINT)],
+     stderr_has=['dtrace: error on enabled probe ID 1 (ID 1: dtrace:::BEGIN): '
+                 'invalid address (0x10) in action #1 at DIF offset 8\n'],
+     check=otel_check(check_otel_error))
+
+
+# dtrace.c's drop handler passes the drop kind: aggregation drops (a full
+# aggregation buffer) are counted under their own dtrace.drop.kind
+# (dtrace.drops in OTLP; "drops" in the JSON format).
+def check_otel_agg_drops(d, stdout):
+    if '"name":"drops"' not in stdout or '"dtrace.drop.kind":"aggregation"' not in stdout:
+        return ['no aggregation drop counter']
+    return []
+
+
+case('otel-agg-drops', ['-x', 'aggsize=64', '-x', 'otel=json'] + FAST +
+     ['-n', ENTRY + ' { @[arg0] = count(); }'],
+     script=';'.join(f'go 0 {ENTRY} n:{i} n:{i} a:0:1' for i in range(1, 9)),
+     signals=[('ROUND 2', signal.SIGINT)], stderr_has=['aggregation drops on CPU 0'],
+     check=otel_check(check_otel_agg_drops))
+
+
 # HyperTrace host consumer: the guest's records form their own resource
 # (VM name, id and epoch from the received program, hypertrace.host.name the
 # hypervisor), distinct from the host's; the host's probe clock is local to
