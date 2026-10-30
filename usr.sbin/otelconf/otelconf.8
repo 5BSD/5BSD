@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt OTELCONF 8
 .Os
 .Sh NAME
@@ -14,7 +14,7 @@
 .Op Fl d Ar defaults
 .Op Fl f Ar file
 .Cm check
-.Op Fl eq
+.Op Fl eqt
 .Nm
 .Op Fl d Ar defaults
 .Op Fl f Ar file
@@ -24,12 +24,6 @@
 .Op Fl f Ar file
 .Cm get
 .Ar key
-.Nm
-.Op Fl d Ar defaults
-.Op Fl f Ar file
-.Cm fluentbit
-.Op Fl o Ar output
-.Op Fl u Ar user
 .Sh DESCRIPTION
 .Nm
 loads
@@ -46,20 +40,27 @@ and
 A path that does not exist contributes nothing.
 .Pp
 The commands are:
-.Bl -tag -width "fluentbit"
-.It Cm check Op Fl eq
-Load and validate both files, the exporter credentials file and the
-agent credentials file.
+.Bl -tag -width "check"
+.It Cm check Op Fl eqt
+Load and validate both files and the exporter credentials file.
 Prints
-.Dq otel.conf: OK
-unless
+.Dq otel.conf: OK ,
+noting a disabled configuration or a missing export target, unless
 .Fl q
 is given; errors are always reported.
 With
 .Fl e ,
 also fail with exit status 3 when
 .Ic enable
-is false; the rc.d services use this.
+is false.
+With
+.Fl t ,
+also fail with exit status 4 when the configuration names no export
+target
+.Pq Ic endpoint
+for the base system services.
+The rc.d services use
+.Fl eqt .
 .It Cm show
 Print every resolved setting.
 Header values are redacted.
@@ -69,63 +70,29 @@ Print one resolved setting.
 is a key of
 .Xr otel.conf 5
 written with dots, such as
-.Cm endpoint ,
-.Cm spool.directory
+.Cm endpoint
 or
-.Cm agent.upstream ;
-.Cm agent.listen.host
-and
-.Cm agent.listen.port
-print the parts of
-.Ic agent.listen .
-List-valued keys
-.Pq Cm resource , Cm agent.tail
-print one entry per line.
-.It Cm fluentbit Op Fl o Ar output Op Fl u Ar user
-Render the YAML configuration of the local agent,
-.Xr fluent-bit 8 :
-an OTLP/HTTP input on
-.Ic agent.listen ,
-a tail input for
-.Ic agent.tail ,
-filesystem buffering under
-.Ic spool.directory
-bounded by
-.Ic spool.max_bytes ,
-and an OpenTelemetry output to
-.Ic agent.upstream
-carrying the agent credentials.
-Fails when
-.Ic agent.upstream
-is empty.
-Without
-.Fl o
-the configuration is written to standard output.
-With
-.Fl o ,
-it is written to a new mode 0600 file in the directory of
-.Ar output ,
-synchronized, and renamed over
-.Ar output ;
-.Fl u
-gives that file to
-.Ar user
-first.
+.Cm spool.directory .
+The list-valued key
+.Cm resource
+prints one entry per line.
 .El
 .Sh EXIT STATUS
 .Ex -std
 Usage errors and unknown keys exit 2; a disabled configuration exits 3
 for
-.Cm check Fl e
-and
-.Cm fluentbit .
+.Cm check Fl e ,
+and a configuration without an export target exits 4 for
+.Cm check Fl t .
 .Sh EXAMPLES
 .Bd -literal -offset indent
 $ otelconf check
+otel.conf: OK (no export target)
+# echo 'endpoint = "https://collector.example.org:4318";' >> /etc/otel.conf
+# otelconf check -t
 otel.conf: OK
 $ otelconf get endpoint
-http://localhost:4318
-# otelconf fluentbit -o /var/run/otel/fluent-bit.yaml -u _otel
+https://collector.example.org:4318
 .Ed
 .Sh SEE ALSO
 .Xr oe_sysconf 3 ,
@@ -134,7 +101,3 @@ http://localhost:4318
 .Sh HISTORY
 .Nm
 first appeared in 5BSD.
-.Sh CAVEATS
-The Fluent Bit property names follow the Fluent Bit 5.1 documentation;
-they are exercised against the agent only once it is part of the base
-system.

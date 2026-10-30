@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt LIBOTELEXPORT 3
 .Os
 .Sh NAME
@@ -539,7 +539,7 @@ and
 flush the sink.
 .It Fn oe_jsonl_new , Fn oe_jsonl_sink_new , Fn oe_jsonl_resource_new
 One JSON object per event on its own line, suitable for piping into
-jq, Loki, Vector, Splunk or fluentd.
+jq, Loki, Vector or Splunk.
 Each object carries
 .Va time
 .Pq the probe time in ISO 8601, see Fn oe_iso8601 ,
@@ -1015,7 +1015,16 @@ struct oe_config_request {
 On success
 .Va env->endpoint
 is always set
-.Pq Dv OE_DEFAULT_ENDPOINT , Ql http://localhost:4318 , at the bottom ;
+.Po
+.Dv OE_DEFAULT_ENDPOINT ,
+.Ql http://localhost:4318 ,
+the conventional OTLP/HTTP default, at the bottom, when no layer names
+an endpoint; the shipped
+.Xr otel.conf 5
+names none, and
+.Va env->endpoint_default
+is then set
+.Pc ;
 environment resource attributes and headers win over system ones with
 the same name, and credentials from the
 .Xr otel.conf 5

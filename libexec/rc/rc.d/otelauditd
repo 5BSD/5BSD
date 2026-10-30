@@ -2,7 +2,6 @@
 #
 # PROVIDE: otelauditd
 # REQUIRE: DAEMON auditd
-# AFTER: fluentbit
 # KEYWORD: shutdown
 #
 # Audit records (auditpipe(4)) exported as OpenTelemetry log records
@@ -36,7 +35,11 @@ otelauditd_prestart()
 		warn "${otelauditd_bin} is not installed"
 		return 1
 	fi
-	${otelconf_program} check -eq || return 1
+	# An export target must be configured (otel.conf endpoint, or
+	# otel_endpoint in rc.conf); nothing local receives OTLP.
+	_otel_check="-eqt"
+	[ -n "${otel_endpoint}" ] && _otel_check="-eq"
+	${otelconf_program} check ${_otel_check} || return 1
 	install -d -m 0755 "${otel_rundir}" || return 1
 	# otelauditd opens /dev/auditpipe as root, then drops privileges.
 	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \

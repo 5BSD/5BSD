@@ -1,3 +1,9 @@
+# 20261029: the local OpenTelemetry agent (Fluent Bit) is no longer part
+# of the base system.
+OLD_FILES+= etc/rc.d/fluentbit
+OLD_FILES+= usr/tests/usr.sbin/otelconf/fluentbit_full.yaml
+OLD_FILES+= usr/tests/usr.sbin/otelconf/fluentbit_min.yaml
+
 # 20261016: retire age(4), stf(4), standalone Netgraph utility nodes,
 # SMB1 filesystem/client code, and FireWire network interfaces.
 OLD_FILES+= boot/kernel/if_age.ko

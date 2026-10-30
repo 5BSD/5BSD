@@ -4,9 +4,8 @@
 # Copyright (c) 2026 Kory Heard
 #
 # Tests for the OpenTelemetry rc.d scripts: switch inheritance, start
-# refusal, agent configuration generation and real start/stop through
-# daemon(8) with stand-in programs.  The Fluent Bit binary itself is
-# replaced by a stand-in until it is imported into the base system.
+# refusal (including the missing export target) and real start/stop
+# through daemon(8) with stand-in programs.
 #
 
 : ${OTELCONF:=/usr/sbin/otelconf}
@@ -23,7 +22,6 @@ rc_setup()
 	cat >> rc.conf.test <<EOF
 otel_rundir="$(pwd)/run"
 otelconf_program="$(pwd)/otelconf.sh"
-fluentbit_runas=""
 EOF
 	cat > otelconf.sh <<EOF
 #!/bin/sh
@@ -33,7 +31,7 @@ EOF
 	cat > local.conf <<EOF
 host_id_file = "";
 spool { directory = "$(pwd)/spool"; }
-agent { upstream = "http://collector.invalid:4318"; tail = []; }
+endpoint = "http://collector.invalid:4318";
 EOF
 	cat > ./rc_run <<EOF
 #!/bin/sh
@@ -79,7 +77,7 @@ inherit_switch_head()
 }
 inherit_switch_body()
 {
-	for s in fluentbit otel_hwstat otelpfd otelauditd otel_dtrace; do
+	for s in otel_hwstat otelpfd otelauditd otel_dtrace; do
 		rc_setup 'otel_enable="NO"'
 		atf_check -s exit:1 -o ignore ./rc_run $s enabled
 		rc_setup 'otel_enable="YES"'
@@ -93,93 +91,6 @@ inherit_switch_body()
 		rc_setup
 		atf_check -s exit:1 -o ignore ./rc_run $s enabled
 	done
-}
-
-atf_test_case agent_pending
-agent_pending_head()
-{
-	atf_set "descr" "fluentbit refuses to start without the agent binary"
-}
-agent_pending_body()
-{
-	rc_setup 'otel_enable="YES"' \
-	    "fluentbit_bin=\"$(pwd)/no-fluent-bit\""
-	atf_check -s exit:1 -o empty \
-	    -e match:"is not installed; the Fluent Bit import" \
-	    ./rc_run fluentbit start
-	atf_check -s exit:1 -o empty -e match:"is not installed" \
-	    ./rc_run fluentbit oneconfigtest
-}
-
-atf_test_case agent_configtest
-agent_configtest_head()
-{
-	atf_set "descr" "fluentbit renders, installs and dry-runs its config"
-}
-agent_configtest_body()
-{
-	cat > fluent-bit <<EOF
-#!/bin/sh
-echo "\$@" > "$(pwd)/fb.args"
-exit \${FB_EXIT:-0}
-EOF
-	chmod +x fluent-bit
-	rc_setup "fluentbit_bin=\"$(pwd)/fluent-bit\""
-	atf_check -o match:"fluent-bit.yaml: OK" ./rc_run fluentbit oneconfigtest
-	atf_check -o inline:"--dry-run -c $(pwd)/run/fluent-bit.yaml\n" \
-	    cat fb.args
-	atf_check -o inline:"600\n" stat -f %Lp run/fluent-bit.yaml
-	atf_check -o match:"host: 'collector.invalid'" cat run/fluent-bit.yaml
-	atf_check -o inline:"750\n" stat -f %Lp spool/fluent-bit
-
-	# A rejected configuration stops the start.
-	FB_EXIT=1; export FB_EXIT
-	atf_check -s exit:1 -e match:"rejected by fluent-bit --dry-run" \
-	    ./rc_run fluentbit oneconfigtest
-	unset FB_EXIT
-
-	# No upstream: otelconf refuses and nothing is started.
-	echo 'host_id_file = "";' > local.conf
-	atf_check -s exit:1 -e match:"agent.upstream is not set" \
-	    ./rc_run fluentbit oneconfigtest
-
-	# Disabled configuration.
-	echo 'enable = false;' > local.conf
-	atf_check -s exit:1 -e match:"disabled" ./rc_run fluentbit oneconfigtest
-
-	# An administrator configuration bypasses otelconf.
-	echo "pipeline: {}" > own.yaml
-	rc_setup "fluentbit_bin=\"$(pwd)/fluent-bit\"" \
-	    "fluentbit_config=\"$(pwd)/own.yaml\""
-	echo 'enable = false;' > local.conf
-	atf_check -o match:"own.yaml: OK" ./rc_run fluentbit oneconfigtest
-	atf_check -o inline:"--dry-run -c $(pwd)/own.yaml\n" cat fb.args
-}
-
-atf_test_case agent_start_stop
-agent_start_stop_head()
-{
-	atf_set "descr" "fluentbit starts the agent under daemon(8)"
-	# rc.subr applies login-class limits, which needs root.
-	atf_set "require.user" "root"
-}
-agent_start_stop_body()
-{
-	cat > fluent-bit <<EOF
-#!/bin/sh
-case "\$1" in --dry-run) exit 0;; esac
-echo "\$@" > "$(pwd)/fb.args"
-exec sleep 60
-EOF
-	chmod +x fluent-bit
-	rc_setup 'fluentbit_enable="YES"' \
-	    "fluentbit_bin=\"$(pwd)/fluent-bit\"" 'fluentbit_flags="-q"'
-	atf_check -o match:"Starting fluentbit" ./rc_run fluentbit start
-	wait_for fb.args
-	atf_check -o inline:"-c $(pwd)/run/fluent-bit.yaml -q\n" cat fb.args
-	atf_check -o match:"is running" ./rc_run fluentbit status
-	atf_check -o match:"Stopping fluentbit" ./rc_run fluentbit stop
-	atf_check -s exit:1 -o match:"is not running" ./rc_run fluentbit status
 }
 
 # Start and stop one emitter with a stand-in program.
@@ -247,6 +158,10 @@ emitters_refuse_body()
 		echo 'enable = maybe;' > local.conf
 		atf_check -s exit:1 -e match:"must be true or false" \
 		    ./rc_run $s start
+		# No export target: nothing local receives OTLP.
+		echo 'host_id_file = "";' > local.conf
+		atf_check -s exit:1 -e match:"no export target" \
+		    ./rc_run $s start
 	done
 	if ! kldstat -q -m dtrace; then
 		fake_program prog
@@ -260,9 +175,6 @@ emitters_refuse_body()
 atf_init_test_cases()
 {
 	atf_add_test_case inherit_switch
-	atf_add_test_case agent_pending
-	atf_add_test_case agent_configtest
-	atf_add_test_case agent_start_stop
 	atf_add_test_case emitters_start_stop
 	atf_add_test_case emitters_refuse
 }

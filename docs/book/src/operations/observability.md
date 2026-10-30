@@ -302,13 +302,17 @@ exported over OTLP; only DTrace and telemetry data are.
 The system configuration `/etc/otel.conf` (over `/etc/defaults/otel.conf`,
 see `otel.conf(5)`) is the layer below the environment: command line >
 `OTEL_*` environment > `otel.conf` > built-in defaults. It holds the
-endpoint (default `http://localhost:4318`, the local agent), compression,
-timeout, a separate credentials file (mode 0600/0400, owned by root),
-resource attributes (`service.namespace`, `deployment.environment.name`,
-`host.id` from `/etc/hostid`), the spool directory `/var/spool/otel` and
-the local agent's settings. `otelconf(8)` validates it with the library's
-own loader, prints values for rc.d scripts and renders the agent
-configuration. Every OTLP/HTTP exporter (dtrace `-x otel=otlp`,
+receiver endpoint, compression, timeout, a separate credentials file (mode
+0600/0400, owned by root), resource attributes (`service.namespace`,
+`deployment.environment.name`, `host.id` from `/etc/hostid`) and the spool
+directory `/var/spool/otel`. The base system ships no collector or agent:
+the programs export straight to the receiver the configuration names. The
+shipped `endpoint` is empty, so the services refuse to start until one is
+set (`otelconf check -t`); a program run by hand with OTLP output then uses
+the specification's conventional `http://localhost:4318`, where a collector
+the user runs listens by default. `otelconf(8)` validates the configuration
+with the library's own loader and prints values for rc.d scripts. Every
+OTLP/HTTP exporter (dtrace `-x otel=otlp`,
 bsdinstruments `--format otel`, hwstat, otelpfd, otelauditd) reads it through
 one function, `oe_config_load(3)`; credentials from it are only sent to the
 endpoint it names. Without a command-line spool, an exporter that may write
@@ -316,12 +320,11 @@ the spool directory keeps undeliverable batches in
 `/var/spool/otel/<tool>.spool` (bounded by `spool.max_bytes`, one owner at a
 time) and resends them when the collector is back.
 
-`sysrc otel_enable=YES` starts the services; each `*_enable` left empty
-follows the master switch:
+With an export target configured, `sysrc otel_enable=YES` starts the
+services; each `*_enable` left empty follows the master switch:
 
 | rc.d script | What it exports | Source |
 |---|---|---|
-| `fluentbit` | local agent: OTLP receiver on 127.0.0.1:4318, `agent.tail` logs, filesystem spool, forwarding to `agent.upstream` | Fluent Bit (pending import; refuses to start until installed) |
 | `otel_hwstat` | hardware metrics | `hwstat watch --format otel` |
 | `otelpfd` | pf status counters and gauges | `DIOCGETSTATUS` on `/dev/pf` |
 | `otelauditd` | audit records as log records | `auditpipe(4)` + libbsm |
@@ -329,8 +332,7 @@ follows the master switch:
 
 otelpfd and otelauditd open their device as root, limit its capability
 rights, read the configuration and credentials, and then run as `_otel`
-(uid 830) before their exporter and spool exist; the agent runs as `_otel`
-too. otelpfd uses `network.type` (`ipv4`/`ipv6`) and `network.io.direction`
+(uid 830) before their exporter and spool exist. otelpfd uses `network.type` (`ipv4`/`ipv6`) and `network.io.direction`
 for pf's address families and directions and starts its cumulative sums at
 pf's own enable time. otelauditd exports a successful event as INFO, a
 failed one as WARN, and a failed login or authentication (`lo`, `aa`

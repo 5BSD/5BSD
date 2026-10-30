@@ -2,7 +2,6 @@
 #
 # PROVIDE: otel_dtrace
 # REQUIRE: DAEMON
-# AFTER: fluentbit
 # KEYWORD: shutdown
 #
 # DTrace-derived system metrics: bsdinstruments(8) runs the conservative
@@ -40,7 +39,11 @@ otel_dtrace_prestart()
 		warn "${otel_dtrace_bin} is not installed"
 		return 1
 	fi
-	${otelconf_program} check -eq || return 1
+	# An export target must be configured (otel.conf endpoint, or
+	# otel_endpoint in rc.conf); nothing local receives OTLP.
+	_otel_check="-eqt"
+	[ -n "${otel_endpoint}" ] && _otel_check="-eq"
+	${otelconf_program} check ${_otel_check} || return 1
 	# Late kldload of the DTrace providers is refused on 5BSD; they must
 	# come from loader.conf(5) (dtraceall_load="YES").
 	if ! kldstat -q -m dtrace; then

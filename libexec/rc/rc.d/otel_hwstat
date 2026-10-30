@@ -2,7 +2,6 @@
 #
 # PROVIDE: otel_hwstat
 # REQUIRE: DAEMON
-# AFTER: fluentbit
 # KEYWORD: shutdown
 #
 # Continuous hardware metrics (hwstat(8)) exported with OTLP to the
@@ -36,7 +35,11 @@ otel_hwstat_prestart()
 		warn "${otel_hwstat_bin} is not installed"
 		return 1
 	fi
-	${otelconf_program} check -eq || return 1
+	# An export target must be configured (otel.conf endpoint, or
+	# otel_endpoint in rc.conf); nothing local receives OTLP.
+	_otel_check="-eqt"
+	[ -n "${otel_endpoint}" ] && _otel_check="-eq"
+	${otelconf_program} check ${_otel_check} || return 1
 	install -d -m 0755 "${otel_rundir}" || return 1
 	# Runs as root: package energy counters need cpuctl(4).
 	command_args="-f -S -T ${name} -P ${pidfile} -r -R 10 \

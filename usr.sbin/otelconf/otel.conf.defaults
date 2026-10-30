@@ -13,8 +13,11 @@
 # file and the rc.d OpenTelemetry services refuse to start.
 enable = true;
 
-# Where base system emitters send OTLP: the local agent by default.
-endpoint = "http://localhost:4318";
+# Base URL of the OTLP/HTTP receiver (an OpenTelemetry Collector).
+# The base system has no local collector, so none is configured: the
+# telemetry services refuse to start until this is set.  Programs run by
+# hand with OTLP output then use the conventional http://localhost:4318.
+endpoint = "";
 protocol = "http/json";
 compression = "gzip";
 timeout_ms = 10000;
@@ -33,25 +36,8 @@ resource {
 	"deployment.environment.name" = "production";
 }
 
-# Persistent buffering for the local agent and exporters.
+# Persistent buffering of batches the receiver could not take.
 spool {
 	directory = "/var/spool/otel";
 	max_bytes = 268435456;
-}
-
-# Local agent (fluent-bit, started by the fluentbit rc.d script).
-agent {
-	# OTLP/HTTP receiver for the base system emitters.
-	listen = "127.0.0.1:4318";
-	# Remote collector the agent forwards to; the agent does not start
-	# until this is set.
-	upstream = "";
-	upstream_protocol = "http/protobuf";
-	# Credentials for upstream, same format and mode rules as
-	# headers_file.
-	headers_file = "";
-	tls_verify = true;
-	log_level = "info";
-	# Text logs shipped as OTel log records.
-	tail = [ "/var/log/messages" ];
 }

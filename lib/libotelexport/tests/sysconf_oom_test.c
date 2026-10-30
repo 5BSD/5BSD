@@ -73,19 +73,11 @@ write_config(void)
 	    "headers_file = \"%s/creds\";\n"
 	    "host_id_file = \"%s/hostid\";\n"
 	    "resource { a = \"1\"; b = \"2\"; c = \"\"; }\n"
-	    "spool { directory = \"/var/db/otel\"; }\n"
-	    "agent {\n"
-	    "  listen = \"127.0.0.1:4319\";\n"
-	    "  upstream = \"https://up:4318\";\n"
-	    "  upstream_protocol = \"grpc\";\n"
-	    "  headers_file = \"/etc/otel/up\";\n"
-	    "  log_level = \"warn\";\n"
-	    "  tail = [\"/var/log/a\", \"/var/log/b\"];\n"
-	    "}\n", cwd, cwd);
+	    "spool { directory = \"/var/db/otel\"; }\n", cwd, cwd);
 	write_file("local.conf", conf, 0644);
-	/* The defaults layer replaces an attribute and the tail list. */
+	/* The defaults layer replaces an attribute and the spool. */
 	write_file("defaults.conf", "resource { a = \"0\"; c = \"x\"; }\n"
-	    "agent { tail = [\"/var/log/old\"]; }\n", 0644);
+	    "spool { directory = \"/var/spool/old\"; }\n", 0644);
 }
 
 ATF_TC_WITHOUT_HEAD(load_sweep);
@@ -105,7 +97,7 @@ ATF_TC_BODY(load_sweep, tc)
 			ATF_REQUIRE_EQ_MSG(r, 0, "%s", sc.error);
 			ATF_CHECK_EQ(sc.nheaders, 2);
 			ATF_CHECK_EQ(sc.nresource_attrs, 3);
-			ATF_CHECK_EQ(sc.nagent_tail, 2);
+			ATF_CHECK_STREQ(sc.spool_dir, "/var/db/otel");
 			oe_sysconf_free(&sc);
 			break;
 		}
@@ -136,9 +128,9 @@ ATF_TC_BODY(init_sweep, tc)
 		}
 		ATF_REQUIRE_EQ(r, -1);
 		ATF_CHECK_STREQ(sc.error, "out of memory");
-		ATF_CHECK(sc.endpoint == NULL && sc.agent_log_level == NULL);
+		ATF_CHECK(sc.endpoint == NULL && sc.spool_dir == NULL);
 	}
-	ATF_REQUIRE(n >= 11);
+	ATF_REQUIRE(n >= 6);
 }
 
 ATF_TC_WITHOUT_HEAD(env_sweep);

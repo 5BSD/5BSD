@@ -40,6 +40,16 @@ oe_service_open(struct oe_service *svc, const char *service_name,
 		    "otel.conf (enable = false)");
 		return (-1);
 	}
+	/*
+	 * Nothing in the base system listens on the conventional OTLP
+	 * port: a service never falls back to it.
+	 */
+	if (svc->env.endpoint_default) {
+		snprintf(err, errlen, "no export target: set endpoint in "
+		    "otel.conf(5) (or OTEL_EXPORTER_OTLP_ENDPOINT, or the "
+		    "endpoint option)");
+		return (-1);
+	}
 	if (user != NULL && oe_drop_privileges(user, err, errlen) != 0)
 		return (-1);
 	oe_host_detect(&svc->host);

@@ -28,7 +28,17 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261029:
-	The OpenTelemetry services (otelpfd, otelauditd and the local agent)
+	The base system no longer carries a local OpenTelemetry agent: the
+	fluentbit rc.d script, its rc.conf variables, the agent section of
+	otel.conf(5) and "otelconf fluentbit" are gone (otel.conf files
+	with an agent block no longer load), and /etc/defaults/otel.conf
+	names no endpoint.  The OpenTelemetry services (otel_enable)
+	export directly and refuse to start until /etc/otel.conf sets
+	endpoint or rc.conf sets otel_endpoint; programs run by hand with
+	OTLP output still default to http://localhost:4318.
+
+20261029:
+	The OpenTelemetry services (otelpfd, otelauditd)
 	run as the new _otel user and group (uid/gid 830), which owns
 	/var/spool/otel.  Before installworld, add them, for example with
 	etcupdate or by merging /usr/src/etc/master.passwd and

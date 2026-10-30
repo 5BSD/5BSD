@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt OE_SYSCONF 3
 .Os
 .Sh NAME
@@ -96,8 +96,14 @@ from
 .Fa sc
 when it is enabled; resource attributes and headers are merged by
 name with the environment winning.
+An empty
+.Va sc->endpoint
+.Pq the shipped default
+is unset and leaves
+.Va env->endpoint
+.Dv NULL .
 Headers from the system credentials file are added only if the
-resolved endpoint equals
+resolved endpoint equals a non-empty
 .Va sc->endpoint .
 Strings in
 .Fa env
@@ -122,9 +128,16 @@ sets up the exporter of a base system telemetry service such as
 .Xr otelpfd 8 :
 it resolves the settings with
 .Xr oe_config_load 3 ,
-fails if the system configuration is invalid or has
+fails if the system configuration is invalid, has
 .Ic enable
-set to false, switches to
+set to false, or no layer names an export target
+.Po
+.Va env.endpoint_default
+is set: a service never falls back to
+.Dv OE_DEFAULT_ENDPOINT ,
+where nothing in the base system listens
+.Pc ,
+switches to
 .Fa user
 with
 .Fn oe_drop_privileges

@@ -421,6 +421,11 @@ struct oe_env {
 	const char	*spool_path;	/* NULL: no spool */
 	uint64_t	 spool_max;	/* 0: the exporter's default */
 	int		 spool_optional; /* system spool: never fatal */
+	/*
+	 * Set by oe_config_load() when no layer named an endpoint and
+	 * env->endpoint is OE_DEFAULT_ENDPOINT.
+	 */
+	int		 endpoint_default;
 	struct oe_sysconf *sysconf;	/* owned otel.conf(5) layer */
 	char		*spool_buf;	/* owned system spool path */
 };

@@ -14,12 +14,7 @@
  */
 
 #include <sys/param.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-
-#include <netinet/in.h>
-
-#include <arpa/inet.h>
 
 #include <ctype.h>
 #include <errno.h>
@@ -136,18 +131,6 @@ attrs_set(struct oe_attr **attrsp, size_t *np, const char *name,
 	return (0);
 }
 
-static void
-tail_free(struct oe_sysconf *sc)
-{
-	size_t i;
-
-	for (i = 0; i < sc->nagent_tail; i++)
-		free(sc->agent_tail[i]);
-	free(sc->agent_tail);
-	sc->agent_tail = NULL;
-	sc->nagent_tail = 0;
-}
-
 void
 oe_sysconf_free(struct oe_sysconf *sc)
 {
@@ -160,17 +143,8 @@ oe_sysconf_free(struct oe_sysconf *sc)
 	free(sc->host_id_file);
 	oe_attrs_free(sc->resource_attrs, sc->nresource_attrs);
 	free(sc->spool_dir);
-	free(sc->agent_listen);
-	free(sc->agent_upstream);
-	free(sc->agent_upstream_protocol);
-	free(sc->agent_headers_file);
-	free(sc->agent_log_level);
-	tail_free(sc);
 	sc->endpoint = sc->protocol = sc->compression = NULL;
 	sc->headers_file = sc->host_id_file = sc->spool_dir = NULL;
-	sc->agent_listen = sc->agent_upstream = NULL;
-	sc->agent_upstream_protocol = sc->agent_headers_file = NULL;
-	sc->agent_log_level = NULL;
 	sc->headers = sc->resource_attrs = NULL;
 	sc->nheaders = sc->nresource_attrs = 0;
 }
@@ -183,19 +157,12 @@ oe_sysconf_init(struct oe_sysconf *sc)
 	sc->enable = 1;
 	sc->timeout_ms = OE_SYSCONF_DEFAULT_TIMEOUT_MS;
 	sc->spool_max_bytes = OE_SYSCONF_DEFAULT_SPOOL_MAX;
-	sc->agent_tls_verify = 1;
 	if (set_str(&sc->endpoint, OE_SYSCONF_DEFAULT_ENDPOINT) != 0 ||
 	    set_str(&sc->protocol, OE_SYSCONF_DEFAULT_PROTOCOL) != 0 ||
 	    set_str(&sc->compression, OE_SYSCONF_DEFAULT_COMPRESSION) != 0 ||
 	    set_str(&sc->headers_file, "") != 0 ||
 	    set_str(&sc->host_id_file, OE_SYSCONF_DEFAULT_HOSTID_FILE) != 0 ||
-	    set_str(&sc->spool_dir, OE_SYSCONF_DEFAULT_SPOOL_DIR) != 0 ||
-	    set_str(&sc->agent_listen, OE_SYSCONF_DEFAULT_LISTEN) != 0 ||
-	    set_str(&sc->agent_upstream, "") != 0 ||
-	    set_str(&sc->agent_upstream_protocol,
-	    OE_SYSCONF_DEFAULT_UPSTREAM_PROTOCOL) != 0 ||
-	    set_str(&sc->agent_headers_file, "") != 0 ||
-	    set_str(&sc->agent_log_level, "info") != 0) {
+	    set_str(&sc->spool_dir, OE_SYSCONF_DEFAULT_SPOOL_DIR) != 0) {
 		oe_sysconf_free(sc);
 		sc_error(sc, "out of memory");
 		return (-1);
@@ -474,16 +441,17 @@ get_path(struct oe_sysconf *sc, const char *file, const char *key,
 	return (0);
 }
 
+/* An http:// or https:// URL, or "" for unset. */
 static int
 get_url(struct oe_sysconf *sc, const char *file, const char *key,
-    const ucl_object_t *obj, bool allow_empty, char **dst)
+    const ucl_object_t *obj, char **dst)
 {
 	struct oe_url url;
 	const char *s;
 
 	if (get_string(sc, file, key, obj, OE_SYSCONF_VALUE_MAX, &s) != 0)
 		return (-1);
-	if (!(allow_empty && s[0] == '\0') && oe_url_parse(s, &url) != 0) {
+	if (s[0] != '\0' && oe_url_parse(s, &url) != 0) {
 		sc_error(sc, "%s: %s \"%s\" is not an http:// or https:// "
 		    "URL", file, key, s);
 		return (-1);
@@ -639,152 +607,6 @@ parse_spool(struct oe_sysconf *sc, const char *file,
 	return (0);
 }
 
-/* Validate "ipv4:port" or "[ipv6]:port". */
-static bool
-valid_listen(const char *s)
-{
-	char host[INET6_ADDRSTRLEN + 2], buf[sizeof(struct in6_addr)];
-	const char *colon, *close;
-	char *end;
-	unsigned long port;
-	size_t hlen;
-	int af;
-
-	if (s[0] == '[') {
-		close = strchr(s, ']');
-		if (close == NULL || close[1] != ':')
-			return (false);
-		hlen = (size_t)(close - s - 1);
-		s++;
-		colon = close + 1;
-		af = AF_INET6;
-	} else {
-		colon = strrchr(s, ':');
-		if (colon == NULL)
-			return (false);
-		hlen = (size_t)(colon - s);
-		af = AF_INET;
-	}
-	if (hlen == 0 || hlen >= sizeof(host))
-		return (false);
-	memcpy(host, s, hlen);
-	host[hlen] = '\0';
-	if (inet_pton(af, host, buf) != 1)
-		return (false);
-	errno = 0;
-	port = strtoul(colon + 1, &end, 10);
-	return (isdigit((unsigned char)colon[1]) && *end == '\0' &&
-	    errno == 0 && port >= 1 && port <= 65535);
-}
-
-static int
-parse_tail(struct oe_sysconf *sc, const char *file, const ucl_object_t *obj)
-{
-	const ucl_object_t *cur;
-	ucl_object_iter_t it;
-	const char *s;
-	char **v;
-	size_t n;
-
-	if (ucl_object_type(obj) != UCL_ARRAY) {
-		sc_error(sc, "%s: agent.tail must be an array of paths",
-		    file);
-		return (-1);
-	}
-	tail_free(sc);
-	it = NULL;
-	n = 0;
-	while ((cur = ucl_object_iterate(obj, &it, true)) != NULL) {
-		if (get_string(sc, file, "agent.tail entry", cur,
-		    PATH_MAX - 1, &s) != 0)
-			return (-1);
-		if (s[0] != '/' || strpbrk(s, "\n\r\"',") != NULL) {
-			sc_error(sc, "%s: agent.tail entry \"%s\" must be an "
-			    "absolute path without quotes or commas", file, s);
-			return (-1);
-		}
-		if (n >= OE_SYSCONF_TAIL_MAX) {
-			sc_error(sc, "%s: agent.tail has more than %d "
-			    "entries", file, OE_SYSCONF_TAIL_MAX);
-			return (-1);
-		}
-		v = reallocarray(sc->agent_tail, n + 1, sizeof(*v));
-		if (v == NULL || (v[n] = strdup(s)) == NULL) {
-			if (v != NULL)
-				sc->agent_tail = v;
-			sc_error(sc, "%s: out of memory", file);
-			return (-1);
-		}
-		sc->agent_tail = v;
-		sc->nagent_tail = ++n;
-	}
-	return (0);
-}
-
-static int
-parse_agent(struct oe_sysconf *sc, const char *file,
-    const ucl_object_t *obj)
-{
-	static const char *const protocols[] = { "http/protobuf", "grpc",
-	    NULL };
-	static const char *const levels[] = { "off", "error", "warn",
-	    "info", "debug", "trace", NULL };
-	const ucl_object_t *cur;
-	ucl_object_iter_t it;
-	const char *key, *s;
-
-	if (ucl_object_type(obj) != UCL_OBJECT) {
-		sc_error(sc, "%s: agent must be an object", file);
-		return (-1);
-	}
-	it = NULL;
-	while ((cur = ucl_object_iterate(obj, &it, true)) != NULL) {
-		key = ucl_object_key(cur);
-		if (strcmp(key, "listen") == 0) {
-			if (get_string(sc, file, "agent.listen", cur,
-			    OE_SYSCONF_KEY_MAX, &s) != 0)
-				return (-1);
-			if (!valid_listen(s)) {
-				sc_error(sc, "%s: agent.listen \"%s\" must be "
-				    "an IP address and port, e.g. "
-				    "127.0.0.1:4318", file, s);
-				return (-1);
-			}
-			if (set_str(&sc->agent_listen, s) != 0) {
-				sc_error(sc, "%s: out of memory", file);
-				return (-1);
-			}
-		} else if (strcmp(key, "upstream") == 0) {
-			if (get_url(sc, file, "agent.upstream", cur, true,
-			    &sc->agent_upstream) != 0)
-				return (-1);
-		} else if (strcmp(key, "upstream_protocol") == 0) {
-			if (get_enum(sc, file, "agent.upstream_protocol", cur,
-			    protocols, &sc->agent_upstream_protocol) != 0)
-				return (-1);
-		} else if (strcmp(key, "headers_file") == 0) {
-			if (get_path(sc, file, "agent.headers_file", cur,
-			    &sc->agent_headers_file) != 0)
-				return (-1);
-		} else if (strcmp(key, "tls_verify") == 0) {
-			if (get_bool(sc, file, "agent.tls_verify", cur,
-			    &sc->agent_tls_verify) != 0)
-				return (-1);
-		} else if (strcmp(key, "log_level") == 0) {
-			if (get_enum(sc, file, "agent.log_level", cur, levels,
-			    &sc->agent_log_level) != 0)
-				return (-1);
-		} else if (strcmp(key, "tail") == 0) {
-			if (parse_tail(sc, file, cur) != 0)
-				return (-1);
-		} else {
-			sc_error(sc, "%s: unknown key agent.%s", file, key);
-			return (-1);
-		}
-	}
-	return (0);
-}
-
 static int
 parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 {
@@ -802,8 +624,7 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 			if (get_bool(sc, file, key, cur, &sc->enable) != 0)
 				return (-1);
 		} else if (strcmp(key, "endpoint") == 0) {
-			if (get_url(sc, file, key, cur, false,
-			    &sc->endpoint) != 0)
+			if (get_url(sc, file, key, cur, &sc->endpoint) != 0)
 				return (-1);
 		} else if (strcmp(key, "protocol") == 0) {
 			s = ucl_object_type(cur) == UCL_STRING ?
@@ -812,9 +633,7 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 			    strcmp(s, "grpc") == 0) {
 				sc_error(sc, "%s: protocol \"%s\": "
 				    "libotelexport implements only "
-				    "\"http/json\"; use the local agent "
-				    "(agent.upstream_protocol) for %s", file,
-				    s, s);
+				    "\"http/json\"", file, s);
 				return (-1);
 			}
 			if (get_enum(sc, file, key, cur, protocols,
@@ -842,9 +661,6 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 				return (-1);
 		} else if (strcmp(key, "spool") == 0) {
 			if (parse_spool(sc, file, cur) != 0)
-				return (-1);
-		} else if (strcmp(key, "agent") == 0) {
-			if (parse_agent(sc, file, cur) != 0)
 				return (-1);
 		} else {
 			sc_error(sc, "%s: unknown key %s", file, key);
@@ -1033,7 +849,8 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 		env->endpoint = cli_endpoint;
 	if (sc == NULL || !sc->enable)
 		return (0);
-	if (env->endpoint == NULL)
+	/* An empty system endpoint is unset (the built-in default applies). */
+	if (env->endpoint == NULL && sc->endpoint[0] != '\0')
 		env->endpoint = sc->endpoint;
 	if (env->compression == NULL)
 		env->compression = sc->compression;
@@ -1042,7 +859,8 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 	if (merge_missing(&env->resource_attrs, &env->nresource_attrs,
 	    sc->resource_attrs, sc->nresource_attrs) != 0)
 		return (-1);
-	if (strcmp(env->endpoint, sc->endpoint) == 0 &&
+	if (env->endpoint != NULL && sc->endpoint[0] != '\0' &&
+	    strcmp(env->endpoint, sc->endpoint) == 0 &&
 	    merge_missing(&env->headers, &env->nheaders, sc->headers,
 	    sc->nheaders) != 0)
 		return (-1);
@@ -1086,8 +904,10 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 	env->sysconf = sc;
 	if (r != 0)
 		goto nomem;
-	if (env->endpoint == NULL)
+	if (env->endpoint == NULL) {
 		env->endpoint = OE_DEFAULT_ENDPOINT;
+		env->endpoint_default = 1;
+	}
 	if (sc != NULL && !sc->enable)
 		sc = NULL;
 	if (req->spool != NULL) {

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt OTEL.CONF 5
 .Os
 .Sh NAME
@@ -15,7 +15,9 @@
 .Sh DESCRIPTION
 .Nm
 configures how base system programs export telemetry with the
-OpenTelemetry protocol (OTLP), and how the local agent forwards it.
+OpenTelemetry protocol (OTLP).
+The base system contains no collector or agent: the programs export
+directly to the receiver named here.
 It is read through one configuration path of the base exporter library
 .Pq Xr oe_config_load 3
 by every program exporting with OTLP/HTTP:
@@ -29,7 +31,7 @@ and
 .Xr otelauditd 8 ,
 and by
 .Xr otelconf 8 ,
-which validates it and renders the local agent configuration.
+which validates it.
 .Pp
 Settings are resolved per key, highest precedence first:
 .Bl -enum -offset indent -compact
@@ -76,14 +78,41 @@ Apply this configuration.
 When false, programs ignore the file
 .Pq as if it did not exist
 and the rc.d OpenTelemetry services refuse to start.
-.It Ic endpoint Pq string, default Qq http://localhost:4318
-Base URL of the OTLP/HTTP receiver.
+.It Ic endpoint Pq string, default Qq
+Base URL of the OTLP/HTTP receiver, for example an OpenTelemetry
+Collector.
 Signals are sent to
-.Pa /v1/metrics
-and
+.Pa /v1/metrics ,
 .Pa /v1/logs
+and
+.Pa /v1/traces
 below it.
-The default is the local agent.
+.Pp
+The default is empty: nothing in the base system listens for OTLP, so
+the configuration names no receiver until one is set.
+The rc.d services
+.Pq Sx SERVICES ,
+.Xr otelpfd 8
+and
+.Xr otelauditd 8
+refuse to start without one
+.Po
+.Ql otelconf check -t
+fails
+.Pc .
+A program a user runs and asks for OTLP explicitly
+.Po
+.Xr dtrace 1
+.Fl x Cm otel=otlp ,
+.Xr bsdinstruments 8
+and
+.Xr hwstat 8
+.Fl -format Cm otel
+.Pc
+then uses the conventional OTLP/HTTP default of the OpenTelemetry
+specification,
+.Qq http://localhost:4318 ,
+where a collector the user runs listens by default.
 .It Ic protocol Pq string, default Qq http/json
 OTLP transport.
 The base exporter implements only
@@ -91,8 +120,7 @@ The base exporter implements only
 .Qq http/protobuf
 and
 .Qq grpc
-are refused here and are available through the agent's
-.Ic upstream_protocol .
+are refused.
 .It Ic compression Pq string, default Qq gzip
 .Qq gzip
 or
@@ -161,9 +189,6 @@ and root may; other users export without a spool).
 Each spool file has one owner at a time, held with a lock on
 .Pa <program>.spool.lock ;
 a second instance of the same program exports without a spool.
-.Xr fluent-bit 8
-buffers under
-.Pa <directory>/fluent-bit .
 .It Ic max_bytes Pq integer, default 268435456
 Bound on buffered data, 1 MiB to 1 TiB, applied to each spool file and
 to a command-line spool given without its own bound; batches beyond it
@@ -172,46 +197,6 @@ UCL size suffixes such as
 .Qq 256mb
 are accepted.
 .El
-.El
-.Sh AGENT KEYS
-The
-.Ic agent
-object configures the local agent,
-.Xr fluent-bit 8 ,
-started by the
-.Pa fluentbit
-rc.d script:
-.Bl -tag -width "upstream_protocol"
-.It Ic listen Pq string, default Qq 127.0.0.1:4318
-OTLP/HTTP receiver address for the base emitters, as
-.Ar ipv4 : Ns Ar port
-or
-.Li \&[ Ns Ar ipv6 Ns \&]: Ns Ar port .
-.It Ic upstream Pq string, default Qq
-URL of the collector the agent forwards to.
-The agent is not started while this is empty.
-.It Ic upstream_protocol Pq string, default Qq http/protobuf
-.Qq http/protobuf
-or
-.Qq grpc .
-.It Ic headers_file Pq path, default Qq
-Credentials for
-.Ic upstream ,
-in the format of
-.Sx CREDENTIALS FILES .
-.It Ic tls_verify Pq boolean, default Dv true
-Verify the upstream TLS certificate.
-.It Ic log_level Pq string, default Qq info
-One of
-.Qq off ,
-.Qq error ,
-.Qq warn ,
-.Qq info ,
-.Qq debug ,
-.Qq trace .
-.It Ic tail Pq array of paths, default Bq Qq /var/log/messages
-Text log files shipped as OpenTelemetry log records.
-At most 16 absolute paths without quotes or commas.
 .El
 .Sh CREDENTIALS FILES
 A credentials file holds one header per line as
@@ -250,9 +235,12 @@ variables start the telemetry services; all default to off.
 .It Va otel_enable
 Master switch.
 Each service variable below that is left empty follows it.
-.It Va fluentbit_enable
-Local agent
-.Pq requires Ic agent.upstream .
+The services need an export target
+.Pq Ic endpoint ,
+or
+.Va otel_endpoint
+in
+.Xr rc.conf 5 .
 .It Va otel_hwstat_enable
 .Xr hwstat 8
 hardware metrics.
@@ -289,18 +277,16 @@ host UUID
 spool directory
 .El
 .Sh EXAMPLES
-Forward everything to a remote collector with a bearer token:
+Export everything to a remote collector with a bearer token:
 .Bd -literal -offset indent
 # /etc/otel.conf
-agent {
-	upstream = "https://collector.example.org:4318";
-	headers_file = "/etc/otel/upstream.headers";
-}
+endpoint = "https://collector.example.org:4318";
+headers_file = "/etc/otel/collector.headers";
 .Ed
 .Bd -literal -offset indent
-# install -m 0600 /dev/null /etc/otel/upstream.headers
-# echo 'Authorization: Bearer TOKEN' > /etc/otel/upstream.headers
-# otelconf check
+# install -m 0600 /dev/null /etc/otel/collector.headers
+# echo 'Authorization: Bearer TOKEN' > /etc/otel/collector.headers
+# otelconf check -t
 # sysrc otel_enable=YES
 .Ed
 .Sh SEE ALSO

@@ -80,7 +80,8 @@ ATF_TC_BODY(builtin_defaults, tc)
 
 	ATF_REQUIRE_EQ(oe_sysconf_load(&sc, "", ""), 0);
 	ATF_CHECK_EQ(sc.enable, 1);
-	ATF_CHECK_STREQ(sc.endpoint, "http://localhost:4318");
+	/* No receiver is configured out of the box (no local agent). */
+	ATF_CHECK_STREQ(sc.endpoint, "");
 	ATF_CHECK_STREQ(sc.protocol, "http/json");
 	ATF_CHECK_STREQ(sc.compression, "gzip");
 	ATF_CHECK_EQ(sc.timeout_ms, 10000);
@@ -88,12 +89,6 @@ ATF_TC_BODY(builtin_defaults, tc)
 	ATF_CHECK_EQ(sc.nheaders, 0);
 	ATF_CHECK_STREQ(sc.spool_dir, "/var/spool/otel");
 	ATF_CHECK_EQ(sc.spool_max_bytes, 256ULL * 1024 * 1024);
-	ATF_CHECK_STREQ(sc.agent_listen, "127.0.0.1:4318");
-	ATF_CHECK_STREQ(sc.agent_upstream, "");
-	ATF_CHECK_STREQ(sc.agent_upstream_protocol, "http/protobuf");
-	ATF_CHECK_EQ(sc.agent_tls_verify, 1);
-	ATF_CHECK_STREQ(sc.agent_log_level, "info");
-	ATF_CHECK_EQ(sc.nagent_tail, 0);
 	oe_sysconf_free(&sc);
 	/* Freeing twice is harmless. */
 	oe_sysconf_free(&sc);
@@ -160,9 +155,7 @@ ATF_TC_BODY(layering, tc)
 	    "  \"deployment.environment.name\" = \"production\";\n"
 	    "  \"keep.me\" = \"yes\";\n"
 	    "}\n"
-	    "spool { directory = \"/var/spool/otel\"; max_bytes = 2mb; }\n"
-	    "agent { tail = [\"/var/log/messages\", "
-	    "\"/var/log/auth.log\"]; }\n",
+	    "spool { directory = \"/var/spool/otel\"; max_bytes = 2mb; }\n",
 	    0644);
 	write_file("local.conf",
 	    "endpoint = \"https://collector.example:4318/otlp\";\n"
@@ -173,16 +166,8 @@ ATF_TC_BODY(layering, tc)
 	    "  \"service.namespace\" = \"\";\n"
 	    "  \"team\" = \"infra\";\n"
 	    "}\n"
-	    "spool { max_bytes = 1048576; directory = \"/var/db/otel\"; }\n"
-	    "agent {\n"
-	    "  listen = \"[::1]:14318\";\n"
-	    "  upstream = \"https://up.example\";\n"
-	    "  upstream_protocol = \"grpc\";\n"
-	    "  headers_file = \"/etc/otel/up.headers\";\n"
-	    "  tls_verify = false;\n"
-	    "  log_level = \"debug\";\n"
-	    "  tail = [\"/var/log/daemon.log\"];\n"
-	    "}\n", 0644);
+	    "spool { max_bytes = 1048576; directory = \"/var/db/otel\"; }\n",
+	    0644);
 	ATF_REQUIRE_EQ_MSG(oe_sysconf_load(&sc, "defaults.conf",
 	    "local.conf"), 0, "%s", sc.error);
 	ATF_CHECK_STREQ(sc.endpoint, "https://collector.example:4318/otlp");
@@ -199,14 +184,6 @@ ATF_TC_BODY(layering, tc)
 	    "team"), "infra");
 	ATF_CHECK_STREQ(sc.spool_dir, "/var/db/otel");
 	ATF_CHECK_EQ(sc.spool_max_bytes, 1048576);
-	ATF_CHECK_STREQ(sc.agent_listen, "[::1]:14318");
-	ATF_CHECK_STREQ(sc.agent_upstream, "https://up.example");
-	ATF_CHECK_STREQ(sc.agent_upstream_protocol, "grpc");
-	ATF_CHECK_STREQ(sc.agent_headers_file, "/etc/otel/up.headers");
-	ATF_CHECK_EQ(sc.agent_tls_verify, 0);
-	ATF_CHECK_STREQ(sc.agent_log_level, "debug");
-	ATF_REQUIRE_EQ(sc.nagent_tail, 1);
-	ATF_CHECK_STREQ(sc.agent_tail[0], "/var/log/daemon.log");
 	oe_sysconf_free(&sc);
 }
 
@@ -254,45 +231,12 @@ ATF_TC_BODY(malformed, tc)
 	expect_error("spool { max_bytes = 1000; }", "outside");
 	expect_error("spool { max_bytes = \"x\"; }", "must be an integer");
 	expect_error("spool { size = 1; }", "unknown key spool.size");
-	expect_error("agent = 1;", "agent must be an object");
-	expect_error("agent { listen = \"localhost:4318\"; }",
-	    "must be an IP address and port");
-	expect_error("agent { listen = \"127.0.0.1\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1:\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1:0\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1:65536\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1:12x\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1: 80\"; }", "IP address");
-	expect_error("agent { listen = \"127.0.0.1:+80\"; }", "IP address");
-	expect_error("agent { listen = \":4318\"; }", "IP address");
-	expect_error("agent { listen = \"[::1]4318\"; }", "IP address");
-	expect_error("agent { listen = \"[::1:4318\"; }", "IP address");
-	expect_error("agent { listen = \"[nothex]:4318\"; }", "IP address");
-	expect_error("agent { listen = 4318; }", "must be a single string");
-	expect_error("agent { upstream = \"mailto:x\"; }", "is not an http");
-	expect_error("agent { upstream = 1; }", "must be a single string");
-	expect_error("agent { upstream_protocol = \"http/json\"; }",
-	    "is not supported");
-	expect_error("agent { headers_file = \"x\"; }", "absolute path");
-	expect_error("agent { tls_verify = 1; }", "true or false");
-	expect_error("agent { log_level = \"loud\"; }", "is not supported");
-	expect_error("agent { tail = \"/var/log/messages\"; }",
-	    "must be an array");
-	expect_error("agent { tail = [\"relative\"]; }", "absolute path");
-	expect_error("agent { tail = [\"/a\\\"b\"]; }", "without quotes");
-	expect_error("agent { tail = [1]; }", "must be a single string");
-	expect_error("agent { tail = [\"/1\",\"/2\",\"/3\",\"/4\",\"/5\","
-	    "\"/6\",\"/7\",\"/8\",\"/9\",\"/10\",\"/11\",\"/12\",\"/13\","
-	    "\"/14\",\"/15\",\"/16\",\"/17\"]; }", "more than 16");
-	expect_error("agent { color = \"blue\"; }", "unknown key agent.color");
+	/* The local agent and its keys are gone. */
+	expect_error("agent = 1;", "unknown key agent");
+	expect_error("agent { upstream = \"http://c:4318\"; }",
+	    "unknown key agent");
 	expect_error("endpoint = \"http://a\\u0000b\";", "NUL byte");
 	expect_error("resource { \"\" = \"x\"; }", "syntax error");
-	expect_error("agent { listen = \"[]:4318\"; }", "IP address");
-	expect_error("agent { listen = \"1111111111111111111111111111111111111"
-	    "111111111111111:4318\"; }", "IP address");
-	expect_error("agent { listen = "
-	    "\"127.0.0.1:99999999999999999999999\"; }",
-	    "IP address");
 }
 
 ATF_TC_WITHOUT_HEAD(accepted_forms);
@@ -300,14 +244,14 @@ ATF_TC_BODY(accepted_forms, tc)
 {
 	struct oe_sysconf sc;
 
-	/* Empty file, explicit protocol, empty upstream. */
+	/* Empty file, explicit protocol, an explicitly empty endpoint. */
 	write_file("empty.conf", "", 0644);
 	write_file("local.conf", "protocol = \"http/json\";\n"
-	    "agent { upstream = \"\"; listen = \"0.0.0.0:4318\"; }\n", 0644);
+	    "endpoint = \"\";\n", 0644);
 	ATF_REQUIRE_EQ_MSG(oe_sysconf_load(&sc, "empty.conf", "local.conf"), 0,
 	    "%s", sc.error);
 	ATF_CHECK_STREQ(sc.protocol, "http/json");
-	ATF_CHECK_STREQ(sc.agent_upstream, "");
+	ATF_CHECK_STREQ(sc.endpoint, "");
 	oe_sysconf_free(&sc);
 }
 
@@ -679,6 +623,22 @@ ATF_TC_BODY(env_layering, tc)
 	oe_env_free(&env);
 	clear_env();
 
+	/*
+	 * An empty system endpoint is unset: no endpoint, and the system
+	 * credentials go nowhere.
+	 */
+	free(sc.endpoint);
+	sc.endpoint = strdup("");
+	ATF_REQUIRE(sc.endpoint != NULL);
+	ATF_REQUIRE_EQ(oe_env_load_system(&env, &sc, NULL), 0);
+	ATF_CHECK(env.endpoint == NULL);
+	ATF_CHECK_EQ(env.nheaders, 0);
+	ATF_CHECK_EQ(env.timeout_ms, 1234);
+	oe_env_free(&env);
+	ATF_REQUIRE_EQ(oe_env_load_system(&env, &sc, "http://cli:1"), 0);
+	ATF_CHECK_EQ(env.nheaders, 0);
+	oe_env_free(&env);
+
 	/* A disabled or absent system layer contributes nothing. */
 	sc.enable = 0;
 	ATF_REQUIRE_EQ(oe_env_load_system(&env, &sc, NULL), 0);
@@ -724,6 +684,7 @@ ATF_TC_BODY(config_load, tc)
 	    "%s", err);
 	ATF_REQUIRE(env.sysconf != NULL);
 	ATF_CHECK_STREQ(env.endpoint, "http://collector:4318");
+	ATF_CHECK_EQ(env.endpoint_default, 0);
 	ATF_CHECK_EQ(env.timeout_ms, 2500);
 	snprintf(path, sizeof(path), "%s/spool/tool.spool", cwd);
 	ATF_CHECK_STREQ(env.spool_path, path);
@@ -792,6 +753,7 @@ ATF_TC_BODY(config_load, tc)
 	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
 	ATF_CHECK(env.sysconf == NULL);
 	ATF_CHECK_STREQ(env.endpoint, OE_DEFAULT_ENDPOINT);
+	ATF_CHECK_EQ(env.endpoint_default, 1);
 	ATF_CHECK(env.spool_path == NULL);
 	memset(&cfg, 0, sizeof(cfg));
 	oe_otlp_config_env(&cfg, &env);
@@ -818,6 +780,22 @@ ATF_TC_BODY(config_load, tc)
 	ATF_CHECK(env.spool_path == NULL);
 	ATF_CHECK(env.sysconf != NULL && !env.sysconf->enable);
 	oe_env_free(&env);
+
+	/*
+	 * An enabled layer without an endpoint (the shipped default) leaves
+	 * the conventional default to programs run by hand, and says so.
+	 */
+	write_file("local.conf", "endpoint = \"\";\n", 0644);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.endpoint, OE_DEFAULT_ENDPOINT);
+	ATF_CHECK_EQ(env.endpoint_default, 1);
+	oe_env_free(&env);
+	setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://env:1", 1);
+	ATF_REQUIRE_EQ(oe_config_load(&env, &req, err, sizeof(err)), 0);
+	ATF_CHECK_STREQ(env.endpoint, "http://env:1");
+	ATF_CHECK_EQ(env.endpoint_default, 0);
+	oe_env_free(&env);
+	clear_env();
 
 	/* An invalid otel.conf is an error, and env is left empty. */
 	write_file("local.conf", "endpoint = 5;\n", 0644);
@@ -849,9 +827,26 @@ ATF_TC_BODY(service_open, tc)
 	ATF_REQUIRE(svc.exporter != NULL);
 	oe_service_close(&svc);
 
-	/* An unknown user is refused before any exporter exists. */
+	/*
+	 * No export target anywhere: a service never falls back to the
+	 * conventional endpoint, where nothing in the base system listens.
+	 */
 	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof", NULL, 1.0,
-	    "no-such-user-otel", err, sizeof(err)), -1);
+	    NULL, err, sizeof(err)), -1);
+	ATF_CHECK_MSG(strstr(err, "no export target") != NULL, "%s", err);
+	ATF_CHECK(svc.exporter == NULL);
+	oe_service_close(&svc);
+	/* The environment names one. */
+	setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9", 1);
+	ATF_REQUIRE_EQ_MSG(oe_service_open(&svc, "svc", "1.0", "prof", NULL,
+	    1.0, NULL, err, sizeof(err)), 0, "%s", err);
+	oe_service_close(&svc);
+	clear_env();
+
+	/* An unknown user is refused before any exporter exists. */
+	ATF_REQUIRE_EQ(oe_service_open(&svc, "svc", "1.0", "prof",
+	    "http://127.0.0.1:9", 1.0, "no-such-user-otel", err,
+	    sizeof(err)), -1);
 	ATF_CHECK_MSG(strstr(err, "unknown user") != NULL, "%s", err);
 	ATF_CHECK(svc.exporter == NULL);
 	oe_service_close(&svc);

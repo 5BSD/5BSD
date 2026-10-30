@@ -235,9 +235,9 @@ NUAGEINIT=	nuageinit \
 CONFGROUPS.${MK_OFED_EXTRA}+=	OPENSM
 OPENSM=	opensm
 
-# OpenTelemetry agent and emitters (otel.conf(5)).
+# OpenTelemetry emitters (otel.conf(5)).
 CONFGROUPS+=			OTEL
-OTEL=		fluentbit otel_dtrace otel_hwstat otelauditd otelpfd
+OTEL=		otel_dtrace otel_hwstat otelauditd otelpfd
 OTELPACKAGE=	otel
 
 CONFGROUPS.${MK_PF}+=		PF

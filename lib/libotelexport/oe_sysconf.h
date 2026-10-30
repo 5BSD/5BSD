@@ -23,22 +23,20 @@
 #define	OE_SYSCONF_PATH			"/etc/otel.conf"
 #define	OE_SYSCONF_DEFAULTS_PATH	"/etc/defaults/otel.conf"
 
-#define	OE_SYSCONF_DEFAULT_ENDPOINT	"http://localhost:4318"
+/* No endpoint: the services refuse to start until one is configured. */
+#define	OE_SYSCONF_DEFAULT_ENDPOINT	""
 #define	OE_SYSCONF_DEFAULT_PROTOCOL	"http/json"
 #define	OE_SYSCONF_DEFAULT_COMPRESSION	"gzip"
 #define	OE_SYSCONF_DEFAULT_TIMEOUT_MS	10000
 #define	OE_SYSCONF_DEFAULT_HOSTID_FILE	"/etc/hostid"
 #define	OE_SYSCONF_DEFAULT_SPOOL_DIR	"/var/spool/otel"
 #define	OE_SYSCONF_DEFAULT_SPOOL_MAX	(256ULL * 1024 * 1024)
-#define	OE_SYSCONF_DEFAULT_LISTEN	"127.0.0.1:4318"
-#define	OE_SYSCONF_DEFAULT_UPSTREAM_PROTOCOL "http/protobuf"
 
 /* Hard limits; files or values beyond them are refused. */
 #define	OE_SYSCONF_FILE_MAX		(64 * 1024)
 #define	OE_SYSCONF_HEADERS_FILE_MAX	(16 * 1024)
 #define	OE_SYSCONF_HEADERS_MAX		32
 #define	OE_SYSCONF_ATTRS_MAX		32
-#define	OE_SYSCONF_TAIL_MAX		16
 #define	OE_SYSCONF_KEY_MAX		255
 #define	OE_SYSCONF_VALUE_MAX		1024
 #define	OE_SYSCONF_SPOOL_MIN		(1ULL * 1024 * 1024)
@@ -51,7 +49,7 @@
  */
 struct oe_sysconf {
 	int		 enable;	/* system layer active */
-	char		*endpoint;	/* exporter endpoint (base URL) */
+	char		*endpoint;	/* exporter endpoint (base URL); "" unset */
 	char		*protocol;	/* exporter protocol: http/json */
 	char		*compression;	/* gzip | none */
 	int		 timeout_ms;
@@ -63,16 +61,6 @@ struct oe_sysconf {
 	size_t		 nresource_attrs;
 	char		*spool_dir;
 	uint64_t	 spool_max_bytes;
-
-	/* Local agent (Fluent Bit) settings, used by otelconf(8). */
-	char		*agent_listen;	/* host:port */
-	char		*agent_upstream; /* "" when not forwarding */
-	char		*agent_upstream_protocol; /* http/protobuf | grpc */
-	char		*agent_headers_file; /* "" when unset */
-	int		 agent_tls_verify;
-	char		*agent_log_level;
-	char		**agent_tail;
-	size_t		 nagent_tail;
 
 	char		 error[512];	/* set when a call returns -1 */
 };

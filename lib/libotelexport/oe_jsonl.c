@@ -5,7 +5,7 @@
  *
  * JSONL exporter — one JSON object per event, span or aggregation
  * snapshot on its own line, so output pipes cleanly into jq, Loki,
- * Vector, Splunk, fluentd.  Spans carry "type":"span" and snapshots
+ * Vector, Splunk.  Spans carry "type":"span" and snapshots
  * "type":"metric"; events have no "type" (the original shape) so
  * existing consumers keep working.  Events and spans carry an
  * "attributes" object with the semantic-convention context.
