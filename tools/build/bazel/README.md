@@ -43979,3 +43979,25 @@ with 16 jobs and existing explicit input settings.
   full-world/kernel/package/performance gates remain open. Frontend review:
   maintained build-bsd bazel-test explicit targets/tests setting and 16 jobs
   suffice; no frontend C/backend/signing/publication contract changes required.
+
+### 2026-10-30: complete mouse-service installation subtree
+
+- Added native moused and msconvd targets with explicit maintained sources,
+  local headers and native math/util dependencies. moused includes moused.conf,
+  both manuals and 5-generic-touchpad.quirks with Make's ownership/modes/tags.
+- Fresh Make comparisons pass: moused ten changed metadata records/six regular
+  payloads; msconvd five records/three payloads; one debug link each. Symbols,
+  ordered dynamic dependencies, manual/configuration/quirk bytes and CRCs match.
+- Added the parent installation_archives aggregate. Evaluated Make SUBDIR gives
+  exactly moused and msconvd; captured aggregate archive names/hashes match those
+  two independently compared child archives. This establishes installation
+  subtree coverage, not runtime or complete-system coverage.
+- Evidence under /usr/obj/usr/src: bazel-mouse-tools-reference-20261030 per-child
+  comparisons and aggregate-audit.py/json, bazel-mouse-tools-20261030 native
+  capture, bazel-moused-make-20261030 and bazel-msconvd-make-20261030 fresh Make
+  references. Neither daemon was started; no host device configuration changed.
+- Frontend review: maintained build-bsd bazel-test explicit targets and 16 jobs
+  handle leaf and aggregate outputs. No frontend C/backend/signing/publication
+  contract change. Device input/hotplug/quirk runtime, daemon lifecycle, native
+  Bazel behavioral tests and full world/kernel/package/performance gates remain
+  open. Make stays production default.

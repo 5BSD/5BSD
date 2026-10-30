@@ -8294,3 +8294,12 @@ kernel-produced accounting records; private fixture tests cover format conversio
 and accumulation, not live accounting delivery or attribution. vipw retains its
 native libutil dependency; password-lock/edit/update behavior and associated audit
 coverage remain runtime review items. No host password or accounting state changed.
+
+### 2026-10-30: moused and msconvd
+
+Both retain existing syslog paths; neither declares a local DTrace provider or
+direct libbsm integration. Native integration includes the complete maintained
+moused parser/quirks/evdev/list helpers. Device access, configuration changes,
+hotplug failures and daemon startup/shutdown attribution need runtime review.
+Installation parity and aggregate coverage do not establish those behaviors;
+no daemon was started on the host.
