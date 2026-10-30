@@ -7558,3 +7558,7 @@ Native library carries the maintained mesh provider and source-retained anchor.
 DOF schemas/providers and patched amd64 site counts match Make; function bounds
 and instruction bytes are checked. No live probe firing or protocol simulation
 was exercised yet. Existing key-material exclusion policy is unchanged.
+
+Mesh runtime follow-up: 69 unchanged crypto/network/transport/replay ATF cases
+pass against the native static library. This includes malformed/tampered messages
+and replay rejection; live provider firing and daemon audit paths remain open.

@@ -42343,3 +42343,24 @@ including crypto known-answer, network, transport, access, replay protection,
 provisioning and simulator tests. That directory has no local BUILD.bazel yet.
 Migrating those fixtures and their declared dependencies remains next runtime
 work; this configuration check does not claim they have executed.
+
+### Native Mesh ATF runtime fixtures (2026-10-30)
+
+Added native Bazel ATF targets in tests/usr.sbin/bluetooth/BSDBluetooth for the
+existing crypto, network, transport and replay-protection fixtures: 69 cases.
+All 69 pass without failures/errors/skips in bazel-libmesh-runtime-20261030-r2.
+Evidence: saved test XML/logs and runtime-summary.json under
+bazel-libmesh-runtime-reference-20261030. Existing fixture sources are unchanged;
+six recursively included oracle headers are declared. Test binaries link the
+native static libblemesh and libcrypto rather than recompiling private copies
+of library source. Maintained Make fixtures use selected library sources;
+this runtime check is deliberately a consumer of the newly built archive.
+
+Coverage includes known-answer cryptography, network/transport codecs, malformed
+inputs, tampered messages, segmentation/reassembly and replay protection. This
+is not shared-library runtime, live radio/daemon integration, live probe firing,
+full fixture-directory migration, test-package parity or performance evidence.
+Frontend review: build-bsd's existing explicit targets/tests and ATF reporting
+support the suite; no frontend/backend input contract changes are needed. The
+initial request omitted cases from targets and was correctly rejected; the
+qualification input now declares every requested test as a selected target.
