@@ -19075,3 +19075,31 @@ Frontend review: existing explicit test targets and declared runtime graph work
 through build-bsd; no frontend/backend/signing/publication contract changed.
 Whole-system/runtime/bootstrap/pkgbase/performance gates remain open, and Make
 remains production/default.
+
+
+### capsign and complete test installation (2026-10-30)
+
+Added native capsign with maintained capsign.c/capsign_tree.c and explicit native
+capimage, capbundle and crypto linkage. Tests-enabled installation includes both
+ATF shell suites, the native elf_signature_test binary/debug file, generated
+Kyuafile and all three maintained stage scripts. Script exports have narrow
+visibility; no signing or stage-script behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-capsign-20261030-r4. Fresh Make reference:
+/usr/obj/usr/src/bazel-capsign-make-20261030. Scripts/results:
+/usr/obj/usr/src/bazel-capsign-reference-20261030/capsign. All 17 installation
+records match. Eleven regular payloads pass symbol/dynamic dependency inventories,
+manual/test/script/Kyuafile bytes and two debuglink CRC checks. Earlier attempts
+caught manifest-provider composition, test-directory metadata, Kyuafile ordering
+and ATF library ordering; these were corrected without loosening comparisons.
+
+No signing operation or test body was executed. Native Bazel test execution,
+key/tamper/staging cases, live veriexec/ELF-kernel consumers and tests-disabled
+qualification remain open. The previously recorded host Capsicum ABI mismatch
+also affects qualification planning. Building these artifacts does not establish
+verified boot, signing enforcement or protection against compromised root.
+
+Frontend review: existing build-bsd explicit target, typed tests and SDK inputs
+cover this addition. Maintained stage scripts are consumed unchanged; no frontend,
+backend, signing or publication contract changed. Full world/kernel/bootstrap,
+pkgbase and performance remain unqualified; Make remains production/default.

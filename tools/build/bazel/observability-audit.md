@@ -7988,3 +7988,13 @@ caph_limit_stdio assertion, before policyctl bodies. Read-only host rights probe
 confirms rights bits outside source CAP_ALL1. SDK libc diagnostic reproduces it;
 no fallback retained. Matching-kernel tests and upgrade ABI review are needed.
 Evidence: /usr/obj/usr/src/bazel-policyctl-tests-reference-20261030/capsicum-abi.json.
+
+
+### capsign (2026-10-30)
+
+Native rules preserve maintained signing sources and install all existing tests
+and stage scripts. No direct DTRACE/SDT_PROBE/audit_ calls were found in capsign's
+C sources. Artifact comparisons pass; no signing/test body ran. Runtime work must
+cover invalid keys, tampered ELF/policies, no-clobber/stage failures and the actual
+kernel signature consumers. Review signing-event diagnostics/audit coverage.
+Build parity does not establish trust enforcement or verified boot.

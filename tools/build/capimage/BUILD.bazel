@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["sign-stage.sh", "prepare-stage.sh", "verify-stage.sh"], visibility = ["//usr.sbin/capsign/tests:__pkg__"])
