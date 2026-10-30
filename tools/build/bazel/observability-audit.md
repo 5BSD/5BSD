@@ -8561,3 +8561,38 @@ existing format-5 targets exercised the change, so no frontend option/manual
 change is required. Repository-design reference consulted:
 https://bazel.build/rules/lib/builtins/path (readdir membership watching) and
 https://bazel.build/rules/lib/builtins/repository_ctx (watch/watch_tree).
+
+### Book inventory repository experiment rejected (2026-10-30)
+
+Added book_inventory_sources.py and its two regression tests. Discovery matches
+the maintained regular-file selection, ignores .git and directory symlinks,
+and records directory/entry membership for later invalidation integration.
+Tests cover manual/sysctl selection, cyclic and file symlinks, ignored metadata,
+and unselected-file-to-directory transitions. These are Python utility checks,
+not proof of Bazel mutation invalidation.
+
+The first native repository candidate failed: ctx.watch_tree followed the
+existing contrib/zsh/Doc/Doc -> /usr/src/contrib/zsh/Doc cycle. Inspection of
+the actual Bazel 9.3.1 bootstrap source found that RepoRecordedInput.Dirents
+hashes only Dirent::getName, so readdir(watch="yes") alone cannot safely detect
+same-name entry-type replacement. The alternative watched all 10932 directory
+listings and 144104 entries. It was intentionally interrupted after 266.924 s
+with no build actions executed: broad content invalidation and this analysis
+cost are not accepted for the intended incremental design. Client time output
+is not server CPU/RSS measurement and must not be reported as total resources.
+
+Removed the candidate repository rule, MODULE registration, and generator
+wiring from the working source. Exact candidate sources and rejection decision
+are retained in /usr/obj/usr/src/bazel-installer-inventories-reference-20261030/
+rejected-watch-candidate; first and second run evidence are
+bazel-installer-inventories-20261030 and -r2 under /usr/obj/usr/src.
+Discovery test output is discovery-tests.log in the reference directory.
+Next requirement: efficient type-aware source membership tracking (including
+same-name regular-file/directory/symlink changes), then actual Bazel mutation,
+cache and complete inventory parity tests. Consider a narrowly reviewed Bazel
+watching improvement before adopting broad per-file repository watches.
+The installer aggregate remains tests=true incompatible. No generated outputs
+are substituted and no source-change class is silently ignored.
+Frontend review: rejected wiring has been removed; the discovery utility is
+not a new build input or user-facing option, so no frontend/backend change is
+required by this committed diagnostic step.
