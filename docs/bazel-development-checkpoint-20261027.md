@@ -17052,3 +17052,27 @@ dynamic metadata and one debug-link CRC. Evidence lives in install-audit.json
 and payload-audit.json under bazel-voss-{null,oss}-reference-20261030.
 The run has no runtime tests; successful compilation/install comparison is not
 module loading or audio qualification. Bluetooth with DTrace remains next.
+
+### Native virtual_oss Bluetooth backend candidate (2026-10-30)
+
+Added the three maintained C sources, explicit local headers, native Bluetooth/SDP/
+math dependencies, generated btaudio provider header and declared object rewriting.
+DTrace selection follows the existing typed setting; the shared-module provider
+needs no static archive anchor. Installation uses the same sound/private backend
+layout as Make. Fresh default Make completes; bazel-voss-bt-20261030 is pending.
+DTrace-disabled reference/qualification follows. Optional HAVE_LIBAV dependency
+integration is still unimplemented and is not claimed covered. Existing build-bsd
+explicit targets and DTrace settings require no frontend contract change.
+No Bluetooth hardware operations or probe firing have been exercised.
+
+Bluetooth backend results: bazel-voss-bt-20261030 and
+bazel-voss-bt-nodtrace-20261030 both pass. Each configuration matches fresh Make
+at five installation destinations, two regular payloads and one debug-link CRC.
+Default DOF schemas match for command-start and command-done, including argument
+types and two ordinary/two is-enabled sites; function bounds and patched bytes
+validate independently in both ELFs. DTrace-disabled ELFs contain no DOF sections.
+The positive-probe inventory utility correctly rejects an empty inventory, so
+absence was checked directly from each disabled ELF's section types.
+Evidence: *install-audit.json, *payload-audit.json, native-dof.json, make-dof.json,
+dof-comparison.json and nodtrace-dof.json under bazel-voss-bt-reference-20261030.
+No live Bluetooth/probe execution, HAVE_LIBAV or full-system claim is made.

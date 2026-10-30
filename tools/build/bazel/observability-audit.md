@@ -7390,3 +7390,11 @@ Native candidates preserve the existing backend source; no production edits or
 new probes. These two backends have no Make DTrace generator. The Bluetooth
 backend's btaudio_provider.d must be carried forward in its subsequent migration.
 Module loading, CUSE/device runtime and audio performance remain unqualified.
+
+### virtual_oss Bluetooth backend (2026-10-30)
+
+Preserved btaudio command-start/command-done DTrace generation in native actions.
+Default native/Make DOF schemas match; both ELFs independently validate two probe
+and two is-enabled instruction sites and function bounds. Disabled builds match
+Make artifacts and have no DOF sections. Live registration/firing and Bluetooth
+I/O remain unqualified. Evidence: bazel-voss-bt-reference-20261030/*dof*.json.
