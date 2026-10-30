@@ -43953,3 +43953,29 @@ with 16 jobs and existing explicit input settings.
 - Database generation executes native code, but installed NSS lookups, native
   Bazel behavioral tests, cross builds, complete world/kernel/pkgbase and
   performance qualification remain open. Make remains production default.
+
+### 2026-10-30: sa and vipw
+
+- Added native sa with explicit shared lastcomm/readrec.c and native vipw with
+  libutil. sa installs the maintained TAP script, Kyuafile architecture/program
+  metadata and all 16 fixtures under the tests setting; the script is unchanged.
+- Fresh Make comparisons pass: sa 23 changed metadata records/21 regular
+  payloads; vipw five records/three payloads, one debug link each. Symbols,
+  ordered dynamic dependencies, manuals, script, Kyuafile and fixture bytes match.
+- The maintained sa suite passes all 13 cases for each captured binary (26 total),
+  covering v1/v2 account records, summary reads, conversion, summarization and
+  accumulation. Runs used host shell/tools/loader/libc and private files, with
+  the required maintained lastcomm account fixtures copied into the expected
+  test-tree layout and hashes recorded. This is not native Bazel test execution.
+- Evidence under /usr/obj/usr/src: bazel-sa-vipw-reference-20261030 comparisons,
+  runtime-audit.py/json and per-build logs; bazel-sa-vipw-20261030 capture;
+  bazel-sa-make-20261030 and bazel-vipw-make-20261030 fresh references.
+  An initial attempted reuse of the older account-tools evidence name was
+  rejected before building; its top-level redirect log was overwritten by that
+  rejection, but prior capture/receipts/artifacts were not replaced. New work
+  uses the distinct sa-vipw paths above.
+- No vipw runtime or host password-file modification occurred. Tests-disabled
+  installation, native Bazel TAP execution, installed accounting behavior and
+  full-world/kernel/package/performance gates remain open. Frontend review:
+  maintained build-bsd bazel-test explicit targets/tests setting and 16 jobs
+  suffice; no frontend C/backend/signing/publication contract changes required.

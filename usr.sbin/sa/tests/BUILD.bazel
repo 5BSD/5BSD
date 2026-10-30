@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["legacy_test"], interfaces = {"legacy_test": "tap"}, metadata = {"legacy_test": '{"allowed_architectures":"amd64 i386","required_programs":"sa"}'})
+bsd_install_file(name = "install_shell", src = "legacy_test.sh",
+    destination = "/usr/tests/usr.sbin/sa/legacy_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.sbin/sa/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+_FIXTURES = ['v1-amd64-sav.in', 'v1-amd64-sav.out', 'v1-amd64-u.out', 'v1-amd64-usr.in', 'v1-amd64-usr.out', 'v1-i386-sav.in', 'v1-i386-sav.out', 'v1-i386-u.out', 'v1-i386-usr.in', 'v1-i386-usr.out', 'v2-amd64-sav.in', 'v2-amd64-u.out', 'v2-amd64-usr.in', 'v2-i386-sav.in', 'v2-i386-u.out', 'v2-i386-usr.in']
+[bsd_install_file(name = "fixture_" + n, src = n, destination = "/usr/tests/usr.sbin/sa/" + n, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"]) for n in _FIXTURES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"] + [":fixture_" + n for n in _FIXTURES], visibility = ["//visibility:public"])

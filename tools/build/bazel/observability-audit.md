@@ -8286,3 +8286,11 @@ database generator preserves maintained parsing/storage code and matches fresh
 Make output bytes. This does not establish installed NSS lookup tracing or audit
 attribution of configuration/database replacement. Database generation ran only
 inside the build action; no host /etc/services or /var/db/services.db was changed.
+
+### 2026-10-30: sa and vipw
+
+Neither declares a local DTrace provider or direct libbsm integration. sa consumes
+kernel-produced accounting records; private fixture tests cover format conversion
+and accumulation, not live accounting delivery or attribution. vipw retains its
+native libutil dependency; password-lock/edit/update behavior and associated audit
+coverage remain runtime review items. No host password or accounting state changed.
