@@ -2,8 +2,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/mac.h>
+#include <sys/sysctl.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -231,6 +233,69 @@ ATF_TC_BODY(default_policy_validation, tc)
 	ATF_REQUIRE_EQ(EINVAL, errno);
 }
 
+ATF_TC(object_context_operations);
+ATF_TC_HEAD(object_context_operations, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "unsupported object contexts reject add/load and preserve old policy");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(object_context_operations, tc)
+{
+	struct abac_rule_load_arg load;
+	struct abac_rule_arg *rule;
+	const uint32_t operations[] = { ABAC_OP_READ,
+	    ABAC_OP_SIGNAL | ABAC_OP_READ, ABAC_OP_ALL };
+	size_t size, length;
+	uint32_t sentinel;
+	int value;
+
+	if (strcmp(atf_tc_get_config_var_wd(tc, "disposable_vm", "no"), "yes") != 0)
+		atf_tc_skip("requires disposable_vm=yes; modifies isolated guest policy");
+	length = sizeof(value);
+	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.mode", &value,
+	    &length, NULL, 0) == 0);
+	if (value != ABAC_MODE_PERMISSIVE)
+		atf_tc_skip("requires permissive ABAC");
+	length = sizeof(value);
+	ATF_REQUIRE(sysctlbyname("security.mac.mac_abac.rule_count", &value,
+	    &length, NULL, 0) == 0);
+	if (value != 0)
+		atf_tc_skip("requires empty disposable guest rule table");
+
+	sentinel = add_rule(ABAC_ACTION_DENY, ABAC_OP_EXEC, 0);
+	size = sizeof(*rule) + 4;
+	rule = calloc(1, size);
+	ATF_REQUIRE(rule != NULL);
+	rule->vr_action = ABAC_ACTION_DENY;
+	rule->vr_subject_len = 2;
+	rule->vr_object_len = 2;
+	rule->vr_obj_context.vc_flags = ABAC_CTX_UID;
+	rule->vr_obj_context.vc_uid = 0;
+	memcpy(rule + 1, "*\0*\0", 4);
+	memset(&load, 0, sizeof(load));
+	load.vrl_count = 1;
+	load.vrl_buflen = size;
+	load.vrl_buf = rule;
+	for (size_t i = 0; i < nitems(operations); i++) {
+		rule->vr_operations = operations[i];
+		errno = 0;
+		ATF_REQUIRE_EQ(-1, mac_syscall("mac_abac", ABAC_SYS_RULE_ADD, rule));
+		ATF_REQUIRE_EQ(EINVAL, errno);
+		check_access(ABAC_OP_EXEC, EACCES, true);
+		errno = 0;
+		ATF_REQUIRE_EQ(-1, mac_syscall("mac_abac", ABAC_SYS_RULE_LOAD, &load));
+		ATF_REQUIRE_EQ(EINVAL, errno);
+		check_access(ABAC_OP_EXEC, EACCES, true);
+	}
+	/* A process-only combination remains representable. */
+	rule->vr_operations = ABAC_OP_DEBUG | ABAC_OP_SIGNAL | ABAC_OP_SCHED | ABAC_OP_WAIT;
+	call_ok(ABAC_SYS_RULE_ADD, rule);
+	call_ok(ABAC_SYS_RULE_REMOVE, &rule->vr_id);
+	call_ok(ABAC_SYS_RULE_REMOVE, &sentinel);
+	free(rule);
+}
+
 #define ADD_KERNEL_OPERATION_CASES(name, value)                              \
 	ATF_TP_ADD_TC(tp, kernel_allow_##name);                               \
 	ATF_TP_ADD_TC(tp, kernel_deny_##name);                                \
@@ -239,6 +304,7 @@ ATF_TC_BODY(default_policy_validation, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ABAC_OPERATION_LIST(ADD_KERNEL_OPERATION_CASES)
+	ATF_TP_ADD_TC(tp, object_context_operations);
 	ATF_TP_ADD_TC(tp, atomic_load_rollback);
 	ATF_TP_ADD_TC(tp, atomic_clear_exact);
 	ATF_TP_ADD_TC(tp, load_reserved);

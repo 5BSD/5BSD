@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+[bsd_awk_output(name = name, script = "extract-defines.awk", srcs = [source], output = output,
+    variables = {"guard": guard, "pattern": pattern}, awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+ for name, source, output, guard, pattern in [
+    ("errors", "//contrib/tcsh:sh.err.c", "sh.err.h", "_h_sh_err", "ERR_"),
+    ("editor", "//contrib/tcsh:ed.defns.c", "ed.defns.h", "_h_ed_defns", "[FV]_"),
+]]
+cc_library(name = "error_headers", hdrs = [":errors"], strip_include_prefix = ".")
+cc_library(name = "configuration", hdrs = ["config.h", "config_p.h"], includes = ["."])
+cc_binary(name = "gethost", srcs = ["//contrib/tcsh:gethost.c"],
+    deps = [":configuration", ":error_headers", "//contrib/tcsh:headers"], local_defines = ["_h_tc_const"],
+    copts = ["-std=gnu17"], linkstatic = True, features = ["fully_static_link"])
+bsd_script_output(name = "host_definitions", script = "host-definitions.sh", src = "//contrib/tcsh:host.defs",
+    input_mode = "argument", output = "tc.defs.c", path_tools = {":gethost": "gethost"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sh_runtime"])
+bsd_script_output(name = "constants_preprocessed", script = "constants-cpp.sh", src = "//contrib/tcsh:tc.const.c",
+    input_mode = "argument", output = "tc.const.preprocessed", use_cpp = True,
+    cpp_deps = [":configuration", ":error_headers", "//contrib/tcsh:headers"],
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"])
+bsd_script_output(name = "constants", script = "constants-header.sh", src = ":constants_preprocessed",
+    input_mode = "argument", output = "tc.const.h",
+    path_tools = {"@bsd_sdk//toolchain:extra_grep": "grep", "@bsd_sdk//toolchain:sed": "sed", "@bsd_sdk//toolchain:extra_sort": "sort"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:extra_grep_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:extra_sort_runtime"])
+filegroup(name = "generated", srcs = [":errors", ":editor", ":constants", ":host_definitions"], visibility = ["//visibility:public"])
+
+load(":sources.bzl", "CSH_SOURCES")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+bsd_template(name = "iconv_stub_header", template = "iconv_stub.h", output = "iconv.h", substitutions = {})
+cc_library(name = "iconv_stub_headers", hdrs = [":iconv_stub_header"], strip_include_prefix = ".")
+cc_library(name = "generated_headers", hdrs = [":editor", ":constants"], strip_include_prefix = ".")
+_DYNAMIC = "//tools/build/bazel/config:dynamic_root_enabled"
+_NLS = "//tools/build/bazel/config:nls_catalogs_enabled"
+_STUB = "//tools/build/bazel/config:nls_catalogs_iconv_stub"
+cc_binary(name = "csh", srcs = CSH_SOURCES + [":host_definitions"] + select({_STUB: ["iconv_stub.c"], "//conditions:default": []}),
+    deps = [":configuration", ":error_headers", ":generated_headers", "//contrib/tcsh:headers", "//lib/ncurses/tinfo:tinfo", "//lib/libcrypt:crypt"] + select({_STUB: [":iconv_stub_headers"], "//conditions:default": []}),
+    local_defines = ["'_PATH_TCSHELL=\"/bin/csh\"'"] + select({_NLS: ["HAVE_ICONV"], "//conditions:default": ["NO_NLS_CATALOGS"]}),
+    copts = ["-std=gnu17"] + select({_DYNAMIC: ["-fPIE"], "//conditions:default": []}),
+    dynamic_deps = select({_DYNAMIC: ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libcrypt:crypt_shared"], "//conditions:default": []}),
+    linkopts = select({_DYNAMIC: ["-pie"], "//conditions:default": []}),
+    features = select({_DYNAMIC: [], "//conditions:default": ["fully_static_link"]}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "runtime_smoke", program = ":csh", runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'set values=(one two); @ n = 6 * 7; if ($$n != 42) exit 1; if ($$values[2] != two) exit 1; echo native-csh-ok'"],
+    runtime_lib = select({_DYNAMIC: ["//lib/ncurses/tinfo:tinfo_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], "//conditions:default": []}))
+
+load(":catalogs.bzl", "CATALOGS", "CATALOG_SOURCES", "UTF8_LINKS", "ICONV_LINKS")
+load("//tools/build/bazel:bsd_nls.bzl", "bsd_catalogue")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+[bsd_catalogue(name = "catalogue_" + locale, sources = CATALOG_SOURCES[locale], concatenate = True,
+    output = locale + ".cat", gencat = "//usr.bin/gencat:gencat", cat = "@bsd_sdk//toolchain:cat",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:cat_runtime"]) for locale in CATALOGS]
+[bsd_install_file(name = "install_catalogue_" + locale, src = ":catalogue_" + locale,
+    destination = "/usr/share/nls/" + locale + "/tcsh.cat", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=csh"]) for locale in CATALOGS]
+[bsd_install_link(name = "catalogue_link_" + alias, destination = "/usr/share/nls/" + alias + "/tcsh.cat", target = "../" + locale + "/tcsh.cat",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=csh"])
+ for links in [UTF8_LINKS, ICONV_LINKS] for locale, aliases in links.items() for alias in aliases]
+[bsd_install_file(name = "example_" + str(i), src = "//contrib/tcsh:" + n, destination = "/usr/share/examples/tcsh/" + n,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=csh"]) for i,n in enumerate(["complete.tcsh", "csh-mode.el"])]
+[bsd_install_file(name = "config_" + str(i), src = src, destination = dst, owner = "root", group = "wheel", mode = "0644", install_tags = ["package=csh", "config"])
+ for i, (src,dst) in enumerate([(n, "/etc/" + n) for n in ["csh.cshrc", "csh.login", "csh.logout"]] + [("dot.cshrc", "/root/.cshrc"), ("dot.login", "/root/.login")])]
+_NLS_ENTRIES = [":install_catalogue_" + locale for locale in CATALOGS] + [":catalogue_link_" + alias for aliases in UTF8_LINKS.values() for alias in aliases]
+# MK_NLS controls installation; MK_NLS_CATALOGS controls csh's compiled lookup.
+utility_installation(name = "install_manifest", program = "csh", manual = "//contrib/tcsh:tcsh.man", package = "csh", bindir = "/bin", aliases = ["tcsh"],
+    extra_entries = [":config_" + str(i) for i in range(5)] +
+        select({"//tools/build/bazel/config:examples_enabled": [":example_0", ":example_1"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:nls_enabled": _NLS_ENTRIES, "//conditions:default": []}) +
+        select({":install_iconv_links": [":catalogue_link_" + alias for aliases in ICONV_LINKS.values() for alias in aliases], "//conditions:default": []}))
+config_setting(name = "install_iconv_links", flag_values = {"//tools/build/bazel/config:nls": "true", "//tools/build/bazel/config:iconv": "true", "//tools/build/bazel/config:nls_catalogs": "true"})
+# The non-UTF8 aliases are declared in Make only inside its catalog-enabled branch.
+_DIRS = {"/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh","dbg"]}',
+    "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+    "/root": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=utilities"]}'}
+bsd_install_archive(name = "install_archive", visibility = ["//bin:__pkg__"], manifests = [":install_manifest"],
+    directories = _DIRS | select({"//tools/build/bazel/config:examples_enabled": {"/usr/share/examples/tcsh": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh"]}'}, "//conditions:default": {}}) |
+        select({"//tools/build/bazel/config:nls_enabled": {"/usr/share/nls": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=csh"]}'} | {"/usr/share/nls/" + locale: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for locale in CATALOGS}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

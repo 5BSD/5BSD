@@ -28,6 +28,11 @@ LOGCMP_SCHEMAPACKAGE= liblogcmp-dev
 FILESGROUPS+= LOGCMP_NOTICE
 LOGCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 LOGCMP_NOTICEDIR= /usr/share/licenses/liblogcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= LOGCMP_NOTICEPARENT
+LOGCMP_NOTICEPARENT= ${LOGCMP_NOTICEDIR:H}
+LOGCMP_NOTICEPARENTTAGS= ${LOGCMP_NOTICEDIRTAGS}
+
 INCS=	logcmp.h logcmp_protocol.h logcmp_server.h
 
 LIBADD=	pthread service shmring fidl_bsd cplusplus

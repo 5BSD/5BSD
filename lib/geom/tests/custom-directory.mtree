@@ -1,0 +1,8 @@
+# Custom-layout qualification fixture, explicitly selected by the caller.
+. type=dir uname=root gname=wheel mode=0755
+opt type=dir uname=root gname=wheel mode=0755
+5bsd type=dir uname=root gname=wheel mode=0755
+geom type=dir uname=root gname=wheel mode=0755
+..
+..
+..

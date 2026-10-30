@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h", "*.inc"]),
+    strip_include_prefix = ".", include_prefix = "msan",
+    deps = ["//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers", "//contrib/llvm-project/compiler-rt/lib/ubsan:headers"],
+    visibility = ["//visibility:public"])
+exports_files(["msan_ignorelist.txt"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_allocator.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_chained_origin_depot.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_dl.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_interceptors.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_linux.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_poisoning.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_report.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_thread.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["msan_new_delete.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])

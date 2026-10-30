@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "ibcm", srcs = ["//contrib/ofed/libibcm:cm.c"],
+    deps = ["//lib/ofed/libibverbs:ibverbs", "//contrib/ofed/libibcm:headers"], implementation_deps = ["//contrib/ofed/libibcm:configuration"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ibcm"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "ibcm_shared", deps = [":ibcm"], shared_lib_name = "libibcm.so.1",
+    dynamic_deps = ["//lib/ofed/libibverbs:ibverbs_shared"],
+    additional_linker_inputs = ["//contrib/ofed/libibcm:libibcm.map"],
+    user_link_flags = ['-Wl,-soname,libibcm.so.1', '-Wl,--fatal-warnings,--warn-shared-textrel', '-Wl,--version-script=$(location //contrib/ofed/libibcm:libibcm.map),--no-undefined-version'],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//lib/ofed:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=rdma","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

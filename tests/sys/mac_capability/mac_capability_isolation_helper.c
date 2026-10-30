@@ -3,6 +3,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/extattr.h>
+#include <sys/mman.h>
 #include <sys/event.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
@@ -15,6 +17,7 @@
 
 #include <arpa/inet.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jail.h>
@@ -290,6 +293,138 @@ main(int argc, char **argv)
 	const char *addr;
 	int svc, op, domain, protocol;
 	unsigned long port, direction, prefix;
+
+	if (argc == 5 && strcmp(argv[1], "inherited-directory") == 0) {
+		char buffer[4096];
+		off_t base;
+		ssize_t result;
+		int fd, token;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || fd < 0)
+			return (2);
+		token = (int)strtol(argv[4], &end, 10);
+		if (*end != '\0' || (token >= 0 && fi_authorize(token) != 0))
+			return (2);
+		if (strcmp(argv[3], "read") == 0) {
+			result = getdirentries(fd, buffer, sizeof(buffer), &base);
+			if (result == 0)
+				return (2);
+		} else if (strcmp(argv[3], "chdir") == 0)
+			result = fchdir(fd);
+		else if (strcmp(argv[3], "chroot") == 0)
+			result = fchroot(fd);
+		else
+			return (2);
+		if (result >= 0)
+			return (0);
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
+	}
+
+	if (argc == 5 && strcmp(argv[1], "inherited-xattr") == 0) {
+		char buffer[256];
+		ssize_t result;
+		int fd, token;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || fd < 0)
+			return (2);
+		token = (int)strtol(argv[4], &end, 10);
+		if (*end != '\0' || (token >= 0 && fi_authorize(token) != 0))
+			return (2);
+		if (strcmp(argv[3], "set") == 0)
+			result = extattr_set_fd(fd, EXTATTR_NAMESPACE_USER, "isolation", "x", 1);
+		else if (strcmp(argv[3], "get") == 0)
+			result = extattr_get_fd(fd, EXTATTR_NAMESPACE_USER, "isolation", buffer, sizeof(buffer));
+		else if (strcmp(argv[3], "list") == 0)
+			result = extattr_list_fd(fd, EXTATTR_NAMESPACE_USER, buffer, sizeof(buffer));
+		else if (strcmp(argv[3], "delete") == 0)
+			result = extattr_delete_fd(fd, EXTATTR_NAMESPACE_USER, "isolation");
+		else
+			return (2);
+		if (result >= 0)
+			return (0);
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
+	}
+
+	if (argc == 4 && strcmp(argv[1], "token-map-read") == 0) {
+		volatile char byte;
+		void *mapping, *other;
+		int token, fd, result, saved;
+
+		token = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || token < 0 || fi_authorize(token) != 0)
+			return (2);
+		fd = open(argv[3], O_RDONLY);
+		if (fd < 0)
+			return (3);
+		mapping = mmap(NULL, 1, PROT_READ | PROT_MAX(PROT_READ),
+		    MAP_PRIVATE, fd, 0);
+		if (mapping == MAP_FAILED)
+			return (4);
+		byte = *(volatile char *)mapping;
+		if (byte != 'q')
+			return (11);
+		errno = 0;
+		result = mprotect(mapping, 1, PROT_READ | PROT_WRITE);
+		saved = errno;
+		fprintf(stderr, "mapping write escalation: result=%d errno=%d\n", result, saved);
+		if (result != -1 || saved != EACCES)
+			return (5);
+		errno = 0;
+		result = mprotect(mapping, 1, PROT_READ | PROT_EXEC);
+		saved = errno;
+		fprintf(stderr, "mapping exec escalation: result=%d errno=%d\n", result, saved);
+		if (result != -1 || saved != EACCES)
+			return (6);
+		/* Failed escalation must leave the useful read mapping intact. */
+		byte = *(volatile char *)mapping;
+		if (byte != 'q')
+			return (11);
+		if (munmap(mapping, 1) != 0)
+			return (7);
+		/* No initial access, but a ceiling permitting later execute. */
+		errno = 0;
+		other = mmap(NULL, 1, PROT_NONE | PROT_MAX(PROT_READ | PROT_EXEC),
+		    MAP_PRIVATE, fd, 0);
+		if (other != MAP_FAILED || (errno != EACCES && errno != EPERM))
+			return (8);
+		errno = 0;
+		other = mmap(NULL, 1, PROT_EXEC | PROT_MAX(PROT_EXEC),
+		    MAP_PRIVATE, fd, 0);
+		if (other != MAP_FAILED || (errno != EACCES && errno != EPERM))
+			return (9);
+		close(fd);
+		return (0);
+	}
+
+	if (argc == 3 && strcmp(argv[1], "inherited-map-read") == 0) {
+		volatile char byte;
+		void *mapping;
+		int fd;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || fd < 0)
+			return (2);
+		mapping = mmap(NULL, 1, PROT_READ, MAP_PRIVATE, fd, 0);
+		if (mapping == MAP_FAILED)
+			return (errno == EACCES || errno == EPERM ? 1 : 2);
+		byte = *(volatile char *)mapping;
+		(void)byte;
+		return (munmap(mapping, 1) == 0 ? 0 : 2);
+	}
+
+	if (argc == 3 && strcmp(argv[1], "inherited-read") == 0) {
+		char byte;
+		int fd;
+
+		fd = (int)strtol(argv[2], &end, 10);
+		if (*end != '\0' || fd < 0)
+			return (2);
+		if (pread(fd, &byte, 1, 0) == 1)
+			return (0);
+		return (errno == EACCES || errno == EPERM ? 1 : 2);
+	}
 
 	if (argc == 3 && strcmp(argv[1], "inherited-write") == 0) {
 		int fd;
@@ -810,14 +945,14 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * token-revoke <token_fd> <ready_fd> <go_fd> <filepath>
+	 * token-revoke/token-reclaim <token_fd> <ready_fd> <go_fd> <filepath>
 	 *
-	 * Authorize on the token, close it, signal the parent via
-	 * ready_fd, wait for parent on go_fd, then try to open the
-	 * file.  Returns 0 if open is blocked (revoke worked),
-	 * 1 if open succeeded (revoke failed), 10 if authorize failed.
+	 * Authorize and establish successful access. Revoke mode closes its
+	 * token copy; reclaim mode retains it. Signal ready_fd, wait on go_fd,
+	 * then require EACCES when opening the file. Other errors fail the test.
 	 */
-	if (argc == 6 && strcmp(argv[1], "token-revoke") == 0) {
+	if (argc == 6 && (strcmp(argv[1], "token-revoke") == 0 ||
+	    strcmp(argv[1], "token-reclaim") == 0)) {
 		int token_fd, ready_fd, go_fd, fd;
 		char buf;
 
@@ -833,17 +968,26 @@ main(int argc, char **argv)
 
 		if (fi_authorize(token_fd) != 0)
 			return (10);
-		close(token_fd);
+		/* Establish a working grant before testing its invalidation. */
+		fd = open(argv[5], O_RDONLY);
+		if (fd < 0)
+			return (11);
+		close(fd);
+		/* Keep the old token live across claim replacement. */
+		if (strcmp(argv[1], "token-revoke") == 0)
+			close(token_fd);
 
-		write(ready_fd, "r", 1);
+		if (write(ready_fd, "r", 1) != 1)
+			return (12);
 		close(ready_fd);
 
-		read(go_fd, &buf, 1);
+		if (read(go_fd, &buf, 1) != 1)
+			return (13);
 		close(go_fd);
 
 		fd = open(argv[5], O_RDONLY);
 		if (fd < 0)
-			return (0);	/* blocked — revoke worked */
+			return (errno == EACCES ? 0 : 14);
 		close(fd);
 		return (1);		/* opened — revoke failed */
 	}

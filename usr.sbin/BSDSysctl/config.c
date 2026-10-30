@@ -6,6 +6,7 @@
 
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -80,7 +81,7 @@ parse_prefix_array(const ucl_object_t *array,
 	const ucl_object_t *elem;
 	ucl_object_iter_t it;
 	const char *s;
-	size_t n;
+	size_t n, i;
 
 	if (ucl_object_type(array) != UCL_ARRAY)
 		return (-1);
@@ -91,9 +92,12 @@ parse_prefix_array(const ucl_object_t *array,
 		    SYSCTLCMP_MAX_PREFIXES)
 			return (-1);
 		s = ucl_object_tostring(elem);
-		if (s == NULL || s[0] == '\0' ||
+		if (s == NULL || s[0] == '\0' || strlen(s) != elem->len ||
 		    strlen(s) >= SYSCTLCMP_MAX_PREFIX)
 			return (-1);
+		for (i = 0; i < n; i++)
+			if (strcmp(dest[i], s) == 0)
+				return (-1);
 		(void)strlcpy(dest[n], s, SYSCTLCMP_MAX_PREFIX);
 		n++;
 	}
@@ -114,7 +118,8 @@ parse_acl_object(const ucl_object_t *object, struct sysctlcmp_acl *acl)
 	it = NULL;
 	while ((cur = ucl_object_iterate(object, &it, true)) != NULL) {
 		key = ucl_object_key(cur);
-		if (key == NULL)
+		if (key == NULL || strlen(key) != cur->keylen ||
+		    cur->next != NULL)
 			return (-1);
 		if (strcmp(key, "read") == 0) {
 			if (parse_prefix_array(cur, acl->read, &acl->nread) == -1)
@@ -140,16 +145,27 @@ config_parse(const char *text, struct sysctlcmp_config *config)
 	size_t label_len;
 	int result;
 
-	parser = ucl_parser_new(0);
+	parser = ucl_parser_new(UCL_PARSER_NO_FILEVARS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_IMPLICIT_ARRAYS);
 	if (parser == NULL)
 		return (errno = ENOMEM, -1);
 	result = -1;
-	if (!ucl_parser_add_string(parser, text, strlen(text)) ||
+	if (!ucl_parser_add_chunk_full(parser, (const unsigned char *)text,
+	    strlen(text), 0, UCL_DUPLICATE_ERROR, UCL_PARSE_UCL) ||
 	    ucl_parser_get_error(parser) != NULL)
 		goto out;
 	root = ucl_parser_get_object(parser);
 	if (root == NULL || ucl_object_type(root) != UCL_OBJECT)
 		goto out_root;
+	it = NULL;
+	while ((entry = ucl_object_iterate(root, &it, true)) != NULL) {
+		const char *key = ucl_object_key(entry);
+
+		if (key == NULL || strlen(key) != entry->keylen ||
+		    entry->next != NULL || (strcmp(key, "default") != 0 &&
+		    strcmp(key, "clients") != 0))
+			goto out_root;
+	}
 
 	def = ucl_object_lookup(root, "default");
 	if (def != NULL) {
@@ -166,7 +182,7 @@ config_parse(const char *text, struct sysctlcmp_config *config)
 		it = NULL;
 		while ((entry = ucl_object_iterate(clients, &it, true)) != NULL) {
 			label = ucl_object_key(entry);
-			label_len = label != NULL ? strlen(label) : 0;
+			label_len = entry->keylen;
 			if (!valid_label(label, label_len) ||
 			    config->nclients >= SYSCTLCMP_MAX_CLIENTS)
 				goto out_root;
@@ -191,14 +207,18 @@ out:
 int
 sysctlcmp_config_load_fd(struct sysctlcmp_config *config, int fd)
 {
-	struct stat status;
+	struct stat status, after;
+	struct sysctlcmp_config candidate;
 	char *text;
 	ssize_t amount;
 	size_t done;
 	int error, result;
 
-	if (config == NULL || fd < 0)
+	if (config == NULL) {
+		if (fd >= 0)
+			(void)close(fd);
 		return (errno = EINVAL, -1);
+	}
 	sysctlcmp_config_defaults(config);
 	if (fstat(fd, &status) == -1)
 		goto fail;
@@ -223,8 +243,8 @@ sysctlcmp_config_load_fd(struct sysctlcmp_config *config, int fd)
 		goto fail;
 	done = 0;
 	for (;;) {
-		amount = read(fd, text + done,
-		    SYSCTLCMP_CONFIG_FILE_MAX + 1 - done);
+		amount = pread(fd, text + done,
+		    SYSCTLCMP_CONFIG_FILE_MAX + 1 - done, (off_t)done);
 		if (amount == -1 && errno == EINTR)
 			continue;
 		if (amount == -1)
@@ -237,37 +257,46 @@ sysctlcmp_config_load_fd(struct sysctlcmp_config *config, int fd)
 			goto fail_text;
 		}
 	}
-	close(fd);
+	if (fstat(fd, &after) == -1)
+		goto fail_text;
+	if (done != (size_t)status.st_size || after.st_size != status.st_size ||
+	    after.st_mode != status.st_mode || after.st_uid != status.st_uid ||
+	    after.st_gid != status.st_gid ||
+	    timespeccmp(&after.st_mtim, &status.st_mtim, !=) ||
+	    timespeccmp(&after.st_ctim, &status.st_ctim, !=)) {
+		errno = EINVAL;
+		goto fail_text;
+	}
+	(void)close(fd);
 	fd = -1;
 	if (memchr(text, '\0', done) != NULL) {
 		errno = EINVAL;
 		goto fail_text;
 	}
 	text[done] = '\0';
-	/* Reset to defaults, then let the file override. */
-	sysctlcmp_config_defaults(config);
-	result = config_parse(text, config);
+	sysctlcmp_config_defaults(&candidate);
+	result = config_parse(text, &candidate);
 	error = result == -1 ? errno : 0;
 	free(text);
-	if (result == -1)
+	if (result == -1) {
 		sysctlcmp_config_defaults(config);
-	errno = error;
-	return (result);
-
+		return (errno = error, -1);
+	}
+	*config = candidate;
+	return (0);
 fail_text:
-	error = errno != 0 ? errno : EIO;
+	error = errno;
 	free(text);
 	if (fd >= 0)
-		close(fd);
+		(void)close(fd);
 	sysctlcmp_config_defaults(config);
-	errno = error;
-	return (-1);
+	return (errno = error, -1);
 fail:
-	error = errno != 0 ? errno : EIO;
-	close(fd);
+	error = errno;
+	if (fd >= 0)
+		(void)close(fd);
 	sysctlcmp_config_defaults(config);
-	errno = error;
-	return (-1);
+	return (errno = error, -1);
 }
 
 int
@@ -275,7 +304,10 @@ sysctlcmp_config_load(struct sysctlcmp_config *config, const char *path)
 {
 	int fd;
 
-	if (config == NULL || path == NULL)
+	if (config == NULL)
+		return (errno = EINVAL, -1);
+	sysctlcmp_config_defaults(config);
+	if (path == NULL)
 		return (errno = EINVAL, -1);
 	sysctlcmp_config_defaults(config);
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);

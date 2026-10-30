@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "headers", hdrs = ["bsnmptools.h", "bsnmptc.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bsnmpd/tools:__subpackages__"])
+cc_library(name = "bsnmptools", srcs = ["bsnmpimport.c", "bsnmpmap.c", "bsnmptools.c", "bsnmptc.c"],
+    deps = [":headers", "//contrib/bsnmp/lib:public_headers"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//usr.sbin/bsnmpd/tools:__subpackages__"])
+cc_library(name = "bsnmptools_pie", srcs = ["bsnmpimport.c", "bsnmpmap.c", "bsnmptools.c", "bsnmptc.c"],
+    deps = [":headers", "//contrib/bsnmp/lib:public_headers"], copts = ["-fPIE"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//usr.sbin/bsnmpd/tools:__subpackages__"])
+bsd_component_archive(name = "static_archive", groups = [":bsnmptools"], visibility = ["//usr.sbin/bsnmpd/tools:__subpackages__"])
+
+bsd_component_archive(name = "pie_archive", groups = [":bsnmptools_pie"], visibility = ["//usr.sbin/bsnmpd/tools:__subpackages__"])

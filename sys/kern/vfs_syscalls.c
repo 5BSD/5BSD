@@ -1601,6 +1601,15 @@ kern_linkat(struct thread *td, int fd1, int fd2, const char *path1,
 		NDFREE_PNBUF(&nd);
 		if ((nd.ni_resflags & NIRES_EMPTYPATH) != 0) {
 			error = priv_check(td, PRIV_VFS_FHOPEN);
+#ifdef MAC
+			if (error == 0) {
+				error = vn_lock(nd.ni_vp, LK_SHARED);
+				if (error == 0) {
+					error = mac_vnode_check_fh(td->td_ucred, nd.ni_vp);
+					VOP_UNLOCK(nd.ni_vp);
+				}
+			}
+#endif
 			if (error != 0) {
 				vrele(nd.ni_vp);
 				return (error);
@@ -4736,7 +4745,11 @@ kern_getfhat(struct thread *td, int flags, int fd, const char *path,
 	vp = nd.ni_vp;
 	bzero(&fh, sizeof(fh));
 	fh.fh_fsid = vp->v_mount->mnt_stat.f_fsid;
-	error = VOP_VPTOFH(vp, &fh.fh_fid);
+#ifdef MAC
+	error = mac_vnode_check_fh(td->td_ucred, vp);
+	if (error == 0)
+#endif
+		error = VOP_VPTOFH(vp, &fh.fh_fid);
 	vput(vp);
 	if (error == 0) {
 		if (fhseg == UIO_USERSPACE)
@@ -4797,6 +4810,13 @@ kern_fhlinkat(struct thread *td, int fd, const char *path,
 		vfs_unbusy(mp);
 		if (error != 0)
 			return (error);
+#ifdef MAC
+		error = mac_vnode_check_fh(td->td_ucred, vp);
+		if (error != 0) {
+			vput(vp);
+			return (error);
+		}
+#endif
 		VOP_UNLOCK(vp);
 		error = kern_linkat_vp(td, vp, fd, path, pathseg);
 	} while (error == EAGAIN || error == ERELOOKUP);
@@ -4832,6 +4852,13 @@ sys_fhreadlink(struct thread *td, struct fhreadlink_args *uap)
 	vfs_unbusy(mp);
 	if (error != 0)
 		return (error);
+#ifdef MAC
+	error = mac_vnode_check_fh(td->td_ucred, vp);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+#endif
 	error = kern_readlink_vp(vp, uap->buf, UIO_USERSPACE, uap->bufsize, td);
 	vput(vp);
 	return (error);
@@ -4889,6 +4916,13 @@ kern_fhopen(struct thread *td, const struct fhandle *u_fhp, int flags)
 	if (error != 0)
 		return (error);
 
+#ifdef MAC
+	error = mac_vnode_check_fh(td->td_ucred, vp);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+#endif
 	/*
 	 * Check to see if the file handle refers to a named attribute
 	 * directory or attribute.  If it does, the O_NAMEDATTR flag
@@ -4982,6 +5016,13 @@ kern_fhstat(struct thread *td, struct fhandle fh, struct stat *sb)
 	vfs_unbusy(mp);
 	if (error != 0)
 		return (error);
+#ifdef MAC
+	error = mac_vnode_check_fh(td->td_ucred, vp);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+#endif
 	error = VOP_STAT(vp, sb, td->td_ucred, NOCRED);
 	vput(vp);
 	return (error);
@@ -5031,6 +5072,14 @@ kern_fhstatfs(struct thread *td, fhandle_t fh, struct statfs *buf)
 		vfs_unbusy(mp);
 		return (error);
 	}
+#ifdef MAC
+	error = mac_vnode_check_fh(td->td_ucred, vp);
+	if (error != 0) {
+		vput(vp);
+		vfs_unbusy(mp);
+		return (error);
+	}
+#endif
 	vput(vp);
 	error = prison_canseemount(td->td_ucred, mp);
 	if (error != 0)

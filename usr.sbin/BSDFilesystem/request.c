@@ -15,16 +15,16 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/wait.h>
-#include <sys/socket.h>
 
 #include <dev/hid/vhid.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 #include <net/if.h>
-#include <netinet/in.h>
 #include <net/pfvar.h>
 
 #include <ctype.h>
@@ -50,11 +50,29 @@
 #include <oes_broker_protocol.h>
 #include "bsdfilesystem_probes.h"
 
+#ifdef BSDFILESYSTEM_CRASH_TEST
+/* Only the separate disposable crash fixture defines these functions. */
+int bsdfilesystem_crash_test_watch(int);
+void bsdfilesystem_crash_test_event(const struct kevent *);
+void bsdfilesystem_crash_test_request(void);
+#endif
+
+
 /*
  * Per-connection worker context: the retained-handle state (a private COW copy)
  * plus the connecting client's unforgeable label, which namespaces every leaf
  * this client can name.
  */
+/* Request attribution, not permission. A future storage grant must acquire
+ * live authority/session binding from its independent issuer. These copies
+ * cannot replace that binding or authorize a user merely by software identity. */
+struct tzfs_actor {
+	struct cap_authority_stamp authority;
+	uint64_t process_identity;
+	uint64_t execution_nonce;
+	bool valid;
+};
+
 struct tzfs_conn {
 	struct bsdfilesystem_state	*st;
 	char			client[64];	/* resource owner (ephemeral key) */
@@ -64,6 +82,7 @@ struct tzfs_conn {
 	char			groups[4][64];	/* group containers the bundle may
 						 * claim (Data/Shared/<group>/) */
 	bool			negotiated;	/* GetProtocolInfo answered */
+	struct tzfs_actor	actor;	/* replaced for every request */
 	/* Stamped sender credentials: the only ownership a store can take. */
 	uid_t			uid;
 	gid_t			gid;
@@ -97,6 +116,8 @@ struct tzfs_msg {
 	const void			*data;
 	size_t				 length;
 	const struct channel_sender	*sender;
+	const struct channel_process_identity *process;
+	const struct cap_authority_stamp *authority;
 	union {
 		struct bsdfilesystem_reply		rp;
 		struct bsdfilesystem_list_reply		lrp;
@@ -138,6 +159,7 @@ tzfs_capture(struct tzfs_msg *m, const struct channel_outgoing *out)
  * live claims; the caller then closes `fd` (unmounting the store only if this
  * was its sole anchor).
  */
+
 static int
 conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd,
     bool ephemeral)
@@ -192,8 +214,9 @@ conn_anchors_init(struct tzfs_conn *conn)
 {
 	size_t i;
 
-	for (i = 0; i < nitems(conn->anchors); i++)
+	for (i = 0; i < nitems(conn->anchors); i++) {
 		conn->anchors[i].fd = -1;
+	}
 }
 
 static void
@@ -208,72 +231,11 @@ conn_anchors_close(struct tzfs_conn *conn)
 	}
 }
 
-/* A claim name must be a single, safe path component. */
-static bool
-valid_dataset_n(const char *name, size_t capacity)
-{
-	size_t i, len;
-
-	/*
-	 * A claim or namespace component is a positive charset, not merely
-	 * "no slash": ZFS gives a leading '@', '#' or '%' a meaning of its own
-	 * (a snapshot, a bookmark, a receive placeholder -- of the PARENT, one
-	 * level above the claim), and a leading '.' or '-' is a hazard to
-	 * every tool that later names the dataset.  Everything else that ZFS
-	 * accepts in a component is fine.
-	 */
-	len = strnlen(name, capacity);
-	if (len == 0 || len >= capacity)
-		return (false);
-	if (name[0] == '.' || name[0] == '-' || name[0] == '@' ||
-	    name[0] == '#' || name[0] == '%')
-		return (false);
-	for (i = 0; i < len; i++) {
-		char c = name[i];
-
-		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-		    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
-		    c == '-' || c == ':'))
-			return (false);
-	}
-	return (true);
-}
-
-/*
- * Leaf-name prefix the broker reserves for its own transient staging clones
- * during a TXN_COMMIT swap (see the TXN_COMMIT handler's `del-<version>`).  A
- * caller-supplied claim must never occupy it: otherwise a pre-created
- * `del-<version>` claim would EEXIST-collide with the swap's rename and wedge
- * the commit.  Versions themselves use the unpredictable `v<hex>` shape keyed
- * to the caller's own container, so they need no reservation here.
- *
- * BSDFILESYSTEM_STAGING_PREFIX and BSDFILESYSTEM_TXN_BASE_PROP are defined in
- * bsdfilesystem.h: the boot-scoped staging sweep in layout.c reaps by both.
- *
- * The v<hex> version-id shape is ALSO reserved: it names the broker's TXN
- * staging clones, and letting a caller take a claim (or a writable handle) by
- * that name would let it (a) rewrite a staging clone's bsdfilesystem:txnbase
- * property to redirect a commit onto a different claim, and (b) name a claim
- * that the reaper's name-shape guard would then mistake for an orphan and
- * destroy.  A real claim never needs this shape.
- */
-static bool
-valid_dataset(const char *name)
-{
-
-	if (strncmp(name, BSDFILESYSTEM_STAGING_PREFIX,
-	    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0)
-		return (false);
-	if (bsdfilesystem_is_version_id_name(name))
-		return (false);
-	return (valid_dataset_n(name, BSDFILESYSTEM_NAME_MAX));
-}
-
 /*
  * A version identifier a caller supplies (TXN_COMMIT/ABORT, ROLLBACK,
  * OPEN_VERSION) must be exactly the v<hex> shape the broker mints -- never a
  * claim name and never the reserved del-<id> transient.  Screening with
- * valid_dataset_n alone (charset only) would let a caller pass version="del-X"
+ * storage_namespace_component_valid alone (charset only) would let a caller pass version="del-X"
  * (destroying the broker's mid-swap transient) or version=<some claim> (naming
  * a different dataset in its own namespace) into destroy_tree/promote paths.
  */
@@ -281,19 +243,8 @@ static bool
 valid_version(const char *version, size_t capacity)
 {
 
-	return (valid_dataset_n(version, capacity) &&
+	return (storage_namespace_component_valid(version, capacity) &&
 	    bsdfilesystem_is_version_id_name(version));
-}
-
-/* Case-insensitive equality for reserved-name checks (ZFS names are
- * case-sensitive; operators and packagers are not). */
-static bool
-name_is(const char *a, const char *b)
-{
-	for (; *a != '\0' && *b != '\0'; a++, b++)
-		if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
-			return (false);
-	return (*a == '\0' && *b == '\0');
 }
 
 static bool
@@ -344,12 +295,13 @@ valid_request(const struct bsdfilesystem_request *rq)
 	    rq->scope > BSDFILESYSTEM_SCOPE_GROUP)
 		return (false);
 	/*
-	 * Scope names a durable container shape: only REQUEST and DESTROY take
-	 * one, only for persistent/cache claims, and `group` is present exactly
+	 * Scope names a durable container shape for claim operations, only for
+	 * persistent/cache claims, and `group` is present exactly
 	 * when the scope is GROUP (and is then a safe single component).
 	 */
 	if (rq->op != BSDFILESYSTEM_OP_REQUEST && rq->op != BSDFILESYSTEM_OP_DESTROY &&
 	    rq->op != BSDFILESYSTEM_OP_STAT_CLAIM &&
+	    rq->op != BSDFILESYSTEM_OP_UNMOUNT &&
 	    rq->op != BSDFILESYSTEM_OP_SET_QUOTA) {
 		if (rq->scope != BSDFILESYSTEM_SCOPE_UNIT || rq->group[0] != '\0')
 			return (false);
@@ -358,7 +310,7 @@ valid_request(const struct bsdfilesystem_request *rq)
 			return (false);
 		if ((rq->scope == BSDFILESYSTEM_SCOPE_GROUP) != (rq->group[0] != '\0'))
 			return (false);
-		if (rq->group[0] != '\0' && !valid_dataset(rq->group))
+		if (rq->group[0] != '\0' && !storage_namespace_claim_valid(rq->group))
 			return (false);
 	}
 	switch (rq->op) {
@@ -391,8 +343,9 @@ valid_request(const struct bsdfilesystem_request *rq)
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
 		    rq->session[0] == '\0');
+	case BSDFILESYSTEM_OP_UNMOUNT:
 	case BSDFILESYSTEM_OP_STAT_CLAIM:
-		/* Names a claim (dataset + lifetime + scope), reads only. */
+		/* Claim reference only; no new authority or provisioning fields. */
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
 		    rq->lifetime <= BSDFILESYSTEM_CACHE && rq->session[0] == '\0');
@@ -416,124 +369,6 @@ valid_request(const struct bsdfilesystem_request *rq)
 		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
 		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
-	}
-}
-
-/*
- * Derive a client's EPHEMERAL namespace: a single dataset component named
- * directly by the connecting service's resource owner — the flat, unforgeable
- * "cap.<hex>" key switchboard stamps on the brokered channel, never a wire
- * argument.  This roots the client's boot- and lease-scoped storage (reaped on
- * disconnect or reboot).  Durable storage is not keyed this way — it lives in
- * the per-bundle container (see container_ns).  The owner is already a safe
- * fixed-width component, so this only rejects an empty key, a bare "."/".." , or
- * one bearing a path separator, so a caller can never escape its own subtree.
- */
-static bool
-derive_ns(const char *client, char *out, size_t outsz)
-{
-	if (client == NULL || client[0] == '\0' ||
-	    strchr(client, '/') != NULL ||
-	    strcmp(client, ".") == 0 || strcmp(client, "..") == 0)
-		return (false);
-	if ((size_t)snprintf(out, outsz, "%s", client) >= outsz)
-		return (false);
-	return (true);
-}
-
-/*
- * A container path is exactly "<bundle>/<unit>" — two safe single components,
- * the unit's place in the Data layout.  Reject anything else so a caller can
- * never escape its container into another bundle's data or the Data root.
- */
-static bool
-valid_container(const char *c)
-{
-	const char *slash;
-	char comp[BSDFILESYSTEM_NAME_MAX];
-	size_t n;
-
-	if (c == NULL || (slash = strchr(c, '/')) == NULL || slash == c ||
-	    slash[1] == '\0' || strchr(slash + 1, '/') != NULL)
-		return (false);
-	n = (size_t)(slash - c);
-	if (n >= sizeof(comp))
-		return (false);
-	memcpy(comp, c, n);
-	comp[n] = '\0';
-	if (!valid_dataset_n(comp, sizeof(comp)) ||
-	    !valid_dataset_n(slash + 1, BSDFILESYSTEM_NAME_MAX))
-		return (false);
-	/*
-	 * Reserved: a bundle named "Shared" would alias Data/Shared/ -- the
-	 * GROUP container root -- so its unit-scope claims would land in group
-	 * containers with no membership check and be reaped by the group
-	 * reconcile; a unit named "shared" would alias its bundle's SHARED
-	 * scope.  Neither may exist as a container.
-	 */
-	if (name_is(comp, BSDFILESYSTEM_SHARED_DIR) || name_is(slash + 1, "shared"))
-		return (false);
-	return (true);
-}
-
-/*
- * The caller's DURABLE namespace under the Data root: its per-bundle container's
- * persistent or cache subdir, Data/<bundle>/<unit>/{persistent,cache}
- * (docs/book/src/plane/containers-and-storage.md).  Fails when the caller has no valid
- * container (no bundle), so a bundleless client holds no durable storage.
- */
-static bool
-container_ns(const char *container, uint32_t lifetime, char *out, size_t outsz)
-{
-	const char *sub = lifetime == BSDFILESYSTEM_CACHE ? "cache" : "persistent";
-
-	if (!valid_container(container))
-		return (false);
-	return ((size_t)snprintf(out, outsz, "%s/%s", container, sub) < outsz);
-}
-
-/*
- * The caller's durable namespace for a claim's scope
- * (docs/book/src/plane/containers-and-storage.md "Storage and delivery"):
- *   UNIT    Data/<bundle>/<unit>/{persistent,cache}   (container_ns)
- *   SHARED  Data/<bundle>/shared/{persistent,cache}   any unit of the bundle
- *   GROUP   Data/Shared/<group>/{persistent,cache}    only if the bundle
- *           declares membership in <group> (stamped on the identity)
- * A bundleless client has none.  The group name is validated as a single safe
- * component even though it was already matched against the stamped list.
- */
-static bool
-scoped_ns(const char *container, const char (*groups)[64], uint8_t scope,
-    const char *group, uint32_t lifetime, char *out, size_t outsz)
-{
-	const char *sub = lifetime == BSDFILESYSTEM_CACHE ? "cache" : "persistent";
-	const char *slash;
-	size_t blen;
-	unsigned i;
-
-	if (!valid_container(container))
-		return (false);
-	switch (scope) {
-	case BSDFILESYSTEM_SCOPE_UNIT:
-		return (container_ns(container, lifetime, out, outsz));
-	case BSDFILESYSTEM_SCOPE_SHARED:
-		slash = strchr(container, '/');
-		blen = (size_t)(slash - container);
-		return ((size_t)snprintf(out, outsz, "%.*s/shared/%s", (int)blen,
-		    container, sub) < outsz);
-	case BSDFILESYSTEM_SCOPE_GROUP:
-		if (group == NULL || group[0] == '\0' || groups == NULL ||
-		    !valid_dataset(group))
-			return (false);
-		for (i = 0; i < 4; i++)
-			if (groups[i][0] != '\0' && strcmp(groups[i], group) == 0)
-				break;
-		if (i == 4)
-			return (false);			/* not a member */
-		return ((size_t)snprintf(out, outsz, "Shared/%s/%s", group, sub) <
-		    outsz);
-	default:
-		return (false);
 	}
 }
 
@@ -576,6 +411,95 @@ open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags
 	}
 }
 
+/* Provider-created selection, copied at fork. Names are lookup keys inside
+ * this already selected view, never a request to walk a broader parent. */
+enum namespace_kind { NS_DURABLE, NS_BOOT, NS_LEASE };
+struct namespace_entry {
+	enum namespace_kind kind;
+	char name[BSDFILESYSTEM_MAXPATH];
+	int fd;
+};
+struct bsdfilesystem_namespace_view {
+	uint32_t available; /* Backend presence, not authority or descriptor numbers. */
+	size_t count, capacity;
+	struct namespace_entry entries[];
+};
+
+static int
+namespace_parent(const struct bsdfilesystem_state *st, enum namespace_kind kind)
+{
+	switch (kind) {
+	case NS_DURABLE: return (st->persistent_fd);
+	case NS_BOOT: return (st->boot_fd);
+	case NS_LEASE: return (st->lease_fd);
+	}
+	return (-1);
+}
+
+static bool
+namespace_available(const struct bsdfilesystem_state *st, enum namespace_kind kind)
+{
+	if (st->worker_namespaces != NULL)
+		return ((st->worker_namespaces->available & (1u << kind)) != 0);
+	return (namespace_parent(st, kind) != -1);
+}
+
+/* Worker code needs availability and selected objects, not broad ancestor
+ * descriptors. Avoid leaving stale descriptor numbers that could be reused. */
+static void
+namespace_detach_parents(struct bsdfilesystem_state *st)
+{
+	int parents[] = {st->persistent_fd, st->ephemeral_fd, st->boot_fd, st->lease_fd};
+
+	for (size_t i = 0; i < nitems(parents); i++) {
+		bool duplicate = false;
+		for (size_t j = 0; j < i; j++)
+			if (parents[i] == parents[j])
+				duplicate = true;
+		if (parents[i] >= 0 && !duplicate)
+			(void)close(parents[i]);
+	}
+	st->persistent_fd = st->ephemeral_fd = st->boot_fd = st->lease_fd = -1;
+}
+
+static void
+namespace_view_close(struct bsdfilesystem_state *st)
+{
+	struct bsdfilesystem_namespace_view *view = st->worker_namespaces;
+
+	if (view == NULL)
+		return;
+	for (size_t i = 0; i < view->count; i++)
+		if (view->entries[i].fd >= 0)
+			(void)close(view->entries[i].fd);
+	free(view);
+	st->worker_namespaces = NULL;
+}
+
+/* All worker namespace acquisition goes through this function. A selected
+ * view confines workers to its entries.
+ * A fresh derived handle has independent mount-anchor lifetime. */
+static int
+worker_namespace_open(struct bsdfilesystem_state *st, enum namespace_kind kind,
+    const char *name, uint64_t rights, bool create)
+{
+	struct bsdfilesystem_namespace_view *view = st->worker_namespaces;
+	int parent;
+
+	if (view != NULL) {
+		for (size_t i = 0; i < view->count; i++)
+			if (view->entries[i].kind == kind &&
+			    strcmp(view->entries[i].name, name) == 0)
+				return (tzfs_derive(view->entries[i].fd, rights));
+		return (errno = EPERM, -1);
+	}
+	parent = namespace_parent(st, kind);
+	if (parent == -1)
+		return (errno = ENXIO, -1);
+	return (create ? bsdfilesystem_ensure_path(parent, name, rights) :
+	    open_ns_path(parent, name, rights, ZHF_SUBTREE));
+}
+
 /*
  * Produce a rights-limited handle for a REQUEST.  `owner` roots ephemeral
  * (boot/lease) storage; `container` roots durable (persistent/cache) storage in
@@ -599,6 +523,18 @@ bsdfilesystem_limit_readonly_dir(int dfd)
 	return (cap_rights_limit(dfd, &rights));
 }
 
+/* Enumeration failure never establishes room for another storage object. */
+static int
+count_admit(int count, int limit)
+{
+
+	if (count < 0)
+		return (-1); /* Preserve the enumeration/decoding error. */
+	if (count >= limit)
+		return (errno = EDQUOT, -1);
+	return (0);
+}
+
 static int
 grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
     const struct bsdfilesystem_request *rq, char *dataset, size_t dsz, int *keep_fd)
@@ -607,7 +543,8 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 	const char *owner = conn->client, *container = conn->container;
 	const char (*groups)[64] = (const char (*)[64])conn->groups;
 	const bool ro = rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED_RO;
-	int parent_fd, ns_fd, leaf_fd, granted;
+	int ns_fd, leaf_fd, granted;
+	enum namespace_kind kind;
 	const char *parent_name, *claim;
 	char parent_buf[BSDFILESYSTEM_MAXPATH];
 	char ns[BSDFILESYSTEM_MAXPATH];
@@ -633,7 +570,7 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!valid_dataset(rq->dataset)) {
+	if (!storage_namespace_claim_valid(rq->dataset)) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -658,35 +595,35 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 	 * not a bundleless client's EPERM.
 	 */
 	if (rq->lifetime == BSDFILESYSTEM_BOOT) {
-		parent_fd = st->boot_fd;
+		kind = NS_BOOT;
 		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
 		    cfg->ephemeral, st->boot_name);
 		parent_name = parent_buf;
-		if (!derive_ns(owner, ns, sizeof(ns))) {
+		if (!storage_namespace_owner(owner, ns, sizeof(ns))) {
 			errno = EINVAL;
 			return (-1);
 		}
 	} else if (rq->lifetime == BSDFILESYSTEM_LEASE) {
-		if (st->lease_fd == -1) {
+		if (!namespace_available(st, NS_LEASE)) {
 			errno = ENXIO;
 			return (-1);
 		}
-		parent_fd = st->lease_fd;
+		kind = NS_LEASE;
 		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
 		    cfg->ephemeral, st->lease_name);
 		parent_name = parent_buf;
-		if (!derive_ns(owner, ns, sizeof(ns))) {
+		if (!storage_namespace_owner(owner, ns, sizeof(ns))) {
 			errno = EINVAL;
 			return (-1);
 		}
 	} else {
-		parent_fd = st->persistent_fd;
+		kind = NS_DURABLE;
 		parent_name = cfg->persistent;
-		if (parent_fd == -1) {
+		if (!namespace_available(st, kind)) {
 			errno = ENXIO;
 			return (-1);
 		}
-		if (!scoped_ns(container, groups, rq->scope, rq->group,
+		if (!storage_namespace_scope(container, groups, rq->scope, rq->group,
 		    rq->lifetime, ns, sizeof(ns))) {
 			errno = EPERM;	/* no bundle, or not a member of the group */
 			return (-1);
@@ -698,7 +635,7 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 	 * leaking -1 down to openat/ioctl turns an expected unavailable backend
 	 * into the misleading EBADF seen in the system log.
 	 */
-	if (parent_fd == -1) {
+	if (!namespace_available(st, kind)) {
 		errno = ENXIO;
 		return (-1);
 	}
@@ -713,7 +650,7 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 		 * the claim must already exist (ENOENT otherwise), and no quota
 		 * or ownership is applied.
 		 */
-		ns_fd = open_ns_path(parent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		ns_fd = worker_namespace_open(st, kind, ns, ZH_ALL_RIGHTS, false);
 		if (ns_fd == -1)
 			return (-1);
 		leaf_fd = tzfs_openat(ns_fd, claim, ZH_ALL_RIGHTS, ZHF_SUBTREE);
@@ -726,7 +663,7 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 		}
 		goto mounted;
 	}
-	ns_fd = bsdfilesystem_ensure_path(parent_fd, ns, ZH_ALL_RIGHTS);
+	ns_fd = worker_namespace_open(st, kind, ns, ZH_ALL_RIGHTS, true);
 	if (ns_fd == -1)
 		return (-1);
 	/*
@@ -737,9 +674,12 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 	 */
 	leaf_fd = tzfs_openat(ns_fd, claim, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 	if (leaf_fd == -1 && errno == ENOENT) {
-		if (bsdfilesystem_count_children(ns_fd) >= BSDFILESYSTEM_NS_MAX_CLAIMS) {
+		if (count_admit(bsdfilesystem_count_children(ns_fd),
+		    BSDFILESYSTEM_NS_MAX_CLAIMS) == -1) {
+			int saved = errno;
+
 			(void)close(ns_fd);
-			errno = EDQUOT;
+			errno = saved;
 			return (-1);
 		}
 		leaf_fd = bsdfilesystem_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
@@ -759,18 +699,26 @@ grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
 	 * ceiling is applied to the delivered handle.  A nonzero rq->quota is this
 	 * claim's explicit ceiling (already floor-checked above) and overrides the
 	 * configured default; quota == 0 falls back to cfg->default_refquota (0 ==
-	 * no ceiling).  Best-effort: a pre-existing persistent claim already over
-	 * the (possibly lowered) ceiling must not be made undeliverable — the
-	 * ceiling still blocks further growth.
+	 * no ceiling). A failed property update cannot establish this bound:
+	 * never deliver writable storage after that failure. Existing data is
+	 * retained, and a read-only request can still inspect/recover it without
+	 * changing its quota. An operator must resolve an incompatible ceiling.
 	 */
 	{
 		uint64_t refquota = rq->quota != 0 ? rq->quota :
 		    cfg->default_refquota;
 
 		if (refquota != 0 &&
-		    tzfs_set_prop_uint64(leaf_fd, "refquota", refquota) == -1)
-			syslog(LOG_WARNING, "set refquota=%ju on claim %s: %m",
+		    tzfs_set_prop_uint64(leaf_fd, "refquota", refquota) == -1) {
+			int saved = errno;
+
+			syslog(LOG_ERR, "set refquota=%ju on claim %s: %m",
 			    (uintmax_t)refquota, claim);
+			(void)close(leaf_fd);
+			(void)close(ns_fd);
+			errno = saved;
+			return (-1);
+		}
 	}
 
 	/*
@@ -882,8 +830,9 @@ mounted:
 	(void)close(leaf_fd);
 	granted = tzfs_openat(ns_fd, claim, rq->rights, rq->flags);
 	(void)close(ns_fd);
-	if (granted == -1)
+	if (granted == -1) {
 		return (-1);
+	}
 	/* Add a monotonic Capsicum ioctl ceiling before SCM_RIGHTS transfer. */
 	if (tzfs_limit_dataset_ioctls_by_rights(granted, rq->rights,
 	    rq->flags) == -1) {
@@ -902,6 +851,7 @@ mounted:
 	}
 	return (granted);
 }
+
 
 /* Compare components without opening the privileged device. */
 static bool
@@ -1088,10 +1038,9 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
 		};
 		static const unsigned long pf_ioctls[] = {
-			/* pf(4) state export (read-only) */
-			DIOCGETSTATES,
-			/* narrow to a jailed client's vnet (BSDNetwork(8)) */
-			DIOCBINDJAIL,
+			/* BSDNetwork binds to the client's vnet, then removes the
+			 * bind command before handing out read-only state access. */
+			DIOCGETSTATES, DIOCBINDJAIL,
 		};
 		const unsigned long *ioctls;
 		size_t nioctls;
@@ -1173,7 +1122,7 @@ list_claim_cmp(const void *ap, const void *bp)
  * left open and the caller frees *claimsp.
  */
 static int
-list_collect_ns(int parent_fd, const char *ns, uint8_t lifetime, int *ns_fdp,
+list_collect_ns(struct bsdfilesystem_state *st, const char *ns, uint8_t lifetime, int *ns_fdp,
     struct list_claim **claimsp, size_t *nclaimsp, size_t *capp)
 {
 	struct zfd_info_args info;
@@ -1189,7 +1138,7 @@ list_collect_ns(int parent_fd, const char *ns, uint8_t lifetime, int *ns_fdp,
 	 * parent.  An absent namespace means the caller has made no claims of this
 	 * lifetime yet: contribute nothing rather than fail.
 	 */
-	ns_fd = open_ns_path(parent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	ns_fd = worker_namespace_open(st, NS_DURABLE, ns, ZH_ALL_RIGHTS, false);
 	if (ns_fd == -1)
 		return (errno == ENOENT ? 0 : -1);
 	memset(&info, 0, sizeof(info));
@@ -1298,7 +1247,7 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (st->persistent_fd == -1) {
+	if (!namespace_available(st, NS_DURABLE)) {
 		errno = ENXIO;
 		return (-1);
 	}
@@ -1308,19 +1257,19 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 	 * leak).  Both durable namespaces derive from the same scope, so if the
 	 * persistent name will not build neither will cache.
 	 */
-	if (!scoped_ns(container, groups, rq->scope, rq->group,
+	if (!storage_namespace_scope(container, groups, rq->scope, rq->group,
 	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
 		return (0);	/* rp->count / next_cursor already 0 */
-	if (list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_PERSISTENT,
+	if (list_collect_ns(st, ns, BSDFILESYSTEM_PERSISTENT,
 	    &ns_fd_pers, &claims, &nclaims, &cap) == -1) {
 		saved = errno;
 		free(claims);
 		errno = saved;
 		return (-1);
 	}
-	if (scoped_ns(container, groups, rq->scope, rq->group,
+	if (storage_namespace_scope(container, groups, rq->scope, rq->group,
 	    BSDFILESYSTEM_CACHE, ns, sizeof(ns)) &&
-	    list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_CACHE,
+	    list_collect_ns(st, ns, BSDFILESYSTEM_CACHE,
 	    &ns_fd_cache, &claims, &nclaims, &cap) == -1) {
 		saved = errno;
 		free(claims);
@@ -1414,20 +1363,20 @@ open_own_claim(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
 	char ns[BSDFILESYSTEM_MAXPATH];
 	int ns_fd, cfd;
 
-	if (lifetime > BSDFILESYSTEM_CACHE || !valid_dataset(dataset)) {
+	if (lifetime > BSDFILESYSTEM_CACHE || !storage_namespace_claim_valid(dataset)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!scoped_ns(conn->container, (const char (*)[64])conn->groups, scope,
+	if (!storage_namespace_scope(conn->container, (const char (*)[64])conn->groups, scope,
 	    group, lifetime, ns, sizeof(ns))) {
 		errno = EPERM;
 		return (-1);
 	}
-	if (st->persistent_fd == -1) {
+	if (!namespace_available(st, NS_DURABLE)) {
 		errno = ENXIO;
 		return (-1);
 	}
-	ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	ns_fd = worker_namespace_open(st, NS_DURABLE, ns, ZH_ALL_RIGHTS, false);
 	if (ns_fd == -1)
 		return (-1);
 	cfd = tzfs_openat(ns_fd, dataset, rights, flags);
@@ -1450,16 +1399,16 @@ open_own_ns(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!scoped_ns(conn->container, (const char (*)[64])conn->groups, scope,
+	if (!storage_namespace_scope(conn->container, (const char (*)[64])conn->groups, scope,
 	    group, lifetime, ns, nssz)) {
 		errno = EPERM;
 		return (-1);
 	}
-	if (st->persistent_fd == -1) {
+	if (!namespace_available(st, NS_DURABLE)) {
 		errno = ENXIO;
 		return (-1);
 	}
-	return (open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE));
+	return (worker_namespace_open(st, NS_DURABLE, ns, ZH_ALL_RIGHTS, false));
 }
 
 /*
@@ -1503,11 +1452,11 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 			 * snapshot space (defeating "no single claim fills the
 			 * pool").  Each snapshot's unique data is bounded by
 			 * refquota, so capping the COUNT bounds total snapshot
-			 * space.  A count failure is best-effort (allow).
+			 * space. Enumeration failure must deny creation as well.
 			 */
-			if (bsdfilesystem_count_snapshots(cfd) >=
-			    BSDFILESYSTEM_MAX_SNAPSHOTS) {
-				vrp.status = EDQUOT;
+			if (count_admit(bsdfilesystem_count_snapshots(cfd),
+			    BSDFILESYSTEM_MAX_SNAPSHOTS) == -1) {
+				vrp.status = errno;
 				(void)close(cfd);
 			} else {
 				gen_version_id(vrp.version, sizeof(vrp.version));
@@ -1623,7 +1572,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 			rp.status = EINVAL;
 			goto ov_reply;
 		}
-		if (st->lease_fd == -1) {
+		if (!namespace_available(st, NS_LEASE)) {
 			rp.status = ENXIO;	/* no session: BEGIN_SESSION first */
 			goto ov_reply;
 		}
@@ -1634,12 +1583,12 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 			rp.status = errno;
 			goto ov_reply;
 		}
-		if (!derive_ns(conn->client, lns, sizeof(lns))) {
+		if (!storage_namespace_owner(conn->client, lns, sizeof(lns))) {
 			rp.status = EINVAL;
 			(void)close(cfd);
 			goto ov_reply;
 		}
-		lns_fd = bsdfilesystem_ensure_path(st->lease_fd, lns, ZH_ALL_RIGHTS);
+		lns_fd = worker_namespace_open(st, NS_LEASE, lns, ZH_ALL_RIGHTS, true);
 		if (lns_fd == -1) {
 			rp.status = errno;
 			(void)close(cfd);
@@ -1726,7 +1675,7 @@ ov_reply:
 		/*
 		 * Snapshot the claim and clone it read-write as a sibling in the
 		 * caller's own namespace; the caller edits the staging clone and
-		 * later COMMITs (atomic swap) or ABORTs it.
+		 * later COMMITs (a multi-step replacement) or ABORTs it.
 		 */
 		struct bsdfilesystem_version_reply vrp;
 		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
@@ -1737,7 +1686,7 @@ ov_reply:
 			vrp.status = EINVAL;
 			goto tb_reply;
 		}
-		if (!valid_dataset(vrq->dataset)) {
+		if (!storage_namespace_claim_valid(vrq->dataset)) {
 			vrp.status = EINVAL;
 			goto tb_reply;
 		}
@@ -1750,15 +1699,15 @@ ov_reply:
 		/*
 		 * Bound the datasets one namespace may hold: a staging clone is a
 		 * persistent-tree sibling of the caller's claims and survives a
-		 * disconnect until COMMIT/ABORT or the idle reap, so without this
+		 * disconnect until COMMIT/ABORT or authorized recovery, so without this
 		 * cap a caller could TXN_BEGIN in a loop and fill the pool with
 		 * abandoned clones (and starve its own legitimate claims).  grant()
 		 * caps new claims the same way; the two share the NS_MAX_CLAIMS
 		 * budget (tb_reply closes ns_fd).
 		 */
-		if (bsdfilesystem_count_children(ns_fd) >=
-		    BSDFILESYSTEM_NS_MAX_CLAIMS) {
-			vrp.status = EDQUOT;
+		if (count_admit(bsdfilesystem_count_children(ns_fd),
+		    BSDFILESYSTEM_NS_MAX_CLAIMS) == -1) {
+			vrp.status = errno;
 			goto tb_reply;
 		}
 		claim_fd = tzfs_openat(ns_fd, vrq->dataset,
@@ -1880,9 +1829,11 @@ tb_reply:
 	}
 	case BSDFILESYSTEM_OP_TXN_COMMIT: {
 		/*
-		 * Atomic swap: promote the staging clone, then rename it over the
-		 * claim (claim -> del-<id>, txn -> claim, destroy del-<id>).  Fails
-		 * EBUSY if the claim is still mounted/held elsewhere.
+		 * Multi-step replacement: promote the staging clone, move the claim
+		 * to del-<id>, move txn to claim, then destroy del-<id>. This is not
+		 * an atomic namespace swap: there is no durable recovery record
+		 * across the separate renames. Failure undo below is best-effort.
+		 * Fails EBUSY if the claim is still mounted/held elsewhere.
 		 */
 		struct bsdfilesystem_reply rp;
 		char ns[BSDFILESYSTEM_MAXPATH], del[BSDFILESYSTEM_NAME_MAX], full[BSDFILESYSTEM_MAXPATH];
@@ -1890,7 +1841,7 @@ tb_reply:
 
 		memset(&rp, 0, sizeof(rp));
 		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
-		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
+		    !storage_namespace_claim_valid(vrq->dataset) || vrq->cursor != 0) {
 			rp.status = EINVAL;
 			goto tc_reply;
 		}
@@ -1932,24 +1883,17 @@ tb_reply:
 				rp.status = EINVAL;	/* not this claim's txn */
 				goto tc_close;
 			}
-			/*
-			 * Origin verified -- commit is going to proceed.  Clear the
-			 * txn stamp on the clone NOW, before the anchor drop below
-			 * unmounts it.  The idle staging reap relies on "a live txn
-			 * clone is mounted (so its destroy fails EBUSY)"; that guard
-			 * does NOT hold in the swap window, where the clone is
-			 * unmounted but not yet renamed.  An unmounted, aged, still-
-			 * STAMPED v<hex> clone in that window would be a valid
-			 * idle-reap target -- the reaper could destroy a live commit's
-			 * clone out from under it (promote then fails ENXIO and the
-			 * committed work is lost).  With the stamp gone first, the
-			 * idle reap (which requires the stamp) skips it; and if the
-			 * worker crashes before the swap completes, the boot sweep
-			 * still reaps the leftover by its reserved v<hex> NAME alone
-			 * (valid_dataset forbids a real claim that shape).
-			 */
-			(void)tzfs_set_prop_string(clone_fd,
-			    BSDFILESYSTEM_TXN_BASE_PROP, "");
+			/* Clear the admission marker before mutation. An empty marker
+			 * prevents ordinary COMMIT/ABORT from treating an interrupted
+			 * commit as an untouched transaction. This is not a durable
+			 * journal: recovery still requires identities and a publication
+			 * record. Startup and idle sweeps preserve unresolved datasets. */
+			if (tzfs_set_prop_string(clone_fd,
+			    BSDFILESYSTEM_TXN_BASE_PROP, "") == -1) {
+				/* Refuse mutation if the admission transition failed. */
+				rp.status = errno;
+				goto tc_close;
+			}
 			/*
 			 * Neither the staging clone NOR the base claim may be mounted
 			 * for the rename swap below (a mounted dataset cannot be
@@ -1981,11 +1925,10 @@ tb_reply:
 				 * staging clone and the live claim became a clone of
 				 * it.  Leaving it so would strand the transaction --
 				 * the migrated snapshot is pinned by the live claim,
-				 * so TXN_ABORT and the boot staging sweep both fail
+				 * so TXN_ABORT would fail
 				 * EEXIST on the clone forever.  Undo the promote by
 				 * re-promoting the claim, restoring the original
-				 * relationship so the staging clone stays abortable
-				 * and reapable.
+				 * relationship so the staging clone stays abortable.
 				 */
 				pc = tzfs_openat(ns_fd, vrq->dataset,
 				    ZH_ALL_RIGHTS, ZHF_SUBTREE);
@@ -2007,7 +1950,7 @@ tb_reply:
 				 * Both are needed and in this order: the promote
 				 * left the claim a clone of <version>@<version>, so
 				 * without the re-promote the staging clone stays the
-				 * pinned origin and TXN_ABORT / the sweep hit EEXIST
+				 * pinned origin and TXN_ABORT hits EEXIST
 				 * on it forever -- the same asymmetry the first-rename
 				 * failure branch above avoids.
 				 */
@@ -2074,11 +2017,15 @@ tc_reply:
 		/* Discard the staging clone and its base snapshot. */
 		struct bsdfilesystem_reply rp;
 		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
-		int ns_fd, claim_fd;
+		int ns_fd, claim_fd, clone_fd;
+		char base[BSDFILESYSTEM_NAME_MAX];
+		uint64_t iv = 0;
+		uint32_t src = 0;
+		int is_str = 0;
 
 		memset(&rp, 0, sizeof(rp));
 		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
-		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
+		    !storage_namespace_claim_valid(vrq->dataset) || vrq->cursor != 0) {
 			rp.status = EINVAL;
 			goto ta_reply;
 		}
@@ -2088,6 +2035,25 @@ tc_reply:
 			rp.status = errno;
 			goto ta_reply;
 		}
+		/* A caller-supplied version name is not proof that this is the
+		 * named claim's staging clone. Preserve anchors and all storage
+		 * on missing, unreadable or mismatched origin metadata. Empty
+		 * metadata also denotes a commit that needs recovery, not abort. */
+		clone_fd = tzfs_openat(ns_fd, vrq->version, ZH_PROPS_READ,
+		    ZHF_SUBTREE);
+		if (clone_fd == -1) {
+			rp.status = errno;
+			goto ta_close;
+		}
+		base[0] = '\0';
+		if (tzfs_get_one_prop(clone_fd, BSDFILESYSTEM_TXN_BASE_PROP,
+		    base, sizeof(base), &iv, &is_str, &src) == -1)
+			rp.status = errno;
+		else if (!is_str || strcmp(base, vrq->dataset) != 0)
+			rp.status = EINVAL;
+		(void)close(clone_fd);
+		if (rp.status != 0)
+			goto ta_close;
 		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
 		    ns, vrq->version);
 		conn_anchor_drop(conn, full);	/* unmount the clone */
@@ -2103,6 +2069,7 @@ tc_reply:
 		if (rp.status == 0)
 			syslog(LOG_INFO, "TXN_ABORT %s (%s)", vrq->dataset,
 			    vrq->version);
+ta_close:
 		(void)close(ns_fd);
 ta_reply:
 		memset(&out, 0, sizeof(out));
@@ -2146,6 +2113,8 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 	bool pf_relay = false;
 
 	memset(&rp, 0, sizeof(rp));
+	/* Never retain the previous request's invocation after a denied request. */
+	memset(&conn->actor, 0, sizeof(conn->actor));
 
 	/* A decoded request never carries a descriptor. */
 	BSDFILESYSTEM_PROBE_MSG((uint64_t)m->length, 0);
@@ -2160,8 +2129,27 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 	{
 		const struct channel_sender *sender = m->sender;
 
-		conn->uid = sender != NULL ? sender->uid : 0;
-		conn->gid = sender != NULL ? sender->gid : 0;
+		/* Missing transport attribution is not a root request. Reject before
+		 * all dispatch forms, including namespace and transaction methods. */
+		if (sender == NULL) {
+			rp.status = EACCES;
+			goto reply;
+		}
+		if (m->process != NULL && m->process->identity != 0 &&
+		    sender->nonce != 0 && m->authority != NULL &&
+		    m->authority->valid == 1 && m->authority->issuer != 0 &&
+		    m->authority->identity != 0 && m->authority->generation != 0 &&
+		    m->authority->kind == CAP_AUTH_MANAGED && m->authority->reserved == 0) {
+			conn->actor.authority = *m->authority;
+			conn->actor.process_identity = m->process->identity;
+			conn->actor.execution_nonce = sender->nonce;
+			conn->actor.valid = true;
+		}
+		/* Software attribution is not storage authority. Capability-channel
+		 * admission and operation-specific storage checks remain required. */
+		/* Mutable UNIX ownership is distinct from software attribution. */
+		conn->uid = sender->uid;
+		conn->gid = sender->gid;
 	}
 
 	/*
@@ -2307,16 +2295,16 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 		char ns[BSDFILESYSTEM_NAME_MAX];
 		int ns_fd;
 
-		if (!valid_dataset(rq->dataset) ||
-		    !derive_ns(conn->client, ns, sizeof(ns))) {
+		if (!storage_namespace_claim_valid(rq->dataset) ||
+		    !storage_namespace_owner(conn->client, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
 		}
-		if (st->lease_fd == -1) {
+		if (!namespace_available(st, NS_LEASE)) {
 			rp.status = ENXIO;
 			break;
 		}
-		ns_fd = tzfs_openat(st->lease_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		ns_fd = worker_namespace_open(st, NS_LEASE, ns, ZH_ALL_RIGHTS, false);
 		if (ns_fd == -1) {
 			/* No namespace => nothing to release (idempotent). */
 			if (errno != ENOENT)
@@ -2358,18 +2346,17 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 		char ns[BSDFILESYSTEM_MAXPATH];
 		int ns_fd, probe;
 
-		if (rq->lifetime > BSDFILESYSTEM_CACHE || !valid_dataset(rq->dataset) ||
-		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		if (rq->lifetime > BSDFILESYSTEM_CACHE || !storage_namespace_claim_valid(rq->dataset) ||
+		    !storage_namespace_scope(conn->container, (const char (*)[64])conn->groups,
 		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
 		}
-		if (st->persistent_fd == -1) {
+		if (!namespace_available(st, NS_DURABLE)) {
 			rp.status = ENXIO;
 			break;
 		}
-		ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS,
-		    ZHF_SUBTREE);
+		ns_fd = worker_namespace_open(st, NS_DURABLE, ns, ZH_ALL_RIGHTS, false);
 		if (ns_fd == -1) {
 			/* No namespace => the claim cannot exist. */
 			rp.status = errno;
@@ -2414,8 +2401,8 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
 
 		if (rq->lifetime > BSDFILESYSTEM_CACHE ||
-		    !valid_dataset(rq->dataset) ||
-		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    !storage_namespace_claim_valid(rq->dataset) ||
+		    !storage_namespace_scope(conn->container, (const char (*)[64])conn->groups,
 		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
@@ -2439,20 +2426,22 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 		int ns_fd, cfd;
 
 		memset(&srp, 0, sizeof(srp));
-		if (!valid_dataset(rq->dataset) ||
-		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		if (!storage_namespace_claim_valid(rq->dataset) ||
+		    !storage_namespace_scope(conn->container, (const char (*)[64])conn->groups,
 		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns)))
 			srp.status = EINVAL;
-		else if (st->persistent_fd == -1)
+		else if (!namespace_available(st, NS_DURABLE))
 			srp.status = ENXIO;
-		else if ((ns_fd = open_ns_path(st->persistent_fd, ns,
-		    ZH_PROPS_READ, ZHF_SUBTREE)) == -1)
+		else if ((ns_fd = worker_namespace_open(st, NS_DURABLE, ns, ZH_PROPS_READ, false)) == -1)
 			srp.status = errno;
 		else {
 			cfd = tzfs_openat(ns_fd, rq->dataset, ZH_PROPS_READ, 0);
 			if (cfd == -1)
 				srp.status = errno;	/* ENOENT if absent */
 			else {
+#ifdef BSDFILESYSTEM_CRASH_TEST
+				bsdfilesystem_crash_test_request();
+#endif
 				struct zfd_stat_args stt;
 				uint64_t refquota = 0;
 				int is_string = 0;
@@ -2502,19 +2491,18 @@ tzfs_request(struct tzfs_conn *conn, struct tzfs_msg *m)
 		char ns[BSDFILESYSTEM_MAXPATH];
 		int ns_fd, cfd;
 
-		if (!valid_dataset(rq->dataset) ||
+		if (!storage_namespace_claim_valid(rq->dataset) ||
 		    (rq->quota != 0 && rq->quota < BSDFILESYSTEM_MIN_REFQUOTA) ||
-		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    !storage_namespace_scope(conn->container, (const char (*)[64])conn->groups,
 		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
 		}
-		if (st->persistent_fd == -1) {
+		if (!namespace_available(st, NS_DURABLE)) {
 			rp.status = ENXIO;
 			break;
 		}
-		ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS,
-		    ZHF_SUBTREE);
+		ns_fd = worker_namespace_open(st, NS_DURABLE, ns, ZH_ALL_RIGHTS, false);
 		if (ns_fd == -1) {
 			rp.status = errno;
 			break;
@@ -2639,6 +2627,8 @@ fs_run(struct tzfs_conn *conn, struct fidl_bsd_request *request,
     const void *record, size_t length, bool representable, struct tzfs_msg *m)
 {
 
+	/* Even an unrepresentable request invalidates prior attribution. */
+	memset(&conn->actor, 0, sizeof(conn->actor));
 	memset(m, 0, sizeof(*m));
 	m->reply_fd = -1;
 	if (!representable) {
@@ -2649,6 +2639,8 @@ fs_run(struct tzfs_conn *conn, struct fidl_bsd_request *request,
 	m->data = record;
 	m->length = length;
 	m->sender = channel_message_sender(fidl_bsd_request_native(request));
+	m->process = channel_message_process(fidl_bsd_request_native(request));
+	m->authority = channel_message_authority(fidl_bsd_request_native(request));
 	tzfs_request(conn, m);
 	if (!m->replied || m->reply_length < sizeof(int32_t)) {
 		if (m->reply_fd >= 0)
@@ -3162,7 +3154,7 @@ conn_reap_ephemeral(struct bsdfilesystem_state *st, struct tzfs_conn *conn)
 	char prefix[BSDFILESYSTEM_MAXPATH];
 	size_t plen, i;
 
-	if (st->lease_fd == -1)
+	if (!namespace_available(st, NS_LEASE))
 		return;
 	if ((size_t)snprintf(prefix, sizeof(prefix), "%s/%s/",
 	    st->cfg.ephemeral, st->lease_name) >= sizeof(prefix))
@@ -3186,8 +3178,7 @@ conn_reap_ephemeral(struct bsdfilesystem_state *st, struct tzfs_conn *conn)
 		lns[nlen] = '\0';
 		(void)close(conn->anchors[i].fd);	/* unmount first */
 		conn->anchors[i].fd = -1;
-		lns_fd = open_ns_path(st->lease_fd, lns, ZH_ALL_RIGHTS,
-		    ZHF_SUBTREE);
+		lns_fd = worker_namespace_open(st, NS_LEASE, lns, ZH_ALL_RIGHTS, false);
 		if (lns_fd != -1) {
 			(void)bsdfilesystem_destroy_tree(lns_fd, slash + 1);
 			(void)close(lns_fd);
@@ -3273,6 +3264,7 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 	 */
 	conn_reap_ephemeral(st, &conn);
 	conn_anchors_close(&conn);
+	namespace_view_close(st);
 	return (0);
 }
 
@@ -3377,14 +3369,10 @@ fs_workers_stop(struct fs_worker **head)
  * Expose system.Filesystem and dispatch each accepted client on its own pdfork'd
  * worker.  SELF-CONFINES before serving: the privileged bootstrap (kldload zfs,
  * zpool import, opening /dev/zfs and the root-pool handles by name) has already
- * run in main(), so the daemon now cap_enter()s and serves every request from
- * its retained, cap_ioctls-limited handles.  It cannot be BORN in capability mode
- * like the other providers (its bootstrap needs the global namespace and classic
- * privilege, so switchboard launches it ambient), but the SERVING window -- where
- * untrusted client requests are handled -- runs sandboxed: every op is an ioctl
- * on a held TrustedZFS handle (ZFD_OPENAT/MOUNT/CREATE/... , not mount(2)) or an
- * openat(2) beneath the retained root fd, all capsicum-legal.  Returns -1 only on
- * setup failure (never on success).
+ * run in main(). The maintained unit is born in capability mode; the serving
+ * window uses bounded TrustedZFS handles and delivered directory descriptors.
+ * Startup acquires the base through /dev/zfs and closes that raw descriptor
+ * before serving.
  */
 int
 bsdfilesystem_serve(struct bsdfilesystem_state *st)
@@ -3435,6 +3423,10 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto out;
+#ifdef BSDFILESYSTEM_CRASH_TEST
+	if (bsdfilesystem_crash_test_watch(kq) == -1)
+		goto out;
+#endif
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
@@ -3456,6 +3448,9 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 				continue;
 			goto out;
 		}
+#ifdef BSDFILESYSTEM_CRASH_TEST
+		bsdfilesystem_crash_test_event(&event);
+#endif
 		if (event.filter == EVFILT_PROCDESC) {
 			/* A worker exited: reap it and free its slot. */
 			fs_worker_remove(&workers, event.udata, &nworkers);
@@ -3514,6 +3509,7 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON | PD_NOWAITPID);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
+			namespace_view_close(st);
 			free(w);
 			(void)close(fd);
 			continue;
@@ -3531,10 +3527,13 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 				service_worker_drop_inherited_authority();
 				_exit(bsdfilesystem_oes_serve(st->root_fd, fd));
 			}
+			if (st->worker_namespaces != NULL)
+				namespace_detach_parents(st);
 			_exit(tzfs_worker(st, fd, id.client_label,
 			    id.resource_owner, id.container,
 			    (const char (*)[64])id.groups));
 		}
+		namespace_view_close(st);
 		(void)close(fd);
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
@@ -3582,6 +3581,32 @@ out:
 }
 
 #ifdef BSDFILESYSTEM_TESTING
+int
+bsdfilesystem_test_selected_session(struct bsdfilesystem_state *st, const char *session)
+{
+	struct bsdfilesystem_namespace_view view = {0};
+	struct bsdfilesystem_namespace_view *saved = st->worker_namespaces;
+	int result;
+
+	st->worker_namespaces = &view;
+	result = bsdfilesystem_session_begin(st, session);
+	st->worker_namespaces = saved;
+	return (result);
+}
+
+int
+bsdfilesystem_test_empty_selection(struct bsdfilesystem_state *st)
+{
+	struct bsdfilesystem_namespace_view view = {0};
+	struct bsdfilesystem_namespace_view *saved = st->worker_namespaces;
+	int result;
+
+	st->worker_namespaces = &view;
+	result = worker_namespace_open(st, NS_DURABLE, "unselected", ZH_PROPS_READ, false);
+	st->worker_namespaces = saved;
+	return (result);
+}
+
 bool
 bsdfilesystem_test_oes_admit(unsigned total, unsigned same, unsigned ordinary)
 {
@@ -3610,7 +3635,7 @@ bool
 bsdfilesystem_test_derive_ns(const char *client, char *out, size_t outsz)
 {
 
-	return (derive_ns(client, out, outsz));
+	return (storage_namespace_owner(client, out, outsz));
 }
 
 /*
@@ -3646,7 +3671,7 @@ bool
 bsdfilesystem_test_valid_container(const char *c)
 {
 
-	return (valid_container(c));
+	return (storage_namespace_container_valid(c));
 }
 
 unsigned
@@ -3673,7 +3698,7 @@ bool
 bsdfilesystem_test_valid_dataset(const char *name)
 {
 
-	return (valid_dataset(name));
+	return (storage_namespace_claim_valid(name));
 }
 
 bool
@@ -3719,7 +3744,7 @@ bsdfilesystem_test_scoped_ns(const char *container, const char (*groups)[64],
     uint8_t scope, const char *group, uint32_t lifetime, char *out,
     size_t outsz)
 {
-	return (scoped_ns(container, groups, scope, group, lifetime, out, outsz));
+	return (storage_namespace_scope(container, groups, scope, group, lifetime, out, outsz));
 }
 
 int
@@ -3758,7 +3783,7 @@ bsdfilesystem_test_worker(struct bsdfilesystem_state *st, int fd, const char *cl
  * Drive grant_list() so tests can assert the LIST request's message hygiene
  * (flags/_reserved must be zero) and the fail-closed no-pool outcome (ENXIO)
  * without an imported pool.  The owner-scoping itself is guarded at the
- * derivation layer (derive_ns) that grant_list roots the walk at.
+ * derivation layer (storage_namespace_owner) that grant_list roots the walk at.
  */
 int
 bsdfilesystem_test_grant_list(struct bsdfilesystem_state *st, const char *client,

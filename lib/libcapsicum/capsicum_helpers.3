@@ -106,7 +106,13 @@ but there is no need to link to the library.
 .Fn caph_limit_stream
 restricts capabilities on
 .Fa fd
-to only those needed by POSIX stream objects (that is, FILEs).
+to the intersection of its existing rights and those needed by POSIX stream
+objects (that is, FILEs).
+Existing ioctl and fcntl command restrictions are intersected as well.
+A successful call never restores rights removed by an earlier caller and does
+not guarantee that the requested read or write operation is authorized.
+The caller must keep the descriptor stable during this operation;
+concurrent tightening may cause an error, without widening authority.
 .Pp
 These flags can be provided:
 .Pp
@@ -114,9 +120,9 @@ These flags can be provided:
 .It Dv CAPH_IGNORE_EBADF
 Do not return an error if file descriptor is invalid.
 .It Dv CAPH_READ
-Set CAP_READ on limited descriptor.
+Retain CAP_READ if already present on the descriptor.
 .It Dv CAPH_WRITE
-Set CAP_WRITE on limited descriptor.
+Retain CAP_WRITE if already present on the descriptor.
 .El
 .Pp
 .Fn caph_limit_stdin ,

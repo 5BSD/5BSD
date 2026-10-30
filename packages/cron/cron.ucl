@@ -1,27 +1,40 @@
-/*
- * SPDX-License-Identifier: ISC
- *
- * Copyright (c) 2025 Lexi Winter <ivy@FreeBSD.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+# SPDX-License-Identifier: ISC
+.include(try=false) "${SRCDIR}/common.ucl"
 
-comment = "Command scheduling facility"
-
-desc = <<EOD
-The cron(8) facility is used to schedule commands to run regularly at a
-particular time, or when the system reboots, based on the /etc/crontab
-file or user-specific crontabs installed using the crontab(1) utility.
-
-This implementation of cron(8) is based on Vixie Cron.
+# Sources: cron/cron.c open_pidfile, cron/pathnames.h, cron/database.c,
+# crontab/crontab.c replace_cmd/delete_cmd/poke_daemon under usr.sbin/cron.
+# Requirements do not authorize a writer or classify job tables as ordinary.
+# Configured command dependencies, PAM sessions and mail output remain unaudited.
+annotations {
+    "5bsd.state-requirements" = <<EOD
+{
+  "format": 1,
+  "requirements": [
+    {
+      "name": "daemon-pid",
+      "program": "/usr/sbin/cron",
+      "path": "/var/run/cron.pid",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Create, lock and write daemon PID state; remove it if daemonization fails"
+    },
+    {
+      "name": "job-tables-reader",
+      "program": "/usr/sbin/cron",
+      "path": "/var/cron/tabs",
+      "type": "directory",
+      "lifetime": "persistent",
+      "purpose": "Scan and read per-user scheduled command tables; contents select execution users and commands and require explicit security policy"
+    },
+    {
+      "name": "job-tables-management",
+      "program": "/usr/bin/crontab",
+      "path": "/var/cron/tabs",
+      "type": "directory",
+      "lifetime": "persistent",
+      "purpose": "Create temporary job tables, atomically replace or delete user tables, and update spool directory timestamps; authorization remains independent of this declaration"
+    }
+  ]
+}
 EOD
+}

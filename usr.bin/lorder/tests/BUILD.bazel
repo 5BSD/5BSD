@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+bsd_script_wrapper(name = "lorder_test", body = "lorder_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["lorder_test"], interfaces = {"lorder_test": "atf"}, metadata = {"lorder_test": '{"required_programs":"nm"}'})
+bsd_install_file(name = "test_file", src = ":lorder_test", destination = "/usr/tests/usr.bin/lorder/lorder_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "kyuafile_file", src = ":kyuafile", destination = "/usr/tests/usr.bin/lorder/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":test_file", ":kyuafile_file"], visibility = ["//usr.bin:__subpackages__"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin/lorder": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+

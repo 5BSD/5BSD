@@ -14,14 +14,16 @@
  * only processes sharing the claimer's MAC_CAPABILITY nonce can interact
  * with them.  Isolated vnodes are protected against:
  *
- *   - open / exec                (content access)
+ *   - open / read / write / exec (content access)
  *   - unlink / link / rename     (namespace mutation)
  *   - chmod / chown / chflags / utimes / truncate (metadata mutation)
  *   - stat / access / readlink   (information disclosure)
  *   - connect (AF_UNIX)          (socket access)
  *
- * The claimer may still dup/pass an already-open fd to other
- * processes; only new vnode operations are gated.
+ * Descriptor transfer does not transfer the caller's nonce authorization.
+ * Checked descriptor operations, including read and write, consult current
+ * authority even if the descriptor was acquired before the claim. Data already
+ * copied and existing readable mappings cannot be retracted by revocation.
  *
  * Isolation works for any vnode type: device nodes (character and
  * block), regular files, FIFOs, and Unix domain sockets (connect
@@ -35,6 +37,9 @@
  *     Claim isolation over a vnode.  The caller passes an open fd
  *     to the target in the MAC_CAPABILITY_CALL message (cm_nfds=1).  The
  *     service identifies the vnode from the fd internally.
+ *     A directory claim is not recursive. It gates traversal through that
+ *     vnode, not access through existing descriptors or aliases of unclaimed
+ *     children. Child content needs its own claim or other enforced boundary.
  *     The caller's nonce becomes the owner.  Fails with EBUSY if
  *     already claimed by a different nonce.  Re-claiming the same
  *     vnode from the same nonce transfers ownership to the calling
@@ -89,7 +94,9 @@
  *   Claims are held by the MAC_CAPABILITY instance fd.  When the claimer's
  *   MAC_CAPABILITY connection closes (instance revoke), all claims owned by
  *   that instance are automatically released.  This prevents stale
- *   claims from orphaned supervisors.
+ *   claims from orphaned supervisors. This lifetime is deliberately transient:
+ *   closing the owner removes the restriction, rather than leaving a mandatory
+ *   deny boundary. It must not be used as persistent BIP storage protection.
  *
  *   If the claimer exec()s, its nonce rotates and it loses the
  *   ability to release via a new connection — but the original

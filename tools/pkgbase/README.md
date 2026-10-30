@@ -7,7 +7,7 @@ the script accepts an mtree file in a format that's returned by
 
 synopsis:
 ```
-metalog_reader.lua [-h] [-a | -c | -p [-count] [-size] [-f...]] [-W...] [-v] metalog-path
+metalog_reader.lua [-h] [-a | -c | -u | -p [-count] [-size] [-f...]] [-W...] [-v] metalog-path
 ```
 
 options:
@@ -18,6 +18,11 @@ options:
   conflicting metadata
   *  `-Wcheck-notagdir` entries with dir type and no tags will be also included
      the first time they appear (1)
+* `-u` lists sorted, unique non-directory paths with no nonempty `package=`
+  assignment on any record. METALOG pathname escaping is preserved. This is a
+  review report, not a failure verdict: generated files require comparison with
+  constructor declarations and receipts. It does not account for files absent
+  from METALOG or establish runtime coverage.
 * `-p` list all package names found in the file as exactly specified by
   `tags=package=...`
   * `-count` display the number of files of the package
@@ -59,3 +64,6 @@ some examples:
 ```
 by default, this is not warned. if the option is enabled, this will be warned
 as the second line sufficiently covers the first line.
+
+Run `/usr/local/bin/python3.12 -B release/tests/metalog_unassigned_test.py`
+from the source root for the unassigned-report regression tests.

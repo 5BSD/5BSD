@@ -300,8 +300,25 @@ T_flag_mtree_cleanup()
 	common_cleanup
 }
 
+atf_test_case escaped_contents
+escaped_contents_body()
+{
+    task_makefs=$(atf_config_get makefs makefs)
+    mkdir 'source directory'
+    printf 'space payload\n' > 'source directory/payload'
+    printf 'literal command-looking filename\n' > '`touch injected`'
+    cat > manifest <<-'EOF'
+	. type=dir uid=0 gid=0 mode=0755
+	./space type=file uid=0 gid=0 mode=0444 contents=source\040directory/payload
+	./literal type=file uid=0 gid=0 mode=0444 contents=\140touch\040injected\140
+	EOF
+    atf_check -s exit:0 -o ignore -e empty "$task_makefs" -t ffs -o version=2 image.ufs manifest
+    [ ! -e injected ] || atf_fail 'escaped filename was executed'
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case escaped_contents
 	atf_add_test_case autocalculate_image_size
 
 	atf_add_test_case D_flag

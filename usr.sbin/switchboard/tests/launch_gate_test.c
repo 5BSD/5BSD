@@ -33,6 +33,7 @@ fault_write(int fd, const void *bytes, size_t length)
 #undef kevent
 
 struct switchboard_state sd;
+const char *switchboard_run_dir = "run";
 void
 svc_authority_revoke_unit(const struct svc_runtime *svc __unused)
 {
@@ -133,8 +134,98 @@ ATF_TC_BODY(launch_gate_failures, tc)
 		close(kq);
 	}
 }
+ATF_TC(launch_abort_containers);
+ATF_TC_HEAD(launch_abort_containers, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "20");
+	atf_tc_set_md_var(tc, "descr",
+	    "Actual launch abort removes pre-fork storage but retains post-fork storage");
+}
+ATF_TC_BODY(launch_abort_containers, tc)
+{
+	struct svc_runtime svc;
+	struct stat st;
+	char leaf[NAME_MAX + 1], byte;
+	int parent, container, fresh, gate[2], proof[2], pd, status;
+	pid_t child;
+
+	fault = 0;
+	ATF_REQUIRE_EQ(0, mkdir("run", 0700));
+	parent = open("run", O_DIRECTORY | O_RDONLY);
+	ATF_REQUIRE(parent >= 0);
+	for (unsigned forked = 0; forked != 2; forked++) {
+		memset(&svc, 0, sizeof(svc));
+		strlcpy(svc.manifest.label, "org.test.abort", sizeof(svc.manifest.label));
+		svc.owner_uid = (uid_t)-1;
+		ATF_REQUIRE_EQ(0, sb_run_container_leaf(svc.manifest.label,
+		    svc.owner_uid, leaf, sizeof(leaf)));
+		container = svc_run_container_open(svc.manifest.label,
+		    svc.owner_uid, getuid(), getgid());
+		ATF_REQUIRE(container >= 0);
+		svc.launch = calloc(1, sizeof(*svc.launch));
+		ATF_REQUIRE(svc.launch != NULL);
+		svc.launch->capsule_end = svc.launch->child_end = -1;
+		svc.launch->coalition_fd = svc.launch->capprotect_fd = -1;
+		svc.launch->nservices = 1;
+		svc.launch->service_fds[0] = container;
+		svc.launch->forked = forked != 0;
+		if (forked) {
+			ATF_REQUIRE_EQ(0, pipe(gate));
+			ATF_REQUIRE_EQ(0, pipe(proof));
+			child = pdfork(&pd, PD_CLOEXEC);
+			ATF_REQUIRE(child >= 0);
+			if (child == 0) {
+				int output;
+				close(gate[1]);
+				close(proof[0]);
+				if (read(gate[0], &byte, 1) != 1)
+					_exit(1);
+				output = openat(container, "child-state",
+				    O_CREAT | O_EXCL | O_WRONLY, 0600);
+				if (output == -1)
+					_exit(2);
+				close(output);
+				if (write(proof[1], "X", 1) != 1)
+					_exit(3);
+				_exit(0);
+			}
+			close(gate[0]);
+			close(proof[1]);
+		}
+		svc_launch_abort(&svc, EIO, -1);
+		ATF_REQUIRE(svc.launch == NULL);
+		ATF_CHECK_EQ(SVC_STATE_STOPPED, svc.state);
+		ATF_REQUIRE_ERRNO(EBADF, fcntl(container, F_GETFD) == -1);
+		if (forked) {
+			ATF_REQUIRE_EQ(0, fstatat(parent, leaf, &st, 0));
+			ATF_REQUIRE_ERRNO(EEXIST, svc_run_container_open(
+			    svc.manifest.label, svc.owner_uid, getuid(), getgid()) == -1);
+			ATF_REQUIRE_EQ(1, write(gate[1], "R", 1));
+			ATF_REQUIRE_EQ(1, read(proof[0], &byte, 1));
+			ATF_CHECK_EQ('X', byte);
+			ATF_REQUIRE_EQ(0, pdwait(pd, &status, WEXITED, NULL, NULL));
+			ATF_REQUIRE(WIFEXITED(status));
+			ATF_CHECK_EQ(0, WEXITSTATUS(status));
+			close(pd);
+			close(gate[1]);
+			close(proof[0]);
+			/* Model only the call after confirmed child exit, not coalition
+			 * completion: that is covered by the supervisor integration gate. */
+			svc_run_container_remove(svc.manifest.label, svc.owner_uid);
+		}
+		ATF_REQUIRE_ERRNO(ENOENT, fstatat(parent, leaf, &st, 0) == -1);
+		fresh = svc_run_container_open(svc.manifest.label,
+		    svc.owner_uid, getuid(), getgid());
+		ATF_REQUIRE(fresh >= 0);
+		close(fresh);
+		svc_run_container_remove(svc.manifest.label, svc.owner_uid);
+	}
+	close(parent);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, launch_gate_failures);
+	ATF_TP_ADD_TC(tp, launch_abort_containers);
 	return (atf_no_error());
 }

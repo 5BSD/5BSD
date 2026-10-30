@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["include/siphash/SipHash.h"], strip_include_prefix = "include", visibility = ["//contrib/llvm-project/llvm/lib:__pkg__"])

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+# This maintained script starts installed inetd/tftpd and requires isolation.
+bsd_script_wrapper(name = "tftp_test", body = "tftp_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["tftp_test"],
+    interfaces = {"tftp_test": "atf"}, metadata = {"tftp_test": '{"is_exclusive":"true"}'})
+bsd_install_file(name = "install_script", src = ":tftp_test",
+    destination = "/usr/tests/usr.bin/tftp/tftp_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/tftp/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_kyuafile"],
+    visibility = ["//usr.bin/tftp:__pkg__"])

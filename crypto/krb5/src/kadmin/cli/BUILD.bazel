@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["keytab.c", "k5srvutil.sh", "keytab_local.c", "kadmin.c", "ss_wrapper.c", "getdate.y", "kadmin_ct.ct"])
+cc_library(name = "headers", hdrs = ["kadmin.h"], includes = ["."], deps = ["//crypto/krb5/src/include:internal_headers"], visibility = ["//krb5:__subpackages__"])
+
+# Included by keytab_local.c with KADMIN_LOCAL; do not compile separately.
+cc_library(name = "local_keytab_source", textual_hdrs = ["keytab.c"],
+    deps = [":headers", "//crypto/krb5/src/lib/kadm5:headers"],
+    visibility = ["//krb5/usr.sbin/kadmin.local:__pkg__"])

@@ -1,6 +1,6 @@
 WORLDPACKAGE=	mac-abac
 PKG_SETS=	minimal
-SUBPACKAGES=	dbg man
+SUBPACKAGES=	dbg dev man
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=		${SRCTOP}/release/packages/ucl/mac-abac-all.ucl
 

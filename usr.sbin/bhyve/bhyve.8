@@ -935,6 +935,7 @@ It exposes one control virtqueue for session management and one or more data
 virtqueues for crypto requests.
 The advertised services are symmetric CIPHER (AES-CBC), HASH (SHA-256),
 MAC (HMAC-SHA-256) and AEAD (AES-GCM); the host backend is OpenSSL.
+This device is available only when built with OpenSSL support.
 The optional
 .Cm queues
 setting selects the number of data virtqueues (1 to 8, default 1) and the

@@ -48,6 +48,11 @@ FILESYSTEMCMP_SCHEMAPACKAGE= libfilesystemcmp-dev
 FILESGROUPS+= FILESYSTEMCMP_NOTICE
 FILESYSTEMCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FILESYSTEMCMP_NOTICEDIR= /usr/share/licenses/libfilesystemcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FILESYSTEMCMP_NOTICEPARENT
+FILESYSTEMCMP_NOTICEPARENT= ${FILESYSTEMCMP_NOTICEDIR:H}
+FILESYSTEMCMP_NOTICEPARENTTAGS= ${FILESYSTEMCMP_NOTICEDIRTAGS}
+
 INCS=	filesystemcmp.h
 LIBADD=	pthread service trustedzfs fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

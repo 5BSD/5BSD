@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load(":events.bzl", "bsd_pmu_events")
+cc_binary(name = "jevents", srcs = ["jevents.c", "jsmn.c", "json.c", "jsmn.h", "json.h", "list.h", "pmu-events.h"],
+    copts = ["-Wno-cast-qual"], linkstatic = True, visibility = ["//visibility:public"])
+cc_library(name = "headers", hdrs = ["pmu-events.h"], strip_include_prefix = ".", include_prefix = "pmu-events", visibility = ["//lib/libpmc:__pkg__"])
+# jevents recursively reads each architecture and the shared test event tree.
+# A glob records the full data inventory, including new files, in Bazel's graph.
+[bsd_pmu_events(name = "events_" + arch, architecture = arch,
+    mapfile = "arch/" + arch + "/mapfile.csv",
+    event_files = glob(["arch/" + arch + "/**", "arch/test/**"]),
+    runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    jevents = ":jevents", output = arch + "/libpmc_events.c",
+    visibility = ["//visibility:public"])
+ for arch in ["x86", "arm64"]]
+
+# RISC-V has no event dataset; match Make's explicit EVENT_ARCH=none.
+bsd_pmu_events(
+    name = "events_riscv64",
+    architecture = "none",
+    jevents = ":jevents",
+    runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    output = "riscv64/libpmc_events.c",
+    visibility = ["//visibility:public"],
+)

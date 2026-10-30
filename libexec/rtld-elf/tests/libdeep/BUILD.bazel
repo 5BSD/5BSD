@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["libdeep.c"], visibility = ["//libexec/rtld-elf/tests/rtld_deepbind:__pkg__"])

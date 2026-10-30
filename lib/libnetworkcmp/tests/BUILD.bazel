@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+[cc_binary(name = name, srcs = sources,
+    deps = ["//lib/libnetworkcmp:networkcmp", "//lib/libnetworkcmp:test_source_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/libservice:service",
+        "//lib/atf/libatf-c:atf_c"] + (["//lib/libservice:bootstrap_headers"] if name == "networkcmp_test" else []),
+    linkstatic = True, linkopts = ["-static"])
+ for name, sources in {
+    "networkcmp_test": ["networkcmp_test.c", "networkcmp_test_impl.c"],
+    "client_lifecycle_test": ["client_lifecycle_test.c", "fake_service.c", "fake_service.h", "networkcmp_client_impl.c"],
+    "state_client_test": ["state_client_test.c"],
+ }.items()]
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    case_timeout = 300 if name == "networkcmp_test" else 120,
+    test_metadata = "{}" if name == "networkcmp_test" else '{"required_user":"root"}',
+    tags = ["manual", "requires-matching-kernel"],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["networkcmp_test", "client_lifecycle_test", "state_client_test"]]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "libnetworkcmp-tests", bindir = TESTDIR) for p in BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
+    interfaces = {p: "atf" for p in ATF_PROGRAMS},
+    metadata = {n: '{"required_user":"root","timeout":"120"}' for n in ["client_lifecycle_test", "state_client_test"]})
+_FILES = [(":kyuafile", TESTDIR + "/Kyuafile")] + [
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/libnetworkcmp-tests/fuchsia/" + n) for n in ["LICENSE", "PATENTS"]]
+[bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libnetworkcmp-tests"])
+ for i, (source, dest) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + str(i) for i in range(len(_FILES))],
+    visibility = ["//lib/libnetworkcmp:__pkg__"])

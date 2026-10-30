@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['capability-services.d'], visibility = ["//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDNotify/tests:__pkg__", "//usr.sbin/switchboard/tests:__pkg__"])

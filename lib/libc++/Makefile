@@ -83,7 +83,10 @@ CXXRT_SRCS+=	typeinfo.cc
 .for _S in ${CXXRT_SRCS}
 CLEANFILES+=	cxxrt_${_S}
 STATICOBJS+=	cxxrt_${_S:R}.o
-cxxrt_${_S}: ${_LIBCXXRTDIR}/${_S} .NOMETA
+# Share the source alias/origin contract with native build graph exporters.
+STATICOBJ_SOURCE.cxxrt_${_S:R}.o= cxxrt_${_S}
+STATICOBJ_ORIGIN.cxxrt_${_S:R}.o= ${_LIBCXXRTDIR}/${_S}
+${STATICOBJ_SOURCE.cxxrt_${_S:R}.o}: ${STATICOBJ_ORIGIN.cxxrt_${_S:R}.o} .NOMETA
 	ln -sf ${.ALLSRC} ${.TARGET}
 .endfor
 

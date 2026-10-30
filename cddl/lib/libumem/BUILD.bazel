@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "umem", srcs = ["//cddl/compat/opensolaris/lib/libumem:umem.c"],
+    deps = ["//cddl/compat/opensolaris/lib/libumem:headers"],
+    local_defines = ["NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":umem"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "umem_shared", deps = [":umem"], shared_lib_name = "libumem.so.2",
+    user_link_flags = ["-Wl,-soname,libumem.so.2", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_test(name = "allocation_" + variant, srcs = ["allocation_test.c"],
+    deps = ([":archive_link", "//cddl/compat/opensolaris/lib/libumem:headers"] if variant == "static" else [":umem"]),
+    dynamic_deps = [] if variant == "static" else [":umem_shared"],
+    features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
+    size = "small", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

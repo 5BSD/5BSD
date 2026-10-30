@@ -97,8 +97,8 @@ digest(struct executable *x)
 {
 	EVP_MD_CTX *mdctx;
 	const EVP_MD *md;
-	size_t sum_of_bytes_hashed;
-	int i, ok;
+	size_t sum_of_bytes_hashed, certificates;
+	int order[MAX_SECTIONS], count, i, j, section, ok;
 
 	/*
 	 * Windows Authenticode Portable Executable Signature Format
@@ -148,16 +148,30 @@ digest(struct executable *x)
 	    x->x_headers_len -
 	    (x->x_certificate_entry_off + x->x_certificate_entry_len));
 
-	/*
-	 * Then, each section in turn, as specified in the PE Section Table.
-	 *
-	 * XXX: Sorting.
+	/* Authenticode hashes nonempty sections in ascending file-offset order,
+	 * which need not match section-table order. Keep the parsed table intact.
 	 */
-	sum_of_bytes_hashed = x->x_headers_len;
+	if (x->x_nsections < 0 || x->x_nsections > MAX_SECTIONS)
+		errx(1, "invalid section count");
+	count = 0;
 	for (i = 0; i < x->x_nsections; i++) {
+		if (x->x_section_len[i] == 0)
+			continue;
+		for (j = count; j > 0 &&
+		    x->x_section_off[order[j - 1]] > x->x_section_off[i]; j--)
+			order[j] = order[j - 1];
+		order[j] = i;
+		count++;
+	}
+	sum_of_bytes_hashed = x->x_headers_len;
+	for (i = 0; i < count; i++) {
+		section = order[i];
+		if (sum_of_bytes_hashed > x->x_len ||
+		    x->x_section_len[section] > x->x_len - sum_of_bytes_hashed)
+			errx(1, "number of bytes hashed is larger than file size");
 		digest_range(x, mdctx,
-		    x->x_section_off[i], x->x_section_len[i]);
-		sum_of_bytes_hashed += x->x_section_len[i];
+		    x->x_section_off[section], x->x_section_len[section]);
+		sum_of_bytes_hashed += x->x_section_len[section];
 	}
 
 	/*
@@ -169,10 +183,12 @@ digest(struct executable *x)
 	/*
 	 * I can't really explain this one; just do what the spec says.
 	 */
-	if (sum_of_bytes_hashed < x->x_len) {
+	certificates = signature_size(x);
+	if (certificates > x->x_len - sum_of_bytes_hashed)
+		errx(1, "certificate size exceeds remaining file data");
+	if (sum_of_bytes_hashed < x->x_len - certificates)
 		digest_range(x, mdctx, sum_of_bytes_hashed,
-		    x->x_len - (signature_size(x) + sum_of_bytes_hashed));
-	}
+		    x->x_len - certificates - sum_of_bytes_hashed);
 
 	ok = EVP_DigestFinal_ex(mdctx, x->x_digest, &x->x_digest_len);
 	if (ok == 0) {

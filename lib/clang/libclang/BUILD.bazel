@@ -1,0 +1,435 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+
+# Maintained Clang diagnostic families and modes; each output is its own action.
+_DIAGNOSTIC_COMPONENTS = ["AST", "Analysis", "Comment", "Common", "CrossTU", "Driver", "Frontend", "InstallAPI", "Lex", "Parse", "Refactoring", "Sema", "Serialization"]
+_DIAGNOSTIC_MODES = {"CompatIDs": "-gen-clang-diags-compat-ids", "Enums": "-gen-clang-diags-enums", "Kinds": "-gen-clang-diags-defs", "Interface": "-gen-clang-diags-iface"}
+_DIAGNOSTICS = {"Diagnostic" + component + suffix: [flag, "-clang-component=" + component] for component in _DIAGNOSTIC_COMPONENTS for suffix, flag in _DIAGNOSTIC_MODES.items()} | {
+    "DiagnosticAllCompatIDs": ["-gen-clang-diags-compat-ids"],
+    "DiagnosticGroups": ["-gen-clang-diag-groups"],
+    "DiagnosticIndexName": ["-gen-clang-diags-index-name"],
+}
+[bsd_tablegen(
+    name = name,
+    src = "//contrib/llvm-project/clang/include:clang/Basic/Diagnostic.td",
+    includes = ["//contrib/llvm-project/clang/include:diagnostic_definitions"],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/Basic"],
+    flags = flags,
+    output = "clang/Basic/" + name + ".inc",
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for name, flags in _DIAGNOSTICS.items()]
+cc_library(name = "diagnostic_headers", hdrs = [":" + name for name in _DIAGNOSTICS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "diagnostic_outputs", srcs = [":" + name for name in _DIAGNOSTICS], visibility = ["//visibility:public"])
+
+_ATTRIBUTES = {
+    "clang/Sema/AttrTemplateInstantiate.inc": "-gen-clang-attr-template-instantiate",
+    "clang/Parse/AttrParserStringSwitches.inc": "-gen-clang-attr-parser-string-switches",
+    "clang/Parse/AttrSubMatchRulesParserStringSwitches.inc": "-gen-clang-attr-subject-match-rules-parser-string-switches",
+    "clang/AST/AttrImpl.inc": "-gen-clang-attr-impl",
+    "clang/AST/AttrNodeTraverse.inc": "-gen-clang-attr-node-traverse",
+    "clang/AST/AttrTextNodeDump.inc": "-gen-clang-attr-text-node-dump",
+    "clang/AST/AttrVisitor.inc": "-gen-clang-attr-ast-visitor",
+    "clang/AST/Attrs.inc": "-gen-clang-attr-classes",
+    "clang/Basic/AttrHasAttributeImpl.inc": "-gen-clang-attr-has-attribute-impl",
+    "clang/Basic/AttrList.inc": "-gen-clang-attr-list",
+    "clang/Basic/AttrParsedAttrList.inc": "-gen-clang-attr-parsed-attr-list",
+    "clang/Basic/AttrSubMatchRulesList.inc": "-gen-clang-attr-subject-match-rule-list",
+    "clang/Basic/AttributeSpellingList.inc": "-gen-attribute-spelling-list",
+    "clang/Basic/CXX11AttributeInfo.inc": "-gen-cxx11-attribute-info",
+    "clang/Basic/RegularKeywordAttrInfo.inc": "-gen-clang-regular-keyword-attr-info",
+    "clang/Sema/AttrParsedAttrImpl.inc": "-gen-clang-attr-parsed-attr-impl",
+    "clang/Sema/AttrParsedAttrKinds.inc": "-gen-clang-attr-parsed-attr-kinds",
+    "clang/Sema/AttrParsedAttrList.inc": "-gen-clang-attr-parsed-attr-list",
+    "clang/Sema/AttrSpellingListIndex.inc": "-gen-clang-attr-spelling-index",
+    "clang/Serialization/AttrPCHRead.inc": "-gen-clang-attr-pch-read",
+    "clang/Serialization/AttrPCHWrite.inc": "-gen-clang-attr-pch-write"
+}
+[bsd_tablegen(
+    name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:clang/Basic/Attr.td",
+    includes = ["//contrib/llvm-project/clang/include:attribute_definitions"],
+    include_dirs = ["contrib/llvm-project/clang/include"],
+    flags = [flag], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+    visibility = ["//usr.bin/clang/clang-tblgen:__pkg__"],
+) for output, flag in _ATTRIBUTES.items()]
+cc_library(name = "attribute_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "attribute_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ATTRIBUTES], visibility = ["//visibility:public"])
+
+_AST_DEFINITIONS = {
+    "clang/AST/AbstractBasicReader.inc": [
+        "-gen-clang-basic-reader",
+        "clang/AST/PropertiesBase.td",
+        ""
+    ],
+    "clang/AST/AbstractBasicWriter.inc": [
+        "-gen-clang-basic-writer",
+        "clang/AST/PropertiesBase.td",
+        ""
+    ],
+    "clang/AST/AbstractTypeReader.inc": [
+        "-gen-clang-type-reader",
+        "clang/AST/TypeProperties.td",
+        "//contrib/llvm-project/clang/include:ast_TypeProperties_inputs"
+    ],
+    "clang/AST/AbstractTypeWriter.inc": [
+        "-gen-clang-type-writer",
+        "clang/AST/TypeProperties.td",
+        "//contrib/llvm-project/clang/include:ast_TypeProperties_inputs"
+    ],
+    "clang/AST/CommentCommandInfo.inc": [
+        "-gen-clang-comment-command-info",
+        "clang/AST/CommentCommands.td",
+        ""
+    ],
+    "clang/AST/CommentCommandList.inc": [
+        "-gen-clang-comment-command-list",
+        "clang/AST/CommentCommands.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLNamedCharacterReferences.inc": [
+        "-gen-clang-comment-html-named-character-references",
+        "clang/AST/CommentHTMLNamedCharacterReferences.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLTags.inc": [
+        "-gen-clang-comment-html-tags",
+        "clang/AST/CommentHTMLTags.td",
+        ""
+    ],
+    "clang/AST/CommentHTMLTagsProperties.inc": [
+        "-gen-clang-comment-html-tags-properties",
+        "clang/AST/CommentHTMLTags.td",
+        ""
+    ],
+    "clang/AST/CommentNodes.inc": [
+        "-gen-clang-comment-nodes",
+        "clang/Basic/CommentNodes.td",
+        "//contrib/llvm-project/clang/include:ast_CommentNodes_inputs"
+    ],
+    "clang/AST/DeclNodes.inc": [
+        "-gen-clang-decl-nodes",
+        "clang/Basic/DeclNodes.td",
+        "//contrib/llvm-project/clang/include:ast_DeclNodes_inputs"
+    ],
+    "clang/AST/StmtDataCollectors.inc": [
+        "-gen-clang-data-collectors",
+        "clang/AST/StmtDataCollectors.td",
+        ""
+    ],
+    "clang/AST/StmtNodes.inc": [
+        "-gen-clang-stmt-nodes",
+        "clang/Basic/StmtNodes.td",
+        "//contrib/llvm-project/clang/include:ast_StmtNodes_inputs"
+    ],
+    "clang/AST/TypeNodes.inc": [
+        "-gen-clang-type-nodes",
+        "clang/Basic/TypeNodes.td",
+        "//contrib/llvm-project/clang/include:ast_TypeNodes_inputs"
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include"], flags = [config[0]],
+    output = output, tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _AST_DEFINITIONS.items()]
+cc_library(name = "ast_definition_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "ast_definition_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _AST_DEFINITIONS], visibility = ["//visibility:public"])
+
+_ARCH_BUILTINS = {
+    "clang/Basic/arm_cde_builtin_aliases.inc": [
+        "-gen-arm-cde-builtin-aliases",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtin_cg.inc": [
+        "-gen-arm-cde-builtin-codegen",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtin_sema.inc": [
+        "-gen-arm-cde-builtin-sema",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_cde_builtins.inc": [
+        "-gen-arm-cde-builtin-def",
+        "clang/Basic/arm_cde.td",
+        "//contrib/llvm-project/clang/include:arm_cde_inputs"
+    ],
+    "clang/Basic/arm_fp16.inc": [
+        "-gen-arm-neon-sema",
+        "clang/Basic/arm_fp16.td",
+        "//contrib/llvm-project/clang/include:arm_fp16_inputs"
+    ],
+    "clang/Basic/arm_immcheck_types.inc": [
+        "-gen-arm-immcheck-types",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_aliases.inc": [
+        "-gen-arm-mve-builtin-aliases",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_cg.inc": [
+        "-gen-arm-mve-builtin-codegen",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtin_sema.inc": [
+        "-gen-arm-mve-builtin-sema",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_mve_builtins.inc": [
+        "-gen-arm-mve-builtin-def",
+        "clang/Basic/arm_mve.td",
+        "//contrib/llvm-project/clang/include:arm_mve_inputs"
+    ],
+    "clang/Basic/arm_neon.inc": [
+        "-gen-arm-neon-sema",
+        "clang/Basic/arm_neon.td",
+        "//contrib/llvm-project/clang/include:arm_neon_inputs"
+    ],
+    "clang/Basic/arm_sme_builtin_cg.inc": [
+        "-gen-arm-sme-builtin-codegen",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_builtins.inc": [
+        "-gen-arm-sme-builtins",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_builtins_za_state.inc": [
+        "-gen-arm-sme-builtin-za-state",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_sema_rangechecks.inc": [
+        "-gen-arm-sme-sema-rangechecks",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sme_streaming_attrs.inc": [
+        "-gen-arm-sme-streaming-attrs",
+        "clang/Basic/arm_sme.td",
+        "//contrib/llvm-project/clang/include:arm_sme_inputs"
+    ],
+    "clang/Basic/arm_sve_builtin_cg.inc": [
+        "-gen-arm-sve-builtin-codegen",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_builtins.inc": [
+        "-gen-arm-sve-builtins",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_sema_rangechecks.inc": [
+        "-gen-arm-sve-sema-rangechecks",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_streaming_attrs.inc": [
+        "-gen-arm-sve-streaming-attrs",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/arm_sve_typeflags.inc": [
+        "-gen-arm-sve-typeflags",
+        "clang/Basic/arm_sve.td",
+        "//contrib/llvm-project/clang/include:arm_sve_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtin_cg.inc": [
+        "-gen-riscv-andes-vector-builtin-codegen",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtin_sema.inc": [
+        "-gen-riscv-andes-vector-builtin-sema",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_andes_vector_builtins.inc": [
+        "-gen-riscv-andes-vector-builtins",
+        "clang/Basic/riscv_andes_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_andes_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtin_cg.inc": [
+        "-gen-riscv-sifive-vector-builtin-codegen",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtin_sema.inc": [
+        "-gen-riscv-sifive-vector-builtin-sema",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_sifive_vector_builtins.inc": [
+        "-gen-riscv-sifive-vector-builtins",
+        "clang/Basic/riscv_sifive_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_sifive_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtin_cg.inc": [
+        "-gen-riscv-vector-builtin-codegen",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtin_sema.inc": [
+        "-gen-riscv-vector-builtin-sema",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ],
+    "clang/Basic/riscv_vector_builtins.inc": [
+        "-gen-riscv-vector-builtins",
+        "clang/Basic/riscv_vector.td",
+        "//contrib/llvm-project/clang/include:riscv_vector_inputs"
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/Basic"],
+    flags = [config[0]], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _ARCH_BUILTINS.items()]
+cc_library(name = "architecture_builtin_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "architecture_builtin_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _ARCH_BUILTINS], visibility = ["//visibility:public"])
+
+_BUILTIN_TABLES = {
+    "clang/Basic/Builtins.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/Builtins.td",
+        "//contrib/llvm-project/clang/include:Builtins_inputs"
+    ],
+    "clang/Basic/BuiltinsBPF.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsBPF.td",
+        "//contrib/llvm-project/clang/include:BuiltinsBPF_inputs"
+    ],
+    "clang/Basic/BuiltinsDirectX.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsDirectX.td",
+        "//contrib/llvm-project/clang/include:BuiltinsDirectX_inputs"
+    ],
+    "clang/Basic/BuiltinsHexagon.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsHexagon.td",
+        "//contrib/llvm-project/clang/include:BuiltinsHexagon_inputs"
+    ],
+    "clang/Basic/BuiltinsNVPTX.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsNVPTX.td",
+        "//contrib/llvm-project/clang/include:BuiltinsNVPTX_inputs"
+    ],
+    "clang/Basic/BuiltinsRISCV.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsRISCV.td",
+        "//contrib/llvm-project/clang/include:BuiltinsRISCV_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVCommon.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVCommon.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVCommon_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVCL.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVCL.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVCL_inputs"
+    ],
+    "clang/Basic/BuiltinsSPIRVVK.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsSPIRVVK.td",
+        "//contrib/llvm-project/clang/include:BuiltinsSPIRVVK_inputs"
+    ],
+    "clang/Basic/BuiltinsX86.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsX86.td",
+        "//contrib/llvm-project/clang/include:BuiltinsX86_inputs"
+    ],
+    "clang/Basic/BuiltinsX86_64.inc": [
+        "-gen-clang-builtins",
+        "clang/Basic/BuiltinsX86_64.td",
+        "//contrib/llvm-project/clang/include:BuiltinsX86_64_inputs"
+    ],
+    "clang/Basic/BuiltinTemplates.inc": [
+        "-gen-clang-builtin-templates",
+        "clang/Basic/BuiltinTemplates.td",
+        ""
+    ]
+}
+[bsd_tablegen(name = output.replace("/", "_").removesuffix(".inc"),
+    src = "//contrib/llvm-project/clang/include:" + config[1],
+    includes = [config[2]] if config[2] else [],
+    include_dirs = ["contrib/llvm-project/clang/include"],
+    flags = [config[0]], output = output,
+    tool = "//usr.bin/clang/clang-tblgen:bootstrap",
+) for output, config in _BUILTIN_TABLES.items()]
+cc_library(name = "builtin_table_headers", hdrs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "builtin_table_outputs", srcs = [":" + output.replace("/", "_").removesuffix(".inc") for output in _BUILTIN_TABLES], visibility = ["//visibility:public"])
+
+bsd_tablegen(name = "checker_definitions", src = "//contrib/llvm-project/clang/include:clang/StaticAnalyzer/Checkers/Checkers.td",
+    includes = ["//contrib/llvm-project/clang/include:clang/StaticAnalyzer/Checkers/CheckerBase.td"],
+    include_dirs = ["contrib/llvm-project/clang/include/clang/StaticAnalyzer/Checkers"],
+    flags = ["-gen-clang-sa-checkers"], output = "clang/StaticAnalyzer/Checkers/Checkers.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "opcode_definitions", src = "//contrib/llvm-project/clang/lib/AST:ByteCode/Opcodes.td",
+    flags = ["-gen-clang-opcodes"], output = "Opcodes.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "opencl_definitions", src = "//contrib/llvm-project/clang/lib/Sema:OpenCLBuiltins.td",
+    flags = ["-gen-clang-opencl-builtins"], output = "OpenCLBuiltins.inc", tool = "//usr.bin/clang/clang-tblgen:bootstrap")
+bsd_tablegen(name = "driver_options", src = "//contrib/llvm-project/clang/include:clang/Driver/Options.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Option/OptParser.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/clang/include/clang/Driver"],
+    flags = ["-gen-opt-parser-defs"], output = "clang/Driver/Options.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+_REMAINING_DEFINITIONS = [":checker_definitions", ":opcode_definitions", ":opencl_definitions", ":driver_options"]
+cc_library(name = "remaining_definition_headers", hdrs = _REMAINING_DEFINITIONS, strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "generated_headers", deps = [":diagnostic_headers", ":attribute_headers", ":ast_definition_headers", ":architecture_builtin_headers", ":builtin_table_headers", ":remaining_definition_headers"], visibility = ["//visibility:public"])
+filegroup(name = "generated_outputs", srcs = [":diagnostic_outputs", ":attribute_outputs", ":ast_definition_outputs", ":architecture_builtin_outputs", ":builtin_table_outputs"] + _REMAINING_DEFINITIONS, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native object aggregate; shared linkage/install is not yet qualified.
+_COMPONENTS = [
+    "//contrib/llvm-project/clang/lib/APINotes:apinotes",
+    "//contrib/llvm-project/clang/lib/AST:ast",
+    "//contrib/llvm-project/clang/lib/ASTMatchers:astmatchers",
+    "//contrib/llvm-project/clang/lib/Analysis:analysis",
+    "//contrib/llvm-project/clang/lib/Basic:basic",
+    "//contrib/llvm-project/clang/lib/CodeGen:codegen",
+    "//contrib/llvm-project/clang/lib/Driver:driver",
+    "//contrib/llvm-project/clang/lib/Edit:edit",
+    "//contrib/llvm-project/clang/lib/ExtractAPI:extractapi",
+    "//contrib/llvm-project/clang/lib/Format:format",
+    "//contrib/llvm-project/clang/lib/Frontend:frontend",
+    "//contrib/llvm-project/clang/lib/FrontendTool:frontendtool",
+    "//contrib/llvm-project/clang/lib/Index:index",
+    "//contrib/llvm-project/clang/lib/InstallAPI:installapi",
+    "//contrib/llvm-project/clang/lib/Lex:lex",
+    "//contrib/llvm-project/clang/lib/Parse:parse",
+    "//contrib/llvm-project/clang/lib/Rewrite:rewrite",
+    "//contrib/llvm-project/clang/lib/Sema:sema",
+    "//contrib/llvm-project/clang/lib/Serialization:serialization",
+    "//contrib/llvm-project/clang/lib/Support:support",
+    "//contrib/llvm-project/clang/lib/Tooling:tooling",
+    "//contrib/llvm-project/clang/lib/Basic:target_selection"
+] + select({"//tools/build/bazel/config:clang_full_enabled": ["//contrib/llvm-project/clang/lib/CrossTU:crosstu", "//contrib/llvm-project/clang/lib/StaticAnalyzer:static_analyzer"], "//conditions:default": []})
+bsd_component_archive(name = "pic_archive", groups = _COMPONENTS, pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_component_sources(name = "source_inventory", groups = _COMPONENTS, visibility = ["//visibility:public"])
+
+# Installed Clang library owns its selected objects and links native LLVM.
+cc_import(name = "clang", pic_static_library = ":pic_archive",
+    deps = ["//lib/clang/libllvm:llvm", "//lib/libc++:cxx", "//lib/msun:m"],
+    visibility = ["//visibility:public"])
+cc_shared_library(name = "clang_shared", deps = [":clang"],
+    dynamic_deps = ["//lib/clang/libllvm:llvm_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    shared_lib_name = "libprivateclang.so.21",
+    user_link_flags = ["-Wl,-soname,libprivateclang.so.21", "-Wl,--gc-sections", "-Wl,-znow", "-Wl,-zrelro", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
+compiler_shared_installation(name = "install_manifest", library = "clang", major = 21, binary = ":clang_shared")

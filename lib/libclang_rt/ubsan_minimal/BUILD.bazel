@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_test")
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+compiler_rt_archive(stem = "ubsan_minimal",
+    cxx_srcs = ["//contrib/llvm-project/compiler-rt/lib/ubsan_minimal:ubsan_minimal_handlers.cpp"],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers"],
+    defines = ["SANITIZER_COMMON_NO_REDEFINE_BUILTINS"])
+
+cc_import(name = "runtime", static_library = ":static_archive", visibility = ["//visibility:public"])
+[cc_library(name = mode + "_probe", srcs = ["overflow_probe.c"],
+    copts = ["-fsanitize=signed-integer-overflow", "-fsanitize-minimal-runtime"] + (["-fno-sanitize-recover=signed-integer-overflow"] if mode == "abort" else []),
+    local_defines = ["PROBE_NAME=" + mode + "_probe"], testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for mode in ["recover", "abort"]]
+cc_test(name = "runtime_test", srcs = ["runtime_test.c"],
+    deps = [":recover_probe", ":abort_probe", ":runtime"],
+    linkopts = ["-static"], linkstatic = True, size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])

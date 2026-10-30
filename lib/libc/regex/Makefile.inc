@@ -15,3 +15,5 @@ MLINKS+=	regexec.3 regfree.3
 
 MANNODEV+=	re_format.7
 .endif
+
+TEXTUAL_SRCS.regexec.c= ${LIBC_SRCTOP}/regex/engine.c

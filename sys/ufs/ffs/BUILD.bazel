@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ffs_subr.c", "ffs_tables.c"], visibility = ["//lib/libufs:__pkg__", "//sbin/fsdb:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["fs.h", "ffs_extern.h"], includes = ["../.."],
+    deps = ["//sys/ufs/ufs:kernel_headers"], visibility = ["//visibility:public"])

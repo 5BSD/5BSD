@@ -209,7 +209,8 @@ SRCS+=		sha256c.c sha512c.c
 SRCS+=		md5c.c
 CFLAGS.md5c.c+= -DSTANDALONE_SMALL
 
-.if ${DO32:U0} == 0
+# The common standalone library owns the manual page; EFI variants are private.
+.if ${DO32:U0} == 0 && !defined(EFI_TARGET)
 MAN=libsa.3
 .endif
 

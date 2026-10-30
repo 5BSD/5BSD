@@ -1,0 +1,75 @@
+OpenCrypto scatter/gather SHA-256 qualification module
+====================================================
+
+This explicit test module exercises the actual kernel crypto interface. It is
+not a verifier backend, default build target or boot dependency. An optional
+bounded component timing mode is described below.
+Do not install/load it on the build host. Run it only in a disposable test VM
+with a matching kernel after VM execution is authorized. Use an INVARIANTS
+kernel so request-contract checks are active. A hung request must fail the VM
+runner deadline; the module cannot abandon memory still owned by a provider.
+
+Compile only with the configured kernel flags:
+  make -C /usr/src/tools/test/construction -j16 verity-crypto-kernel-compile \
+    VERITY_KERNEL_OBJDIR=/usr/obj/usr/src/amd64.amd64/sys/GENERIC
+
+For the explicit module artifact, supply the matching kernel object directory:
+  make -C /usr/src/tools/test/construction/verity_crypto \
+    MAKEOBJDIRPREFIX=/usr/obj SYSDIR=/usr/src/sys \
+    KERNBUILDDIR=/usr/obj/usr/src/amd64.amd64/sys/GENERIC obj
+  make -C /usr/src/tools/test/construction/verity_crypto -j16 \
+    MAKEOBJDIRPREFIX=/usr/obj SYSDIR=/usr/src/sys \
+    KERNBUILDDIR=/usr/obj/usr/src/amd64.amd64/sys/GENERIC WERROR=-Werror all
+
+In the disposable VM only, choose an installed provider instance using
+  kenv debug.verity_crypto_test.provider=cryptosoft0
+then kldload the staged matching verity_crypto_test.ko by its explicit path.
+Require successful load AND the console result:
+  verity_crypto_test: provider=cryptosoft0 passed=64 expected=64 error=0
+Unload the test module before repeating with aesni0 or another applicable
+provider. The test defaults to cryptosoft0; a missing requested provider fails,
+and a prefix resolving to a different instance fails. Missing acceleration is
+an unavailable matrix row, not evidence that an accelerated provider passed.
+
+The 64 cases comprise SHA256("abc") plus seven salt lengths, three block
+lengths and three payload splits. Each uses one UIO payload for salt and data,
+with a separate iovec for digest storage. No AAD or concatenation allocation is
+used. Scalar SHA-256 computes the reference; the abc vector also checks a fixed
+known digest. Cases check digest equality, unchanged input hash and digest
+boundary sentinels. Salt lengths include zero, SHA-256 block boundaries and the
+verity format maximum. All requests share one session and are fully completed
+before freeing request, session or buffer storage. Dispatch/provider errors,
+including migration/EAGAIN, fail rather than count as passed.
+
+Compile/link success is not runtime qualification. Still required: execute the
+matrix, negative-control validation, provider migration/error injection,
+concurrent request/lifetime tests, and measured dispatch/FPU overhead before
+integrating an accelerated verifier backend. The test does not prove absence
+of provider-internal copies, bounded provider queues, performance or disk I/O.
+
+Optional cost comparison (VM only)
+----------------------------------
+Before loading the module, explicitly set:
+  kenv debug.verity_crypto_test.iterations=2000
+The default is zero (correctness matrix only); negative values or values above
+10000 reject the run before session allocation. After all 64 correctness cases
+pass, the module compares scalar SHA-256 and OpenCrypto for 512-, 4096- and
+65536-byte blocks with a 16-byte salt. It emits three verity_crypto_cost rows.
+Every measured request still checks its digest, unchanged input and output
+sentinels. Require all three rows AND the final error=0 correctness summary;
+partial timing output is not a successful run. Keep the VM runner deadline.
+
+scalar_wall_us covers SHA initialization, salt/data hashing and finalization.
+request_wall_us covers request allocation, completion-lock initialization,
+dispatch, callback/wait, request freeing and lock destruction. The session is
+reused; UIO setup and post-completion correctness checks are outside that timing.
+These are aggregate elapsed times, not CPU times or latency percentiles. Provider
+execution may involve scheduling, FPU setup and internal copying. The experiment
+does not isolate those costs or model concurrent verifier workers. Scalar always
+runs first within a case, so repeat runs and report order/cache limitations.
+
+Reset iterations to zero for ordinary qualification. Test cryptosoft0 and each
+explicit available accelerated instance separately; do not silently substitute a
+provider. No speedup or production suitability is established until those runs
+and the remaining error/lifetime/concurrency qualification succeed. The module
+must never be loaded on the build host by any build-bsd or make target.

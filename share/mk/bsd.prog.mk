@@ -140,6 +140,12 @@ DEBUGFILE= ${PROGNAME}.debug
 
 .sinclude <bsd.capimage.mk>
 
+# Feature notes are part of executable identity. Apply requested bits before
+# debug splitting, installation and signing, never as a stage-tree mutation.
+.if defined(ELF_FEATURES) && !empty(ELF_FEATURES)
+_ELF_FEATURE_EDIT= +${ELF_FEATURES:ts,}
+.endif
+
 .if defined(SRCS)
 
 OBJS+=  ${SRCS:N*.h:${OBJS_SRCS_FILTER:ts:}:S/$/.${OBJ_EXT}/g}
@@ -152,7 +158,9 @@ LLOBJS+=${SRCS:N*.[hsS]:N*.asm:${OBJS_SRCS_FILTER:ts:}:S/$/.llo/g}
 beforelinking: ${OBJS}
 ${PROG_FULL}: beforelinking
 .endif
-${PROG_FULL}: ${OBJS}
+# Source makefiles declare link/feature inputs. Track their removal as well
+# as addition, including when ELF_FEATURES becomes empty on an incremental build.
+${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u}
 .if defined(PROG_CXX)
 	${CXX:N${CCACHE_BIN}} ${CXXFLAGS:N-M*} ${LDFLAGS} -o ${.TARGET} \
 	    ${OBJS} ${LDADD}
@@ -162,6 +170,10 @@ ${PROG_FULL}: ${OBJS}
 .endif
 .if ${MK_CTF} != "no"
 	${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${OBJS}
+.endif
+.if defined(_ELF_FEATURE_EDIT)
+	${ELFCTL} -e ${_ELF_FEATURE_EDIT:Q} ${.TARGET:Q} || \
+	    { status=$$?; rm -f -- ${.TARGET:Q}; exit $$status; }
 .endif
 
 .else	# !defined(SRCS)
@@ -187,7 +199,9 @@ CLEANFILES+=	${PROG}.${OBJ_EXT} ${PROG}.bc ${PROG}.ll
 beforelinking: ${OBJS}
 ${PROG_FULL}: beforelinking
 .endif
-${PROG_FULL}: ${OBJS}
+# Source makefiles declare link/feature inputs. Track their removal as well
+# as addition, including when ELF_FEATURES becomes empty on an incremental build.
+${PROG_FULL}: ${OBJS} ${.MAKE.MAKEFILES:O:u}
 .if defined(PROG_CXX)
 	${CXX:N${CCACHE_BIN}} ${CXXFLAGS:N-M*} ${LDFLAGS} -o ${.TARGET} \
 	    ${OBJS} ${LDADD}
@@ -197,6 +211,10 @@ ${PROG_FULL}: ${OBJS}
 .endif
 .if ${MK_CTF} != "no"
 	${CTFMERGE} ${CTFFLAGS} -o ${.TARGET} ${OBJS}
+.endif
+.if defined(_ELF_FEATURE_EDIT)
+	${ELFCTL} -e ${_ELF_FEATURE_EDIT:Q} ${.TARGET:Q} || \
+	    { status=$$?; rm -f -- ${.TARGET:Q}; exit $$status; }
 .endif
 .endif # !target(${PROG})
 

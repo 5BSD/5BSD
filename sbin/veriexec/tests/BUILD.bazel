@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# The maintained test replaces ioctl with its own recorder; it does not load
+# manifests or change kernel veriexec state.
+cc_binary(name = "manifest_test", srcs = ["manifest_test.c", "//sbin/veriexec:parser_source", "//sbin/veriexec:lexer"],
+    deps = ["//sbin/veriexec:headers", "//lib/libsecureboot:headers", "//lib/atf/libatf-c:atf_c"],
+    local_defines = ["ioctl=veriexec_test_ioctl"],
+    linkstatic = True, features = ["fully_static_link"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+_CASES = ["valid_manifest", "rejects_bad_hash_lengths", "reports_load_failure", "reports_recovered_syntax_error"]
+[bsd_atf_test(name = "native_" + case, case_name = case, interface = "program", body = ":manifest_test",
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_kyuafile", "bsd_install_file")
+utility_installation(name = "install_manifest", program = "manifest_test", manual = "",
+    package = "tests", bindir = "/usr/tests/sbin/veriexec", extra_entries = [":install_kyuafile"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["manifest_test"],
+    interfaces = {"manifest_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/sbin/veriexec/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])

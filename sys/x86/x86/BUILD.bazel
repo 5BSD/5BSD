@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+amd64_generic_kernel_objects(name = "generic_busdma", srcs = ["busdma_bounce.c", "busdma_machdep.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:busdma_bounce_implementation",
+        "//sys/x86/include:busdma_internal_headers", "//sys/amd64/conf:generic_opt_acpi_header"])

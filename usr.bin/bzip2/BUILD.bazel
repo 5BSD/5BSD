@@ -1,0 +1,259 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_base_install.bzl", "bsd_program_install")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_fixture.bzl", "bsd_uu_fixture")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+cc_binary(
+    name = "bzip2",
+    srcs = ["//contrib/bzip2:bzip2.c"],
+    copts = ["-D_FILE_OFFSET_BITS=64"],
+    deps = ["//lib/libbz2:bz2"],
+    dynamic_deps = ["//lib/libbz2:bz2_shared"],
+    linkstatic = False,
+    visibility = ["//visibility:public"],
+)
+
+bsd_uu_fixture(
+    name = "sample1_ref",
+    src = "//contrib/bzip2:sample1.ref.gz.uu",
+    output = "sample1.ref",
+    gzip = True,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_uu_fixture(
+    name = "sample1_bz2",
+    src = "//contrib/bzip2:sample1.bz2.uu",
+    output = "sample1.bz2",
+    gzip = False,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_compare_test(
+    name = "sample1_compress_test",
+    program = ":bzip2",
+    input = ":sample1_ref",
+    expected = ":sample1_bz2",
+    arguments = ["-1"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sample1_decompress_test",
+    program = ":bzip2",
+    input = ":sample1_bz2",
+    expected = ":sample1_ref",
+    arguments = ["-d"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_uu_fixture(
+    name = "sample2_ref",
+    src = "//contrib/bzip2:sample2.ref.gz.uu",
+    output = "sample2.ref",
+    gzip = True,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_uu_fixture(
+    name = "sample2_bz2",
+    src = "//contrib/bzip2:sample2.bz2.uu",
+    output = "sample2.bz2",
+    gzip = False,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_compare_test(
+    name = "sample2_compress_test",
+    program = ":bzip2",
+    input = ":sample2_ref",
+    expected = ":sample2_bz2",
+    arguments = ["-2"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sample2_decompress_test",
+    program = ":bzip2",
+    input = ":sample2_bz2",
+    expected = ":sample2_ref",
+    arguments = ["-d"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_uu_fixture(
+    name = "sample3_ref",
+    src = "//contrib/bzip2:sample3.ref.gz.uu",
+    output = "sample3.ref",
+    gzip = True,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_uu_fixture(
+    name = "sample3_bz2",
+    src = "//contrib/bzip2:sample3.bz2.uu",
+    output = "sample3.bz2",
+    gzip = False,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+bsd_compare_test(
+    name = "sample3_compress_test",
+    program = ":bzip2",
+    input = ":sample3_ref",
+    expected = ":sample3_bz2",
+    arguments = ["-3"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_compare_test(
+    name = "sample3_decompress_test",
+    program = ":bzip2",
+    input = ":sample3_bz2",
+    expected = ":sample3_ref",
+    arguments = ["-ds"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["//lib/libbz2:bz2_shared"],
+    size = "small",
+)
+
+bsd_debug_split(
+    name = "bzip2_debug",
+    src = ":bzip2",
+    binary_name = "install/bzip2",
+    debug_name = "install/bzip2.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bsd_strip_binary(
+    name = "bzip2_install",
+    src = ":bzip2_debug",
+    output = "stripped/bzip2",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip",
+    strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bsd_compress(
+    name = "manual_gzip",
+    src = "//contrib/bzip2:bzip2.1",
+    output = "bzip2.1.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_install_file(
+    name = "manual_entry",
+    src = ":manual_gzip",
+    destination = "/usr/share/man/man1/bzip2.1.gz",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=bzip2-man"],
+        "//conditions:default": ["package=bzip2"],
+    }),
+)
+
+bsd_install_link(
+    name = "bunzip2_entry",
+    destination = "/usr/bin/bunzip2",
+    target = "/usr/bin/bzip2",
+    kind = "hardlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0555",
+    install_tags = ["package=bzip2"],
+)
+
+bsd_install_link(
+    name = "bzcat_entry",
+    destination = "/usr/bin/bzcat",
+    target = "/usr/bin/bzip2",
+    kind = "hardlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0555",
+    install_tags = ["package=bzip2"],
+)
+
+bsd_install_link(
+    name = "bunzip2_manual_entry",
+    destination = "/usr/share/man/man1/bunzip2.1.gz",
+    target = "/usr/share/man/man1/bzip2.1.gz",
+    kind = "hardlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=bzip2-man"],
+        "//conditions:default": ["package=bzip2"],
+    }),
+)
+
+bsd_install_link(
+    name = "bzcat_manual_entry",
+    destination = "/usr/share/man/man1/bzcat.1.gz",
+    target = "/usr/share/man/man1/bzip2.1.gz",
+    kind = "hardlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=bzip2-man"],
+        "//conditions:default": ["package=bzip2"],
+    }),
+)
+
+bsd_install_link(
+    name = "bzip2recover_manual_entry",
+    destination = "/usr/share/man/man1/bzip2recover.1.gz",
+    target = "/usr/share/man/man1/bzip2.1.gz",
+    kind = "hardlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=bzip2-man"],
+        "//conditions:default": ["package=bzip2"],
+    }),
+)
+
+bsd_program_install(
+    name = "install_manifest",
+    binary = ":bzip2_install",
+    debug = ":bzip2_debug",
+    destination = "/usr/bin/bzip2",
+    package = "bzip2",
+    extra_entries = [':manual_entry', ':bunzip2_entry', ':bzcat_entry', ':bunzip2_manual_entry', ':bzcat_manual_entry', ':bzip2recover_manual_entry'],
+    visibility = ["//visibility:public"],
+)

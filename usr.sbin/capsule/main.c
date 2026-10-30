@@ -32,6 +32,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <ucl.h>
 
 #include "capsule_daemon.h"
 #include "capsule.h"
@@ -47,15 +48,17 @@ usage(void)
 
 	fprintf(stderr,
 	    "usage: capsule [-dT] [-b bootstrap] [-f conffile] "
-	    "[-p pidfile]\n");
+	    "[-p pidfile]\n       capsule -n [-j] -f conffile\n");
 	exit(1);
 }
+
 
 int
 main(int argc, char *argv[])
 {
 	const char *bootstrap_override, *conffile, *pidfile_override;
 	pid_t otherpid;
+	bool validate_only = false, explicit_config = false, json_report = false;
 	int ch;
 
 	/*
@@ -70,7 +73,7 @@ main(int argc, char *argv[])
 	conffile = CAPSULE_DEFAULT_CONFFILE;
 	pidfile_override = NULL;
 
-	while ((ch = getopt(argc, argv, "b:dTf:p:")) != -1) {
+	while ((ch = getopt(argc, argv, "b:dTnjf:p:")) != -1) {
 		switch (ch) {
 		case 'b':
 			bootstrap_override = optarg;
@@ -82,7 +85,14 @@ main(int argc, char *argv[])
 			od.foreground = true;
 			od.test_mode = true;
 			break;
+		case 'j':
+			json_report = true;
+			break;
+		case 'n':
+			validate_only = true;
+			break;
 		case 'f':
+			explicit_config = true;
 			conffile = optarg;
 			break;
 		case 'p':
@@ -94,7 +104,10 @@ main(int argc, char *argv[])
 	}
 	argc -= optind;
 	argv += optind;
-	if (argc != 0)
+	if (argc != 0 || (json_report && !validate_only))
+		usage();
+	if (validate_only && (!explicit_config || bootstrap_override != NULL ||
+	    pidfile_override != NULL || od.foreground || od.test_mode))
 		usage();
 
 	/*
@@ -104,8 +117,21 @@ main(int argc, char *argv[])
 	 * CLI flags override config values after loading.
 	 */
 	config_init_defaults(&od.cfg);
-	if (config_load(&od.cfg, conffile) != 0)
+	if (config_load(&od.cfg, conffile) != 0 ||
+	    (validate_only && !od.cfg.loaded_from_file))
 		errx(1, "configuration error");
+	if (validate_only) {
+		if (json_report)
+			config_validation_report(&od.cfg);
+		else
+			puts("configuration valid: syntax and static constraints only");
+		config_free(&od.cfg);
+		return (0);
+	}
+	if (od.cfg.nstorage != 0 || od.cfg.hostuuid[0] != '\0') {
+		fprintf(stderr, "capsule: host identity and storage assignments require the PID 1 personality\n");
+		exit(1);
+	}
 	strlcpy(od.conffile, conffile, sizeof(od.conffile));
 	CAPSULE_PROBE_CONFIG(conffile);
 
@@ -130,6 +156,7 @@ main(int argc, char *argv[])
 			    (intmax_t)otherpid);
 		err(1, "cannot open pidfile %s", od.cfg.pidfile);
 	}
+
 
 	/* Phase 2: daemonize.
 	 * After daemon(), stderr is closed — use syslog for errors. */

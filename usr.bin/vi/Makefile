@@ -7,6 +7,9 @@ PACKAGE=	vi
 SRCDIR=		${SRCTOP}/contrib/nvi
 SUBDIR+=	catalog
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
+
 WARNS?=	0	# some warn issues on 32 bit machines
 
 VI=	nvi

@@ -171,20 +171,22 @@ alloc_pread(readin_handle_t fd, off_t off, size_t len)
  */
 int mount_currdev(struct env_var *ev, int flags, const void *value)
 {
+	char *old;
 	int rv;
 
-	/* mount new rootfs */
+	old = ev->ev_value != NULL ? strdup(ev->ev_value) : NULL;
+	if (ev->ev_value != NULL && old == NULL)
+		return (ENOMEM);
+	/* Keep the old mount until both the new mount and variable commit succeed. */
 	rv = mount(value, "/", 0, NULL);
 	if (rv == 0) {
-		/*
-		 * Note we unmount any previously mounted fs only after
-		 * successfully mounting the new because we do not want to
-		 * end up with unmounted rootfs.
-		 */
-		if (ev->ev_value != NULL)
-			unmount(ev->ev_value, 0);
-		env_setenv(ev->ev_name, flags | EV_NOHOOK, value, NULL, NULL);
+		rv = env_setenv(ev->ev_name, flags | EV_NOHOOK, value, NULL, NULL);
+		if (rv != 0)
+			unmount(value, 0);
+		else if (old != NULL)
+			unmount(old, 0);
 	}
+	free(old);
 	return (rv);
 }
 

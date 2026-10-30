@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["h_pthread_dlopen.c"], visibility = ["//lib/libthr/tests/dlopen/dso:__pkg__"])

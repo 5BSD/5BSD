@@ -1,0 +1,166 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_spec", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_dtrace_spec(name = "provider", source = "switchboard_provider.d", output = "switchboard_provider.o",
+    flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+
+_LIBRARIES = ['//lib/libcapability:capability', '//lib/libcapimage:capimage', '//secure/lib/libcrypto:crypto', '//lib/libcapbundle:capbundle', '//lib/libchannel:channel', '//lib/libcapsulert:capsulert', '//lib/libservice:service', '//lib/libucl:ucl', '//lib/libutil:util', '//lib/libbsm:bsm', '//lib/libmd:md_link']
+_SHARED_LIBRARIES = ['//lib/libcapability:capability_shared', '//lib/libcapimage:capimage_shared', '//secure/lib/libcrypto:crypto_shared', '//lib/libcapbundle:capbundle_shared', '//lib/libchannel:channel_shared', '//lib/libcapsulert:capsulert_shared', '//lib/libservice:service_shared', '//lib/libucl:ucl_shared', '//lib/libutil:util_shared', '//lib/libbsm:bsm_shared', '//lib/libmd:md_shared']
+cc_library(
+    name = "objects",
+    srcs = ['switchboard.c', 'account_nss.c', 'nss_child.c', 'nss_exchange.c', 'nss-helper/nss_protocol.c', 'activation.c', 'anoint.c', 'activation_calendar.c', 'bundle_registry.c', 'bundle_selection.c', 'authority.c', 'authority_policy.c', 'boot_authority.c', 'domain.c', 'mac_capability_direct.c', 'execute.c', 'lifecycle.c', 'reclaim_publish.c', 'registry_watch.c', 'fd_budget.c', 'management.c', 'manifest_compare.c', 'naming.c', 'on_demand.c', 'capsule_client.c', 'rc_adopt.c', 'responsibility.c', 'rc_ingest.c', 'reload.c', 'sctl.c', 'switchboard_audit.c', 'startup.c', 'svc_proto.c', 'supervisor.c', 'oom_protect.c', 'account_nss.h', 'activation_calendar.h', 'authority.h', 'boot_storage.h', 'bundle_policy.h', 'bundle_selection.h', 'fd_budget.h', 'identity_trace.h', 'launch_limits.h', 'management.h', 'manifest_compare.h', 'nss_child.h', 'nss_exchange.h', 'oom_protect.h', 'rc_adopt.h', 'rc_ingest.h', 'register_lookup_gate.h', 'run_container_directory.h', 'run_container_identity.h', 'scope_identity.h', 'scope_storage.h', 'scope_target.h', 'sctl_gate.h', 'switchboard.h', 'switchboard_audit.h', 'switchboard_probes.h', 'trace_pressure.h', 'nss-helper/nss_protocol.h'],
+    deps = _LIBRARIES,
+    implementation_deps = ["//lib/libcapbundle:internal_headers", "//lib/libservice:bootstrap_headers",
+        "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers",
+        "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:system_headers",
+        "//sys/dev/mac_capability:capprotect_headers", "//sys/dev/mac_capability:isolation_headers"],
+    local_defines = ["USE_BSM_AUDIT"] + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE"], target_compatible_with = _PLATFORM,
+)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider",
+    provider_object = "switchboard_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _LIBRARIES)
+cc_binary(name = "switchboard", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    dynamic_deps = _SHARED_LIBRARIES, linkopts = ["-pie"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_binary(name = "switchboard-nss", srcs = ["nss-helper/nss_main.c", "nss-helper/nss_lookup.c",
+    "nss-helper/nss_protocol.c", "nss-helper/nss_protocol.h"],
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+utility_installation(name = "install_switchboard", program = "switchboard", manual = "switchboard.8",
+    package = "switchboard", bindir = "/usr/libexec", man_section = "8")
+utility_installation(name = "install_nss", program = "switchboard-nss", manual = "nss-helper/switchboard-nss.8",
+    package = "switchboard", bindir = "/usr/libexec", man_section = "8")
+bsd_compress(name = "manual5", src = "switchboard.5", output = "switchboard.5.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+_FILES = [(":manual5", "/usr/share/man/man5/switchboard.5.gz", True)] + [
+    (name, "/Capabilities/Config/switchboard/" + name, False) for name in ["rc_adopt.conf", "boot-authority.ucl"]] + [
+    ("examples/" + name, "/usr/share/examples/switchboard/" + name, False)
+    for name in ["timer-activation.ucl", "path-activation.ucl", "socket-activation.ucl"]]
+[bsd_install_file(name = "install_file_" + destination.replace("/", "_"), src = source,
+    destination = destination, owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=switchboard-man"],
+        "//conditions:default": ["package=switchboard"]}) if manual else ["package=switchboard"])
+ for source, destination, manual in _FILES]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + destination.replace("/", "_") for _, destination, _ in _FILES], visibility = ["//packages/switchboard:__pkg__"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Runtime-only target retained for focused payload qualification.
+bsd_install_archive(
+    name = "runtime_install_archive", visibility = ["//packages/switchboard:__pkg__"],
+    directory_packages = ["switchboard", "switchboard-man"],
+    manifests = [":install_switchboard", ":install_nss", ":install_extra"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=switchboard"]}'
+        for d in ["/Capabilities", "/Capabilities/System", "/Capabilities/Config/switchboard", "/usr/share/examples/switchboard"]} |
+        {"/Capabilities/Config": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=switchboard","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+                   "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Tests include maintained implementation sources to inject their dependencies.
+cc_library(name = "test_source_headers", strip_include_prefix = ".",
+    hdrs = ['account_nss.h', 'activation_calendar.h', 'authority.h', 'boot_storage.h', 'bundle_policy.h', 'bundle_selection.h', 'fd_budget.h', 'identity_trace.h', 'launch_limits.h', 'management.h', 'manifest_compare.h', 'nss_child.h', 'nss_exchange.h', 'oom_protect.h', 'rc_adopt.h', 'rc_ingest.h', 'register_lookup_gate.h', 'run_container_directory.h', 'run_container_identity.h', 'scope_identity.h', 'scope_storage.h', 'scope_target.h', 'sctl_gate.h', 'switchboard.h', 'switchboard_audit.h', 'switchboard_probes.h', 'trace_pressure.h', 'nss-helper/nss_protocol.h'],
+    textual_hdrs = ["account_nss.c", "nss_child.c", "nss-helper/nss_lookup.c", "fd_budget.c", "oom_protect.c"],
+    deps = ["//lib/libcapbundle:internal_headers", "//lib/libcapsulert:headers",
+        "//lib/libcapability:headers", "//lib/libchannel:headers", "//lib/libservice:headers", "//lib/libservice:bootstrap_headers",
+        "//sys/sys:cap_authority_header", "//sys/sys:cap_process_header"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+exports_files(['activation_calendar.c', 'bundle_selection.c', 'manifest_compare.c', 'nss-helper/nss_protocol.c', 'rc_ingest.c'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+# Shared test implementation objects retain Make's common compilation flags.
+cc_library(name = "test_nss_backend", srcs = ["account_nss.c", "nss_exchange.c", "nss_child.c", "nss-helper/nss_protocol.c"],
+    deps = [":test_source_headers"], copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"])
+cc_library(name = "test_management_logic", srcs = ["management.c"], deps = [":test_source_headers", ":test_nss_backend"],
+    copts = ["-fPIE", "-ffunction-sections", "-fdata-sections"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+exports_files(['boot_authority.c', 'rc_adopt.c', 'registry_watch.c', 'responsibility.c'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "reclaim_publish_test_includes", textual_hdrs = ['reclaim_publish.c'], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "launch_gate_test_includes", textual_hdrs = ['execute.c'], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "cleanup_status_test_includes", textual_hdrs = ['sctl.c', 'management.c'], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "worker_cleanup_test_includes", textual_hdrs = ['authority.c'], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "activation_test_includes", textual_hdrs = ["activation.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers", ":test_nss_backend"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "nss_exchange_test_includes", textual_hdrs = ["nss_exchange.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+exports_files(["nss_exchange.c", "nss_child.c", "nss-helper/nss_main.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "nss_protocol_headers", hdrs = ["nss-helper/nss_protocol.h"], strip_include_prefix = "nss-helper",
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+exports_files(["bundle_registry.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "domain_test_includes", textual_hdrs = ["anoint.c", "domain.c", "authority.c", "naming.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "on_demand_test_includes", textual_hdrs = ["on_demand.c", "supervisor.c", "svc_proto.c", "reload.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "scope_storage_test_includes", textual_hdrs = ["lifecycle.c", "reclaim_publish.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "scope_runtime_test_includes", textual_hdrs = ["naming.c", "domain.c", "reload.c", "on_demand.c", "sctl.c", "management.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers", ":test_nss_backend", "//lib/libcapimage:headers", "//sys/sys:envfd_header", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+cc_library(name = "scope_registry_test_includes", textual_hdrs = ["bundle_registry.c"], strip_include_prefix = ".",
+    deps = [":test_source_headers"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+exports_files(["authority.c"], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['anoint.c', 'domain.c', 'execute.c', 'naming.c', 'on_demand.c', 'reload.c', 'svc_proto.c', 'switchboard.h', 'switchboard_probes.h', 'switchboard_provider.d'], visibility = ["//usr.sbin/BSDNotify/tests:__pkg__", "//usr.sbin/switchboard/tests:__pkg__"])
+
+load("//usr.sbin/switchboard/tests:installation_data.bzl", "TEST_DIRECTORIES")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_switchboard", ":install_nss", ":install_extra"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/switchboard/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=switchboard"]}'
+        for d in ["/Capabilities", "/Capabilities/System", "/Capabilities/Config/switchboard", "/usr/share/examples/switchboard"]} |
+        {"/Capabilities/Config": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=switchboard","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+                   "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

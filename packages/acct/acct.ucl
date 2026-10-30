@@ -1,31 +1,38 @@
-/*
- * SPDX-License-Identifier: ISC
- *
- * Copyright (c) 2025 Lexi Winter <ivy@FreeBSD.org>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+# SPDX-License-Identifier: ISC
+.include(try=false) "${SRCDIR}/common.ucl"
 
-comment = "System resource accounting"
-
-desc = <<EOD
-System accounting monitors the system resources used by logged in users.  The
-accounting data is summarised daily and can be viewed using sa(8).  A monthly
-periodic(8) script is also provided which includes basic login time accounting
-in the monthly system status report.
-
-System accounting tracks programs executed by each user, and provides the
-lastcomm(1) command to view this information.  However, system accounting
-is not intended as a security auditing mechanism; use the OpenBSM auditing
-system provided in the $PKG_NAME_PREFIX-audit package for that.
+# Requirements of utx only; these do not assign writers or qualify other tools.
+# Paths correspond to libc gen/utxdb.h and pututxline's boot/shutdown/rm paths.
+annotations {
+    "5bsd.state-requirements" = <<EOD
+{
+  "format": 1,
+  "requirements": [
+    {
+      "name": "active-sessions",
+      "program": "/usr/sbin/utx",
+      "path": "/var/run/utx.active",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Boot initializes and shutdown clears active session records; removal updates records"
+    },
+    {
+      "name": "last-login",
+      "program": "/usr/sbin/utx",
+      "path": "/var/log/utx.lastlogin",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Boot checks existing last-login format and may truncate an invalid file"
+    },
+    {
+      "name": "session-history",
+      "program": "/usr/sbin/utx",
+      "path": "/var/log/utx.log",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Append boot, shutdown and session-removal history"
+    }
+  ]
+}
 EOD
+}

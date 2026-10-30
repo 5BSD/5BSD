@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 11, 2026
+.Dd October 19, 2026
 .Dt BSDCRYPTO 8
 .Os
 .Sh NAME
@@ -47,14 +47,12 @@ The kernel side is provided by the
 device from the
 .Sy cryptodev
 module.
-Before becoming a provider,
-.Nm
-self-serves that module by name through
-.Dq Li system.SystemExtension
-.Pq Xr bsdextension 8 ,
-so it does not rely on PID 1 or
-.Xr switchboard 8
-to load it.
+It must be built into the kernel or authenticated and loaded at boot.
+The provider does not open the device or load the module itself.
+Capsule supplies a bounded control descriptor to the verified Core recipient
+selected by the boot policy's
+.Va crypto_recipient
+field.
 .Ss Operations
 A request names one operation over the client channel:
 .Bl -tag -width ".Cm GENERATE_KEY"
@@ -65,7 +63,7 @@ Mint an asymmetric keypair
 .Pq X25519 for key exchange, or Ed25519 for signing
 and return its descriptor together with the public key.
 .It Cm CREATE
-Create an owner-scoped named persistent key.
+Create an owner-scoped kernel-resident named key.
 .It Cm LEASE
 Return a session descriptor for an existing named key.
 .It Cm ROTATE
@@ -110,40 +108,51 @@ algorithm, an optional NIST-approved-profile gate, a bounded time-to-live, and
 a restricted character set for named-key names.
 An out-of-policy request is rejected without reaching the kernel.
 .Ss Worker isolation
-The long-lived accept parent hands each accepted client to its own
-.Xr pdfork 2 Ns 'd
-worker.
-A worker adopts the client channel, enters capability mode with
-.Xr cap_enter 2 ,
-and drops inherited authority.
-Its only retained kernel handle is the
-.Pa /dev/crypto
-control descriptor, which is limited to
-.Dv CAP_IOCTL
-plus an eight-command ioctl allowlist covering descriptor creation and
-owner-scoped named-key operations.
+The long-lived accept parent derives an independent control descriptor for
+each authenticated owner before creating a client worker with
+.Xr pdfork 2 .
+The kernel fixes the descriptor's owner and operation rights at derivation.
+Direct named-key ioctls for another owner are rejected, including from UID zero.
+An empty owner has no named-key authority.
+Derived controls cannot derive additional control authority.
 .Pp
-The factory starts as root to open the control descriptor: the kernel records
-.Dv PRIV_DRIVER
-at open time for named-key operations.
-It remains born in capability mode and applies
-.Dv SERVICE_PROTECT_NOPRIVS
-and
-.Dv SERVICE_PROTECT_NOEXEC
-before serving clients.
-Only its own workers inherit the non-transferable control descriptor;
-workers additionally lock it closed across any further fork.
+The supervisor control is non-transferable, locked close-on-exec and locked
+close-on-fork, and its ioctl allowlist permits only control derivation.
+It does not survive into workers or the cleanup child.
+A worker locks its derived control against further inheritance and transfer,
+limits it to
+.Dv CAP_IOCTL
+and the child operation allowlist, and enters the existing worker sandbox.
+The kernel owner and rights checks remain necessary even if the worker's
+request dispatcher is compromised.
+.Pp
+The factory requires the checked
+.Dq Li crypto-control
+bootstrap descriptor of type
+.Dq Li cryptoctl .
+Missing or invalid delivery prevents startup; there is no device-open fallback.
+PID 1 acquires the control, and SwitchBoard delivers it only to a verified
+system Core unit whose exact label is selected by the boot policy.
+The shipped Crypto unit uses the Core management class; runtime management
+requests cannot stop or replace it, including requests from root.
+User identity does not grant that authority.
+Supervisor compromise, outstanding-handle revocation and restart semantics
+remain separate security boundaries.
 The process limit includes every process with the same real UID, so its
 configured allowance must include other system daemons.
 .Ss Installation cleanup
-The provider registers a cleanup handler with
-.Xr switchboard 8 .
-After committed removal of the last installation source, it stops that
-installation's workers, removes its named keys, and revokes outstanding
-leases before acknowledging completion.
-Failed cleanup remains pending for retry.
-Updates retain the installation identity and its keys; reinstallation after
-removal receives a new identity.
+A separate reconciliation child receives a derived control limited to
+owner enumeration, named-key listing and deletion.
+It observes the delivered installation and running-bundle directories through
+.Xr capreclaim 3
+and deletes keys for owners judged absent by that reconciliation policy.
+It cannot mint or lease keys.
+Missing installation authority prevents cleanup.
+This periodic reconciliation is not an acknowledged installation-removal
+transaction; atomic removal, interrupted cleanup and authoritative installation
+identity across upgrades and rollback remain unqualified.
+Named keys are kernel-resident and do not establish persistent storage across
+reboot.
 .Ss Protocol
 Sessions speak the FIDL library
 .Sy bsd.crypto.v1

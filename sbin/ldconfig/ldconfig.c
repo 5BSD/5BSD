@@ -73,10 +73,13 @@ main(int argc, char **argv)
 	}
 
 	hints_file = _PATH_ELF_HINTS;
-	while((c = getopt(argc, argv, "BRf:imrsv")) != -1) {
+	while((c = getopt(argc, argv, "BRSf:imrsv")) != -1) {
 		switch (c) {
 		case 'B':
 			force_be = true;
+			break;
+		case 'S':
+			strict = true;
 			break;
 		case 'R':
 			rescan = true;
@@ -105,6 +108,9 @@ main(int argc, char **argv)
 		}
 	}
 
+	if (strict && (justread || merge || rescan || insecure || argc == optind))
+		errx(1, "-S requires explicit directories and excludes -R, -m, -r and -i");
+
 	if (justread) {
 		list_elf_hints(hints_file);
 	} else {
@@ -120,7 +126,7 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: ldconfig [-BRimr] [-f hints_file]"
+	    "usage: ldconfig [-BRSimr] [-f hints_file]"
 	    "[directory | file ...]\n");
 	exit(1);
 }

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/capsicum.h>
@@ -9,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "bsdextension.h"
+#include "test_policy.h"
 
 static struct sysext_policy *
 create(int *fd)
@@ -19,7 +21,7 @@ create(int *fd)
 	ATF_REQUIRE_EQ(0, mkdir("state", 0700));
 	*fd = open("state", O_RDONLY | O_DIRECTORY);
 	ATF_REQUIRE(*fd >= 0);
-	sysext_config_defaults(&defaults);
+	test_base_policy(&defaults);
 	p = sysext_policy_create(&defaults);
 	ATF_REQUIRE(p != NULL);
 	return (p);
@@ -78,7 +80,7 @@ ATF_TC_BODY(persistence_and_precedence, tc)
 	ATF_CHECK(extension_allowed(&cfg, "if_iwlwifi"));
 	ATF_CHECK(!extension_allowed(&cfg, "cryptodev"));
 	sysext_policy_destroy(p);
-	sysext_config_defaults(&cfg);
+	test_base_policy(&cfg);
 	p = sysext_policy_create(&cfg);
 	ATF_REQUIRE_EQ(0, sysext_policy_attach(p, fd));
 	ATF_REQUIRE_EQ(0, sysext_policy_enabled(p, &cfg));
@@ -146,7 +148,7 @@ ATF_TC_BODY(capability_mode_persistence, tc)
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	sysext_policy_destroy(p);
-	sysext_config_defaults(&cfg);
+	test_base_policy(&cfg);
 	p = sysext_policy_create(&cfg);
 	ATF_REQUIRE(p != NULL);
 	ATF_REQUIRE_EQ(0, sysext_policy_attach(p, fd));
@@ -218,7 +220,7 @@ ATF_TC_BODY(concurrent_updates_and_discovery, tc)
 	ATF_CHECK_EQ(ENOENT, errno);
 	ATF_CHECK_EQ(initial.nallow + 4 * 12, count);
 	/* Check each committed name, so a duplicate or lost update cannot hide
-	 * behind an unrelated change in the shipped default allow-list. */
+	 * behind an unrelated change in the fixture base allow-list. */
 	for (i = 0; i < 4; i++) {
 		for (int j = 0; j < 12; j++) {
 			snprintf(name, sizeof(name), "driver%d_%02d", i, j);
@@ -253,8 +255,55 @@ ATF_TC_BODY(writer_death_recovers_durable_commit, tc)
 	close(fd);
 }
 
+
+ATF_TC_WITHOUT_HEAD(override_input_contract);
+ATF_TC_BODY(override_input_contract, tc)
+{
+	const char *invalid[] = {
+	    "version=1; version=1; extensions=[];",
+	    "version=1; extensions=[]; ignored=true;",
+	    "version=1; extensions=[{name=\"a\";permission=1;enabled=true;extra=true;}];",
+	    "version=1; extensions=[{name=\"a\";permission=1;permission=0;enabled=true;}];",
+	    "version=1; extensions=[{name=\"a\";permission=1.0;enabled=true;}];",
+	    "version=1; extensions=[{name=\"a\\u0000b\";permission=1;enabled=true;}];",
+	    ("version=1; extensions=[{name=\"a\";permission=1;enabled=true;},"
+	    "{name=\"a\";permission=1;enabled=true;}];"),
+	    ".include \"injected-overrides.ucl\";",
+	};
+	const char *valid = "version=1; extensions=[];";
+	struct sysext_config cfg;
+	struct sysext_policy *p;
+	size_t i;
+	int dirfd, fd;
+
+	p = create(&dirfd);
+	fd = open("injected-overrides.ucl", O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ((ssize_t)strlen(valid), write(fd, valid, strlen(valid)));
+	close(fd);
+	for (i = 0; i < nitems(invalid); i++) {
+		fd = openat(dirfd, "overrides.ucl", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+		ATF_REQUIRE(fd >= 0);
+		ATF_REQUIRE_EQ((ssize_t)strlen(invalid[i]), write(fd, invalid[i], strlen(invalid[i])));
+		close(fd);
+		ATF_CHECK_ERRNO(EINVAL, sysext_policy_attach(p, dirfd) == -1);
+		ATF_CHECK_ERRNO(EINVAL, sysext_policy_snapshot(p, &cfg) == -1);
+	}
+	ATF_REQUIRE_EQ(0, unlinkat(dirfd, "overrides.ucl", 0));
+	ATF_REQUIRE_EQ(0, mkfifoat(dirfd, "overrides.ucl", 0600));
+	ATF_CHECK_ERRNO(EPERM, sysext_policy_attach(p, dirfd) == -1);
+	ATF_CHECK_ERRNO(EPERM, sysext_policy_snapshot(p, &cfg) == -1);
+	ATF_REQUIRE_EQ(0, unlinkat(dirfd, "overrides.ucl", 0));
+	ATF_REQUIRE_EQ(0, sysext_policy_attach(p, dirfd));
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(p, &cfg));
+	ATF_CHECK(extension_allowed(&cfg, "zfs"));
+	sysext_policy_destroy(p);
+	close(dirfd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, override_input_contract);
 	ATF_TP_ADD_TC(tp, rights_and_bootstrap);
 	ATF_TP_ADD_TC(tp, writer_death_recovers_durable_commit);
 	ATF_TP_ADD_TC(tp, persistence_and_precedence);

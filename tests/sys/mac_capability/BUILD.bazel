@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "mac_capability_shield_helper", srcs = ["mac_capability_shield_helper.c"],
+    deps = ["//sys/dev/mac_capability:shield_test_headers"], copts = ["-fPIE"], linkopts = ["-pie"],
+    visibility = ["//usr.sbin/capsule/tests:__pkg__"])

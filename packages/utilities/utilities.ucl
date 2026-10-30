@@ -2,6 +2,14 @@
 
 scripts: {
        post-install = <<EOD
-       cap_mkdb ${CAP_MKDB_ENDIAN} ${PKG_ROOTDIR}/etc/login.conf
+       /usr/bin/cap_mkdb ${CAP_MKDB_ENDIAN} "${PKG_ROOTDIR}/etc/login.conf"
+EOD
+}
+
+/* Construction declarations identify inputs and expected outputs. They do not
+ * authorize runtime writes or replace verified builder execution receipts. */
+annotations: {
+    "5bsd.construction" = <<EOD
+{"format":1,"actions":[{"name":"login-classes","argv":["/usr/bin/cap_mkdb","${CAP_MKDB_ENDIAN}","/etc/login.conf"],"inputs":["/etc/login.conf"],"outputs":{"/etc/login.conf.db":{"type":"file","uid":0,"gid":0,"mode":420,"flags_set":0,"replace":false}}}]}
 EOD
 }

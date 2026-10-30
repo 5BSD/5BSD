@@ -205,9 +205,19 @@ mtree_resolve(const char *spec, int *istemp)
 	quoted = (subst || c == '\'') ? 1 : 0;
 
 	if (!subst) {
-		res = estrdup(spec + quoted);
-		if (quoted)
+		if (!quoted) {
+			/* Decode mtree path escapes without reinterpreting the
+			 * decoded filename as a command or substitution. */
+			res = emalloc(len + 1);
+			if (strunvis(res, spec) < 0) {
+				free(res);
+				errno = EINVAL;
+				return (NULL);
+			}
+		} else {
+			res = estrdup(spec + 1);
 			res[len - 2] = '\0';
+		}
 		return (res);
 	}
 

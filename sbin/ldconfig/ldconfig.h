@@ -32,6 +32,7 @@
 #include <sys/cdefs.h>
 #include <stdbool.h>
 
+extern bool strict;		/* -S: explicit directory-only construction */
 extern bool insecure;		/* -i flag, needed here for elfhints.c */
 
 __BEGIN_DECLS

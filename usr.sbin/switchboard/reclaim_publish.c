@@ -115,16 +115,26 @@ bundle_present(char (*set)[BUNDLE_MAX], size_t n, const char *name)
  * boot, so this runs every startup.  Non-fatal: a provider that cannot get the
  * descriptor simply treats the running set as empty (installed-only live set).
  */
-void
+int
 svc_reclaim_live_prepare(void)
 {
 	char live[PATH_MAX];
+	int fd;
 
-	(void)mkdir(switchboard_run_dir, 0700);
+	if (mkdir(switchboard_run_dir, 0700) == -1 && errno != EEXIST)
+		return (-1);
 	if (live_dir(live, sizeof(live)) == NULL)
-		return;
-	if (mkdir(live, 0700) == -1 && errno != EEXIST)
+		return (errno = ENAMETOOLONG, -1);
+	if (mkdir(live, 0700) == -1 && errno != EEXIST) {
 		syslog(LOG_WARNING, "reclaim: mkdir %s: %m", live);
+		return (-1);
+	}
+	/* EEXIST alone does not prove a directory, particularly after restart. */
+	fd = open(live, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1)
+		return (-1);
+	close(fd);
+	return (0);
 }
 
 void

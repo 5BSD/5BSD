@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = "pam_tacplus", srcs = ["pam_tacplus.c", "pam_tacplus_probes.h"], provider = "pam_tacplus_provider.d",
+    deps = ["//lib/libtacplus:tacplus", "//lib/libpam/libpam:module_headers"],
+    dynamic_deps = ["//lib/libtacplus:tacplus_shared"])

@@ -739,3 +739,13 @@ TESTS_SUBDIRS	List of subdirectories containing tests into which to
 The actual building of the test programs is performed by <bsd.prog.mk>.
 Please see the documentation above for this other file for additional
 details on the behavior of <bsd.test.mk>.
+
+ELF_FEATURES    Space-separated feature names to add to a program's ELF
+                feature-control note through ELFCTL in the standard link rule.
+                This happens before debug splitting, installation, package
+                inventory and code signing. Missing notes or unknown features
+                fail the build. ELFCTL selects the native/cross-build tool;
+                use a tool matching the source tree. bsd.progs.mk supports
+                ELF_FEATURES.<program> in addition to global features.
+                A clean rebuild is required when changing command-line feature
+                settings, as for other compiler/linker command-line inputs.

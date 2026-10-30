@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "yaml", srcs = ["//contrib/libyaml:src/api.c", "//contrib/libyaml:src/dumper.c", "//contrib/libyaml:src/emitter.c", "//contrib/libyaml:src/loader.c", "//contrib/libyaml:src/parser.c", "//contrib/libyaml:src/reader.c", "//contrib/libyaml:src/scanner.c", "//contrib/libyaml:src/writer.c"],
+    deps = ["//contrib/libyaml:headers"], implementation_deps = ["//contrib/libyaml:private_headers"],
+    local_defines = ['YAML_VERSION_STRING=\\\"0.2.5\\\"', "YAML_VERSION_MAJOR=0", "YAML_VERSION_MINOR=2", "YAML_VERSION_PATCH=5"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":yaml"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":yaml"], pic = True)
+cc_shared_library(name = "yaml_shared", deps = [":yaml"], shared_lib_name = "libprivateyaml.so.1",
+    user_link_flags = ["-Wl,-soname,libprivateyaml.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Private library installation matches the maintained base payload.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libyaml","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -10,11 +10,11 @@
  *
  * Supported resource types:
  *
- *   Files/vnodes:  open, write, exec, unlink, link, rename, chmod, chown,
+ *   Files/vnodes:  open, read, write, mmap, exec, unlink, link, rename, chmod, chown,
  *                  chflags, utimes, truncate, stat, access, readlink,
  *                  connect (AF_UNIX)
  *
- *   Directories:   lookup (gates access to entire subtree)
+ *   Directories:   lookup through the claimed directory (not recursive content)
  *
  *   Network:       socket create (domain-wide), bind, connect
  *                  (per port/address/protocol/direction tuple)
@@ -26,6 +26,7 @@
  * Claims are bound to the mac_capability instance fd.  When the instance is
  * revoked or closed, all claims are released automatically.
  */
+
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -174,6 +175,10 @@ struct fi_vsock_provider_label {
  *
  * Auth entries are bound to a token instance fd.  When the token
  * fd closes, the auth entry is removed automatically.
+ * The entry is only a cached activation: each use also checks the instance's
+ * current authority/issuer/lease lifetime. Holding fi_auth_lock stabilizes the
+ * instance because its revoke callback removes these entries before freeing it.
+ * Instance callbacks run without ci_mtx; the lookup order is auth -> instance.
  */
 #define	FI_AUTH_HASH_SIZE	32
 
@@ -297,7 +302,8 @@ fi_alloc_claim_id(void)
 }
 
 static int
-fi_is_authorized(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+fi_is_authorized(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner, uint64_t claim_id,
     uint64_t actions)
 {
 	struct fi_auth *fa;
@@ -305,6 +311,8 @@ fi_is_authorized(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id && !fa->fa_is_net &&
 		    !fa->fa_is_jail &&
 		    (fa->fa_fs_actions & actions) == actions)
@@ -378,7 +386,8 @@ fi_auth_jail_matches(const struct fi_auth *fa,
 }
 
 static int
-fi_is_authorized_jail(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+fi_is_authorized_jail(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner, uint64_t claim_id,
     const struct fi_jail_request *req)
 {
 	struct fi_auth *fa;
@@ -386,6 +395,8 @@ fi_is_authorized_jail(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_jail_matches(fa, req))
 			return (1);
@@ -475,7 +486,8 @@ fi_auth_net_matches(const struct fi_auth *fa, int domain, int protocol,
 }
 
 static int
-fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+fi_is_authorized_net(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner, uint64_t claim_id,
     int domain, int protocol, struct sockaddr *sa, uint8_t direction)
 {
 	struct fi_auth *fa;
@@ -483,6 +495,8 @@ fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_net_matches(fa, domain, protocol, sa, direction))
 			return (1);
@@ -491,7 +505,8 @@ fi_is_authorized_net(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 }
 
 static int
-fi_is_authorized_net_socket(uint64_t accessor, uint64_t owner,
+fi_is_authorized_net_socket(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner,
     uint64_t claim_id, int domain, int protocol)
 {
 	struct fi_auth *fa;
@@ -499,6 +514,8 @@ fi_is_authorized_net_socket(uint64_t accessor, uint64_t owner,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id && fa->fa_is_net &&
 		    (fa->fa_net.domain == 0 || fa->fa_net.domain == domain) &&
 		    (fa->fa_net.protocol == 0 || protocol == 0 ||
@@ -529,7 +546,8 @@ fi_auth_net_covers_request(const struct fi_auth *fa,
 }
 
 static int
-fi_is_authorized_net_request(uint64_t accessor, uint64_t owner,
+fi_is_authorized_net_request(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner,
     uint64_t claim_id, const struct fi_net_request *nr)
 {
 	struct fi_auth *fa;
@@ -537,6 +555,8 @@ fi_is_authorized_net_request(uint64_t accessor, uint64_t owner,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_net_covers_request(fa, nr))
 			return (1);
@@ -659,14 +679,17 @@ static int
 fi_check_vp_common(struct ucred *cred, struct vnode *vp,
     volatile u_int *claim_count, const char *probe_name, uint64_t actions)
 {
+	struct mac_capability_authorization context;
 	struct fi_claim *c;
 	uint64_t caller_nonce, owner_nonce, claim_id;
+	bool have_context = false;
 
 	if (atomic_load_acq_int(claim_count) == 0)
 		return (0);
 
 	caller_nonce = mac_capability_proc_nonce(cred);
 
+retry:
 	rw_rlock(&fi_lock);
 	c = fi_claim_lookup(vp);
 	if (c == NULL) {
@@ -685,8 +708,19 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 
 	/* Keep the claim stable while consulting its authorization entry. */
 	if (caller_nonce != 0) {
+		/* Unclaimed vnodes and owners need no authority snapshot.
+		 * Do not acquire the process lock under fi_lock. Re-look up
+		 * the claim after dropping it: removal/replacement may change
+		 * both owner and claim ID while the snapshot is collected.
+		 */
+		if (!have_context) {
+			rw_runlock(&fi_lock);
+			mac_capability_authorization_snapshot(curthread, &context);
+			have_context = true;
+			goto retry;
+		}
 		rw_rlock(&fi_auth_lock);
-		if (fi_is_authorized(caller_nonce, owner_nonce, claim_id,
+		if (fi_is_authorized(&context, caller_nonce, owner_nonce, claim_id,
 		    actions)) {
 			SDT_PROBE5(mac_capability_isolation, , , allow__action,
 			    probe_name, owner_nonce, caller_nonce,
@@ -718,6 +752,31 @@ fi_check_vp_action(struct ucred *cred, struct vnode *vp, uint64_t actions)
 	    actions));
 }
 
+/* File handles bypass pathname and per-open authority. There is no scoped
+ * export grant, so even the claim owner cannot publish/use one for a claimed
+ * object. Directory claims remain object claims, not recursive subtree seals. */
+static int
+fi_check_fh(struct ucred *cred __unused, struct vnode *vp,
+    struct label *label __unused)
+{
+	struct fi_claim *claim;
+	uint64_t owner_nonce;
+
+	if (atomic_load_acq_int(&fi_claim_count) == 0)
+		return (0);
+	rw_rlock(&fi_lock);
+	claim = fi_claim_lookup(vp);
+	if (claim == NULL) {
+		rw_runlock(&fi_lock);
+		return (0);
+	}
+	owner_nonce = claim->fi_nonce;
+	rw_runlock(&fi_lock);
+	SDT_PROBE3(mac_capability_isolation, , , deny, "filehandle",
+	    owner_nonce, 0);
+	return (fi_deny(EACCES));
+}
+
 static uint64_t
 fi_actions_from_accmode(accmode_t accmode)
 {
@@ -744,10 +803,25 @@ fi_actions_from_accmode(accmode_t accmode)
 /* --- Content access --- */
 
 static int
-fi_check_mmap(struct ucred *cred __unused, struct vnode *vp,
+fi_check_mmap(struct ucred *cred, struct vnode *vp,
     struct label *vplabel __unused, int prot __unused, int flags, int maxprot)
 {
 	bool claimed;
+	uint64_t actions;
+	int error;
+
+	/* Check every protection that this mapping may later enable. Private
+	 * writable mappings expose file contents even though stores are COW. */
+	actions = 0;
+	if ((maxprot & (PROT_READ | PROT_WRITE)) != 0)
+		actions |= FI_FS_READ;
+	if ((maxprot & PROT_EXEC) != 0)
+		actions |= FI_FS_EXEC;
+	if (actions != 0) {
+		error = fi_check_vp_action(cred, vp, actions);
+		if (error != 0)
+			return (error);
+	}
 
 	/* Shared stores cannot recheck authority after a token is revoked.
 	 * Check maximum protection too: read-only mappings may later gain WRITE.
@@ -759,6 +833,41 @@ fi_check_mmap(struct ucred *cred __unused, struct vnode *vp,
 	claimed = fi_claim_lookup(vp) != NULL;
 	rw_runlock(&fi_lock);
 	return (claimed ? fi_deny(EACCES) : 0);
+}
+
+static int
+fi_check_read(struct ucred *active_cred, struct ucred *file_cred __unused,
+    struct vnode *vp, struct label *vplabel __unused)
+{
+
+	/* Opening before a claim or token revocation does not retain authority. */
+	return (fi_check_vp_action(active_cred, vp, FI_FS_READ));
+}
+
+static int
+fi_check_getextattr(struct ucred *cred, struct vnode *vp,
+    struct label *label __unused, int attrnamespace __unused,
+    const char *name __unused)
+{
+
+	return (fi_check_vp_action(cred, vp, FI_FS_READ));
+}
+
+static int
+fi_check_listextattr(struct ucred *cred, struct vnode *vp,
+    struct label *label __unused, int attrnamespace __unused)
+{
+
+	return (fi_check_vp_action(cred, vp, FI_FS_STAT));
+}
+
+static int
+fi_check_writeextattr(struct ucred *cred, struct vnode *vp,
+    struct label *label __unused, int attrnamespace __unused,
+    const char *name __unused)
+{
+
+	return (fi_check_vp_action(cred, vp, FI_FS_SETATTR));
 }
 
 static int
@@ -929,6 +1038,22 @@ fi_check_readlink(struct ucred *cred, struct vnode *vp,
 {
 
 	return (fi_check_vp_action(cred, vp, FI_FS_READ));
+}
+
+static int
+fi_check_readdir(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel __unused)
+{
+
+	return (fi_check_vp_action(cred, dvp, FI_FS_READ));
+}
+
+static int
+fi_check_chdir(struct ucred *cred, struct vnode *dvp,
+    struct label *dvplabel __unused)
+{
+
+	return (fi_check_vp_action(cred, dvp, FI_FS_LOOKUP));
 }
 
 /* --- Directory traversal --- */
@@ -1238,6 +1363,7 @@ static int
 fi_net_check(struct ucred *cred, int domain, int protocol,
     struct sockaddr *sa, uint8_t direction)
 {
+	struct mac_capability_authorization context;
 	struct fi_net_claim *nc;
 	uint64_t caller_nonce;
 	uint16_t port = 0;
@@ -1298,6 +1424,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 
 	caller_nonce = mac_capability_proc_nonce(cred);
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_net_lock);
 	/* Lock order for combined lookups is claim table, then auth table. */
 	if (caller_nonce != 0)
@@ -1369,7 +1496,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 					rw_runlock(&fi_net_lock);
 					return (0);
 				}
-				if (caller_nonce != 0 && fi_is_authorized_net(
+				if (caller_nonce != 0 && fi_is_authorized_net(&context,
 				    caller_nonce, nc->fn_nonce, nc->fn_id, domain,
 				    protocol, sa, direction)) {
 					SDT_PROBE6(mac_capability_isolation, , ,
@@ -1415,6 +1542,7 @@ static int
 fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
     int protocol)
 {
+	struct mac_capability_authorization context;
 	struct fi_net_claim *nc;
 	uint64_t caller_nonce, denied_id, denied_nonce;
 	bool denied;
@@ -1443,6 +1571,7 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 	 * claims from accidentally blocking socket creation.
 	 * Only a fully-wildcard "block all networking" claim triggers here.
 	 */
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_net_lock);
 	/* Keep each wildcard claim stable across its authorization lookup. */
 	if (caller_nonce != 0)
@@ -1492,7 +1621,7 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 				 * permits creating an inert socket.  Its narrowed
 				 * endpoint is still enforced by bind/connect below.
 				 */
-				if (caller_nonce != 0 && fi_is_authorized_net_socket(
+				if (caller_nonce != 0 && fi_is_authorized_net_socket(&context,
 				    caller_nonce, nc->fn_nonce, nc->fn_id, domain,
 				    protocol)) {
 					rw_runlock(&fi_auth_lock);
@@ -1649,7 +1778,8 @@ fi_auth_vsock_matches(const struct fi_auth *fa, uint64_t cid,
 }
 
 static int
-fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
+fi_is_authorized_vsock(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner, uint64_t claim_id,
     uint64_t cid, uint32_t port, uint8_t direction)
 {
 	struct fi_auth *fa;
@@ -1657,6 +1787,8 @@ fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_vsock_matches(fa, cid, port, direction))
 			return (1);
@@ -1665,7 +1797,8 @@ fi_is_authorized_vsock(uint64_t accessor, uint64_t owner, uint64_t claim_id,
 }
 
 static int
-fi_is_authorized_vsock_claim(uint64_t accessor, uint64_t owner,
+fi_is_authorized_vsock_claim(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner,
     uint64_t claim_id)
 {
 	struct fi_auth *fa;
@@ -1673,6 +1806,8 @@ fi_is_authorized_vsock_claim(uint64_t accessor, uint64_t owner,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id && fa->fa_is_vsock)
 			return (1);
 	}
@@ -1696,7 +1831,8 @@ fi_auth_vsock_covers_request(const struct fi_auth *fa,
 }
 
 static int
-fi_is_authorized_vsock_request(uint64_t accessor, uint64_t owner,
+fi_is_authorized_vsock_request(const struct mac_capability_authorization *context,
+    uint64_t accessor, uint64_t owner,
     uint64_t claim_id, const struct fi_vsock_request *vr)
 {
 	struct fi_auth *fa;
@@ -1704,6 +1840,8 @@ fi_is_authorized_vsock_request(uint64_t accessor, uint64_t owner,
 	rw_assert(&fi_auth_lock, RA_RLOCKED);
 	LIST_FOREACH(fa, FI_AUTH_BUCKET(owner), fa_link) {
 		if (fa->fa_accessor == accessor && fa->fa_owner == owner &&
+		    mac_capability_instance_authorization_allows(fa->fa_inst,
+		    context, accessor) &&
 		    fa->fa_claim_id == claim_id &&
 		    fi_auth_vsock_covers_request(fa, vr))
 			return (1);
@@ -1714,6 +1852,7 @@ fi_is_authorized_vsock_request(uint64_t accessor, uint64_t owner,
 static int
 fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 {
+	struct mac_capability_authorization context;
 	struct fi_vsock_claim *vc;
 	struct sockaddr_vm *svm;
 	uint64_t caller_nonce, cid, denied_id, denied_nonce;
@@ -1738,6 +1877,7 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 	denied_nonce = 0;
 	denied_id = 0;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_vsock_lock);
 	/* Lock order for combined lookups is claim table, then auth table. */
 	if (caller_nonce != 0)
@@ -1797,7 +1937,7 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 					rw_runlock(&fi_vsock_lock);
 					return (0);
 				}
-				if (caller_nonce != 0 && fi_is_authorized_vsock(
+				if (caller_nonce != 0 && fi_is_authorized_vsock(&context,
 				    caller_nonce, vc->fv_nonce, vc->fv_id, cid, port,
 				    direction)) {
 					SDT_PROBE6(mac_capability_isolation, , ,
@@ -1836,6 +1976,7 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 static int
 fi_vsock_check_create(struct ucred *cred)
 {
+	struct mac_capability_authorization context;
 	struct fi_vsock_claim *vc;
 	uint64_t caller_nonce, denied_id, denied_nonce;
 	bool denied;
@@ -1848,6 +1989,7 @@ fi_vsock_check_create(struct ucred *cred)
 	denied_id = 0;
 	denied_nonce = 0;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_vsock_lock);
 	/* Keep the claim stable while consulting its authorization entry. */
 	if (caller_nonce != 0)
@@ -1877,7 +2019,7 @@ fi_vsock_check_create(struct ucred *cred)
 			 * creating an inert socket.  Its narrowed CID, port, and
 			 * direction are still enforced by bind/connect below.
 			 */
-			if (caller_nonce != 0 && fi_is_authorized_vsock_claim(
+			if (caller_nonce != 0 && fi_is_authorized_vsock_claim(&context,
 			    caller_nonce, vc->fv_nonce, vc->fv_id)) {
 				SDT_PROBE6(mac_capability_isolation, , ,
 				    allow__vsock, vc->fv_nonce, caller_nonce,
@@ -1935,6 +2077,7 @@ static int
 fi_vsock_provider_check_attach(struct ucred *cred, uint64_t cid,
     struct label *label)
 {
+	struct mac_capability_authorization context;
 	struct fi_vsock_provider_label *pl;
 	struct fi_vsock_claim *vc;
 	struct fi_vsock_request vr;
@@ -1958,6 +2101,7 @@ fi_vsock_provider_check_attach(struct ucred *cred, uint64_t cid,
 	denied_nonce = 0;
 	denied_id = 0;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_vsock_lock);
 	if (caller_nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -1970,7 +2114,7 @@ fi_vsock_provider_check_attach(struct ucred *cred, uint64_t cid,
 				goto remember_denial;
 			if (caller_nonce == vc->fv_nonce ||
 			    (caller_nonce != 0 &&
-			    fi_is_authorized_vsock_request(caller_nonce,
+			    fi_is_authorized_vsock_request(&context, caller_nonce,
 			    vc->fv_nonce, vc->fv_id, &vr))) {
 				pl->fpl_owner = vc->fv_nonce;
 				pl->fpl_claim_id = vc->fv_id;
@@ -2009,6 +2153,7 @@ static int
 fi_vsock_provider_check_access(struct ucred *cred, uint64_t cid,
     struct label *label)
 {
+	struct mac_capability_authorization context;
 	struct fi_vsock_provider_label *pl;
 	struct fi_vsock_claim *vc;
 	struct fi_vsock_request vr;
@@ -2038,6 +2183,7 @@ fi_vsock_provider_check_access(struct ucred *cred, uint64_t cid,
 	denied_nonce = pl->fpl_owner;
 	denied_id = pl->fpl_claim_id;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_vsock_lock);
 	if (caller_nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -2055,7 +2201,7 @@ fi_vsock_provider_check_access(struct ucred *cred, uint64_t cid,
 				goto remember_denial;
 			if (caller_nonce == vc->fv_nonce ||
 			    (caller_nonce != 0 &&
-			    fi_is_authorized_vsock_request(caller_nonce,
+			    fi_is_authorized_vsock_request(&context, caller_nonce,
 			    vc->fv_nonce, vc->fv_id, &vr))) {
 				if (caller_nonce != 0)
 					rw_runlock(&fi_auth_lock);
@@ -2242,6 +2388,7 @@ static int
 fi_do_query(struct file *fp, uint64_t nonce, uint64_t actions,
     struct fi_reply *rpl)
 {
+	struct mac_capability_authorization context;
 	struct vnode *vp;
 	struct fi_claim *c;
 
@@ -2251,6 +2398,7 @@ fi_do_query(struct file *fp, uint64_t nonce, uint64_t actions,
 
 	rpl->flags = 0;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_lock);
 	c = fi_claim_lookup(vp);
 	if (c != NULL) {
@@ -2259,7 +2407,7 @@ fi_do_query(struct file *fp, uint64_t nonce, uint64_t actions,
 			rpl->flags |= FI_QF_MINE;
 		} else if (nonce != 0) {
 			rw_rlock(&fi_auth_lock);
-			if (fi_is_authorized(nonce, c->fi_nonce, c->fi_id,
+			if (fi_is_authorized(&context, nonce, c->fi_nonce, c->fi_id,
 			    actions))
 				rpl->flags |= FI_QF_AUTHORIZED;
 			rw_runlock(&fi_auth_lock);
@@ -2474,6 +2622,7 @@ static int
 fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
     struct fi_reply *rpl)
 {
+	struct mac_capability_authorization context;
 	struct fi_net_claim *nc;
 	u_long buckets[4];
 	uint16_t port_min, port_max, hash_port;
@@ -2490,6 +2639,7 @@ fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
 	buckets[3] = fi_net_hash_fn(0, 0);
 
 	rpl->flags = 0;
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_net_lock);
 	if (nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -2513,7 +2663,7 @@ fi_do_query_net(const struct fi_net_request *nr, uint64_t nonce,
 				rw_runlock(&fi_net_lock);
 				return (0);
 			}
-			if (nonce != 0 && fi_is_authorized_net_request(nonce,
+			if (nonce != 0 && fi_is_authorized_net_request(&context, nonce,
 			    nc->fn_nonce, nc->fn_id, nr))
 				rpl->flags |= FI_QF_AUTHORIZED;
 		}
@@ -2673,8 +2823,10 @@ static int
 fi_do_query_jail(const struct fi_jail_request *jr, uint64_t nonce,
     struct fi_reply *rpl)
 {
+	struct mac_capability_authorization context;
 	struct fi_jail_claim *jc;
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_jail_lock);
 	if (nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -2690,7 +2842,7 @@ fi_do_query_jail(const struct fi_jail_request *jr, uint64_t nonce,
 			    nonce, (uint64_t)0, (uint64_t)0, rpl->flags);
 			return (0);
 		}
-		if (nonce != 0 && fi_is_authorized_jail(nonce,
+		if (nonce != 0 && fi_is_authorized_jail(&context, nonce,
 		    jc->fj_nonce, jc->fj_id, jr))
 			rpl->flags |= FI_QF_AUTHORIZED;
 	}
@@ -2843,6 +2995,7 @@ static int
 fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
     struct fi_reply *rpl)
 {
+	struct mac_capability_authorization context;
 	struct fi_vsock_claim *vc;
 	u_long buckets[4];
 	uint32_t hash_port;
@@ -2857,6 +3010,7 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 	buckets[3] = fi_vsock_hash_fn(0, 0);
 
 	rpl->flags = 0;
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_vsock_lock);
 	if (nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -2883,7 +3037,7 @@ fi_do_query_vsock(const struct fi_vsock_request *vr, uint64_t nonce,
 				    rpl->flags);
 				return (0);
 			}
-			if (nonce != 0 && fi_is_authorized_vsock_request(nonce,
+			if (nonce != 0 && fi_is_authorized_vsock_request(&context, nonce,
 			    vc->fv_nonce, vc->fv_id, vr))
 				rpl->flags |= FI_QF_AUTHORIZED;
 		}
@@ -3583,6 +3737,7 @@ static int
 fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
     uint32_t actions, const char *what)
 {
+	struct mac_capability_authorization context;
 	struct fi_jail_claim *jc;
 	struct fi_jail_request req;
 	uint64_t caller_nonce, denied_id, denied_nonce;
@@ -3603,6 +3758,7 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 	denied_id = 0;
 	denied_nonce = 0;
 	denied_name[0] = '\0';
+	mac_capability_authorization_snapshot(curthread, &context);
 	rw_rlock(&fi_jail_lock);
 	if (caller_nonce != 0)
 		rw_rlock(&fi_auth_lock);
@@ -3619,7 +3775,7 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 			rw_runlock(&fi_jail_lock);
 			return (0);
 		}
-		if (caller_nonce != 0 && fi_is_authorized_jail(caller_nonce,
+		if (caller_nonce != 0 && fi_is_authorized_jail(&context, caller_nonce,
 		    jc->fj_nonce, jc->fj_id, &req)) {
 			SDT_PROBE6(mac_capability_isolation, , , allow__jail,
 			    jc->fj_nonce, caller_nonce, jc->fj_id, jid, what,
@@ -3728,6 +3884,7 @@ fi_check_prison_attach(struct ucred *cred, struct prison *pr,
 static struct mac_policy_ops fi_mac_ops = {
 	/* Content access */
 	.mpo_vnode_check_open		= fi_check_open,
+	.mpo_vnode_check_read		= fi_check_read,
 	.mpo_vnode_check_write		= fi_check_write,
 	.mpo_vnode_check_mmap		= fi_check_mmap,
 	.mpo_vnode_check_exec		= fi_check_exec,
@@ -3737,6 +3894,10 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_vnode_check_rename_from	= fi_check_rename_from,
 	.mpo_vnode_check_rename_to	= fi_check_rename_to,
 	/* Metadata mutation */
+	.mpo_vnode_check_setextattr	= fi_check_writeextattr,
+	.mpo_vnode_check_deleteextattr	= fi_check_writeextattr,
+	.mpo_vnode_check_getextattr	= fi_check_getextattr,
+	.mpo_vnode_check_listextattr	= fi_check_listextattr,
 	.mpo_vnode_check_setmode	= fi_check_setmode,
 	.mpo_vnode_check_setowner	= fi_check_setowner,
 	.mpo_vnode_check_setflags	= fi_check_setflags,
@@ -3747,7 +3908,10 @@ static struct mac_policy_ops fi_mac_ops = {
 	.mpo_vnode_check_access		= fi_check_access,
 	.mpo_vnode_check_readlink	= fi_check_readlink,
 	/* Directory traversal */
+	.mpo_vnode_check_readdir		= fi_check_readdir,
+	.mpo_vnode_check_chdir		= fi_check_chdir,
 	.mpo_vnode_check_lookup		= fi_check_lookup,
+	.mpo_vnode_check_fh		= fi_check_fh,
 	.mpo_vnode_check_create		= fi_check_create,
 	/* Unix domain sockets */
 	.mpo_vnode_check_uipc_connect	= fi_check_uipc_connect,
@@ -3769,10 +3933,9 @@ static struct mac_policy_ops fi_mac_ops = {
 };
 
 /*
- * Isolation is enforced at open(2) time only.  File descriptors obtained
- * before a claim is established, or received via SCM_RIGHTS, remain
- * usable.  This is intentional: once a process holds a valid fd, the
- * capability model (Capsicum) governs further access, not isolation.
+ * Isolation checks current authority at the registered operation hooks,
+ * including I/O through old descriptors. Directory claims are not recursive,
+ * and existing mappings are not revoked. Capsicum limits apply independently.
  */
 MAC_POLICY_SET(&fi_mac_ops, mac_mac_capability_isolation,
     "MAC_CAPABILITY isolation enforcement",

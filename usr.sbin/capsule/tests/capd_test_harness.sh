@@ -37,9 +37,9 @@ capd_paths_init()
 # options MAC_CAPABILITY_TEST_RELAX and booted with kern.mac_capability.test_relax=1
 # lets a test-local Capsule create one, loudly logged as TEST MODE; that is the
 # tier these stack cases run in (docs/book/src/develop/testing.md).  On any
-# other kernel a case that would fail after Capsule logged that the issuer is
-# unavailable skips with that reason instead; cases that need no launched unit
-# still run and assert.
+# other kernel, cases that require launched units must explicitly check this
+# prerequisite before starting their stack. Cases that need no launched unit
+# still run. A daemon log message must never turn an assertion into a skip.
 # ----------------------------------------------------------------------------
 
 CAPD_ISSUER_SKIP="requires an authority issuer: a test-local Capsule off PID 1 needs a MAC_CAPABILITY_TEST_RELAX kernel booted with kern.mac_capability.test_relax=1"
@@ -49,37 +49,11 @@ capd_test_relax()
 	[ "$(sysctl -n kern.mac_capability.test_relax 2>/dev/null)" = 1 ]
 }
 
-# The issuer condition, as logged by the test-local Capsule itself.
-capd_issuer_unavailable()
+# Call only from cases that require successful unit authority issuance.
+# Check the environment before launching processes, never after an assertion.
+capd_require_unit_issuer()
 {
-	[ -n "${CAPD_LOG:-}" ] && [ -r "$CAPD_LOG" ] &&
-	    grep -q "protected authority issuer unavailable" "$CAPD_LOG" \
-	    2>/dev/null
-}
-
-# Replace atf-sh's atf_fail: a failure on a stack that could not issue unit
-# authority is the environment, not the behaviour under test.
-_capd_failing=
-atf_fail()
-{
-	if [ -z "$_capd_failing" ] && capd_issuer_unavailable; then
-		_capd_failing=1
-		echo "atf_fail: $*" >&2
-		_atf_create_resfile "skipped: ${CAPD_ISSUER_SKIP}"
-		exit 0
-	fi
-	case "${Expect}" in
-	fail)
-		atf_expected_failure "${@}"
-		;;
-	pass)
-		_atf_create_resfile "failed: ${*}"
-		exit 1
-		;;
-	*)
-		_atf_error 128 "Unreachable"
-		;;
-	esac
+	capd_test_relax || atf_skip "$CAPD_ISSUER_SKIP"
 }
 
 capd_require_stack_kmods()
@@ -114,14 +88,21 @@ capd_require_device()
 
 capd_find_guardian()
 {
-	local candidate srcdir
+	local candidate selected srcdir
+
+	# Explicit qualification inputs must never fall back to another revision.
+	selected=$(atf_config_get capd_guardian "${CAPD_TEST_GUARDIAN:-}")
+	if atf_config_has capd_guardian || [ -n "$selected" ]; then
+		[ -x "$selected" ] || atf_fail "selected guardian is not executable: $selected"
+		capd_guardian_bin=$selected
+		return 0
+	fi
 
 	if [ -n "$capd_guardian_bin" ] && [ -x "$capd_guardian_bin" ]; then
 		return 0
 	fi
 	srcdir=$(atf_get_srcdir 2>/dev/null || pwd)
 	for candidate in \
-	    "${CAPD_TEST_GUARDIAN:-}" \
 	    "${srcdir}/capd_test_guardian" \
 	    "$(command -v capd_test_guardian 2>/dev/null)"
 	do
@@ -135,7 +116,15 @@ capd_find_guardian()
 
 capd_find_switchboard()
 {
-	local candidate machine machine_arch
+	local candidate selected machine machine_arch
+
+	# Explicit qualification inputs must never fall back to another revision.
+	selected=$(atf_config_get capd_switchboard "${CAPD_TEST_SWITCHBOARD:-}")
+	if atf_config_has capd_switchboard || [ -n "$selected" ]; then
+		[ -x "$selected" ] || atf_fail "selected switchboard is not executable: $selected"
+		capd_switchboard_bin=$selected
+		return 0
+	fi
 
 	if [ -n "$capd_switchboard_bin" ] && [ -x "$capd_switchboard_bin" ]; then
 		return 0
@@ -145,7 +134,6 @@ capd_find_switchboard()
 	# Prefer the source-build switchboard: qualification must exercise the
 	# same revision as the staged libraries.
 	for candidate in \
-	    "${CAPD_TEST_SWITCHBOARD:-}" \
 	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/switchboard/switchboard" \
 	    /usr/libexec/switchboard \
 	    "$(command -v switchboard 2>/dev/null)"
@@ -160,7 +148,15 @@ capd_find_switchboard()
 
 capd_find_capsule()
 {
-	local candidate machine machine_arch
+	local candidate selected machine machine_arch
+
+	# Explicit qualification inputs must never fall back to another revision.
+	selected=$(atf_config_get capd_capsule "${CAPD_TEST_CAPSULE:-}")
+	if atf_config_has capd_capsule || [ -n "$selected" ]; then
+		[ -x "$selected" ] || atf_fail "selected capsule is not executable: $selected"
+		capd_capsule_bin=$selected
+		return 0
+	fi
 
 	if [ -n "$capd_capsule_bin" ] && [ -x "$capd_capsule_bin" ]; then
 		return 0
@@ -171,7 +167,6 @@ capd_find_capsule()
 	# reason: an installed capsule from an older world must not be paired
 	# with the staged libraries.
 	for candidate in \
-	    "${CAPD_TEST_CAPSULE:-}" \
 	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/capsule/capsule" \
 	    "$(command -v capsule 2>/dev/null)"
 	do

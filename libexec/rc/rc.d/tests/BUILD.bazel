@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Analysis-only platforms for rc installation selection, not compiler toolchains.
+[platform(name = cpu, constraint_values = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu])
+ for cpu in ["x86_64", "x86_32", "aarch64", "riscv64"]]

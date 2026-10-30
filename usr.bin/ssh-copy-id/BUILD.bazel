@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+bsd_install_file(name = "script_file", src = 'ssh-copy-id.sh', destination = '/usr/bin/ssh-copy-id', owner = "root", group = "wheel", mode = "0555", install_tags = ['package=ssh'])
+bsd_compress(name = "manual", src = 'ssh-copy-id.1', output = 'ssh-copy-id.1.gz', arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "manual_file", src = ":manual", destination = '/usr/share/man/man1/ssh-copy-id.1.gz', owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ['package=ssh-man'], "//conditions:default": ['package=ssh']}))
+bsd_install_manifest(name = "install_manifest", entries = [':script_file', ':manual_file'])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//usr.bin:__subpackages__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ssh"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

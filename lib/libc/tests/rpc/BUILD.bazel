@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library")
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+
+[bsd_rpcgen(
+    name = output + "_generate",
+    source = "//contrib/netbsd-tests/lib/libc/rpc:h_testbits.x",
+    output = output,
+    mode = mode,
+    flags = ["-L", "-C"],
+    cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    rpcgen = "//usr.bin/rpcgen:rpcgen",
+    cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    runtime = ["@bsd_sdk//toolchain:cpp_runtime"],
+) for output, mode in [("h_testbits.h", "-h"), ("h_testbits_xdr.c", "-c")]]
+cc_library(name = "fixture_headers", hdrs = [":h_testbits.h"], strip_include_prefix = ".")
+
+# Select the already-qualified PIC archive for this PIE object test.
+cc_import(name = "xdr_pic", static_library = "//lib/libc/xdr:pic_objects_archive")
+
+# Exercise the native libc objects before the complete libc link is available.
+# This is not the installed xdr_test/rpc_test suite or installation parity.
+cc_binary(
+    name = "xdr_objects_test",
+    srcs = ["//contrib/netbsd-tests/lib/libc/rpc:t_xdr.c", ":h_testbits_xdr.c"],
+    deps = [":fixture_headers", ":xdr_pic",
+            "//lib/libnetbsd:netbsd_pie", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_atf_test(
+    name = "native_xdr",
+    case_name = "xdr",
+    interface = "program",
+    body = ":xdr_objects_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared",
+                   "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+    visibility = ["//visibility:public"],
+)
+
+# Maintained installed programs. These use SDK libc until native libc is linked.
+# Native runtime variants use transitive RPATH so libc auxiliary libsys also
+# resolves to its declared suite artifact; installed binaries have no RPATH.
+[cc_binary(name = name + suffix,
+    srcs = ["//contrib/netbsd-tests/lib/libc/rpc:" + source] +
+        ([":h_testbits_xdr.c"] if name == "xdr_test" else []),
+    deps = [":fixture_headers", "//lib/libnetbsd:netbsd_pie", "//lib/atf/libatf-c:atf_c",
+            "//lib/librpcsvc:rpcsvc", "//lib/libutil:util"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/librpcsvc:rpcsvc_shared", "//lib/libutil:util_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name, source in [("rpc_test", "t_rpc.c"), ("xdr_test", "t_xdr.c")] for suffix in ["", "_native"]]
+
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[bsd_kyua_test(name = "case_" + case, program = ":" + program + "_native", program_path = program, case_name = case,
+    interface = "atf", suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime", "@bsd_sdk//toolchain:python_stdlib", "//tools/build/bazel:libmd_environment.py"],
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {
+        "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "//lib/librpcsvc:rpcsvc_shared": "librpcsvc.so.5",
+        "//lib/libutil:util_shared": "libutil.so.10",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7",
+    },
+    tags = [] if case in ["raw", "xdr"] else ["manual", "requires-network"],
+    size = "small", visibility = ["//visibility:public"],
+) for program, cases in [("xdr_test", ["xdr"]), ("rpc_test", ["raw", "get_svc_addr_tcp", "get_svc_addr_udp", "tcp", "udp", "tcp_poll", "udp_poll"])] for case in cases]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "", package = "tests",
+    bindir = "/usr/tests/lib/libc/rpc") for name in ["rpc_test", "xdr_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["rpc_test", "xdr_test"],
+    interfaces = {n: "atf" for n in ["rpc_test", "xdr_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libc/rpc/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_rpc_test", ":install_xdr_test", ":install_extra"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libc", "/usr/lib/debug/usr/tests/lib/libc/rpc"]} | {"/usr/tests/lib/libc/rpc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

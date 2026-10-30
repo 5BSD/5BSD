@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_SCRIPTS = {
+    "ifconfig": "ifconfig.sh",
+    "inet6": "inet6.sh",
+    "nonexistent_test": "//contrib/netbsd-tests/sbin/ifconfig:t_nonexistent.sh",
+    "openbsd": "openbsd.sh",
+}
+[bsd_script_wrapper(name = name, body = body,
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name, body in _SCRIPTS.items()]
+bsd_kyuafile(
+    name = "kyuafile", suite = "FreeBSD", names = _SCRIPTS.keys(),
+    interfaces = {name: "atf" for name in _SCRIPTS},
+    metadata = {name: json.encode({"execenv": "jail", "execenv_jail_params": "vnet allow.raw_sockets"}) for name in _SCRIPTS},
+)
+[bsd_install_file(name = "install_" + name, src = ":" + name,
+    destination = "/usr/tests/sbin/ifconfig/" + name, owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"]) for name in _SCRIPTS]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/sbin/ifconfig/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + name for name in _SCRIPTS] + [":install_kyuafile"],
+    visibility = ["//visibility:public"])

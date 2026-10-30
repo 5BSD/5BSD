@@ -51,6 +51,7 @@ NO_SHARED.provider_test=	yes
 # ${TESTSDIR}/srctree so the installed tests do not depend on the build
 # machine's source tree.
 SRCTREE_FILES=	usr.sbin/BSDFilesystem/bsdfilesystem.ucl \
+		usr.sbin/BSDNetwork/capbundle/bsdnetwork.conf \
 		usr.sbin/BSDNetwork/bsdnetwork_provider.d \
 		usr.sbin/BSDNetwork/networkcmp.c \
 		usr.sbin/BSDNetwork/resolver.c
@@ -154,6 +155,11 @@ CFLAGS.${t}+= -I${FIDLGEN.networkcmp}
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdnetwork-tests/fuchsia
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
 
 # Bindings generated at build time (fidl-bindings.mk).
 FIDL_BINDINGS+=	networkcmp

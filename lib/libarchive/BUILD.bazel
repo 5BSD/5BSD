@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
+load("//contrib/libarchive:sources.bzl", "ARCHIVE_SOURCES")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:cc_feature_requirements.bzl", "bsd_cc_feature_requirements")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_OPENSSL = "//tools/build/bazel/config:openssl_enabled"
+_ICONV = "//tools/build/bazel/config:iconv_enabled"
+_LIBRARIES = ["//lib/libz:z", "//lib/libbz2:bz2", "//lib/liblzma:lzma", "//lib/libexpat:bsdxml", "//lib/libzstd:zstd"] + select({
+    _OPENSSL: ["//secure/lib/libcrypto:crypto"], "//conditions:default": ["//lib/libmd:md_link"],
+})
+_SHARED = ["//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared", "//lib/libexpat:bsdxml_shared", "//lib/libzstd:zstd_shared"] + select({
+    _OPENSSL: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": ["//lib/libmd:md_shared"],
+})
+_FEATURES = select({_ICONV: ["bsd_libarchive_iconv"], "//conditions:default": []})
+bsd_cc_feature_requirements(name = "required_features", required_features = _FEATURES)
+cc_library(name = "configuration", hdrs = ["config_freebsd.h"], strip_include_prefix = "/lib/libarchive", visibility = ["//usr.bin/bsdcat:__pkg__", "//usr.bin/unzip:__pkg__", "//usr.bin/cpio:__pkg__", "//usr.bin/tar:__pkg__", "//usr.bin/bsdcat/tests:__pkg__", "//usr.bin/unzip/tests:__pkg__", "//usr.bin/cpio/tests:__pkg__", "//usr.bin/tar/tests:__pkg__"])
+bsd_dtrace_header(name = "provider", source = "archiveio_provider.d", output = "archiveio_provider.h",
+    flags = ["-C", "-x", "nolibs"], static_anchor = True, object_path_mode = "relative",
+    dtrace = "@bsd_sdk//toolchain:extra_dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "@bsd_sdk//toolchain:sysroot/usr/lib/dtrace/drti.o",
+    tool_inputs = ["@bsd_sdk//toolchain:extra_dtrace_runtime", "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = "/lib/libarchive")
+_HMAC = "//contrib/libarchive:libarchive/archive_hmac.c"
+[
+    cc_library(name = name, srcs = sources, deps = _LIBRARIES + ["//contrib/libarchive:headers"],
+        implementation_deps = ["//contrib/libarchive:internal_headers", ":configuration", ":required_features"] +
+            select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+        local_defines = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"'] +
+            select({_OPENSSL: ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []}) +
+            select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}),
+        features = _FEATURES, copts = flags, linkstatic = True, target_compatible_with = _PLATFORM)
+    for name, sources, flags in [
+        ("objects", [source for source in ARCHIVE_SOURCES if source != _HMAC], []),
+        ("hmac_objects", [_HMAC], ["-Wno-error=cast-qual"]),
+    ]
+]
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = [":objects", ":hmac_objects"], provider = ":provider",
+    provider_object = "archiveio_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[
+    filegroup(name = group, srcs = [":traced_objects"], output_group = group)
+    for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]
+]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"],
+    deps = _LIBRARIES + [":provider_link"])
+cc_library(name = "archive", deps = ["//contrib/libarchive:headers"] + select({
+    _TRACE: [":traced"], "//conditions:default": [":objects", ":hmac_objects"],
+}), linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = select({
+    _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects", ":hmac_objects"],
+}), target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "archive_shared", deps = [":archive"], dynamic_deps = _SHARED,
+    shared_lib_name = "libarchive.so.7",
+    user_link_flags = ["-Wl,-soname,libarchive.so.7", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "roundtrip_static", srcs = ["roundtrip_test.c"],
+    deps = [":archive_link", "//contrib/libarchive:headers"] + _LIBRARIES,
+    linkstatic = True, size = "small", target_compatible_with = _PLATFORM)
+cc_test(name = "roundtrip_shared", srcs = ["roundtrip_test.c"], deps = [":archive", "//lib/libmd:md_link"],
+    # Include liblzma's transitive libmd in the native test runtime closure.
+    dynamic_deps = [":archive_shared", "//lib/libmd:md_shared"] + _SHARED, features = ["bsd_test_runtime_paths"],
+    size = "small", target_compatible_with = _PLATFORM)
+
+load(":installation.bzl", "archive_installation")
+archive_installation(name = "install_manifest")
+
+filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/libarchive:__pkg__"])

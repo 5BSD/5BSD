@@ -1760,6 +1760,47 @@ will output debug log messages to
 .It Pa /boot/dtrace.dof
 File for anonymous tracing directives.
 .El
+.Sh REPRODUCIBLE OBJECT LINKING
+The
+.Fl x Cm linkpath=relative
+option makes
+.Fl G
+use normalized relative object paths when deriving symbols that distinguish
+local probe sites.
+This avoids embedding the build directory in object identity.
+Object arguments must be nonempty relative paths without empty,
+.Dq .
+or
+.Dq ..
+components.
+The caller must use distinct relative paths for different objects
+that may appear in the same final link, including objects from different
+libraries.
+A basename alone is insufficient when libraries share filenames.
+The default,
+.Fl x Cm linkpath=absolute ,
+uses resolved absolute paths and preserves the historical behavior.
+This option does not by itself make other debug or toolchain output
+reproducible.
+.Sh SECTION-SCOPED OBJECT LINKING
+The
+.Fl x Cm linksection=index
+option restricts
+.Fl G
+to probe sites in one executable ELF section of one relocatable input object.
+The index is a positive decimal ELF section index obtained from the input
+object, not a source file or function name.
+Other sections' probe sites are left untouched.
+An invalid index, non-executable section, or multiple input objects is an error.
+The default processes all sections as before.
+.Pp
+This advanced option allows build tools to generate separate metadata for
+independently discarded code sections.
+The caller must process every required probe-bearing section and correctly
+associate each generated metadata object and its registration code with the
+corresponding code section.
+The option alone does not establish those associations or preserve probes
+through linker garbage collection.
 .Sh EXIT STATUS
 The following exit statuses are returned:
 .Bl -tag -width indent

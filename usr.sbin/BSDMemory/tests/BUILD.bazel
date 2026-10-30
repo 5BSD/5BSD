@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Keep the installed executable's linkage identical to Make. The runtime-only
+# variant resolves declared candidate libraries, including transitive libc deps.
+[cc_binary(name = "pressure_test" + suffix, srcs = ["pressure_test.c", "//usr.sbin/BSDMemory:pressure.c"],
+    deps = ["//usr.sbin/BSDMemory:test_headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for suffix in ["", "_runtime"]]
+bsd_kyua_test(name = "pressure_test_run", program = ":pressure_test_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {
+        "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+
+_WRAPS = {'dependency_test': ['sysctlcmp_client_open', 'sysctlcmp_client_close', 'sysctlcmp_get', 'notify_client_open_system', 'notify_client_close', 'notify_state_get', 'notify_state_set'], 'startup_test': ['service_set_proctitle', 'service_provider_create', 'service_provider_destroy', 'service_provider_authorize_capabilities', 'service_provider_protect', 'service_provider_enter_capability_mode', 'service_provider_ready', 'service_provider_quiescing', 'service_provider_quiesce_complete', 'kqueue', 'kevent', 'service_monotime_ms', 'service_provider_heartbeat', 'syslog', 'sysctlcmp_client_open', 'sysctlcmp_client_close', 'sysctlcmp_get', 'notify_client_open_system', 'notify_client_close', 'notify_state_get', 'notify_state_set']}
+[cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDMemory:pressure.c"],
+    deps = ["//usr.sbin/BSDMemory:test_headers", "//lib/libnotify:notify", "//lib/libservice:service",
+        "//lib/libsysctlcmp:sysctlcmp", "//lib/atf/libatf-c:atf_c"],
+    linkstatic = True, linkopts = ["-static"] + ["-Wl,--wrap=" + symbol for symbol in _WRAPS[name]])
+ for name in ["dependency_test", "startup_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+ for name in ["dependency_test", "startup_test"]]
+
+load(":installation.bzl", "PROGRAMS", "TESTDIR")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_kyuafile", "bsd_install_file", "bsd_install_manifest")
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "bsdmemory-tests", bindir = TESTDIR) for name in PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = PROGRAMS, interfaces = {n: "atf" for n in PROGRAMS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = TESTDIR + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdmemory-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//usr.sbin/BSDMemory:__pkg__"])

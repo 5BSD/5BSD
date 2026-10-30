@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['cl_atomic.h', 'cl_atomic_osd.h', 'cl_byteswap.h', 'cl_byteswap_osd.h', 'cl_comppool.h', 'cl_debug.h', 'cl_debug_osd.h', 'cl_dispatcher.h', 'cl_event.h', 'cl_event_osd.h', 'cl_event_wheel.h', 'cl_fleximap.h', 'cl_list.h', 'cl_log.h', 'cl_map.h', 'cl_math.h', 'cl_nodenamemap.h', 'cl_packoff.h', 'cl_packon.h', 'cl_passivelock.h', 'cl_pool.h', 'cl_ptr_vector.h', 'cl_qcomppool.h', 'cl_qlist.h', 'cl_qmap.h', 'cl_qpool.h', 'cl_spinlock.h', 'cl_spinlock_osd.h', 'cl_thread.h', 'cl_thread_osd.h', 'cl_threadpool.h', 'cl_timer.h', 'cl_timer_osd.h', 'cl_types.h', 'cl_types_osd.h', 'cl_vector.h'], visibility = ["//lib/ofed/include:__pkg__", "//contrib/ofed/opensm:__pkg__"])

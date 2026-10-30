@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "gmock", srcs = ["//contrib/googletest:googlemock/src/gmock-all.cc"],
+    deps = ["//contrib/googletest:bsd_mock_headers", "//lib/googletest/gtest:gtest"],
+    implementation_deps = ["//contrib/googletest:bsd_mock_implementation"],
+    copts = ["-fPIC", "-nostdinc++", "-pthread"], linkstatic = True, visibility = ["//visibility:public"])

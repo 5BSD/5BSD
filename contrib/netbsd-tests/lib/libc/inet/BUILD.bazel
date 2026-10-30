@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_inet_addr.c", "t_inet_network.c"], visibility = ["//lib/libc/tests/inet:__pkg__"])

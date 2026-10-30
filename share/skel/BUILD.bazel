@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["dot.zprofile", "dot.zshrc"], visibility = ["//bin/zsh:__pkg__"])

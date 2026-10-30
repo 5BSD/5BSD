@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["src/ibstat.c", "src/ibdiag_common.c", "src/ibdiag_sa.c", "man/ibstat.8"], visibility = ["//usr.bin/ofed/infiniband-diags:__subpackages__"])
+cc_library(name = "configuration", hdrs = ["config.h"], strip_include_prefix = ".")
+cc_library(name = "headers", hdrs = ["src/ibdiag_common.h", "src/ibdiag_sa.h", "src/ibdiag_version.h"], strip_include_prefix = "src", deps = [":configuration", "//contrib/ofed/libibnetdisc:headers", "//contrib/ofed/opensm:infiniband_headers", "//contrib/ofed/libibumad:headers"], visibility = ["//usr.bin/ofed/infiniband-diags:__subpackages__"])
+
+exports_files(['man/dump_fts.8', 'man/ibaddr.8', 'man/ibcacheedit.8', 'man/ibccconfig.8', 'man/ibccquery.8', 'man/iblinkinfo.8', 'man/ibnetdiscover.8', 'man/ibping.8', 'man/ibportstate.8', 'man/ibqueryerrors.8', 'man/ibroute.8', 'man/ibsysstat.8', 'man/ibtracert.8', 'man/perfquery.8', 'man/saquery.8', 'man/sminfo.8', 'man/smpdump.8', 'man/smpquery.8', 'man/vendstat.8', 'src/dump_fts.c', 'src/ibaddr.c', 'src/ibcacheedit.c', 'src/ibccconfig.c', 'src/ibccquery.c', 'src/iblinkinfo.c', 'src/ibmirror.c', 'src/ibnetdiscover.c', 'src/ibping.c', 'src/ibportstate.c', 'src/ibqueryerrors.c', 'src/ibroute.c', 'src/ibsysstat.c', 'src/ibtracert.c', 'src/perfquery.c', 'src/saquery.c', 'src/sminfo.c', 'src/smpdump.c', 'src/smpquery.c', 'src/vendstat.c'], visibility = ["//usr.bin/ofed/infiniband-diags:__subpackages__"])

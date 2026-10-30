@@ -26,6 +26,7 @@
 #include "llvm/Support/Compression.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Memory.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1076,6 +1077,224 @@ Error objcopy::elf::executeObjcopyOnRawBinary(const CommonConfig &Config,
   return writeOutput(Config, **Obj, Out, OutputElfType);
 }
 
+// .SUNW_ctf uses the relative order of defined object/function symbols, not
+// their names, to identify type records. Keep the input symbol identity across
+// localization, renaming and removal. Name matching cannot distinguish a
+// localized global from a static symbol of the same name.
+class CTFRewriter {
+  SectionBase *Section = nullptr;
+  ArrayRef<uint8_t> Input;
+  SmallVector<std::pair<uint32_t, uint8_t>, 0> InputSymbols;
+  SmallVector<uint8_t, 0> Header, Body;
+  // Widen ELF indices so UINT32_MAX (a new symbol) is not a DenseMap
+  // empty/tombstone key.
+  DenseMap<uint64_t, ArrayRef<uint8_t>> Entries;
+  llvm::endianness Endian = llvm::endianness::little;
+  uint32_t ObjectOffset = 0, FunctionOffset = 0, TypeOffset = 0;
+  unsigned Width = 0;
+  bool Compressed = false;
+
+  static Error invalid(StringRef Reason) {
+    return createStringError(errc::invalid_argument,
+                             "invalid .SUNW_ctf: " + Reason);
+  }
+  uint32_t read32(ArrayRef<uint8_t> Data, size_t Offset) const {
+    return support::endian::read32(Data.data() + Offset, Endian);
+  }
+  uint32_t readID(size_t Offset) const {
+    return Width == 4 ? read32(Body, Offset)
+                      : support::endian::read16(Body.data() + Offset, Endian);
+  }
+  static bool eligible(const Symbol &S) {
+    return (S.Type == STT_OBJECT || S.Type == STT_FUNC) &&
+           S.getShndx() != SHN_UNDEF && !S.Name.empty() &&
+           S.Name != "_START_" && S.Name != "_END_" &&
+           !(S.Type == STT_OBJECT && S.getShndx() == SHN_ABS && !S.Value);
+  }
+
+public:
+  Error capture(Object &Obj) {
+    Section = Obj.findSection(".SUNW_ctf");
+    if (!Section)
+      return Error::success();
+    // Dynamic symbol tables are not transformed by these objcopy operations.
+    // A zero link is accepted for older toolchains which dropped sh_link.
+    if (Section->Link) {
+      Expected<SectionBase *> Linked = Obj.sections().getSection(
+          Section->Link, "invalid .SUNW_ctf symbol table link");
+      if (!Linked)
+        return Linked.takeError();
+      if ((*Linked)->Type == SHT_DYNSYM) {
+        Section = nullptr;
+        return Error::success();
+      }
+      if (*Linked != Obj.SymbolTable)
+        return invalid("link does not identify a symbol table");
+    }
+    if (!Obj.SymbolTable) {
+      Section = nullptr;
+      return Error::success();
+    }
+    Input = Section->getContents();
+    for (Symbol &S : Obj.SymbolTable->symbols()) {
+      S.OriginalIndex = S.Index;
+      if (eligible(S))
+        InputSymbols.emplace_back(S.Index, S.Type);
+    }
+    return Error::success();
+  }
+
+private:
+  Error parse() {
+    auto Data = Input;
+    if (Data.size() < 36)
+      return invalid("truncated header");
+    if (support::endian::read16le(Data.data()) == 0xcff1)
+      Endian = llvm::endianness::little;
+    else if (support::endian::read16be(Data.data()) == 0xcff1)
+      Endian = llvm::endianness::big;
+    else
+      return invalid("bad magic");
+    if (Data[2] != 2 && Data[2] != 3)
+      return invalid("unsupported version");
+    if (Data[3] & ~1)
+      return invalid("unsupported flags");
+    if (Section->ParentSegment || (Section->Flags & SHF_ALLOC))
+      return invalid("allocated CTF is not supported");
+    Width = Data[2] == 3 ? 4 : 2;
+    Compressed = Data[3] & 1;
+    Header.assign(Data.begin(), Data.begin() + 36);
+    ObjectOffset = read32(Header, 16);
+    FunctionOffset = read32(Header, 20);
+    TypeOffset = read32(Header, 24);
+    uint32_t LabelOffset = read32(Header, 12);
+    uint32_t StringOffset = read32(Header, 28);
+    uint64_t Size = uint64_t(StringOffset) + read32(Header, 32);
+    if (Size > UINT32_MAX || LabelOffset > ObjectOffset ||
+        ObjectOffset > FunctionOffset || FunctionOffset > TypeOffset ||
+        TypeOffset > StringOffset || (LabelOffset & 3) ||
+        ObjectOffset % Width || FunctionOffset % Width || (TypeOffset & 3))
+      return invalid("invalid subsection offsets");
+    if (Compressed) {
+      if (!compression::zlib::isAvailable())
+        return invalid("zlib is unavailable");
+      if (Error E = compression::zlib::decompress(Data.drop_front(36), Body, Size))
+        return E;
+    } else {
+      if (Size != Data.size() - 36)
+        return invalid("incorrect payload size");
+      Body.assign(Data.begin() + 36, Data.end());
+    }
+    if (Body.size() != Size)
+      return invalid("incorrect decompressed size");
+    uint32_t O = ObjectOffset, F = FunctionOffset;
+    for (auto [Index, Type] : InputSymbols) {
+      uint32_t &Offset = Type == STT_OBJECT ? O : F;
+      uint32_t End = Type == STT_OBJECT ? FunctionOffset : TypeOffset;
+      if (End - Offset < Width)
+        return invalid("missing symbol type record");
+      uint64_t Length = Width;
+      if (Type == STT_FUNC) {
+        uint32_t Info = readID(Offset);
+        uint32_t Kind = Width == 4 ? Info >> 26 : Info >> 11;
+        uint32_t Count = Info & (Width == 4 ? 0xffffff : 0x3ff);
+        if (Info != 0) {
+          if (Kind != 5)
+            return invalid("invalid function type record");
+          // Function-section records are packed; only the following
+          // type section requires four-byte alignment.
+          Length = uint64_t(Count + 2) * Width;
+        }
+      }
+      if (Length > End - Offset)
+        return invalid("truncated symbol type record");
+      // Body remains owned and unchanged until rewriting completes. Avoid
+      // one heap allocation per symbol for large kernels and modules.
+      Entries[Index] = ArrayRef<uint8_t>(Body).slice(Offset, Length);
+      Offset += Length;
+    }
+    // Version 2 can have a final half-word of zero alignment padding.
+    auto Padding = [&](uint32_t Begin, uint32_t End) {
+      return End - Begin < 4 &&
+             llvm::all_of(ArrayRef<uint8_t>(Body).slice(Begin, End - Begin),
+                          [](uint8_t V) { return V == 0; });
+    };
+    if (!Padding(O, FunctionOffset) || !Padding(F, TypeOffset))
+      return invalid("symbol/type table length mismatch");
+    return Error::success();
+  }
+
+public:
+  Error rewrite(Object &Obj) {
+    if (!Section || !llvm::any_of(Obj.sections(), [&](const SectionBase &S) {
+          return &S == Section;
+        }))
+      return Error::success();
+    SmallVector<std::pair<uint32_t, uint8_t>, 0> OutputSymbols;
+    if (Obj.SymbolTable)
+      for (const Symbol &S : Obj.SymbolTable->symbols())
+        if (eligible(S))
+          OutputSymbols.emplace_back(S.OriginalIndex, S.Type);
+    // Debug stripping may renumber ELF symbols without changing CTF order.
+    // Do not decompress or validate opaque type bytes in that case; this also
+    // permits copying or explicitly removing an unsupported CTF version.
+    if (InputSymbols == OutputSymbols) {
+      if (Obj.SymbolTable && Obj.SymbolTable->indicesChanged())
+        Section->restoreSymTabLink(*Obj.SymbolTable);
+      return Error::success();
+    }
+    if (Error E = parse())
+      return E;
+    SmallVector<uint8_t, 0> Updated(Body.begin(), Body.begin() + ObjectOffset);
+    auto Append = [&](unsigned Type) {
+      if (Obj.SymbolTable)
+        for (Symbol &S : Obj.SymbolTable->symbols()) {
+          if (S.Type != Type || !eligible(S))
+            continue;
+          auto I = Entries.find(S.OriginalIndex);
+          if (I == Entries.end())
+            Updated.append(Width, 0); // An added symbol has no known type.
+          else
+            Updated.append(I->second.begin(), I->second.end());
+        }
+    };
+    Append(STT_OBJECT);
+    Updated.resize(alignTo(Updated.size(), Width), 0);
+    uint64_t NewFunctions = Updated.size();
+    Append(STT_FUNC);
+    Updated.resize(alignTo(Updated.size(), 4), 0);
+    uint64_t NewTypes = Updated.size();
+    Updated.append(Body.begin() + TypeOffset, Body.end());
+    uint64_t NewStrings = NewTypes + (read32(Header, 28) - TypeOffset);
+    if (Updated.size() > UINT32_MAX || NewStrings > UINT32_MAX)
+      return invalid("rewritten payload is too large");
+    // Preserve compressed bytes when symbol transformations left CTF unchanged.
+    if (Updated == Body) {
+      if (Obj.SymbolTable && Obj.SymbolTable->indicesChanged())
+        Section->restoreSymTabLink(*Obj.SymbolTable);
+      return Error::success();
+    }
+    support::endian::write32(Header.data() + 20, NewFunctions, Endian);
+    support::endian::write32(Header.data() + 24, NewTypes, Endian);
+    support::endian::write32(Header.data() + 28, NewStrings, Endian);
+    SmallVector<uint8_t, 0> Payload;
+    if (Compressed)
+      compression::zlib::compress(Updated, Payload);
+    else
+      Payload = std::move(Updated);
+    Header.append(Payload);
+    std::string Name = Section->Name;
+    if (Error E = Obj.updateSectionData(*Section, Header))
+      return E;
+    SectionBase *UpdatedSection = Obj.findSection(Name);
+    UpdatedSection->Link = 0;
+    if (Obj.SymbolTable)
+      static_cast<OwnedDataSection *>(UpdatedSection)
+          ->setSymTabLink(*Obj.SymbolTable);
+    return Error::success();
+  }
+};
+
 Error objcopy::elf::executeObjcopyOnBinary(const CommonConfig &Config,
                                            const ELFConfig &ELFConfig,
                                            object::ELFObjectFileBase &In,
@@ -1090,7 +1309,14 @@ Error objcopy::elf::executeObjcopyOnBinary(const CommonConfig &Config,
                                     ? getOutputElfType(*Config.OutputArch)
                                     : getOutputElfType(In);
 
+  CTFRewriter CTF;
+  if (Error E = CTF.capture(**Obj))
+    return E;
+
   if (Error E = handleArgs(Config, ELFConfig, OutputElfType, **Obj))
+    return E;
+
+  if (Error E = CTF.rewrite(**Obj))
     return E;
 
   if (Error E = writeOutput(Config, **Obj, Out, OutputElfType))

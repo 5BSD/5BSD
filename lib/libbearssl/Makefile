@@ -47,9 +47,7 @@ SRCS+= \
 	hash/mgf1.c
 
 
-# this one does not compile for amd64
-# we do not need it
-#	hash/ghash_pclmul.c \
+# Accelerated GHASH is included with the optional SSL algorithms below.
 
 SRCS+= \
 	int/i15_add.c \
@@ -173,6 +171,41 @@ INCS:= ${INCS:S,^,${BEARSSL}/,}
 
 
 .if ${MK_BEARSSL_SSL:Uno} == "yes"
+XCFLAGS.ssl_ccert_single_ec+= -Wno-shadow
+XCFLAGS.ghash_pclmul+= -Wno-cast-qual
+XCFLAGS.aes_x86ni_ctrcbc+= -Wno-cast-qual
+XCFLAGS.aes_x86ni_cbcdec+= -Wno-cast-qual
+XCFLAGS.aes_x86ni_cbcenc+= -Wno-cast-qual
+XCFLAGS.aes_x86ni_ctr+= -Wno-cast-qual
+# Complete optional algorithms and dependencies required by the SSL engine.
+SRCS+= \
+	aead/ccm.c \
+	aead/eax.c \
+	aead/gcm.c \
+	hash/ghash_pclmul.c \
+	rand/aesctr_drbg.c \
+	rand/sysrng.c \
+	rsa/rsa_default_oaep_decrypt.c \
+	rsa/rsa_default_oaep_encrypt.c \
+	rsa/rsa_i15_oaep_decrypt.c \
+	rsa/rsa_i15_oaep_encrypt.c \
+	rsa/rsa_i31_oaep_decrypt.c \
+	rsa/rsa_i31_oaep_encrypt.c \
+	rsa/rsa_i32_oaep_decrypt.c \
+	rsa/rsa_i32_oaep_encrypt.c \
+	rsa/rsa_i62_oaep_decrypt.c \
+	rsa/rsa_i62_oaep_encrypt.c \
+	rsa/rsa_oaep_pad.c \
+	rsa/rsa_oaep_unpad.c \
+	settings.c \
+	ssl/ssl_keyexport.c \
+	symcipher/aes_big_ctrcbc.c \
+	symcipher/aes_ct64_ctrcbc.c \
+	symcipher/aes_ct_ctrcbc.c \
+	symcipher/aes_small_ctrcbc.c \
+	symcipher/aes_x86ni_ctrcbc.c \
+	symcipher/chacha20_sse2.c \
+
 SRCS+= \
 	ssl/prf.c \
 	ssl/prf_md5sha1.c \
@@ -276,3 +309,9 @@ XCFLAGS.x509_minimal+= -Wno-cast-qual
 CFLAGS+= ${XCFLAGS.${.TARGET:T:R}:U} \
 	${XCFLAGS.${COMPILER_TYPE}.${.TARGET:T:R}:U}
 
+
+.if ${MK_BEARSSL_SSL:Uno} == "yes"
+# Keep source diagnostics, but compiler intrinsic headers contain intentional
+# vector alignment casts. Apply after bsd.lib.mk's warning defaults.
+CWARNFLAGS+= -Wno-system-headers
+.endif

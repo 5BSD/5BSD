@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["param.h"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "md_headers",
+    hdrs = ["md4.h", "md5.h"],
+    strip_include_prefix = "/sys/sys",
+    include_prefix = "sys",
+    visibility = ["//lib/libmd:__pkg__"],
+)
+
+cc_library(
+    name = "nv_headers",
+    hdrs = ["nv.h", "cnv.h", "dnv.h"],
+    strip_include_prefix = "/sys/sys",
+    include_prefix = "sys",
+    visibility = ["//lib/libnv:__pkg__", "//lib/libcasper/libcasper:__pkg__"],
+)
+
+cc_library(name = "elf_headers", hdrs = ["elf32.h", "elf64.h", "elf_common.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
+
+exports_files(["priv.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+cc_library(name = "sbuf_headers", hdrs = ["sbuf.h"], strip_include_prefix = "/sys", visibility = ["//lib/libsbuf:__pkg__"])
+
+cc_library(name = "iconv_headers", hdrs = ["iconv.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+# Isolated target constants for host/bootstrap consumers, without ABI headers.
+cc_library(name = "elf_common_header", hdrs = ["elf_common.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cap_authority_header", hdrs = ["cap_authority.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cap_process_header", hdrs = ["cap_process.h"],
+    strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "zfshandle_header", hdrs = ["zfshandle.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "capimage_headers", hdrs = ["capimage.h", "capimage_elf.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "envfd_header", hdrs = ["envfd.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])
+
+exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__"])
+
+cc_library(name = "assym_header", hdrs = ["assym.h"],
+    strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
+
+cc_library(name = "kernel_headers", hdrs = glob(["*.h", "disk/*.h"]),
+    includes = [".."], visibility = ["//visibility:public"])
+
+cc_library(name = "syscall_header", hdrs = ["syscall.h"],
+    strip_include_prefix = "/sys", visibility = ["//lib/libsys:__pkg__", "//lib/libc/sys:__pkg__"])
+
+cc_library(name = "disk_format_headers", hdrs = ["disk/apm.h", "disk/bsd.h", "disk/gpt.h", "disk/mbr.h"], strip_include_prefix = "disk", visibility = ["//usr.bin/mkimg:__pkg__"])
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['_align.h', '_clock_id.h', '_decls.h', '_endian.h', '_iovec.h', '_maxphys.h', '_null.h', '_nv.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_sockaddr_storage.h', '_stdarg.h', '_stdint.h', '_termios.h', '_timespec.h', '_timeval.h', '_types.h', '_ucontext.h', '_visible.h', '_winsize.h', 'aio.h', 'bitcount.h', 'caprights.h', 'capsicum.h', 'cdefs.h', 'endian.h', 'event.h', 'fcntl.h', 'file.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'limits.h', 'mman.h', 'mount.h', 'nv.h', 'nv_namespace.h', 'param.h', 'poll.h', 'procdesc.h', 'procfs.h', 'ptrace.h', 'queue.h', 'resource.h', 'sched.h', 'select.h', 'signal.h', 'socket.h', 'sockio.h', 'stat.h', 'stdint.h', 'syscall.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timespec.h', 'ttycom.h', 'ttydefaults.h', 'types.h', 'ucred.h', 'un.h', 'unistd.h', 'vsock.h', 'wait.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+cc_library(name = "bluetooth_user_headers", hdrs = ['_align.h', '_clock_id.h', '_decls.h', '_endian.h', '_iovec.h', '_maxphys.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_sockaddr_storage.h', '_stdint.h', '_timespec.h', '_timeval.h', '_types.h', '_uio.h', '_visible.h', '_winsize.h', 'bitcount.h', 'bitstring.h', 'cdefs.h', 'endian.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'limits.h', 'param.h', 'queue.h', 'select.h', 'signal.h', 'socket.h', 'sockio.h', 'stdint.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timespec.h', 'ttycom.h', 'types.h', 'uio.h', 'un.h', 'unistd.h'], strip_include_prefix = "/sys", visibility = ["//lib/libbluetooth:__pkg__"])
+
+cc_library(name = "uvmem_headers", hdrs = ["vmem.h", "hash.h"],
+    strip_include_prefix = "/sys", visibility = ["//lib/libuvmem:__pkg__"])
+
+# Source-tree header closure used by the amd64 libvmmapi build.
+cc_library(name = "vmmapi_headers", hdrs = ['_align.h', '_bitset.h', '_clock_id.h', '_cpuset.h', '_decls.h', '_domainset.h', '_endian.h', '_iovec.h', '_maxphys.h', '_null.h', '_nv.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_stdarg.h', '_stdint.h', '_termios.h', '_timespec.h', '_timeval.h', '_types.h', '_visible.h', '_winsize.h', 'bitcount.h', 'bitset.h', 'caprights.h', 'capsicum.h', 'cdefs.h', 'conf.h', 'cpuset.h', 'domainset.h', 'errno.h', 'fcntl.h', 'file.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'limits.h', 'linker.h', 'mman.h', 'module.h', 'nv.h', 'nv_namespace.h', 'param.h', 'queue.h', 'sdt.h', 'select.h', 'signal.h', 'sockio.h', 'sysctl.h', 'syslimits.h', 'timespec.h', 'ttycom.h', 'ttydefaults.h', 'types.h', 'unistd.h'],
+    strip_include_prefix = "/sys", visibility = ["//lib/libvmmapi:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['_align.h', '_bitset.h', '_bus_dma.h', '_callout.h', '_clock_id.h', '_cpuset.h', '_decls.h', '_domainset.h', '_endian.h', '_iovec.h', '_maxphys.h', '_null.h', '_nv.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_sockaddr_storage.h', '_stdarg.h', '_stdint.h', '_termios.h', '_timespec.h', '_timeval.h', '_types.h', '_ucontext.h', '_uio.h', '_umtx.h', '_visible.h', '_winsize.h', 'ata.h', 'atomic_common.h', 'bitcount.h', 'bitset.h', 'bus.h', 'callout.h', 'caprights.h', 'capsicum.h', 'cdefs.h', 'conf.h', 'cpuset.h', 'crc16.h', 'disk.h', 'disk_zone.h', 'domainset.h', 'endian.h', 'errno.h', 'event.h', 'fcntl.h', 'file.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'kernel.h', 'kerneldump.h', 'limits.h', 'linker_set.h', 'md5.h', 'mman.h', 'nv.h', 'nv_namespace.h', 'param.h', 'pciio.h', 'queue.h', 'sbuf.h', 'sched.h', 'sdt.h', 'select.h', 'signal.h', 'socket.h', 'sockio.h', 'soundcard.h', 'stat.h', 'stdint.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timerfd.h', 'timespec.h', 'tree.h', 'ttycom.h', 'ttydefaults.h', 'types.h', 'uio.h', 'un.h', 'unistd.h', 'uuid.h', 'vsock.h', 'wait.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# Userland PMC source ABI header closure.
+cc_library(name = "pmc_user_headers", hdrs = ['_align.h', '_bitset.h', '_callout.h', '_clock_id.h', '_cpuset.h', '_decls.h', '_domainset.h', '_endian.h', '_exterr.h', '_lock.h', '_maxphys.h', '_mutex.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_seqc.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_smr.h', '_stdint.h', '_sx.h', '_timespec.h', '_timeval.h', '_types.h', '_ucontext.h', '_visible.h', 'bitcount.h', 'bitset.h', 'callout.h', 'caprights.h', 'cdefs.h', 'condvar.h', 'counter.h', 'cpuset.h', 'elf32.h', 'elf64.h', 'elf_common.h', 'errno.h', 'event.h', 'filedesc.h', 'ktr_class.h', 'limits.h', 'lock.h', 'lock_profile.h', 'module.h', 'mutex.h', 'osd.h', 'param.h', 'pmc.h', 'pmclog.h', 'priority.h', 'proc.h', 'queue.h', 'resource.h', 'rtprio.h', 'sched.h', 'select.h', 'seqc.h', 'sigio.h', 'signal.h', 'signalvar.h', 'smr_types.h', 'sx.h', 'syscall.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timespec.h', 'types.h', 'ucontext.h', 'ucred.h', 'unistd.h'], visibility = ["//lib/libpmc:__pkg__"])

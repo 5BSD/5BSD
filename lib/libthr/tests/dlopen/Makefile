@@ -6,9 +6,6 @@ WARNS?=		2
 
 TESTSDIR=	${TESTSBASE}/lib/libthr/dlopen
 
-CFLAGS+=	-DTESTDIR=\"${TESTSDIR:Q}/\"
-LDFLAGS+=	-L${.OBJDIR}/dso -Wl,-rpath=${TESTDIR}
-
 .if !defined(NO_PIC)
 SUBDIR+=	dso
 

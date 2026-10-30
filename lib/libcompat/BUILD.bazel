@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Make NO_PIC: only the ordinary static archive is installed.
+cc_library(name = "compat", srcs = ["4.3/re_comp.c", "4.3/rexec.c", "4.4/cuserid.c"], linkstatic = True, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":compat"], visibility = ["//visibility:public"])
+bsd_install_file(name = "install_library", src = ":static_archive", destination = "/usr/lib/libcompat.a", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcompat", "dev"])
+man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=libcompat-man"], "//conditions:default": ["package=libcompat-dev"]})
+bsd_compress(name = "manual_0", src = "4.3/re_comp.3", output = "manuals/re_comp.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual_0", src = ":manual_0", destination = "/usr/share/man/man3/re_comp.3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+bsd_compress(name = "manual_1", src = "4.3/rexec.3", output = "manuals/rexec.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual_1", src = ":manual_1", destination = "/usr/share/man/man3/rexec.3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+bsd_compress(name = "manual_2", src = "4.4/cuserid.3", output = "manuals/cuserid.3.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual_2", src = ":manual_2", destination = "/usr/share/man/man3/cuserid.3.gz", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+bsd_install_link(name = "manual_alias", destination = "/usr/share/man/man3/re_exec.3.gz", target = "/usr/share/man/man3/re_comp.3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+bsd_install_manifest(name = "install_manifest", entries = [":install_library", ":install_manual_0", ":install_manual_1", ":install_manual_2", ":manual_alias"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "backend_headers",
+    hdrs = ["backend.h", "int.h"],
+    strip_include_prefix = ".",
+    deps = ["//lib/libcuse:headers", "//lib/libsamplerate:headers"],
+    visibility = ["//lib/virtual_oss:__subpackages__"],
+)
+
+cc_library(name = "public_headers", hdrs = ["virtual_oss.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/virtual_oss:__subpackages__"])
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = 'virtual_oss', srcs = ['audio_delay.c', 'compressor.c', 'ctl.c', 'eq.c', 'format.c', 'httpd.c', 'main.c', 'mul.c', 'ring.c', 'virtual_oss.c'],
+    deps = ['//lib/libcuse:cuse', '//lib/msun:m', '//lib/libnv:nv', '//lib/libsamplerate:samplerate', '//lib/libthr:thr', ':backend_headers', ':public_headers'],
+    dynamic_deps = ['//lib/libcuse:cuse_shared', '//lib/msun:m_shared', '//lib/libnv:nv_shared', '//lib/libsamplerate:samplerate_shared', '//lib/libthr:thr_shared'],
+    copts = ["-fPIE"], linkopts = ['-pie', '-Wl,--export-dynamic-symbol=virtual_oss_wait', '-Wl,--export-dynamic-symbol=voss_has_synchronization'], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "installed_header", src = "virtual_oss.h", destination = "/usr/include/virtual_oss.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=sound", "dev"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'virtual_oss', manual = 'virtual_oss.8', package = "sound", bindir = "/usr/sbin", man_section = "8", extra_entries = [":installed_header"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=sound","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

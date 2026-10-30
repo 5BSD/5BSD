@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "fuzzer",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerCrossOver.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerDataFlowTrace.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerDriver.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtFunctionsDlsym.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtFunctionsWeak.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtraCounters.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerFork.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerIO.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerIOPosix.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerLoop.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerMain.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerMerge.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerMutate.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerSHA1.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerTracePC.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtil.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtilLinux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtilPosix.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/fuzzer:headers"],
+    installed_headers = {"//contrib/llvm-project/compiler-rt/include:fuzzer/FuzzedDataProvider.h": "fuzzer/FuzzedDataProvider.h"},
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "runtime", static_library = ":static_archive", alwayslink = True)
+cc_import(name = "no_main_runtime", static_library = "//lib/libclang_rt/fuzzer_no_main:static_archive", alwayslink = True)
+[cc_test(name = name, srcs = ["runtime_test.cpp"],
+    copts = ["-fsanitize=fuzzer-no-link"],
+    local_defines = ["CUSTOM_MAIN"] if custom else [],
+    deps = ([":no_main_runtime"] if custom else [":runtime"]) + ["//lib/libc++:cxx"],
+    linkopts = ["-static", "-lpthread", "-lm"], linkstatic = True,
+    args = ["-runs=100", "-seed=1", "-max_len=32"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+ for name, custom in [("runtime_test", False), ("custom_main_test", True)]]

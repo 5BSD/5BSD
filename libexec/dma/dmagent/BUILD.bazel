@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_yacc(name = "aliases_parser", src = "//contrib/dma:aliases_parse.y", output = "aliases_parse.c",
+    header = "aliases_parse.h", interface = "aliases_parse.i", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":aliases_parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":aliases_parser"], output_group = "header")
+filegroup(name = "parser_interface", srcs = [":aliases_parser"], output_group = "interface")
+bsd_lex(name = "aliases_scanner", src = "//contrib/dma:aliases_scan.l", output = "aliases_scan.c",
+    lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(
+    name = "parser_headers",
+    hdrs = [":parser_header", ":parser_interface"],
+    strip_include_prefix = ".",
+)
+cc_binary(
+    name = "dma",
+    srcs = ["//contrib/dma:base64.c", "//contrib/dma:conf.c", "//contrib/dma:crypto.c", "//contrib/dma:dma.c", "//contrib/dma:dns.c", "//contrib/dma:local.c", "//contrib/dma:mail.c", "//contrib/dma:net.c", "//contrib/dma:spool.c", "//contrib/dma:util.c"] + [":parser_source", ":aliases_scanner"],
+    deps = [":parser_headers", "//contrib/dma:headers", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"],
+    dynamic_deps = ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"],
+    local_defines = ["HAVE_REALLOCF", "HAVE_STRLCPY", "HAVE_GETPROGNAME", "CONF_PATH=\\\"/etc/dma\\\"", "LIBEXEC_PATH=\\\"/usr/libexec\\\"", "DMA_VERSION=\\\"v0.13+\\\"", "DMA_ROOT_USER=\\\"mailnull\\\"", "DMA_GROUP=\\\"mail\\\"", "OPENSSL_API_COMPAT=0x10100000L"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+[bsd_install_file(
+    name = name + "_config",
+    src = name + ".conf",
+    destination = "/etc/dma/" + name + ".conf",
+    owner = "root", group = "mail", mode = "0640",
+    install_tags = ["package=dma", "config"],
+) for name in ["auth", "dma"]]
+bsd_install_file(
+    name = "mailer_example", src = "mailer.conf",
+    destination = "/usr/share/examples/dma/mailer.conf",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=dma"],
+)
+bsd_install_link(
+    name = "config_manual", destination = "/usr/share/man/man5/dma.conf.5.gz",
+    target = "/usr/share/man/man8/dma.8.gz", kind = "hardlink",
+    owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=dma-man"], "//conditions:default": ["package=dma"]}),
+)
+utility_installation(
+    name = "install_manifest", program = "dma", manual = "//contrib/dma:dma.8",
+    package = "dma", bindir = "/usr/libexec", man_section = "8",
+    binary_group = "mail", binary_mode = "2555",
+    extra_entries = [":auth_config", ":dma_config", ":mailer_example", ":config_manual"],
+)
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/etc/dma": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}', "/usr/share/examples/dma": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=dma"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=dma","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

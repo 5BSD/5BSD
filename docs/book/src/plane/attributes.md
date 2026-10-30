@@ -1,5 +1,11 @@
 # Software attributes
 
+This chapter describes the current software-authority implementation. The
+[system security design](../capability/system-security.md) extends the intended
+model with independent user authorization, mandatory system integrity, verified
+boot and authenticated recovery. Those additional protections remain under
+implementation and must not be inferred from software attributes alone.
+
 Attributes describe what approved software may access in the capability plane.
 They do not describe a UNIX user's privileges. UNIX login, SSH, su, file
 permissions, and UID changes retain their ordinary UNIX meaning.
@@ -78,8 +84,8 @@ The decision to make authority depend on software is deliberate: anyone who
 can execute an approved control client can request the operations it exposes,
 including UNIX root. Attributes block direct access by unapproved code; they do
 not prohibit root from using approved tools. UNIX execution permissions are not
-a strong barrier against root. An additional per-operation user-authorization
-layer would be a separate design choice, and is not part of this model.
+a strong barrier against root. The system security design adds an independent per-operation user-authorization
+layer. That layer is not yet implemented.
 
 The server enforces its operation semantics. SwitchBoard need not understand
 network interfaces, firewall rules, or each daemon's configuration language.
@@ -102,5 +108,5 @@ including cached-handle revocation. Fresh installer acceptance is still pending.
 Shipped PAM stacks no longer issue grants, and BSDInstall no longer assigns
 capability permissions to accounts. The old login-principal policy, elevation
 APIs, and remaining related tools and documentation are being removed; they
-are not the intended authorization model. Fresh installer, stock login/SSH/su,
+are not the implementation to restore for the new authorization boundary. Fresh installer, stock login/SSH/su,
 service recovery, DTrace, and release-artifact acceptance remain outstanding.

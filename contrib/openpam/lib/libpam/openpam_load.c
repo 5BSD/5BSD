@@ -38,6 +38,7 @@
 #endif
 
 #include <dlfcn.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,7 +61,8 @@ openpam_load_module(const char *modulename)
 
 #ifdef OPENPAM_STATIC_MODULES
 	/* look for a static module */
-	if (module == NULL && strchr(modulename, '/') == NULL) {
+	if (module == NULL && errno == ENOENT &&
+	    strchr(modulename, '/') == NULL) {
 		module = openpam_static(modulename);
 		openpam_log(PAM_LOG_DEBUG, "%s static %s",
 		    (module == NULL) ? "no" : "using", modulename);

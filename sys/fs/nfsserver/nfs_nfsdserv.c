@@ -1913,7 +1913,7 @@ nfsrvd_rename(struct nfsrv_descript *nd, int isdgram,
 	/*
 	 * Done parsing, now down to business.
 	 */
-	nd->nd_repstat = nfsvno_namei(nd, &fromnd, dp, 0, exp, &fdirp);
+	nd->nd_repstat = nfsvno_renamefrom(nd, &fromnd, dp, exp, &fdirp);
 	if (nd->nd_repstat) {
 		if (nd->nd_flag & ND_NFSV3) {
 			nfsrv_wcc(nd, fdirfor_ret, &fdirfor, fdiraft_ret,

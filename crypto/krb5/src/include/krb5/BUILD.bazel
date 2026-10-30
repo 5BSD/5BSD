@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['ccselect_plugin.h', 'certauth_plugin.h', 'clpreauth_plugin.h', 'hostrealm_plugin.h', 'kadm5_auth_plugin.h', 'kadm5_hook_plugin.h', 'kdcpolicy_plugin.h', 'kdcpreauth_plugin.h', 'localauth_plugin.h', 'locate_plugin.h', 'plugin.h', 'preauth_plugin.h', 'pwqual_plugin.h', 'krb5.hin'], visibility = ["//krb5:__subpackages__"])
+cc_library(name = "plugin_headers", hdrs = ['ccselect_plugin.h', 'certauth_plugin.h', 'clpreauth_plugin.h', 'hostrealm_plugin.h', 'kadm5_auth_plugin.h', 'kadm5_hook_plugin.h', 'kdcpolicy_plugin.h', 'kdcpreauth_plugin.h', 'localauth_plugin.h', 'locate_plugin.h', 'plugin.h', 'preauth_plugin.h', 'pwqual_plugin.h'], strip_include_prefix = ".", include_prefix = "krb5", visibility = ["//krb5:__subpackages__"])
+
+exports_files(["authdata_plugin.h"], visibility = ["//crypto/krb5/src/include:__pkg__"])
+
+cc_library(name = "kdc_internal_plugin_headers", hdrs = ["kdcauthdata_plugin.h", "audit_plugin.h"],
+    strip_include_prefix = ".", include_prefix = "krb5", visibility = ["//krb5:__subpackages__"])

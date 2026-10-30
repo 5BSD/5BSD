@@ -50,14 +50,20 @@ build_mock_switchboard()
 
 find_shield_helper()
 {
-	local candidate srcdir
+	local candidate selected srcdir
+
+	selected=$(atf_config_get capd_shield_helper "${CAPD_SHIELD_HELPER:-}")
+	if atf_config_has capd_shield_helper || [ -n "$selected" ]; then
+		[ -x "$selected" ] || atf_fail "selected shield helper is not executable: $selected"
+		shield_helper=$selected
+		return 0
+	fi
 
 	if [ -n "$shield_helper" ] && [ -x "$shield_helper" ]; then
 		return 0
 	fi
 	srcdir=$(atf_get_srcdir)
 	for candidate in \
-	    "${CAPD_SHIELD_HELPER:-}" \
 	    "${srcdir}/mac_capability_shield_helper" \
 	    "/usr/tests/sys/mac_capability/mac_capability_shield_helper" \
 	    "$(command -v mac_capability_shield_helper 2>/dev/null)"
@@ -188,7 +194,7 @@ bootstrap_starts_switchboard_body()
 
 	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "switchboard did not start (mac_capability channel service may not be loaded)"
+		atf_fail "bootstrap fixture did not start"
 	fi
 
 	# Verify the channel fd was inherited.
@@ -221,7 +227,7 @@ bootstrap_channel_ping_body()
 
 	if ! wait_for_file switchboard-ping-ok.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "switchboard did not start or ping failed"
+		atf_fail "bootstrap fixture did not start or ping failed"
 	fi
 
 	atf_check -s exit:0 -o match:"ok" cat switchboard-ping-ok.out
@@ -317,7 +323,7 @@ bootstrap_ready_logged_body()
 
 	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "switchboard did not start"
+		atf_fail "bootstrap fixture did not start"
 	fi
 
 	if ! wait_for_log "capsule_proto: switchboard ready"; then
@@ -346,7 +352,7 @@ bootstrap_restart_on_crash_body()
 	# Wait for the restart log entry.
 	if ! wait_for_log "scheduling restart"; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "restart not observed (mac_capability may not be loaded)"
+		atf_fail "bootstrap restart not observed"
 	fi
 
 	# Verify capsule logged the exit.
@@ -377,7 +383,7 @@ bootstrap_clean_shutdown_body()
 
 	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "switchboard did not start"
+		atf_fail "bootstrap fixture did not start"
 	fi
 
 	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||

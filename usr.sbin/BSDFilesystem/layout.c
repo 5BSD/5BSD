@@ -3,10 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * bsdfilesystem(8) layout provisioning.  bsdfilesystem is an ambient provider and never
- * cap_enter()s; everything here runs during startup: it
- * opens handles by name (tzfs_open needs /dev/zfs) and imports the pool.  The
- * retained parent handles are what the request loop uses in capability mode.
+ * bsdfilesystem(8) layout provisioning beneath a dataset handle. The maintained
+ * provider is born in capability mode. BIP requires a bootstrap-delivered base;
+ * the non-BIP acquisition path can mint that base from an already imported pool.
+ * Neither path imports pools here. Serving retains only bounded child handles.
  */
 
 #include <sys/types.h>
@@ -39,14 +39,12 @@
 extern char **environ;
 
 /*
- * The container-model live set (docs/book/src/plane/containers-and-storage.md): the
- * installed bundles are the pkg-owned System/ and Apps/ directories (read
- * directly -- they are always authoritative, so no marker or sentinel is
- * needed), and switchboard adds a marker per running bundle under Run/live/ so a
- * unit that is up but whose bundle is mid-removal is never reaped.  The reconcile
- * reaps a Data/<bundle> container only when its bundle is in none of the three.
- * System/ existing is the readiness gate: while it cannot be opened the reconcile
- * reaps nothing.
+ * Installed bundle directories and running-bundle markers supply observations
+ * for reconciliation (docs/book/src/plane/containers-and-storage.md). Absence
+ * from this view is not persistent-data deletion authority: retained generations
+ * and recovery records may still reference the data. The persistent callbacks
+ * retain containers with EBUSY pending an authenticated lifecycle protocol.
+ * A missing System/ source prevents bundle reconciliation.
  */
 #define	BSDFILESYSTEM_SYSTEM_DIR	"/Capabilities/System"
 #define	BSDFILESYSTEM_APPS_DIR		"/Capabilities/Apps"
@@ -426,19 +424,14 @@ out:
 static int
 reconcile_boot_generations(struct bsdfilesystem_state *st)
 {
-	struct timeval boottime;
 	struct zfd_info_args info;
 	void *buf;
 	char **names;
 	const char *name, *rel;
-	size_t len, prefix_len, sz, nnames, i;
+	size_t len, prefix_len, nnames, i;
 
-	sz = sizeof(boottime);
-	if (sysctlbyname("kern.boottime", &boottime, &sz, NULL, 0) == -1)
+	if (storage_namespace_boot_name(st->boot_name, sizeof(st->boot_name)) == -1)
 		return (-1);
-	(void)snprintf(st->boot_name, sizeof(st->boot_name),
-	    "boot-%016jx-%08lx", (uintmax_t)boottime.tv_sec,
-	    (unsigned long)boottime.tv_usec);
 	memset(&info, 0, sizeof(info));
 	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
 	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
@@ -523,66 +516,19 @@ bsdfilesystem_reap_leases(struct bsdfilesystem_state *st)
 bool
 bsdfilesystem_is_version_id_name(const char *s)
 {
-	size_t i;
-
-	if (s[0] != 'v')
-		return (false);
-	for (i = 1; s[i] != '\0'; i++)
-		if (!isxdigit((unsigned char)s[i]))
-			return (false);
-	return (i >= 17);	/* 'v' + at least 16 hex digits */
+	return (storage_namespace_version_name(s));
 }
 
 /*
- * A version-id name embeds its creation instant: the 16 hex digits after the
- * leading 'v' are (tv_sec*1e9 + tv_nsec) at gen_version_id() time.  Return true
- * iff that instant is at least `grace` seconds in the past.  Used by the idle
- * staging reap to leave a just-created clone alone during the sub-second window
- * between TXN_BEGIN's clone and its mount (when a concurrent reconcile could
- * otherwise race it); a clone created in the future (clock skew) counts as fresh.
- * Caller guarantees is_version_id_name(rel), so rel[1..16] are hex.
- */
-static bool
-staging_older_than(const char *rel, time_t grace)
-{
-	char nsbuf[17];
-	unsigned long long ns;
-	struct timespec now;
-
-	memcpy(nsbuf, rel + 1, 16);
-	nsbuf[16] = '\0';
-	errno = 0;
-	ns = strtoull(nsbuf, NULL, 16);
-	if (errno != 0 || clock_gettime(CLOCK_REALTIME, &now) == -1)
-		return (false);		/* unparseable/no clock: never age-reap */
-	return ((time_t)(ns / 1000000000ull) + grace <= now.tv_sec);
-}
-
-/*
- * Recursively walk one persistent-tree directory, destroying orphaned TXN
- * staging clones beneath it.  A clone is a candidate iff it is a reserved
- * del-<id> transient, OR it carries the BSDFILESYSTEM_TXN_BASE_PROP stamp AND has
- * the version-id name shape (both required: a committed claim keeps the inherited
- * property for one commit if the clear raced, but never the version-id name).
- *
- * `grace` selects the caller:
- *   0  = the boot sweep -- every candidate is an orphan (nothing survives a
- *        reboot), reaped unconditionally.
- *   >0 = the idle reap running in the reconcile loop while units are live --
- *        only a STAMPED clone older than `grace` seconds is reaped, and a
- *        del-<id> transient is left to the boot sweep.  Correctness rests on
- *        ZFS: a clone held by a live transaction is MOUNTED (TXN_BEGIN mounts
- *        it and the connection's anchor holds it), and a mounted dataset cannot
- *        be destroyed -- tzfs_destroy fails EBUSY, which is expected here and
- *        left quietly for a later pass.  An abandoned clone was UNMOUNTED by its
- *        connection's teardown, so it destroys cleanly.  The age grace only
- *        avoids racing an in-progress TXN_BEGIN.
- *
- * Every other child is an ordinary claim or namespace directory and is descended
- * into.  Best-effort: a failed reap is logged and counted, never fatal.
+ * Inventory unresolved transaction datasets without mutating them. Neither a
+ * reserved name, an old timestamp, nor a txnbase property proves that its owner
+ * is gone or publication completed. A mounted parent is also insufficient:
+ * recursive deletion can destroy snapshots/children before returning EBUSY.
+ * Reclamation requires an authoritative lifecycle/recovery protocol. Until
+ * then both startup and idle passes preserve these datasets and report them.
  */
 static int
-reap_staging_walk(int dir_fd, int depth, time_t grace)
+reap_staging_walk(int dir_fd, int depth)
 {
 	struct zfd_info_args info;
 	void *buf;
@@ -604,11 +550,7 @@ reap_staging_walk(int dir_fd, int depth, time_t grace)
 	free(buf);
 	prefix_len = strlen(info.zi_name);
 	for (i = 0; i < nnames; i++) {
-		char base[BSDFILESYSTEM_NAME_MAX];
-		uint64_t iv = 0;
-		uint32_t src = 0;
-		int is_str = 0, child;
-		bool orphan, from_prop = false;
+		int child;
 
 		name = names[i];
 		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
@@ -617,81 +559,27 @@ reap_staging_walk(int dir_fd, int depth, time_t grace)
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') != NULL)
 			continue;	/* only direct children */
-		base[0] = '\0';
-		/*
-		 * A del-<id> transient is an orphan -- but only the boot sweep
-		 * (grace == 0) reaps it; the idle reap leaves it, since it has no
-		 * txnbase stamp to age-check and is a rare mid-swap-crash remnant.
-		 */
-		orphan = grace == 0 && strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
-		    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0;
 		child = tzfs_openat(dir_fd, rel, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 		if (child == -1)
 			continue;	/* raced away; nothing to reap */
-		if (!orphan && bsdfilesystem_is_version_id_name(rel)) {
-			/*
-			 * Read the txnbase stamp: it names the base claim (so the
-			 * base snapshot can be dropped) and, for the idle reap,
-			 * gates the reap.  The BOOT sweep reaps ANY v<hex>-named
-			 * dataset regardless of the stamp -- a real claim can never
-			 * take that shape (valid_dataset reserves it), so a v<hex>
-			 * name at boot is always a staging clone, including one a
-			 * commit cleared the stamp on and then crashed before
-			 * finishing the swap.  The IDLE reap still requires the
-			 * stamp AND the age grace, so it never touches a live
-			 * commit's clone (whose stamp is cleared for the swap).
-			 */
-			if (tzfs_get_one_prop(child, BSDFILESYSTEM_TXN_BASE_PROP,
-			    base, sizeof(base), &iv, &is_str, &src) == 0 &&
-			    is_str && base[0] != '\0')
-				from_prop = true;	/* base claim name known */
-			if (grace == 0)
-				orphan = true;
-			else if (from_prop && staging_older_than(rel, grace))
-				orphan = true;
-		}
-		if (orphan) {
+		/* A reserved name is not proof of abandonment or successful
+		 * publication. In particular del-<id> can be the only original
+		 * claim after interruption between commit's two renames. Startup
+		 * also runs on same-boot provider restart. Preserve both sides
+		 * until an authoritative recovery protocol resolves ownership. */
+		if (bsdfilesystem_is_version_id_name(rel) ||
+		    strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
+		    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0) {
+			logcmp_log(LOG_WARNING,
+			    "reclaim: preserving unresolved transaction dataset %s",
+			    name);
 			(void)close(child);
-			if (bsdfilesystem_destroy_tree(dir_fd, rel) == -1) {
-				/*
-				 * EBUSY in idle mode means the clone is still
-				 * mounted by a live transaction: expected, not a
-				 * failure -- leave it for a later pass.
-				 */
-				if (grace != 0 && errno == EBUSY)
-					continue;
-				logcmp_log(LOG_WARNING,
-				    "reclaim: destroy abandoned txn staging %s: %m",
-				    rel);
-				rc = -1;
-			} else {
-				/*
-				 * Drop the base snapshot <base>@<rel> the clone
-				 * was made from, exactly as TXN_ABORT does: with
-				 * the clone gone it is unreferenced, and left
-				 * behind it pins space and surfaces in
-				 * LIST_VERSIONS as a phantom version the caller
-				 * never took.  The base claim name is the txnbase
-				 * stamp; only the property path knows it (a del-
-				 * transient's origin snapshot was already migrated
-				 * onto the live claim by the promote).  Best-effort.
-				 */
-				if (from_prop) {
-					int cfd = tzfs_openat(dir_fd, base,
-					    ZH_SNAP_DESTROY, ZHF_SUBTREE);
-					if (cfd != -1) {
-						(void)tzfs_snap_destroy(cfd, rel);
-						(void)close(cfd);
-					}
-				}
-				logcmp_log(LOG_NOTICE,
-				    "reclaim: destroyed abandoned txn staging %s",
-				    rel);
-			}
+			errno = EBUSY;
+			rc = -1;
 			continue;
 		}
 		/* An ordinary claim/namespace dir: descend to reach its clones. */
-		if (reap_staging_walk(child, depth + 1, grace) == -1)
+		if (reap_staging_walk(child, depth + 1) == -1)
 			rc = -1;
 		(void)close(child);
 	}
@@ -700,44 +588,25 @@ reap_staging_walk(int dir_fd, int depth, time_t grace)
 }
 
 /*
- * Boot-scoped GC of orphaned TXN staging clones in the persistent tree.  A
- * TXN_BEGIN stages a read-write clone of a claim as a sibling in the caller's
- * namespace, and it is reaped explicitly by TXN_COMMIT/TXN_ABORT.  A caller that
- * begins a transaction and then vanishes without committing or aborting leaves
- * that clone behind: it is deliberately NOT tagged ephemeral (a transaction may
- * legitimately span connections so it can be resumed), so connection teardown
- * only unmounts it; it lives in the persistent tree, so the ephemeral lease and
- * boot-generation GC never see it; and the container reconcile only reaps whole
- * uninstalled bundles -- so nothing reclaims it while its bundle stays installed.
- * A transaction cannot span a reboot, but this entry point also runs after a
- * same-boot provider restart.  That does not prove existing staging is orphaned:
- * surviving workers may be creating or committing it.  TODO: gate aggressive
- * startup reclamation on verified boot/owner lifetime before calling this sweep.
- * Mount EBUSY alone is insufficient for a recursive destructive operation.
+ * Startup inventory of transaction staging. Reserved transaction names are
+ * retained and reported unresolved: startup is neither a durable commit record
+ * nor proof that the original owner has died. In particular a del-<id> dataset
+ * may be the only original claim after the first commit rename. A future
+ * recovery protocol must resolve these identities before authorizing deletion.
  */
 int
 bsdfilesystem_reap_staging(struct bsdfilesystem_state *st)
 {
 
-	return (reap_staging_walk(st->persistent_fd, 0, 0));
+	return (reap_staging_walk(st->persistent_fd, 0));
 }
 
-/*
- * Idle reap of abandoned TXN staging clones while units are live, run each
- * settled reconcile pass.  The boot sweep above only reclaims at startup, so on
- * a long-uptime system an abandoned clone (client began a txn and vanished)
- * would otherwise pin space until the next reboot.  This closes that gap: it
- * reaps only a stamped clone older than BSDFILESYSTEM_STAGING_IDLE_GRACE, and a
- * clone held by a LIVE transaction is protected by ZFS itself -- it is still
- * mounted, so its destroy fails EBUSY and is left for a later pass (see
- * reap_staging_walk).  Non-fatal.
- */
+/* Idle inventory uses the same preservation rule as startup. */
 int
 bsdfilesystem_reap_idle_staging(struct bsdfilesystem_state *st)
 {
 
-	return (reap_staging_walk(st->persistent_fd, 0,
-	    (time_t)st->cfg.staging_idle_grace));
+	return (reap_staging_walk(st->persistent_fd, 0));
 }
 
 /*
@@ -751,7 +620,13 @@ int
 bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *session)
 {
 	const char *p;
+	int replacement;
 	char wanted[BSDFILESYSTEM_NAME_MAX];
+
+	/* A selected worker cannot replace its view through inherited roots.
+	 * A new session requires a new supervised namespace selection. */
+	if (st->worker_namespaces != NULL)
+		return (errno = EOPNOTSUPP, -1);
 
 	if (session == NULL || strlen(session) != BSDFILESYSTEM_SESSION_MAX - 1) {
 		errno = EINVAL;
@@ -763,12 +638,15 @@ bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *session)
 			return (-1);
 		}
 	(void)snprintf(wanted, sizeof(wanted), "lease-%s", session);
+	/* Acquisition may be denied or fail on storage/descriptor exhaustion.
+	 * Keep the previous session intact until its replacement is usable. */
+	replacement = bsdfilesystem_ensure_path(st->ephemeral_fd, wanted,
+	    RETAIN_RIGHTS);
+	if (replacement == -1)
+		return (-1);
 	if (st->lease_fd != -1)
 		close(st->lease_fd);
-	st->lease_fd = bsdfilesystem_ensure_path(st->ephemeral_fd, wanted,
-	    RETAIN_RIGHTS);
-	if (st->lease_fd == -1)
-		return (-1);
+	st->lease_fd = replacement;
 	strlcpy(st->lease_name, wanted, sizeof(st->lease_name));
 	return (0);
 }
@@ -812,7 +690,7 @@ persistent_enumerate(void *arg,
 			continue;
 		rel = name + prefix_len + 1;
 		if (strcmp(rel, BSDFILESYSTEM_SHARED_DIR) == 0)
-			continue;	/* group containers: reaped by membership */
+			continue;	/* group containers: inventoried separately */
 		if (strchr(rel, '/') == NULL)
 			emit(emit_arg, rel);
 	}
@@ -821,33 +699,22 @@ persistent_enumerate(void *arg,
 }
 
 /*
- * libcapreclaim destroy callback: reap one gone owner's entire persistent
- * namespace, deepest dataset first, exactly as OP_DESTROY/reclaim do.  The
- * owner key is a single '/'-free component, and bsdfilesystem_destroy_tree refuses any
- * relname bearing a '/', so this can only ever touch derive_ns(owner)'s subtree.
+ * Catalogue absence is an observation, not persistent-data deletion authority.
+ * Retained generations and recovery records may still reference this state.
+ * Keep it until an authenticated retention/deletion protocol can prove release.
  */
 static int
-persistent_destroy(void *arg, const char *owner)
+persistent_destroy(void *arg __unused, const char *owner)
 {
-	struct bsdfilesystem_state *st = arg;
-	int rc;
-
-	rc = bsdfilesystem_destroy_tree(st->persistent_fd, owner);
-	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(owner, rc == 0 ? 0 : errno);
-	if (rc == 0)
-		syslog(LOG_NOTICE,
-		    "reclaim: destroyed orphan persistent namespace %s", owner);
-	else
-		syslog(LOG_WARNING,
-		    "reclaim: destroy orphan persistent namespace %s: %m%s",
-		    owner, errno == EBUSY || errno == EEXIST ? " (mounted, or "
-		    "a snapshot is pinned by a clone outside the container; "
-		    "retried next pass)" : "");
-	return (rc);
+	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(owner, EBUSY);
+	syslog(LOG_WARNING,
+	    "reclaim: retaining persistent namespace %s: deletion authority absent",
+	    owner);
+	return (errno = EBUSY, -1);
 }
 
 /*
- * Group containers (Data/Shared/<group>/) are reaped BY MEMBERSHIP: one is an
+ * Group containers (Data/Shared/<group>/) are inventoried BY MEMBERSHIP: one is an
  * orphan only when no installed bundle still declares the group.  Switchboard
  * publishes the installed-claimed groups as Run/groups/<group> markers (from
  * every installed bundle's Bundle.ucl `groups`), the delivered view this
@@ -901,28 +768,13 @@ groups_enumerate(void *arg,
 }
 
 static int
-groups_destroy(void *arg, const char *group)
+groups_destroy(void *arg __unused, const char *group)
 {
-	struct bsdfilesystem_state *st = arg;
-	int shared_fd, rc, saved;
-
-	shared_fd = tzfs_openat(st->persistent_fd, BSDFILESYSTEM_SHARED_DIR,
-	    ZH_ALL_RIGHTS, ZHF_SUBTREE);
-	if (shared_fd == -1)
-		return (errno == ENOENT ? 0 : -1);
-	rc = bsdfilesystem_destroy_tree(shared_fd, group);
-	saved = errno;
-	close(shared_fd);
-	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(group, rc == 0 ? 0 : saved);
-	if (rc == 0)
-		syslog(LOG_NOTICE,
-		    "reclaim: destroyed orphan group container Shared/%s", group);
-	else
-		syslog(LOG_WARNING,
-		    "reclaim: destroy orphan group container Shared/%s: %s",
-		    group, strerror(saved));
-	errno = saved;
-	return (rc);
+	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(group, EBUSY);
+	syslog(LOG_WARNING,
+	    "reclaim: retaining group container Shared/%s: deletion authority absent",
+	    group);
+	return (errno = EBUSY, -1);
 }
 
 /*
@@ -984,12 +836,10 @@ bsdfilesystem_test_reclaim_bundles(int root_fd, struct capreclaim *r,
  * The reconcile loop: the container-model cleanup for persistent state.  Runs
  * in a forked child so it never blocks the serve loop.  It reopens owner
  * directories relative to its retained root descriptor in capability mode.
- * It compares the owners it holds against switchboard's published live set and destroys the orphans --
- * immediately on the first authoritative pass (BOOT: the state is settled), and
- * only "seen gone twice" thereafter (TIMER: the interval is the grace window,
- * so an upgrade's transient absence is never confirmed).  It NEVER reaps unless
- * the install root (System/) is present, so a missing or unreadable live set is
- * fail-safe.
+ * It compares owners against switchboard's published live set. BOOT reports
+ * absence immediately; TIMER confirms it across two observations. Neither is
+ * deletion authority: the persistent callbacks preserve the datasets and report
+ * unresolved retention. Missing owner sources also prevent reconciliation.
  */
 static void __dead2
 bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
@@ -1016,7 +866,7 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 	 * Run/groups existing is this reconcile's readiness gate (switchboard
 	 * creates it before launching anything), so an EMPTY marker set is a
 	 * genuine "no installed bundle claims any group" and the last group
-	 * container must reap -- opt out of the library's empty-set floor.
+	 * container must be reported -- opt out of the library's empty-set floor.
 	 */
 	g.allow_empty_live = true;
 
@@ -1083,14 +933,8 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 				capreclaim_fini(&g);
 			}
 		}
-		/*
-		 * Idle reap of abandoned TXN staging clones (a client that began a
-		 * transaction and vanished).  Only once the container reconcile has
-		 * settled onto the timer cadence -- during the startup poll burst the
-		 * boot sweep has already run and units may still be establishing txns.
-		 * A live txn's clone is mounted and so survives (EBUSY); only stamped
-		 * clones older than the grace are reclaimed.
-		 */
+		/* Report unresolved transaction staging on the timer cadence.
+		 * Age and mount state do not authorize recursive reclamation. */
 		if (when == CAPRECLAIM_TIMER &&
 		    bsdfilesystem_reap_idle_staging(st) == -1)
 			logcmp_log(LOG_WARNING, "reclaim: idle staging reap: %m");
@@ -1137,121 +981,107 @@ bsdfilesystem_start_reaper(struct bsdfilesystem_state *st)
 	}
 }
 
+/*
+ * Provision only beneath a delivered dataset capability. The caller retains
+ * base_fd; this function retains only the selected children on success.
+ */
+int
+bsdfilesystem_layout_provision_fd(struct bsdfilesystem_state *st, int base_fd)
+{
+	struct bsdfilesystem_config *cfg = &st->cfg;
+	struct zfd_info_args info;
+	struct zfd_stat_args stat;
+	const char *persistent, *ephemeral;
+	uint64_t syncval;
+	int error;
+
+	persistent = rel_under(cfg->base, cfg->persistent);
+	ephemeral = rel_under(cfg->base, cfg->ephemeral);
+	if (persistent == NULL || *persistent == '\0' || ephemeral == NULL ||
+	    *ephemeral == '\0')
+		return (errno = EINVAL, -1);
+	if (st->persistent_fd != -1 || st->ephemeral_fd != -1 ||
+	    st->boot_fd != -1)
+		return (errno = EBUSY, -1);
+	memset(&info, 0, sizeof(info));
+	memset(&stat, 0, sizeof(stat));
+	if (tzfs_info(base_fd, &info) == -1 || tzfs_stat(base_fd, &stat) == -1)
+		return (-1);
+	/* STAT also rejects pool handles; a pool root is not a data-subtree grant.
+	 * The bootstrap issuer must bind the selected pool and dataset GUIDs to
+	 * authenticated policy. Names here check the provider's layout agreement. */
+	if (info.zi_valid != 1 || info.zi_pool_guid == 0 || info.zi_ds_guid == 0 ||
+	    stat.zs_ds_guid != info.zi_ds_guid || info.zi_flags != ZHF_SUBTREE ||
+	    (info.zi_rights & RETAIN_RIGHTS) != RETAIN_RIGHTS ||
+	    strnlen(info.zi_name, sizeof(info.zi_name)) == sizeof(info.zi_name) ||
+	    strcmp(info.zi_name, cfg->base) != 0 || strchr(info.zi_name, '/') == NULL)
+		return (errno = EACCES, -1);
+
+	/* No global mountpoint: clients reach anonymous mounts by descriptor.
+	 * A failed namespace property is fatal, including on later boots. */
+	if (tzfs_set_prop_string(base_fd, "mountpoint", "none") == -1 ||
+	    tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
+		return (-1);
+	st->persistent_fd = bsdfilesystem_ensure_path(base_fd, persistent,
+	    RETAIN_RIGHTS);
+	if (st->persistent_fd == -1)
+		goto fail;
+	st->ephemeral_fd = bsdfilesystem_ensure_path(base_fd, ephemeral,
+	    RETAIN_RIGHTS);
+	if (st->ephemeral_fd == -1)
+		goto fail;
+	if (strcmp(cfg->ephemeral_sync, "standard") == 0)
+		syncval = 0;
+	else if (strcmp(cfg->ephemeral_sync, "always") == 0)
+		syncval = 1;
+	else if (strcmp(cfg->ephemeral_sync, "disabled") == 0)
+		syncval = 2;
+	else {
+		errno = EINVAL;
+		goto fail;
+	}
+	if (tzfs_set_prop_uint64(st->ephemeral_fd, "sync", syncval) == -1 ||
+	    reconcile_boot_generations(st) == -1)
+		goto fail;
+	syslog(LOG_INFO, "provisioned %s {persistent,ephemeral}", cfg->base);
+	return (0);
+fail:
+	error = errno;
+	if (st->boot_fd >= 0)
+		(void)close(st->boot_fd);
+	if (st->ephemeral_fd >= 0)
+		(void)close(st->ephemeral_fd);
+	if (st->persistent_fd >= 0)
+		(void)close(st->persistent_fd);
+	st->boot_fd = st->ephemeral_fd = st->persistent_fd = -1;
+	return (errno = error, -1);
+}
+
+/* Legacy acquisition for non-BIP systems; provisioning uses the same boundary. */
 int
 bsdfilesystem_layout_provision(struct bsdfilesystem_state *st)
 {
-	struct bsdfilesystem_config *cfg = &st->cfg;
-	const char *rel;
-	int zpd, root_fd;
+	const char *relative;
+	int pool, root, base, result, error;
 
-	/*
-	 * Pool root handle: the anchor for the whole /Capabilities tree.  The
-	 * pool handle must hold at least the rights we then derive for the root
-	 * dataset handle (pool_root_open requires a subset), so open it with the
-	 * full mask; bsdfilesystem runs as root and owns the storage plane.
-	 */
-	zpd = tzfs_pool_open_fd(st->zfs_fd, cfg->pool, RETAIN_RIGHTS);
-	if (zpd == -1)
+	relative = rel_under(st->cfg.pool, st->cfg.base);
+	if (relative == NULL || *relative == '\0')
+		return (errno = EINVAL, -1);
+	pool = tzfs_pool_open_fd(st->zfs_fd, st->cfg.pool, RETAIN_RIGHTS);
+	if (pool == -1)
 		return (-1);
-	root_fd = tzfs_pool_root_open(zpd, RETAIN_RIGHTS, ZHF_SUBTREE);
-	(void)close(zpd);
-	if (root_fd == -1) {
-		syslog(LOG_ERR, "pool_root_open %s: %m", cfg->pool);
-		return (-1);
-	}
-
-	/*
-	 * Make the whole /Capabilities dataset subtree INVISIBLE to OS mount
-	 * management.  bsdfilesystem's datasets are reached exclusively through capability
-	 * handles and ANONYMOUS mounts (ZFD_MOUNT / ZH_MOUNT: the objset is mounted
-	 * without any global-namespace mountpoint and accessed only through the
-	 * returned dir fd — see sys/sys/zfshandle.h).  They must therefore never be
-	 * mounted by the OS's boot-time `zfs mount -a`.  If the OS mounts one at its
-	 * inherited mountpoint, the objset is already mounted, and bsdfilesystem's anonymous
-	 * mount (and any destroy) of the SAME dataset fails EBUSY.  That is the
-	 * second-boot collision: on a fresh boot the datasets do not exist yet, but
-	 * on every reboot the persisted datasets are OS-mounted before switchboard
-	 * runs, so a reused persistent claim makes the consumer's storage request
-	 * fail EBUSY (a crash-looping bsdlog) and a stale ephemeral generation makes
-	 * the reconcile destroy fail EBUSY.
-	 *
-	 * Setting the base dataset's mountpoint to "none" propagates by inheritance
-	 * to every child — persistent, ephemeral, per-service homes and claims,
-	 * boot/lease generations — so the OS mounts none of them, and bsdfilesystem owns the
-	 * (anonymous) mount lifecycle completely.  It also keeps the static
-	 * /Capabilities/System bundle tree visible, since the base is not mounted
-	 * over the root dataset's /Capabilities.  canmount=off is kept as belt-and-
-	 * suspenders on the base itself (integer-encoded property, so the uint64
-	 * setter — the string path panics ZFS on an int property).
-	 */
-	rel = rel_under(cfg->pool, cfg->base);
-	if (rel != NULL) {
-		int base_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS);
-
-		if (base_fd == -1) {
-			syslog(LOG_ERR, "provision %s: %m", cfg->base);
-			(void)close(root_fd);
-			return (-1);
-		}
-		/* mountpoint is a genuine string property; setting it "none" here
-		 * propagates to the whole subtree by inheritance. */
-		if (tzfs_set_prop_string(base_fd, "mountpoint", "none") == -1)
-			syslog(LOG_WARNING, "set mountpoint=none on %s: %m "
-			    "(datasets may be OS-mounted and collide after reboot)",
-			    cfg->base);
-		if (tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
-			syslog(LOG_WARNING, "set canmount=off on %s: %m", cfg->base);
-		(void)close(base_fd);
-	}
-
-	/* base/persistent/ephemeral all hang under the pool root. */
-	rel = rel_under(cfg->pool, cfg->persistent);
-	if (rel == NULL ||
-	    (st->persistent_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
-	    -1) {
-		syslog(LOG_ERR, "provision %s: %m", cfg->persistent);
-		(void)close(root_fd);
-		return (-1);
-	}
-	rel = rel_under(cfg->pool, cfg->ephemeral);
-	if (rel == NULL ||
-	    (st->ephemeral_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
-	    -1) {
-		syslog(LOG_ERR, "provision %s: %m", cfg->ephemeral);
-		(void)close(root_fd);
-		return (-1);
-	}
-	/*
-	 * Apply the configured sync= policy to the ephemeral subtree.  sync is an
-	 * index-encoded property (like canmount): STANDARD=0, ALWAYS=1,
-	 * DISABLED=2 — set via the uint64 path (the string path panics ZFS on an
-	 * integer property).  Setting it on the ephemeral parent propagates by
-	 * inheritance to every child (boot/lease generations, per-service homes,
-	 * claims).  Best-effort: a sync miss is a durability/perf knob, not a
-	 * correctness gate for provisioning.
-	 */
-	{
-		uint64_t syncval;
-
-		if (strcmp(cfg->ephemeral_sync, "standard") == 0)
-			syncval = 0;	/* ZFS_SYNC_STANDARD */
-		else if (strcmp(cfg->ephemeral_sync, "always") == 0)
-			syncval = 1;	/* ZFS_SYNC_ALWAYS */
-		else
-			syncval = 2;	/* ZFS_SYNC_DISABLED */
-		if (tzfs_set_prop_uint64(st->ephemeral_fd, "sync", syncval) == -1)
-			syslog(LOG_WARNING, "set sync=%s on %s: %m",
-			    cfg->ephemeral_sync, cfg->ephemeral);
-	}
-	(void)close(root_fd);
-	if (reconcile_boot_generations(st) == -1) {
-		int e = errno;
-		syslog(LOG_ERR, "provision current boot storage: %m");
-		errno = e;	/* syslog() may clobber errno; main() reports it */
-		return (-1);
-	}
-
-	syslog(LOG_INFO, "provisioned %s {persistent,ephemeral}",
-	    cfg->base);
-	return (0);
+	root = tzfs_pool_root_open(pool, RETAIN_RIGHTS, ZHF_SUBTREE);
+	error = errno;
+	(void)close(pool);
+	if (root == -1)
+		return (errno = error, -1);
+	base = bsdfilesystem_ensure_path(root, relative, RETAIN_RIGHTS);
+	error = errno;
+	(void)close(root);
+	if (base == -1)
+		return (errno = error, -1);
+	result = bsdfilesystem_layout_provision_fd(st, base);
+	error = errno;
+	(void)close(base);
+	return (errno = error, result);
 }

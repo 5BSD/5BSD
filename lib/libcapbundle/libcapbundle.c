@@ -111,18 +111,27 @@ open_bundle(const char *path, const char *key, bool required, bool personal,
 	}
 	b->require_signatures |= b->signed_bundle;
 
-	/* Store path and derive name. */
-	if (realpath(path, b->path) == NULL)
-		strlcpy(b->path, path, sizeof(b->path));
-
-	/* Strip trailing slash for basename. */
-	strlcpy(b->name, b->path, sizeof(b->name));
-	len = strlen(b->name);
-	if (len > 0 && b->name[len - 1] == '/')
-		b->name[len - 1] = '\0';
-	slash = strrchr(b->name, '/');
-	if (slash != NULL)
-		memmove(b->name, slash + 1, strlen(slash + 1) + 1);
+	/* Derive the basename before copying into the shorter name buffer. */
+	if (realpath(path, b->path) == NULL &&
+	    strlcpy(b->path, path, sizeof(b->path)) >= sizeof(b->path)) {
+		errno = ENAMETOOLONG;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "bundle path too long");
+		capbundle_close(b);
+		return (-1);
+	}
+	len = strlen(b->path);
+	while (len > 1 && b->path[len - 1] == '/')
+		b->path[--len] = '\0';
+	slash = strrchr(b->path, '/');
+	if (strlcpy(b->name, slash != NULL ? slash + 1 : b->path,
+	    sizeof(b->name)) >= sizeof(b->name)) {
+		errno = ENAMETOOLONG;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "bundle name too long");
+		capbundle_close(b);
+		return (-1);
+	}
 
 	if (snprintf(manifest_path, sizeof(manifest_path), "%s/Bundle.ucl",
 	    b->path) >= (int)sizeof(manifest_path) ||

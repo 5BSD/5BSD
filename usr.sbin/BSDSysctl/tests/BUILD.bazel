@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Keep the installed executable's linkage identical to Make. The runtime-only
+# variant resolves declared candidate libraries, including transitive libc deps.
+[cc_binary(name = "config_test" + suffix, srcs = ["config_test.c", "//usr.sbin/BSDSysctl:config.c"],
+    deps = ["//usr.sbin/BSDSysctl:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libucl:ucl_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for suffix in ["", "_runtime"]]
+bsd_kyua_test(name = "config_test_run", program = ":config_test_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/libucl:ucl_shared": "libprivateucl.so.1", "//lib/msun:m_shared": "libm.so.5",
+        "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    materialize_suite = True,
+    suite_files = {"//usr.sbin/BSDSysctl/capbundle:sysctl.conf": "srctree/usr.sbin/BSDSysctl/capbundle/sysctl.conf"},
+    size = "small", visibility = ["//visibility:public"])
+
+
+cc_binary(name = "interfaces_test", srcs = ["interfaces_test.c", "//usr.sbin/BSDSysctl:interfaces.c"],
+    deps = ["//usr.sbin/BSDSysctl:test_headers", "//lib/libsysctlcmp:headers", "//lib/atf/libatf-c:atf_c"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "interfaces_test_run", program = ":interfaces_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+[cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDSysctl:config.c", "//usr.sbin/BSDSysctl:interfaces.c"] +
+        (["//usr.sbin/BSDSysctl:bsdsysctl.c"] if name == "provider_test" else []),
+    deps = ["//usr.sbin/BSDSysctl:test_headers", "//lib/libsysctlcmp:sysctlcmp", "//lib/libsysctlcmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"] +
+        (["//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers"] if name == "provider_test" else []),
+    local_defines = ["SYSCTLCMP_TESTING"] if name == "provider_test" else [],
+    linkstatic = True, linkopts = ["-static"])
+ for name in ["provider_test", "reactor_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf", case_timeout = 120,
+    tags = ["manual", "requires-matching-kernel"],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["provider_test", "reactor_test"]]
+
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+bsd_fidl_ir(name = "next_ir", schemas = ["evolution/sysctlcmp_next.fidl"], available = "bsd:2",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "next_bindings", ir = ":next_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.sysctl.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.sysctl.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+
+filegroup(name = "next_sources", srcs = [":next_bindings"], output_group = "sources")
+filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = "headers")
+cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
+# Make links all three generated objects directly into this standalone peer.
+cc_library(name = "next_codec", srcs = [":next_sources"],
+    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
+# The newer peer must never inherit the production bsd:1 generated headers.
+cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
+    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    linkopts = ["-static"], linkstatic = True)
+
+
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c",
+        "//usr.sbin/BSDSysctl:config.c", "//usr.sbin/BSDSysctl:interfaces.c"],
+    deps = ["//usr.sbin/BSDSysctl:test_headers", "//lib/libsysctlcmp:sysctlcmp", "//lib/libsysctlcmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    local_defines = ["SYSCTLCMP_TESTING"], linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf", case_timeout = 120,
+    suite_files = {":next_peer": "next_peer"}, tags = ["manual", "requires-matching-kernel"],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDSysctl:config.c", "//usr.sbin/BSDSysctl:interfaces.c"],
+    deps = ["//usr.sbin/BSDSysctl:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
+        "//lib/libsysctlcmp:client_source_headers", "//lib/libsysctlcmp:sysctlcmp",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl"],
+    dynamic_deps = ["//lib/libsysctlcmp:sysctlcmp_shared", "//lib/libfidl:fidl_shared", "//lib/libchannel:channel_shared",
+        "//lib/libservice:service_shared", "//lib/libucl:ucl_shared"],
+    local_defines = ["SYSCTLCMP_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
+
+
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+# Preserve the installed ATF program and its configuration substitution.
+# Its manifest case needs the installed bundle and switchboardctl.
+bsd_template(name = "observability_test_body", template = "observability_test.sh",
+    output = "generated/observability_test.sh",
+    substitutions = select({"//tools/build/bazel/config:dtrace_enabled": {"@MK_DTRACE@": "yes"},
+        "//conditions:default": {"@MK_DTRACE@": "no"}}))
+bsd_script_wrapper(name = "observability_test", body = ":observability_test_body",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES", "SOURCE_FIXTURES", "DIRECTORIES")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "libsysctlcmp-tests", bindir = TESTDIR) for p in BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
+    interfaces = {p: "atf" for p in ATF_PROGRAMS},
+    metadata = {n: '{"timeout":"120"}' for n in ["evolution_test", "provider_test", "reactor_test"]})
+_FILES = [(":kyuafile", TESTDIR + "/Kyuafile", "0444"),
+    (":observability_test", TESTDIR + "/observability_test", "0555")] + [
+    (source, TESTDIR + "/srctree/" + dest, "0444") for source, dest in SOURCE_FIXTURES.items()] + [
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/libsysctlcmp-tests/fuchsia-bsdsysctl/" + n, "0444") for n in ["LICENSE", "PATENTS"]] + [("//contrib/libucl:COPYING", "/usr/share/licenses/libsysctlcmp-tests/libucl-bsdsysctl/COPYING", "0444")]
+[bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=libsysctlcmp-tests"])
+ for i, (source, dest, mode) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + str(i) for i in range(len(_FILES))],
+    visibility = ["//usr.sbin/BSDSysctl:__pkg__"])
+# Every source-fixture ancestor is owned, matching tests/srctree.mk.
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_" + p for p in BINARIES] + [":install_extra"],
+    directories = DIRECTORIES,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+# Inspect the declared candidate; the script's default remains the installed daemon.
+bsd_kyua_test(name = "observability_test_run", program = ":observability_test", interface = "atf",
+    config_files = {"//usr.sbin/BSDSysctl:BSDSysctl": "binary"},
+    suite_files = {source: "srctree/" + dest for source, dest in SOURCE_FIXTURES.items()},
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])

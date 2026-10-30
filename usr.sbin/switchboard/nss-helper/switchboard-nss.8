@@ -1,0 +1,36 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 21, 2026
+.Dt SWITCHBOARD-NSS 8
+.Os
+.Sh NAME
+.Nm switchboard-nss
+.Nd private account lookup helper for SwitchBoard
+.Sh DESCRIPTION
+The
+.Nm
+helper reads one bounded binary request from standard input, requires end of
+input, performs an NSS account lookup, and writes one bounded binary reply to
+standard output.
+It supports passwd lookup by name or UID, group lookup by name,
+and supplementary group membership through
+.Xr getgrouplist 3 .
+It does not return passwords or file descriptors.
+The protocol is private to the matching system generation.
+.Pp
+The caller must remove inherited software authority and privileged descriptors
+and prevent privilege acquisition before executing this helper.
+The caller must also validate all returned data, enforce a deadline, and reap
+the helper.
+This program alone does not establish an isolation boundary.
+SwitchBoard uses this helper for ordinary account lookups in BIP mode.
+.Sh EXIT STATUS
+.Ex -std
+Lookup errors are returned in the reply; malformed framing and I/O failures
+cause a nonzero exit status.
+.Sh SEE ALSO
+.Xr getgrnam 3 ,
+.Xr getgrouplist 3 ,
+.Xr getpwnam 3 ,
+.Xr getpwuid 3 ,
+.Xr nsswitch.conf 5 ,
+.Xr switchboard 8

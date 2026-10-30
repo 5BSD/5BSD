@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
+bsd_pkg_dependency(name = "libservice-tests_dependency", package = "libservice-tests", origin = "base/5BSD-libservice-tests",
+    version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])

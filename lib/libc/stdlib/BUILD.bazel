@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = 'stdlib_objects',
+    srcs = ['_Exit.c', 'a64l.c', 'abort.c', 'abs.c', 'atexit.c', 'atof.c', 'atoi.c', 'atol.c', 'atoll.c', 'bsearch.c', 'bsearch_b.c', 'bsearch_s.c', 'cxa_thread_atexit.c', 'cxa_thread_atexit_impl.c', 'exit.c', 'getenv.c', 'getopt.c', 'getopt_long.c', 'getsubopt.c', 'hcreate.c', 'hcreate_r.c', 'hdestroy_r.c', 'heapsort.c', 'heapsort_b.c', 'hsearch_r.c', 'imaxabs.c', 'imaxdiv.c', 'insque.c', 'l64a.c', 'labs.c', 'llabs.c', 'lsearch.c', 'memalignment.c', 'merge.c', 'mergesort_b.c', 'ptsname.c', 'qsort_r.c', 'qsort_r_compat.c', 'qsort_s.c', 'quick_exit.c', 'radixsort.c', 'rand.c', 'random.c', 'reallocarray.c', 'reallocf.c', 'realpath.c', 'recallocarray.c', 'remque.c', 'set_constraint_handler_s.c', 'strfmon.c', 'strfrom.c', 'strfromd.c', 'strfromf.c', 'strfroml.c', 'strtoimax.c', 'strtol.c', 'strtold.c', 'strtoll.c', 'strtoq.c', 'strtoul.c', 'strtonum.c', 'strtoull.c', 'strtoumax.c', 'strtouq.c', 'system.c', 'tdelete.c', 'tdestroy.c', 'tfind.c', 'tsearch.c', 'twalk.c', 'atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'],
+    textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],
+    implementation_deps = ["//lib/libc/include:stdlib_headers", "//lib/libc/locale:gdtoa_headers", "//contrib/gdtoa:headers", "//lib/libc/amd64:gdtoa_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ['-ftls-model=initial-exec'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = 'qsort_objects',
+    srcs = ['qsort.c', 'atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'],
+    textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],
+    implementation_deps = ["//lib/libc/include:stdlib_headers", "//lib/libc/locale:gdtoa_headers", "//contrib/gdtoa:headers", "//lib/libc/amd64:gdtoa_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ['-ftls-model=initial-exec', '-Wsign-compare'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = 'division_objects',
+    srcs = ['atexit.h', 'hsearch.h', 'random.h', 'strfrom.h', 'tsearch_path.h', '//lib/libc/stdio:floatio.h'] + select({"//tools/build/bazel/config:machdep_optimizations_enabled": ["//lib/libc/amd64/stdlib:div.S", "//lib/libc/amd64/stdlib:ldiv.S", "//lib/libc/amd64/stdlib:lldiv.S"], "//conditions:default": ["div.c", "ldiv.c", "lldiv.c"]}),
+    textual_hdrs = ["bsearch.c", "heapsort.c", "merge.c", "qsort.c"],
+    implementation_deps = ["//lib/libc/include:stdlib_headers", "//lib/libc/locale:gdtoa_headers", "//contrib/gdtoa:headers", "//lib/libc/amd64:gdtoa_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ['-ftls-model=initial-exec'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+# Allocator sources are a separate inventory, not covered by these groups.
+bsd_component_archive(name = "objects_archive", groups = [":stdlib_objects", ":qsort_objects", ":division_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":stdlib_objects", ":qsort_objects", ":division_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+exports_files(["atexit.h"], visibility = ["//lib/libc/gen:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_a64l.3', 'a64l.3'),
+    ('libc_manual_abort.3', 'abort.3'),
+    ('libc_manual_abs.3', 'abs.3'),
+    ('libc_manual_atexit.3', 'atexit.3'),
+    ('libc_manual_atof.3', 'atof.3'),
+    ('libc_manual_atoi.3', 'atoi.3'),
+    ('libc_manual_atol.3', 'atol.3'),
+    ('libc_manual_at_quick_exit.3', 'at_quick_exit.3'),
+    ('libc_manual_bsearch.3', 'bsearch.3'),
+    ('libc_manual_div.3', 'div.3'),
+    ('libc_manual_exit.3', 'exit.3'),
+    ('libc_manual_getenv.3', 'getenv.3'),
+    ('libc_manual_getopt.3', 'getopt.3'),
+    ('libc_manual_getopt_long.3', 'getopt_long.3'),
+    ('libc_manual_getsubopt.3', 'getsubopt.3'),
+    ('libc_manual_hcreate.3', 'hcreate.3'),
+    ('libc_manual_insque.3', 'insque.3'),
+    ('libc_manual_lsearch.3', 'lsearch.3'),
+    ('libc_manual_memalignment.3', 'memalignment.3'),
+    ('libc_manual_memory.3', 'memory.3'),
+    ('libc_manual_ptsname.3', 'ptsname.3'),
+    ('libc_manual_qsort.3', 'qsort.3'),
+    ('libc_manual_quick_exit.3', 'quick_exit.3'),
+    ('libc_manual_radixsort.3', 'radixsort.3'),
+    ('libc_manual_rand.3', 'rand.3'),
+    ('libc_manual_random.3', 'random.3'),
+    ('libc_manual_reallocarray.3', 'reallocarray.3'),
+    ('libc_manual_reallocf.3', 'reallocf.3'),
+    ('libc_manual_realpath.3', 'realpath.3'),
+    ('libc_manual_set_constraint_handler_s.3', 'set_constraint_handler_s.3'),
+    ('libc_manual_strfmon.3', 'strfmon.3'),
+    ('libc_manual_strfromd.3', 'strfromd.3'),
+    ('libc_manual_strtod.3', 'strtod.3'),
+    ('libc_manual_strtol.3', 'strtol.3'),
+    ('libc_manual_strtonum.3', 'strtonum.3'),
+    ('libc_manual_strtoul.3', 'strtoul.3'),
+    ('libc_manual_system.3', 'system.3'),
+    ('libc_manual_tsearch.3', 'tsearch.3'),
+]]
+
+load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
+rtld_libc_source_exports('lib/libc/stdlib')

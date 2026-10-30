@@ -4,10 +4,13 @@
 #include <sys/jail.h>
 #include <sys/types.h>
 #include <sys/cap_authority.h>
+#include <sys/cap_process.h>
+#include "nss_exchange.h"
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 #include <sys/reboot.h>
 #include <sys/ptrace.h>
@@ -383,8 +386,74 @@ provider_child(char **argv)
 		CHECK(0);
 	}
 	wait_ok(child);
+	/* An ordinary shell may read user startup commands, but returning to the
+	 * originally authorized image must not resurrect its managed authority.
+	 * Retain the bound endpoint deliberately to exercise use-time denial. */
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(setenv("ENV", "/shell-startup", 1) == 0);
+		CHECK(unsetenv("BIP_SHELL_STARTUP") == 0);
+		execl("/bin/sh", "sh", "-i", "-c",
+		    "test \"$BIP_SHELL_STARTUP\" = loaded || exit 91; "
+		    "exec /sbin/authority-test --invalid-provider \"$1\" \"$2\"",
+		    "shell-boundary", argv[2], argv[3], (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
 	CHECK(info().valid && info().identity == before.identity);
 	CHECK(send_one(fd, &byte, 1) == 0);
+}
+
+static void
+text_backend_test(int issuer)
+{
+	char fstype[] = "tmpfs", mountpoint[] = "/authority-tmpfs";
+	char fstype_key[] = "fstype", fspath_key[] = "fspath";
+	struct iovec iov[] = {
+	    { fstype_key, sizeof(fstype_key) }, { fstype, sizeof(fstype) },
+	    { fspath_key, sizeof(fspath_key) }, { mountpoint, sizeof(mountpoint) }
+	};
+	struct cap_authority_constraint constraint = { .nexec = 1 };
+	const char *paths[] = { "/authority-pin", "/authority-tmpfs/image" };
+	long page = sysconf(_SC_PAGESIZE);
+	int fd, token;
+	void *mapping;
+
+	CHECK(page > 0);
+	CHECK(mkdir(mountpoint, 0700) == 0);
+	CHECK(nmount(iov, nitems(iov), 0) == 0);
+	for (unsigned i = 0; i < nitems(paths); i++) {
+		fd = open(paths[i], O_RDWR | O_CREAT | O_EXCL, 0700);
+		CHECK(fd >= 0);
+		CHECK(ftruncate(fd, page) == 0);
+		/* Initially read-only still has writable maxprot from the fd. */
+		mapping = mmap(NULL, page, PROT_READ, MAP_SHARED, fd, 0);
+		CHECK(mapping != MAP_FAILED);
+		CHECK(close(fd) == 0);
+		fd = open(paths[i], O_RDONLY);
+		CHECK(fd >= 0);
+		token = issue(issuer, CAP_AUTH_MANAGED, 0);
+		constraint.token_fd = token;
+		constraint.executable_fds[0] = fd;
+		CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1);
+		CHECK(errno == (i == 0 ? ETXTBSY : EOPNOTSUPP));
+		CHECK(mprotect(mapping, page, PROT_READ | PROT_WRITE) == 0);
+		*(char *)mapping = 'x';
+		CHECK(munmap(mapping, page) == 0);
+		if (i == 0) {
+			/* A rejected constraint does not consume the token. */
+			CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0);
+			CHECK(open(paths[i], O_WRONLY) == -1 && errno == ETXTBSY);
+		} else {
+			CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == -1 &&
+			    errno == EOPNOTSUPP);
+		}
+		close(token);
+		close(fd);
+		CHECK(unlink(paths[i]) == 0);
+	}
+	CHECK(unmount(mountpoint, 0) == 0);
+	CHECK(rmdir(mountpoint) == 0);
 }
 
 static void
@@ -533,6 +602,53 @@ library_directory_tests(int issuer)
 	close(token); close(image);
 }
 
+/* Software identity alone must not authorize another invocation's memory. */
+static void
+application_debug_family(void)
+{
+	int ready[2], gate[2], status;
+	char byte, readyfd[32], gatefd[32];
+	pid_t child;
+
+	CHECK(info().valid);
+	for (unsigned round = 0; round < 3; round++) {
+		CHECK(pipe(ready) == 0 && pipe(gate) == 0);
+		child = fork(); CHECK(child >= 0);
+		if (child == 0) {
+			close(ready[0]); close(gate[1]);
+			if (round != 0) {
+				if (round == 2)
+					CHECK(setuid(2101) == 0);
+				snprintf(readyfd, sizeof(readyfd), "%d", ready[1]);
+				snprintf(gatefd, sizeof(gatefd), "%d", gate[0]);
+				execl("/sbin/authority-test", "authority-test",
+				    "--application-debug-target", readyfd, gatefd,
+				    (char *)NULL);
+				CHECK(0);
+			}
+			/* A failed exec must not split an otherwise unchanged family. */
+			execl("/nonexistent", "missing", (char *)NULL);
+			CHECK(errno == ENOENT);
+			CHECK(write(ready[1], "r", 1) == 1);
+			CHECK(read(gate[0], &byte, 1) == 1);
+			_exit(0);
+		}
+		close(ready[1]); close(gate[0]);
+		CHECK(read(ready[0], &byte, 1) == 1);
+		if (round == 0) {
+			CHECK(ptrace(PT_ATTACH, child, NULL, 0) == 0);
+			CHECK(waitpid(child, &status, WUNTRACED) == child);
+			CHECK(WIFSTOPPED(status));
+			CHECK(ptrace(PT_DETACH, child, (caddr_t)1, 0) == 0);
+		} else {
+			CHECK(ptrace(PT_ATTACH, child, NULL, 0) == -1 && errno == EPERM);
+		}
+		CHECK(write(gate[1], "r", 1) == 1);
+		wait_ok(child);
+		close(ready[0]); close(gate[1]);
+	}
+}
+
 /* Ordinary exec: no PAM, user grant, token installation, or launcher helper. */
 static void
 application_exec_tests(int issuer)
@@ -587,6 +703,14 @@ application_exec_tests(int issuer)
 		}
 		wait_ok(child);
 	}
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+		execl("/sbin/authority-test", "authority-test",
+		    "--application-debug-family", (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
 	/* Revoke while an attributed client holds a cached endpoint. */
 	CHECK(pipe(ready) == 0 && pipe(resume) == 0);
 	snprintf(readyfd, sizeof(readyfd), "%d", ready[1]);
@@ -720,6 +844,112 @@ prison_transition_tests(int issuer)
 	close(spare);
 }
 
+/* Failed publication must release the acquired binding; its owned authority
+ * reference must not keep the issuer descriptor or endpoint alive. */
+static void
+binding_lifetime_test(void)
+{
+	struct cap_authority_bind binding;
+	int issuer, other, token, pair[2];
+
+	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(issuer >= 0);
+	other = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(other >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	CHECK(mac_capability_channel_create(pair) == 0);
+	CHECK(token_info(token).references == 1);
+	binding = (struct cap_authority_bind){ token, -1, 0, 0 };
+	for (unsigned i = 0; i < 32; i++) {
+		binding.capability_fd = -1;
+		CHECK(op(CAP_AUTH_BIND, issuer, &binding) == -1 && errno == EBADF);
+		binding.capability_fd = issuer;
+		CHECK(op(CAP_AUTH_BIND, issuer, &binding) == -1 && errno == EINVAL);
+		binding.capability_fd = pair[0];
+		CHECK(op(CAP_AUTH_BIND, other, &binding) == -1 && errno == EPERM);
+	}
+	CHECK(token_info(token).references == 1);
+	CHECK(op(CAP_AUTH_BIND, issuer, &binding) == 0);
+	CHECK(token_info(token).references == 2);
+	for (unsigned i = 0; i < 128; i++)
+		CHECK(op(CAP_AUTH_BIND, issuer, &binding) == -1 && errno == EALREADY);
+	CHECK(token_info(token).references == 2);
+	CHECK(close(issuer) == 0);
+	CHECK(token_info(token).revoked);
+	CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
+	CHECK(token_info(token).references == 1);
+	CHECK(close(token) == 0 && close(other) == 0);
+	pass("binding-ownership-and-failed-publication");
+}
+
+/* Real parent authority and kernel-held discovery state; no mock clear calls.
+ * This fixture is PID 1 in the disposable VM and already owns a real issuer. */
+static void
+nss_isolation_test(void)
+{
+	struct sb_nss_request request = { .version = SB_NSS_VERSION,
+	    .operation = SB_NSS_USER_UID, .id = 1000 };
+	struct sb_nss_reply reply;
+	struct cap_authority_info before, after;
+	struct mac_cap_process_info context, retained;
+	struct cap_authority_constraint constraint = { .nexec = 1 };
+	struct cap_authority_application application;
+	int pair[2], diagnostic, marker, issuer, token, executable;
+	pid_t child;
+	char identity[32];
+
+	before = info();
+	CHECK(before.identity != 0 && before.valid && !before.revoked);
+	CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_INFO, -1, 0, &context) == 0);
+	CHECK(context.present == 0);
+	CHECK(mac_capability_channel_create(pair) == 0);
+	CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_SET, pair[0], 0, NULL) == 0);
+	CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_INFO, -1, 0, &context) == 0);
+	CHECK(context.present == 1);
+	diagnostic = open("/dev/null", O_WRONLY); CHECK(diagnostic >= 0);
+	marker = fcntl(diagnostic, F_DUPFD, 128); CHECK(marker == 128);
+	CHECK(setenv("NSS_ISOLATION_PARENT_MARKER", "must-not-survive", 1) == 0);
+	CHECK(sb_nss_exchange("/sbin/nss-isolation-probe", diagnostic, &request,
+	    1000, 5000, &reply) == 0);
+	CHECK(strcmp(reply.name, "isolation-probe") == 0);
+	/* Prove the exact target gains authority on an ordinary exec first. */
+	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(issuer >= 0);
+	token = issue(issuer, CAP_AUTH_MANAGED, 0);
+	executable = open("/sbin/authority-other", O_RDONLY); CHECK(executable >= 0);
+	constraint.token_fd = token;
+	constraint.executable_fds[0] = executable;
+	CHECK(op(CAP_AUTH_CONSTRAIN, issuer, &constraint) == 0);
+	application = (struct cap_authority_application){ .token_fd = token };
+	CHECK(op(CAP_AUTH_REGISTER_APP, issuer, &application) == 0);
+	snprintf(identity, sizeof(identity), "%ju", (uintmax_t)token_info(token).identity);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+		closefrom(3);
+		execl("/sbin/authority-other", "authority-other", "--nss-attributed",
+		    identity, (char *)NULL);
+		CHECK(0);
+	}
+	wait_ok(child);
+	request.operation = SB_NSS_USER_NAME;
+	request.id = 0;
+	strlcpy(request.name, "/sbin/authority-other", sizeof(request.name));
+	CHECK(sb_nss_exchange("/sbin/nss-isolation-probe", diagnostic, &request,
+	    0, 5000, &reply) == 0);
+	CHECK(strcmp(reply.name, "isolation-reexec") == 0);
+	close(executable); close(token); close(issuer);
+	pass("nss-helper-cannot-reacquire-registered-authority");
+
+	after = info();
+	CHECK(after.identity == before.identity && after.generation == before.generation &&
+	    after.valid && !after.revoked);
+	CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_INFO, -1, 0, &retained) == 0);
+	CHECK(retained.present && retained.generation == context.generation);
+	CHECK(fcntl(marker, F_GETFD) >= 0);
+	CHECK(unsetenv("NSS_ISOLATION_PARENT_MARKER") == 0);
+	CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_CLEAR, -1, 0, NULL) == 0);
+	close(marker); close(diagnostic); close(pair[0]); close(pair[1]);
+	pass("nss-helper-clears-inherited-authority-and-discovery");
+}
+
 static void
 run_tests(void)
 {
@@ -742,6 +972,8 @@ run_tests(void)
 	wait_ok(child);
 	pass("root-is-not-an-issuer");
 
+	binding_lifetime_test();
+
 	prison_transition_tests(issuer);
 	pass("prison-transition-invalidates-authority");
 
@@ -758,6 +990,7 @@ run_tests(void)
 	close(copy);
 	CHECK(token_info(token).references == 2);
 	pass("one-use-object-not-wire-identity");
+	nss_isolation_test();
 
 	child = fork(); CHECK(child >= 0);
 	if (child == 0) {
@@ -854,13 +1087,17 @@ run_tests(void)
 	concurrent_install_test(issuer);
 	pass("concurrent-token-install-single-winner");
 	provider_exec_tests(issuer);
+	pass("ordinary-shell-startup-cannot-restore-managed-authority");
 	pass("software-exec-constraints-and-uid-independence");
 	library_directory_tests(issuer);
 	pass("issuer-library-directories-and-rights-preservation");
 	application_exec_tests(issuer);
+	pass("separate-executions-cannot-debug-by-software-identity");
 	pass("ordinary-exec-software-authority-and-uid-independence");
 	sandboxed_loader_test(issuer);
 	pass("sandboxed-secure-loader-with-hostile-environment");
+	text_backend_test(issuer);
+	pass("text-pin-backends-and-existing-writable-mappings");
 	application_loader_test(issuer);
 	pass("application-loader-injection-denial-and-pinned-contents");
 
@@ -1266,9 +1503,263 @@ system_mixed_sysctl_test(void)
 	pass("system-mixed-sysctl-claims");
 }
 
+/* An activated isolation token must not outlive its bound software grant. */
+static int
+isolation_token_call(int service, uint32_t operation, int file, int *token)
+{
+	struct fi_request request = { .op = operation, .actions = FI_FS_READ };
+	struct fi_reply reply;
+	struct mac_capability_call_args call = { 0 };
+
+	call.req = &request; call.req_len = sizeof(request);
+	call.reply = &reply; call.reply_len = sizeof(reply);
+	if (file >= 0) { call.req_fds = &file; call.req_nfds = 1; }
+	if (token != NULL) { call.reply_fds = token; call.reply_nfds = 1; }
+	return (ioctl(service, MAC_CAPABILITY_CALL, &call));
+}
+
+static void
+isolation_authority_child(char **argv)
+{
+	int token = atoi(argv[2]), file = atoi(argv[3]);
+	int ready = atoi(argv[4]), gate = atoi(argv[5]), authority = atoi(argv[6]);
+	char byte;
+
+	CHECK(op(CAP_AUTH_INSTALL, authority, NULL) == 0);
+	CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == 0);
+	CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	{
+		pid_t child = fork();
+		CHECK(child >= 0);
+		if (child == 0) {
+			ssize_t result;
+			int saved;
+			/* This token is software-bound, not invocation-bound. Its
+			 * fork heir initially has the same software authority. */
+			CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+			CHECK(op(CAP_AUTH_CLEAR, -1, NULL) == 0);
+			CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == -1 && errno == EPERM);
+			errno = 0;
+			result = pread(file, &byte, 1, 0); saved = errno;
+			printf("ISOLATION_AFTER_AUTHORITY_CLEAR result=%zd errno=%d\n", result, saved);
+			CHECK(result == -1 && (saved == EACCES || saved == EPERM));
+			_exit(0);
+		}
+		wait_ok(child);
+		CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	}
+	CHECK(write(ready, "r", 1) == 1);
+	CHECK(read(gate, &byte, 1) == 1);
+	CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == -1 && errno == EPERM);
+	/* The previously activated entry must also stop authorizing direct I/O. */
+	{
+		ssize_t result;
+		int saved;
+		errno = 0;
+		result = pread(file, &byte, 1, 0);
+		saved = errno;
+		printf("ISOLATION_AFTER_AUTHORITY_REVOKE result=%zd errno=%d\n",
+		    result, saved);
+		CHECK(result == -1 && (saved == EACCES || saved == EPERM));
+	}
+}
+
+static void
+isolation_authority_revocation_test(void)
+{
+	struct mac_capability_connect_args connect = { 0 };
+	char args[5][32], byte;
+	int issuer, authority, ctl, file, token = -1, ready[2], gate[2];
+	pid_t child;
+
+	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(issuer >= 0);
+	authority = issue(issuer, CAP_AUTH_MANAGED, 0);
+	ctl = open("/dev/mac_capability", O_RDWR); CHECK(ctl >= 0);
+	strlcpy(connect.name, "isolation", sizeof(connect.name));
+	CHECK(ioctl(ctl, MAC_CAPABILITY_CONNECT, &connect) == 0); close(ctl);
+	file = open("/isolation-authority-test", O_CREAT | O_EXCL | O_RDWR, 0600);
+	CHECK(file >= 0); CHECK(write(file, "s", 1) == 1);
+	CHECK(isolation_token_call(connect.fd, FI_OP_CLAIM, file, NULL) == 0);
+	CHECK(isolation_token_call(connect.fd, FI_OP_MINT, file, &token) == 0);
+	CHECK(token >= 0); bind_to(issuer, authority, token);
+	CHECK(fcntl(token, F_SETFD, 0) == 0);
+	CHECK(fcntl(authority, F_SETFD, 0) == 0);
+	CHECK(pipe(ready) == 0 && pipe(gate) == 0);
+	snprintf(args[0], sizeof(args[0]), "%d", token);
+	snprintf(args[1], sizeof(args[1]), "%d", file);
+	snprintf(args[2], sizeof(args[2]), "%d", ready[1]);
+	snprintf(args[3], sizeof(args[3]), "%d", gate[0]);
+	snprintf(args[4], sizeof(args[4]), "%d", authority);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		close(issuer); close(connect.fd); close(ready[0]); close(gate[1]);
+		execl("/sbin/authority-test", "authority-test", "--isolation-authority",
+		    args[0], args[1], args[2], args[3], args[4], NULL);
+		_exit(127);
+	}
+	close(ready[1]); close(gate[0]);
+	CHECK(read(ready[0], &byte, 1) == 1);
+	revoke_grant(issuer, authority);
+	CHECK(write(gate[1], "x", 1) == 1);
+	wait_ok(child);
+	close(ready[0]); close(gate[1]); close(token); close(authority);
+	CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	CHECK(isolation_token_call(connect.fd, FI_OP_RELEASE, file, NULL) == 0);
+	close(file); close(connect.fd); close(issuer);
+	CHECK(unlink("/isolation-authority-test") == 0);
+	pass("isolation-bound-authority-revocation");
+}
+
+/* Keep the software grant valid throughout: these denials must come from
+ * invocation membership, not revocation or lost descriptors. */
+static void
+isolation_invocation_denied(int token, int file, const char *phase)
+{
+	char byte;
+	ssize_t result;
+	int saved;
+
+	CHECK(info().valid);
+	CHECK(fcntl(token, F_GETFD) >= 0 && fcntl(file, F_GETFD) >= 0);
+	CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == -1 &&
+	    errno == EPERM);
+	errno = 0;
+	result = pread(file, &byte, 1, 0);
+	saved = errno;
+	printf("ISOLATION_INVOCATION_%s result=%zd errno=%d\n",
+	    phase, result, saved);
+	fflush(stdout);
+	CHECK(result == -1 && (saved == EACCES || saved == EPERM));
+}
+
+static void
+isolation_invocation_child(char **argv)
+{
+	int token = atoi(argv[2]), file = atoi(argv[3]);
+	int channel = atoi(argv[4]), gate = atoi(argv[5]);
+	int authority = atoi(argv[6]);
+	char byte;
+	pid_t child;
+
+	CHECK(op(CAP_AUTH_INSTALL, authority, NULL) == 0);
+	/* The issuer uses receive metadata, not this payload, for admission. */
+	CHECK(send_one(channel, "r", 1) == 0);
+	CHECK(read(gate, &byte, 1) == 1);
+	close(channel); close(gate); close(authority);
+	CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == 0);
+	CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		isolation_invocation_denied(token, file, "FORK");
+		_exit(0);
+	}
+	wait_ok(child);
+	/* The child's denied activation must not revoke the admitted parent. */
+	CHECK(isolation_token_call(token, FI_OP_AUTHORIZE, -1, NULL) == 0);
+	CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	/* Exec this process, rather than another fork child, to isolate the
+	 * execution transition. Managed software authority survives this exec. */
+	execl("/sbin/authority-test", "authority-test",
+	    "--isolation-invocation-exec", argv[2], argv[3], NULL);
+	failure(__LINE__, "invocation exec");
+}
+
+static void
+isolation_invocation_test(void)
+{
+	struct mac_capability_connect_args connect = { 0 };
+	struct mac_capability_recvmsg_v3_args received = { 0 };
+	struct cap_authority_bind_invocation binding = { 0 };
+	struct cap_authority_info software;
+	char args[5][32], byte;
+	int issuer, authority, ctl, file, token = -1, channel[2], gate[2], tries;
+	pid_t child;
+
+	issuer = op(CAP_AUTH_ISSUER_CREATE, -1, NULL); CHECK(issuer >= 0);
+	authority = issue(issuer, CAP_AUTH_MANAGED, 0);
+	software = token_info(authority);
+	ctl = open("/dev/mac_capability", O_RDWR); CHECK(ctl >= 0);
+	strlcpy(connect.name, "isolation", sizeof(connect.name));
+	CHECK(ioctl(ctl, MAC_CAPABILITY_CONNECT, &connect) == 0); close(ctl);
+	file = open("/isolation-invocation-test", O_CREAT | O_EXCL | O_RDWR, 0600);
+	CHECK(file >= 0); CHECK(write(file, "s", 1) == 1);
+	CHECK(isolation_token_call(connect.fd, FI_OP_CLAIM, file, NULL) == 0);
+	CHECK(isolation_token_call(connect.fd, FI_OP_MINT, file, &token) == 0);
+	CHECK(token >= 0);
+	CHECK(mac_capability_channel_create(channel) == 0);
+	CHECK(pipe(gate) == 0);
+	CHECK(fcntl(token, F_SETFD, 0) == 0);
+	CHECK(fcntl(authority, F_SETFD, 0) == 0);
+	CHECK(fcntl(channel[0], F_SETFD, 0) == 0);
+	snprintf(args[0], sizeof(args[0]), "%d", token);
+	snprintf(args[1], sizeof(args[1]), "%d", file);
+	snprintf(args[2], sizeof(args[2]), "%d", channel[0]);
+	snprintf(args[3], sizeof(args[3]), "%d", gate[0]);
+	snprintf(args[4], sizeof(args[4]), "%d", authority);
+	child = fork(); CHECK(child >= 0);
+	if (child == 0) {
+		close(issuer); close(connect.fd); close(channel[1]); close(gate[1]);
+		execl("/sbin/authority-test", "authority-test",
+		    "--isolation-invocation", args[0], args[1], args[2],
+		    args[3], args[4], NULL);
+		_exit(127);
+	}
+	close(channel[0]); close(gate[0]);
+	received.message.payload = &byte;
+	received.message.payload_len = sizeof(byte);
+	for (tries = 0; tries < 1000; tries++) {
+		if (ioctl(channel[1], MAC_CAPABILITY_RECVMSG_V3, &received) == 0)
+			break;
+		CHECK(errno == EAGAIN); usleep(1000);
+	}
+	CHECK(tries < 1000 && byte == 'r');
+	CHECK(received.authority.valid &&
+	    received.authority.issuer == software.issuer &&
+	    received.authority.identity == software.identity);
+	CHECK(received.process.pid == child && received.process.identity != 0 &&
+	    received.message.trailer.nonce != 0);
+	binding.token_fd = authority;
+	binding.capability_fd = token;
+	binding.process_identity = received.process.identity;
+	binding.execution_nonce = received.message.trailer.nonce;
+	CHECK(op(CAP_AUTH_BIND_INVOCATION, issuer, &binding) == 0);
+	CHECK(write(gate[1], "x", 1) == 1);
+	wait_ok(child);
+	CHECK(pread(file, &byte, 1, 0) == 1 && byte == 's');
+	CHECK(isolation_token_call(connect.fd, FI_OP_RELEASE, file, NULL) == 0);
+	close(channel[1]); close(gate[1]); close(token); close(authority);
+	close(file); close(connect.fd); close(issuer);
+	CHECK(unlink("/isolation-invocation-test") == 0);
+	pass("isolation-invocation-fork-exec");
+}
+
 int
 main(int argc, char **argv)
 {
+	if (argc == 7 && strcmp(argv[1], "--isolation-invocation") == 0) {
+		isolation_invocation_child(argv);
+		return (0);
+	}
+	if (argc == 4 && strcmp(argv[1], "--isolation-invocation-exec") == 0) {
+		isolation_invocation_denied(atoi(argv[2]), atoi(argv[3]), "EXEC");
+		return (0);
+	}
+	if (argc == 7 && strcmp(argv[1], "--isolation-authority") == 0) {
+		isolation_authority_child(argv);
+		return (0);
+	}
+	if (argc == 2 && strcmp(argv[1], "--application-debug-family") == 0) {
+		application_debug_family();
+		return (0);
+	}
+	if (argc == 4 && strcmp(argv[1], "--application-debug-target") == 0) {
+		char byte;
+		CHECK(info().valid);
+		CHECK(ptrace(PT_TRACE_ME, 0, NULL, 0) == -1 && errno == EPERM);
+		CHECK(write(atoi(argv[2]), "r", 1) == 1);
+		CHECK(read(atoi(argv[3]), &byte, 1) == 1);
+		return (0);
+	}
 	if (argc == 5 && strcmp(argv[1], "--mixed-sysctl") == 0) {
 		mixed_sysctl_child(argv);
 		return (0);
@@ -1287,6 +1778,23 @@ main(int argc, char **argv)
 			CHECK(result == -1 && (errno == EPERM || errno == EACCES));
 		else
 			CHECK(result == 1);
+		return (0);
+	}
+	if (argc == 3 && strcmp(argv[1], "--nss-attributed") == 0) {
+		CHECK(info().valid && info().identity == strtoull(argv[2], NULL, 10));
+		return (0);
+	}
+	if (argc == 2 && strcmp(argv[1], "--nss-unprivileged") == 0) {
+		struct mac_cap_process_info context;
+		struct sb_nss_reply reply = { .version = SB_NSS_VERSION,
+		    .name = "isolation-reexec" };
+		int state;
+		CHECK(!info().valid && info().identity == 0);
+		CHECK(syscall(SYS_cap_process, MAC_CAP_PROCESS_INFO, -1, 0, &context) == 0);
+		CHECK(!context.present);
+		CHECK(procctl(P_PID, getpid(), PROC_NO_NEW_PRIVS_STATUS, &state) == 0);
+		CHECK(state == PROC_NO_NEW_PRIVS_ENABLE);
+		CHECK(write(STDOUT_FILENO, &reply, sizeof(reply)) == sizeof(reply));
 		return (0);
 	}
 	if (argc == 3 && strcmp(argv[1], "--exec") == 0) {
@@ -1318,6 +1826,8 @@ main(int argc, char **argv)
 	}
 	setvbuf(stdout, NULL, _IONBF, 0);
 	isolation_write_test();
+	isolation_invocation_test();
+	isolation_authority_revocation_test();
 	system_partial_release_test();
 	system_mixed_sysctl_test();
 	run_tests();

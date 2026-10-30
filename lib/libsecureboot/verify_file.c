@@ -206,7 +206,10 @@ load_manifest(const char *name, const char *prefix,
 					prefix += DestdirLen;
 			}
 #endif
-			fingerprint_info_add(name, prefix, skip, content, stp);
+			if (fingerprint_info_add(name, prefix, skip, content, stp) != 0) {
+				free(content);
+				return (VE_FINGERPRINT_WRONG);
+			}
 			add_verify_status(stp, VE_VERIFIED);
 			loaded_manifests = 1; /* we are verifying! */
 			DEBUG_PRINTF(3, ("loaded: %s %s %s\n",
@@ -299,6 +302,31 @@ severity_guess(const char *filename)
 }
 
 static int Verifying = -1;		/* 0 if not verifying */
+static int verification_required;
+
+/* Firmware policy is latched before reading any external configuration. */
+void
+verify_require(void)
+{
+	verification_required = 1;
+}
+
+int
+verify_required(void)
+{
+	return (verification_required);
+}
+
+/* Build policy only: callers must still authenticate their exact input bytes. */
+int
+verify_manifest_trust_restricted(void)
+{
+#ifdef VE_EFI_COMPILED_TRUST_ONLY
+	return (1);
+#else
+	return (0);
+#endif
+}
 
 static void
 verify_tweak(int fd, off_t off, struct stat *stp,
@@ -535,6 +563,26 @@ verify_file(int fd, const char *filename, off_t off, int severity,
 	}
 
 	rc = verify_prep(fd, filename, off, &st, caller);
+
+	/* Secure Boot has no best-effort, no_hash, or loader.ve.off mode. */
+	if (verification_required) {
+		/*
+		 * Device/inode values come from mutable filesystem metadata. A
+		 * cached success is not proof of this path's manifest entry or
+		 * these bytes (including hard links and another device with the
+		 * same filesystem ID). Always check the entry and hash again.
+		 */
+		if (rc == VE_VERIFIED || rc == VE_NOT_CHECKED ||
+		    rc == VE_FINGERPRINT_NONE)
+			rc = verify_fd(fd, filename, off, &st);
+		if (rc != VE_VERIFIED)
+			panic("Secure Boot: verification failed: %s (%d)",
+			    filename, rc);
+		verify_report(filename, VE_MUST, rc, &st);
+		add_verify_status(&st, rc);
+		ve_status_set(fd, rc);
+		return (rc);
+	}
 
 	if (!rc)
 		return (0);

@@ -1,5 +1,12 @@
 .include <src.opts.mk>
 
+# EFI has its own standalone/interpreter libraries. Its firmware verifier must
+# not enable crypto in BIOS libraries, whose loader has a fixed size limit.
+.if ${MK_LOADER_EFI_SECUREBOOT} != "no"
+MK_BEARSSL= yes
+MK_LOADER_VERIEXEC= yes
+.endif
+
 # Options used when building app-specific efi components
 # See conf/kern.mk for the correct set of these
 CFLAGS+=	-Wformat

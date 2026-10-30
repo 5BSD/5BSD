@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = ['//usr.bin/ofed/librdmacm/ucmatose:install_archive', '//usr.bin/ofed/librdmacm/mckey:install_archive', '//usr.bin/ofed/librdmacm/rping:install_archive', '//usr.bin/ofed/librdmacm/udaddy:install_archive'], visibility = ["//visibility:public"])

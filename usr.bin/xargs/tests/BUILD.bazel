@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['xargs_normal', 'xargs_I', 'xargs_J', 'xargs_L', 'xargs_P1', 'xargs_R', 'xargs_R_1', 'xargs_n1', 'xargs_n2', 'xargs_nargmax', 'xargs_n2P0', 'xargs_n3', 'xargs_0', 'xargs_0I', 'xargs_0J', 'xargs_0L', 'xargs_0P1', 'xargs_quotes', 'xargs_parallel1', 'xargs_parallel2', 'xargs_parallel3', 'xargs_parallel4']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "xargs_test.sh",
+    data = ['regress.0.in', 'regress.0.out', 'regress.0I.out', 'regress.0J.out', 'regress.0L.out', 'regress.0P1.out', 'regress.I.out', 'regress.J.out', 'regress.L.out', 'regress.P1.out', 'regress.R.out', 'regress.R-1.out', 'regress.in', 'regress.n1.out', 'regress.n2.out', 'regress.nargmax.out', 'regress.n2P0.out', 'regress.n3.out', 'regress.normal.out', 'regress.quotes.in', 'regress.quotes.out'],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/xargs:xargs', '//bin/echo:echo', '//usr.bin/sort:sort', '//sbin/sysctl:sysctl', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "xargs_test", body = "xargs_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["xargs_test"], interfaces = {"xargs_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":xargs_test",
+    destination = "/usr/tests/usr.bin/xargs/xargs_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.bin/xargs/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"] + [":install_" + f for f in ['regress.0.in', 'regress.0.out', 'regress.0I.out', 'regress.0J.out', 'regress.0L.out', 'regress.0P1.out', 'regress.I.out', 'regress.J.out', 'regress.L.out', 'regress.P1.out', 'regress.R.out', 'regress.R-1.out', 'regress.in', 'regress.n1.out', 'regress.n2.out', 'regress.nargmax.out', 'regress.n2P0.out', 'regress.n3.out', 'regress.normal.out', 'regress.quotes.in', 'regress.quotes.out']], visibility = ["//visibility:public"])
+
+[bsd_install_file(name = "install_" + f, src = f,
+    destination = "/usr/tests/usr.bin/xargs/" + f, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"]) for f in ['regress.0.in', 'regress.0.out', 'regress.0I.out', 'regress.0J.out', 'regress.0L.out', 'regress.0P1.out', 'regress.I.out', 'regress.J.out', 'regress.L.out', 'regress.P1.out', 'regress.R.out', 'regress.R-1.out', 'regress.in', 'regress.n1.out', 'regress.n2.out', 'regress.nargmax.out', 'regress.n2P0.out', 'regress.n3.out', 'regress.normal.out', 'regress.quotes.in', 'regress.quotes.out']]

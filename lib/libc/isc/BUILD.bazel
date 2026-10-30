@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# libc object group; qualification archives are not independently installed.
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "isc_objects",
+    srcs = ['ev_streams.c', 'ev_timers.c', 'eventlib_p.h'],
+    implementation_deps = ["//lib/libc/include:resolver_port_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":isc_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":isc_objects"], pic = True)

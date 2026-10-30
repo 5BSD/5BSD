@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+exports_files(["mac.conf"], visibility = ["//lib/libc:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Compile the same kernel ACL source in its userland mode, without a copied fork.
+cc_library(features = LIBC_VARIANT_FEATURES, name = "posix1e_objects",
+    srcs = ['acl_branding.c', 'acl_calc_mask.c', 'acl_cmp_np.c', 'acl_compat.c', 'acl_copy.c', 'acl_delete.c', 'acl_delete_entry.c', 'acl_entry.c', 'acl_equiv_mode_np.c', 'acl_extended_file_np.c', 'acl_flag.c', 'acl_free.c', 'acl_from_mode_np.c', 'acl_from_text.c', 'acl_from_text_nfs4.c', 'acl_get.c', 'acl_id_to_name.c', 'acl_init.c', 'acl_perm.c', 'acl_set.c', 'acl_strip.c', 'acl_support.c', 'acl_support_nfs4.c', 'acl_to_text.c', 'acl_to_text_nfs4.c', 'acl_valid.c', 'extattr.c', 'mac.c', 'mac_exec.c', 'mac_get.c', 'mac_set.c', 'acl_support.h', '//sys/kern:subr_acl_nfs4.c'],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["_ACL_PRIVATE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
+        select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-ftls-model=initial-exec"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+# Object qualification artifacts; final libc ABI and installation are separate.
+bsd_component_archive(name = "objects_archive", groups = [":posix1e_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":posix1e_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_acl.3', 'acl.3'),
+    ('libc_manual_acl_add_flag_np.3', 'acl_add_flag_np.3'),
+    ('libc_manual_acl_add_perm.3', 'acl_add_perm.3'),
+    ('libc_manual_acl_calc_mask.3', 'acl_calc_mask.3'),
+    ('libc_manual_acl_clear_flags_np.3', 'acl_clear_flags_np.3'),
+    ('libc_manual_acl_clear_perms.3', 'acl_clear_perms.3'),
+    ('libc_manual_acl_cmp_np.3', 'acl_cmp_np.3'),
+    ('libc_manual_acl_copy_entry.3', 'acl_copy_entry.3'),
+    ('libc_manual_acl_create_entry.3', 'acl_create_entry.3'),
+    ('libc_manual_acl_delete.3', 'acl_delete.3'),
+    ('libc_manual_acl_delete_entry.3', 'acl_delete_entry.3'),
+    ('libc_manual_acl_delete_flag_np.3', 'acl_delete_flag_np.3'),
+    ('libc_manual_acl_delete_perm.3', 'acl_delete_perm.3'),
+    ('libc_manual_acl_dup.3', 'acl_dup.3'),
+    ('libc_manual_acl_equiv_mode_np.3', 'acl_equiv_mode_np.3'),
+    ('libc_manual_acl_extended_file_np.3', 'acl_extended_file_np.3'),
+    ('libc_manual_acl_free.3', 'acl_free.3'),
+    ('libc_manual_acl_from_mode_np.3', 'acl_from_mode_np.3'),
+    ('libc_manual_acl_from_text.3', 'acl_from_text.3'),
+    ('libc_manual_acl_get.3', 'acl_get.3'),
+    ('libc_manual_acl_get_brand_np.3', 'acl_get_brand_np.3'),
+    ('libc_manual_acl_get_entry.3', 'acl_get_entry.3'),
+    ('libc_manual_acl_get_entry_type_np.3', 'acl_get_entry_type_np.3'),
+    ('libc_manual_acl_get_flagset_np.3', 'acl_get_flagset_np.3'),
+    ('libc_manual_acl_get_flag_np.3', 'acl_get_flag_np.3'),
+    ('libc_manual_acl_get_permset.3', 'acl_get_permset.3'),
+    ('libc_manual_acl_get_perm_np.3', 'acl_get_perm_np.3'),
+    ('libc_manual_acl_get_qualifier.3', 'acl_get_qualifier.3'),
+    ('libc_manual_acl_get_tag_type.3', 'acl_get_tag_type.3'),
+    ('libc_manual_acl_init.3', 'acl_init.3'),
+    ('libc_manual_acl_is_trivial_np.3', 'acl_is_trivial_np.3'),
+    ('libc_manual_acl_set.3', 'acl_set.3'),
+    ('libc_manual_acl_set_entry_type_np.3', 'acl_set_entry_type_np.3'),
+    ('libc_manual_acl_set_flagset_np.3', 'acl_set_flagset_np.3'),
+    ('libc_manual_acl_set_permset.3', 'acl_set_permset.3'),
+    ('libc_manual_acl_set_qualifier.3', 'acl_set_qualifier.3'),
+    ('libc_manual_acl_set_tag_type.3', 'acl_set_tag_type.3'),
+    ('libc_manual_acl_strip_np.3', 'acl_strip_np.3'),
+    ('libc_manual_acl_to_text.3', 'acl_to_text.3'),
+    ('libc_manual_acl_valid.3', 'acl_valid.3'),
+    ('libc_manual_extattr.3', 'extattr.3'),
+    ('libc_manual_mac.3', 'mac.3'),
+    ('libc_manual_mac_free.3', 'mac_free.3'),
+    ('libc_manual_mac_is_present.3', 'mac_is_present.3'),
+    ('libc_manual_mac_get.3', 'mac_get.3'),
+    ('libc_manual_mac_prepare.3', 'mac_prepare.3'),
+    ('libc_manual_mac_set.3', 'mac_set.3'),
+    ('libc_manual_mac_text.3', 'mac_text.3'),
+    ('libc_manual_posix1e.3', 'posix1e.3'),
+    ('libc_manual_mac.conf.5', 'mac.conf.5'),
+]]

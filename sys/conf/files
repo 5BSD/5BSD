@@ -3674,6 +3674,12 @@ geom/raid/tr_raid0.c		optional geom_raid
 geom/raid/tr_raid1.c		optional geom_raid
 geom/raid/tr_raid1e.c		optional geom_raid
 geom/raid/tr_raid5.c		optional geom_raid
+geom/verity/g_verity_verify.c	optional geom_verity
+geom/verity/g_verity_io.c	optional geom_verity
+geom/verity/g_verity_provider.c	optional geom_verity
+geom/verity/g_verity_boot.c	optional geom_verity
+geom/verity/g_verity_transition.c	optional geom_verity
+geom/verity/g_verity_mount.c	optional geom_verity
 geom/uzip/g_uzip.c		optional geom_uzip
 geom/uzip/g_uzip_lzma.c		optional geom_uzip
 geom/uzip/g_uzip_wrkthr.c	optional geom_uzip

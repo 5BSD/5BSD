@@ -1,0 +1,25 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-h3";
+	fragment@0 {
+
+		target-path = "/soc/usb@1c1b000";
+		__overlay__ {
+
+			status = "okay";
+		};
+	};
+	fragment@1 {
+
+		target-path = "/soc/usb@1c1b400";
+		__overlay__ {
+
+			status = "okay";
+		};
+	};
+	__symbols__ {
+
+	};
+};

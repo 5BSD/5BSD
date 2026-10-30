@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libclang; not an additional installed library.
+cc_library(name = "serialization", srcs = ["ASTCommon.cpp", "ASTReader.cpp", "ASTReaderDecl.cpp", "ASTReaderStmt.cpp", "ASTWriter.cpp", "ASTWriterDecl.cpp", "ASTWriterStmt.cpp", "GeneratePCH.cpp", "GlobalModuleIndex.cpp", "InMemoryModuleCache.cpp", "ModuleCache.cpp", "ModuleFile.cpp", "ModuleFileExtension.cpp", "ModuleManager.cpp", "ObjectFilePCHContainerReader.cpp", "PCHContainerOperations.cpp", "TemplateArgumentHasher.cpp"], hdrs = glob(["*.h"]),
+    deps = ["//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/clang/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}) + select({"//tools/build/bazel/config:clang_full_enabled": ["CLANG_ENABLE_STATIC_ANALYZER"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":serialization"], pic = True, visibility = ["//visibility:public"])

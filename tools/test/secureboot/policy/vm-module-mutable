@@ -1,0 +1,1 @@
+auth required /tmp/pam-vm-mutable.so.6

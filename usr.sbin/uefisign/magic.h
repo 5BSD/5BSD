@@ -48,10 +48,11 @@ static const char *magic_fmt =
 "[SpcPeImageData]\n"
 "a = FORMAT:HEX,BITSTRING:00\n"
 /*
- * Well, there should be some other struct here, "SPCLink", but it doesn't
- * appear to be necessary for UEFI, and I have no idea how to synthesize it,
- * as it uses the CHOICE type.
+ * Authenticode requires the obsolete file link even without page hashes.
+ * SpcPeImageData.file is [0] EXPLICIT SpcLink; its file choice is
+ * [2] EXPLICIT SpcString with [0] IMPLICIT BMPSTRING unicode content.
  */
+"b = EXPLICIT:0,EXPLICIT:2,IMPLICIT:0,BMPSTRING:<<<Obsolete>>>\n"
 "\n"
 "[DigestInfo]\n"
 "a = SEQUENCE:AlgorithmIdentifier\n"

@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
+load("//krb5/util/et:error_table.bzl", "mit_error_table")
+mit_error_table(name = "errors", src = "//crypto/krb5/src/kadmin/dbutil:import_err.et", basename = "import_err",
+    textdomain = "mit-krb5", awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_binary(name = "kdb5_util", srcs = ["//crypto/krb5/src/kadmin/dbutil:" + f for f in ['dump.c', 'kadm5_create.c', 'kdb5_create.c', 'kdb5_destroy.c', 'kdb5_mkey.c', 'kdb5_stash.c', 'kdb5_util.c', 'strtok.c', 'tabdump.c', 'tdumputil.c', 'kdb5_util.h', 'nstrtok.h', 'tdumputil.h']] + [":errors"],
+    deps = ["//crypto/krb5/src/include:internal_headers", "//crypto/krb5/src/include:database_headers", "//crypto/krb5/src/lib/kadm5:headers"] + ['//krb5/lib/kadmin_common:kadmin_common_pie', '//krb5/lib/kadm5srv:kadm5srv_mit', '//krb5/lib/kdb:kdb5', '//krb5/lib/rpc:gssrpc', '//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support', '//lib/libsys:sys'],
+    dynamic_deps = ['//krb5/lib/kadm5srv:kadm5srv_mit_shared', '//krb5/lib/kdb:kdb5_shared', '//krb5/lib/rpc:gssrpc_shared', '//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//lib/libsys:sys_shared'], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "kdb5_util", manual = "//crypto/krb5/src/man:kdb5_util.man", man_section = "8", package = "kerberos-kdc", bindir = "/usr/sbin")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos-kdc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+_RUNTIME = ["//krb5/lib/kadm5srv:kadm5srv_mit_shared", "//krb5/lib/kdb:kdb5_shared", "//krb5/lib/rpc:gssrpc_shared", "//krb5/lib/gssapi:gssapi_krb5_shared", "//krb5/lib/krb5:krb5_shared", "//krb5/lib/crypto:k5crypto_shared", "//krb5/util/et:com_err_shared", "//krb5/util/support:krb5support_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libsys:sys_shared", "//secure/lib/libcrypto:crypto_shared"] + [
+    "@bsd_sdk//toolchain:sysroot/" + f for f in ["lib/libc.so.7", "lib/libthr.so.3", "lib/libm.so.5"]]
+cc_test(name = "database_test", srcs = ["database_test.c"],
+    data = [":kdb5_util", "//krb5/usr.sbin/kadmin.local:kadmin.local", "//krb5/plugins/kdb/db2:db2_shared"] + _RUNTIME,
+    args = ["$(location :kdb5_util)", "$(location //krb5/usr.sbin/kadmin.local:kadmin.local)", "$(location //krb5/plugins/kdb/db2:db2_shared)"] + ["$(location " + lib + ")" for lib in _RUNTIME],
+    linkstatic = True, linkopts = ["-static"], size = "small")
+
+_KDC_PROGRAMS = ["//krb5/libexec/kdc:krb5kdc", "//krb5/usr.bin/kinit:kinit", "//krb5/usr.bin/kvno:kvno", "//krb5/usr.bin/klist:klist", "//krb5/usr.bin/kdestroy:kdestroy"]
+_KDC_RUNTIME = ["//krb5/util/verto:verto_shared", "//lib/msun:m_shared"] + _RUNTIME
+cc_test(name = "kdc_test", srcs = ["database_test.c"],
+    data = [":kdb5_util", "//krb5/usr.sbin/kadmin.local:kadmin.local", "//krb5/plugins/kdb/db2:db2_shared"] + _KDC_PROGRAMS + _KDC_RUNTIME,
+    args = ["$(location :kdb5_util)", "$(location //krb5/usr.sbin/kadmin.local:kadmin.local)", "$(location //krb5/plugins/kdb/db2:db2_shared)", "--kdc"] + ["$(location " + p + ")" for p in _KDC_PROGRAMS + _KDC_RUNTIME],
+    linkstatic = True, linkopts = ["-static"], size = "medium")

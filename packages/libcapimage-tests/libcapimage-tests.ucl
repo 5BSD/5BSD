@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Regression tests for libcapimage"
+comment = "Tests for the authenticated executable image library"
 
 desc = <<EOD
-Regression tests for libcapimage.
+Regression tests for libcapimage metadata verification and image-handle clients.
 EOD

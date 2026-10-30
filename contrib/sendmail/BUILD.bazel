@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["libsm/*.c"]) + ["include/sm/os/sm_os_freebsd.h", "rmail/rmail.c", "rmail/rmail.8"], visibility = ["//lib/libsm:__pkg__", "//bin/rmail:__pkg__", "//lib/libsmdb:__pkg__", "//lib/libsmutil:__pkg__", "//lib/libmilter:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["include/**/*.h", "src/*.h", "libsm/*.h"]), includes = ["include", "src"],
+    visibility = ["//lib/libsm:__pkg__", "//bin/rmail:__pkg__", "//lib/libsmdb:__pkg__", "//lib/libsmutil:__pkg__", "//lib/libmilter:__pkg__"])
+
+exports_files(["mail.local/mail.local.c", "mail.local/mail.local.8"], visibility = ["//libexec/mail.local:__pkg__"])
+exports_files(["smrsh/smrsh.c", "smrsh/smrsh.8"], visibility = ["//libexec/smrsh:__pkg__"])
+
+exports_files(glob(["libsmdb/*.c", "libsmutil/*.c"]), visibility = ["//lib/libsmdb:__pkg__", "//lib/libsmutil:__pkg__", "//lib/libmilter:__pkg__"])
+
+exports_files(glob(["libmilter/*.c"]) + ["include/libmilter/mfapi.h", "include/libmilter/mfdef.h"], visibility = ["//lib/libmilter:__pkg__"])
+cc_library(name = "milter_private_headers", hdrs = glob(["libmilter/*.h"]), visibility = ["//lib/libmilter:__pkg__"])

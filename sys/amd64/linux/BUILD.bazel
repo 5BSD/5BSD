@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "sysdecode_headers", hdrs = ["linux.h", "linux_syscall.h"],
+    textual_hdrs = ["linux_syscalls.c"],
+    deps = ["//sys/compat/linux:sysdecode_headers"],
+    strip_include_prefix = ".", include_prefix = "amd64/linux",
+    visibility = ["//usr.bin/kdump:__pkg__", "//lib/libsysdecode:__pkg__"])

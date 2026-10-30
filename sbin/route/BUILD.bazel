@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+bsd_awk_output(name = "keywords_header", script = "keywords.awk", srcs = ["keywords"], output = "keywords.h",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_library(name = "local_headers", hdrs = ["show.h", ":keywords_header"], strip_include_prefix = ".")
+cc_binary(name = "route", srcs = ["route.c", "show.c"] + select({"//tools/build/bazel/config:netlink_support_enabled": ["route_netlink.c"], "//conditions:default": []}),
+    deps = [":local_headers"] + select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": []}),
+    dynamic_deps = select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": []}),
+    local_defines = ["NS"] + select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) + select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) + select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ["WITHOUT_NETLINK"]}) + select({"//tools/build/bazel/config:jail_enabled": ["JAIL"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "route", manual = "route.8", package = "runtime", bindir = "/sbin", man_section = "8")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//sbin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

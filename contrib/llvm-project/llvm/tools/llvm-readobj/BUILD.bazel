@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['ARMWinEHPrinter.cpp', 'COFFDumper.cpp', 'COFFImportDumper.cpp', 'ELFDumper.cpp', 'MachODumper.cpp', 'ObjDumper.cpp', 'WasmDumper.cpp', 'Win64EHDumper.cpp', 'WindowsResourceDumper.cpp', 'XCOFFDumper.cpp', 'llvm-readobj.cpp', 'Opts.td'], visibility = ["//usr.bin/clang/llvm-readobj:__pkg__"])
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['ARMEHABIPrinter.h', 'ARMWinEHPrinter.h', 'DwarfCFIEHPrinter.h', 'ObjDumper.h', 'StackMapPrinter.h', 'Win64EHDumper.h', 'WindowsResourceDumper.h', 'llvm-readobj.h'], deps = ["//contrib/llvm-project/llvm/include:headers"], visibility = ["//usr.bin/clang/llvm-readobj:__pkg__"])

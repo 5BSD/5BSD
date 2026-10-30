@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//crypto/openssl:ssl_cli_sources.bzl", "CLI_SOURCES")
+load("//crypto/openssl:build_config_amd64.bzl", "AMD64_DEFINES")
+cc_binary(name = "openssl", srcs = CLI_SOURCES,
+    deps = ["//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto",
+        "//crypto/openssl:internal_headers", "//crypto/openssl:app_headers",
+        "//secure/lib/libcrypto:buildinfo_headers"],
+    dynamic_deps = ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"],
+    local_defines = AMD64_DEFINES, copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "openssl_installation")
+openssl_installation(name = "install_manifest")
+
+filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/openssl:__pkg__"])

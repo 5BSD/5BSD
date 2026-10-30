@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_kernel_config.bzl", "bsd_kernel_config")
+# Configuration sources remain ordinary inputs, including DEFAULTS and includes.
+filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.bazel"]), visibility = ["//visibility:public"])
+[bsd_kernel_config(
+    name = name, config = "GENERIC", debug = debug,
+    option_settings = {"//tools/build/bazel/config:kernel_zstdio": "ZSTDIO"},
+    inputs = [":configuration_inputs", "//sys/conf:configuration_inputs"],
+    source_anchor = "//sys/conf:files",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    libraries = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    visibility = ["//visibility:public"],
+) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
+[bsd_tree_file(name = name, tree = ":generic_config", member = name + ".h",
+    output = "generic_options/" + name + ".h",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for name in ["opt_global", "opt_hwpmc_hooks", "opt_kstack_pages", "opt_config", "opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix", "opt_sysvipc", "opt_ktrace", "opt_adaptive_mutexes", "opt_no_adaptive_rwlocks", "opt_no_adaptive_sx", "opt_sched", "opt_sleepqueue_profiling", "opt_turnstile_profiling", "opt_stack", "opt_callout_profiling", "opt_ffclock", "opt_ntp", "opt_rss", "opt_kqueue", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_sctp", "opt_param", "opt_hwt_hooks", "opt_vm", "opt_witness", "opt_umtx_profiling", "opt_sysctl", "opt_kld", "opt_gdb", "opt_kdb", "opt_init_path", "opt_verbose_sysinit", "opt_device_polling", "opt_watchdog", "opt_printf", "opt_rootdevname", "opt_debug_lockf", "opt_acpi", "opt_bus", "opt_iommu"]]
+cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+cc_library(name = "generic_assym_headers", hdrs = [":opt_hwpmc_hooks", ":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+
+cc_library(name = "generic_config_header", hdrs = [":opt_config"], strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+[bsd_tree_file(name = "generic_" + name + "_source", tree = ":generic_config", member = name + ".c",
+    output = "generic_sources/" + name + ".c",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"], visibility = ["//visibility:public"])
+ for name in ["config", "env", "hints"]]
+
+filegroup(name = "generic_identity", srcs = [":generic_config"], output_group = "identity", visibility = ["//visibility:public"])
+
+[cc_library(name = "generic_" + name + "_header", hdrs = [":" + name],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+ for name in ["opt_tmpfs", "opt_ddb", "opt_pseudofs", "opt_geom", "opt_zstdio", "opt_capsicum", "opt_mac", "opt_veriexec", "opt_posix", "opt_sysvipc", "opt_ktrace", "opt_adaptive_mutexes", "opt_no_adaptive_rwlocks", "opt_no_adaptive_sx", "opt_sched", "opt_sleepqueue_profiling", "opt_turnstile_profiling", "opt_stack", "opt_callout_profiling", "opt_ffclock", "opt_ntp", "opt_rss", "opt_kqueue", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_sctp", "opt_param", "opt_hwt_hooks", "opt_vm", "opt_witness", "opt_umtx_profiling", "opt_sysctl", "opt_kld", "opt_gdb", "opt_kdb", "opt_init_path", "opt_verbose_sysinit", "opt_device_polling", "opt_watchdog", "opt_printf", "opt_rootdevname", "opt_debug_lockf", "opt_acpi", "opt_bus", "opt_iommu"]]
+
+cc_library(name = "generic_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"], strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+
+cc_library(name = "generic_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])

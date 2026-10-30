@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_dtb.bzl", "bsd_dtb")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+# Match the maintained Makefile's *.dtso inventory. New overlays require a
+# reviewed expected tree; missing expectations fail analysis rather than skip.
+_SOURCES = glob(["*.dtso"])
+_RUNTIME = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+[bsd_dtb(
+    name = source[:-5],
+    src = source,
+    output = source[:-5] + ".dtbo",
+    dtc_options = ["-@"],
+    cpp = "@bsd_sdk//toolchain:bin/cpp",
+    cpp_inputs = ["@bsd_sdk//toolchain:compile_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    dtc = "//usr.bin/dtc:dtc",
+    runtime_libraries = _RUNTIME,
+    visibility = ["//visibility:public"],
+) for source in _SOURCES]
+[bsd_compare_test(
+    name = source[:-5] + "_test",
+    program = "//usr.bin/dtc:dtc", input = ":" + source[:-5],
+    arguments = ["-I", "dtb", "-O", "dts"],
+    expected = "bazel-fixtures/" + source[:-5] + ".expected.dts",
+    expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small",
+) for source in _SOURCES]
+test_suite(name = "tests", tests = [":" + source[:-5] + "_test" for source in _SOURCES], visibility = ["//visibility:public"])

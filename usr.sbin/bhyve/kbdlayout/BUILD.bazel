@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+_LAYOUTS = ['default', 'am', 'be', 'be_acc', 'bg_bds', 'bg_phonetic', 'br', 'br_noacc', 'centraleuropean', 'ch', 'ch_acc', 'ch_macbook_acc', 'ch-fr', 'ch-fr_acc', 'cz', 'de', 'de_acc', 'de_noacc', 'dk', 'dk_macbook', 'ee', 'es', 'es_acc', 'es_dvorak', 'fi', 'fr', 'fr_acc', 'fr_dvorak', 'fr_dvorak_acc', 'fr_macbook', 'gr', 'gr_101_acc', 'gr_elot_acc', 'hr', 'hu_101', 'hu_102', 'is', 'is_acc', 'it', 'jp', 'jp_capsctrl', 'kz_io', 'kz_kst', 'latinamerican', 'latinamerican_acc', 'lt', 'nl', 'no', 'no_dvorak', 'nordic_asus-eee', 'pl_dvorak', 'pt', 'pt_acc', 'ru', 'ru_shift', 'ru_win', 'se', 'si', 'tr', 'tr_f', 'ua', 'ua_shift_alt', 'uk', 'uk_capsctrl', 'uk_dvorak', 'uk_macbook', 'us_dvorak', 'us_dvorakl', 'us_dvorakp', 'us_dvorakr', 'us_dvorakx', 'us_emacs', 'us_unix']
+[bsd_install_file(name = "install_" + name, src = name, destination = "/usr/share/bhyve/kbdlayout/" + name,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bhyve"]) for name in _LAYOUTS]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + name for name in _LAYOUTS], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/share/bhyve/kbdlayout": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

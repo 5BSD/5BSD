@@ -32,7 +32,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd April 20, 2024
+.Dd October 19, 2026
 .Dt LDCONFIG 8
 .Os
 .Sh NAME
@@ -40,7 +40,7 @@
 .Nd configure the dynamic linker search path for shared libraries
 .Sh SYNOPSIS
 .Nm
-.Op Fl BRimr
+.Op Fl BRSimr
 .Op Fl f Ar hints_file
 .Op Ar directory | Ar
 .Sh DESCRIPTION
@@ -112,6 +112,22 @@ Appends pathnames on the command line to the directory list from
 the hints file.
 .Pp
 This is the default action when no options are given.
+.It Fl S
+Use strict directory-only construction.
+At least one explicit directory is required.
+Each must be a canonical absolute path to a root-owned directory that is
+neither group-writable nor world-writable.
+Aliases, duplicate paths, colon-containing paths and files containing directory
+lists are rejected.
+An invalid input causes a nonzero exit before the existing hints file is replaced.
+This option cannot be combined with
+.Fl R ,
+.Fl m ,
+.Fl r
+or
+.Fl i .
+It does not authenticate directories or prevent concurrent filesystem changes;
+the caller must supply an isolated, verified construction environment.
 .It Fl f Ar hints_file
 Read and/or update the specified hints file, instead of the standard file.
 This option is provided primarily for testing.

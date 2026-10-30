@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "ztest",
+    srcs = ['//sys/contrib/openzfs:cmd/ztest.c', '//sys/modules/zfs:zfs_config.h'],
+    deps = ['//lib/libgeom:geom', '//lib/msun:m', '//cddl/lib/libnvpair:nvpair', '//cddl/lib/libumem:umem', '//cddl/lib/libavl:avl', '//cddl/lib/libspl:spl', '//cddl/lib/libzfs_core:zfs_core', '//cddl/lib/libzfs:zfs', '//cddl/lib/libzutil:zutil', '//cddl/lib/libzpool:zpool', '//cddl/lib/libicp:icp', '//sys/contrib/openzfs:ztest_headers'],
+    dynamic_deps = ['//lib/libgeom:geom_shared', '//lib/msun:m_shared', '//cddl/lib/libnvpair:nvpair_shared', '//cddl/lib/libumem:umem_shared', '//cddl/lib/libavl:avl_shared', '//cddl/lib/libspl:spl_shared', '//cddl/lib/libzfs_core:zfs_core_shared', '//cddl/lib/libzfs:zfs_shared', '//cddl/lib/libzutil:zutil_shared', '//cddl/lib/libzpool:zpool_shared', '//cddl/lib/libicp:icp_shared'],
+    local_defines = ['IN_BASE', 'HAVE_ISSETUGID', 'NEED_SOLARIS_BOOLEAN', 'HAVE_STRLCAT', 'HAVE_STRLCPY', 'DEBUG=1', 'ZFS_DEBUG=1'],
+    copts = ['-fPIE', '-include', 'sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h', '-include', 'sys/modules/zfs/zfs_config.h', '-std=c99', '-g', '-Wno-format', '-include', 'sys/contrib/openzfs/include/sys/simd_config.h'], linkopts = ["-pie", "-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ztest", manual = "//sys/contrib/openzfs:man/man1/ztest.1", package = "zfs")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

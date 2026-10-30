@@ -10,7 +10,8 @@ CFLAGS+=	-I${.CURDIR}/.. -I${SRCTOP}/lib/libdevicecmp -I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include -I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-.PATH:		${.CURDIR}/..
+.PATH:		${.CURDIR}/.. ${.CURDIR}/../capbundle
+${PACKAGE}FILES+= device.conf
 
 ATF_TESTS_C+=	policy_test
 SRCS.policy_test=	policy_test.c policy.c
@@ -76,8 +77,18 @@ LIBADD.latency_bench= devicecmp fidl_bsd channel service ucl pthread
 FILESGROUPS+= FIDL_NOTICE UCL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsddevice-tests/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
 UCL_NOTICEDIR= /usr/share/licenses/bsddevice-tests/libucl
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= UCL_NOTICEPARENT
+UCL_NOTICEPARENT= ${UCL_NOTICEDIR:H}
+UCL_NOTICEPARENTTAGS= ${UCL_NOTICEDIRTAGS}
 
 .PATH: ${.CURDIR}/evolution
 

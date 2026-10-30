@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["configure"], visibility = ["//krb5:__subpackages__"])
+cc_library(name = "version_headers", hdrs = ["patchlevel.h"], includes = ["."], visibility = ["//crypto/krb5/src/lib/krb5:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["d_any_char_in.txt", "d_any_char_dflag_out.txt", "d_any_char_fflag_out.txt", "d_any_char_iflag_out.txt"], visibility = ["//usr.bin/sort/tests:__pkg__"])

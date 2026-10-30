@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "libcapability_test", srcs = ["libcapability_test.c"],
+    deps = ["//lib/libcapability:capability", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:capprotect_headers"],
+    linkopts = ["-static"], linkstatic = True, visibility = ["//visibility:public"])
+_HOST_CASES = ["get_info_arguments", "kernel_call_arguments_and_cleanup", "wrong_type_preserves_request_descriptors", "coalition_arguments"]
+_LIVE_CASES = ["live_channel_metadata", "live_zero_length_kernel_call", "live_coalition_cleanup"]
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":libcapability_test",
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+    tags = ["manual", "requires-root", "requires-matching-kernel"] if case in _LIVE_CASES else [])
+ for case in _HOST_CASES + _LIVE_CASES]
+# Live cases remain explicit qualification obligations, not skipped host results.
+cc_binary(name = "libcapability_shared_test", srcs = ["libcapability_test.c"],
+    deps = ["//lib/libcapability:capability", "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:capprotect_headers"],
+    dynamic_deps = ["//lib/libcapability:capability_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"])
+[bsd_atf_test(name = "shared_" + case, case_name = case, interface = "program", body = ":libcapability_shared_test",
+    runtime_lib = ["//lib/libcapability:capability_shared", "//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _HOST_CASES]
+test_suite(name = "host_tests", tests = [":" + prefix + case for prefix in ["", "shared_"] for case in _HOST_CASES], visibility = ["//visibility:public"])
+test_suite(name = "live_tests", tests = [":" + case for case in _LIVE_CASES], tags = ["manual"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "libcapability_test", manual = "", package = "libcapability-tests", bindir = "/usr/tests/lib/libcapability")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["libcapability_test"], interfaces = {"libcapability_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcapability/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcapability-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcapability:__pkg__"])

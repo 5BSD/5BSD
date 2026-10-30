@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "tty", srcs = ["tty.c"],
+    deps = [], dynamic_deps = [],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "tty", manual = "tty.1", package = "utilities")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+[bsd_compare_test(name = name, program = ":tty", expected = output, expected_stderr = "empty.out",
+    expected_exit = 1, arguments = args, runner = "//tools/build/bazel:byte_compare_runner",
+    runtime_lib = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], size = "small")
+ for name, output, args in [("no_terminal", "notty.out", []), ("silent_no_terminal", "empty.out", ["-s"])]]
+test_suite(name = "nonterminal_tests", tests = [":no_terminal", ":silent_no_terminal"], visibility = ["//visibility:public"])

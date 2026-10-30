@@ -29,12 +29,22 @@ class Resources(unittest.TestCase):
     def test_budget_requires_explicit_finite_limits(self):
         r.budget_document(budget())
         for changes in ({'sample_interval_seconds':0}, {'max_elapsed_seconds':0},
-                {'max_physical_memory_bytes':4096*1024**2},
+                {'max_physical_memory_bytes':24*1024**3+1},
                 {'min_free_disk_bytes':True}, {'max_elapsed_seconds':float('nan')},
                 {'min_free_disk_bytes':1.5}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 r.budget_document(dict(budget(), **changes))
         with self.assertRaises(ValueError): r.budget_document({})
+
+    def test_explicit_24_gib_budget_keeps_per_run_enforcement(self):
+        selected = r.budget_document(dict(budget(), max_physical_memory_bytes=24*1024**3))
+        sample = row()
+        sample['memory']['hw.physmem'] = 24*1024**3
+        self.assertEqual(r.violations(sample, sample, selected), [])
+        excess = copy.deepcopy(sample)
+        excess['memory']['hw.physmem'] += 1
+        self.assertTrue(r.violations(excess, sample, selected))
+        self.assertTrue(r.violations(sample, sample, budget()))
 
     def test_each_budget_violation_is_fatal(self):
         start=row();self.assertEqual(r.violations(start,start,budget()),[])

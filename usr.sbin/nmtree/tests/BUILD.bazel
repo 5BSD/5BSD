@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_FIXTURES = ['d_convert.in', 'd_convert_C.out', 'd_convert_C_S.out', 'd_convert_D.out', 'd_convert_D_S.out', 'd_merge.in', 'd_merge_C_M.out', 'd_merge_C_M_S.out']
+_CONVERTED = ['mtree_d_create.out', 'netbsd6_d_create.out']
+[bsd_filter_fixture(name = "converted_" + str(i), src = "//contrib/netbsd-tests/usr.sbin/mtree:" + name, output = name,
+    tool = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"],
+    arguments = ["-e", "s/sha256/sha256digest/g"]) for i, name in enumerate(_CONVERTED)]
+bsd_script_wrapper(name = "nmtree_test", body = "//contrib/netbsd-tests/usr.sbin/mtree:t_mtree.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["nmtree_test"], interfaces = {"nmtree_test": "atf"})
+_FILES = [(name, "//contrib/netbsd-tests/usr.sbin/mtree:" + name, "0444") for name in _FIXTURES] + [(name, ":converted_" + str(i), "0444") for i, name in enumerate(_CONVERTED)] + [("nmtree_test", ":nmtree_test", "0555"), ("Kyuafile", ":kyuafile", "0444")]
+[bsd_install_file(name = "file_" + str(i), src = source, destination = "/usr/tests/usr.sbin/nmtree/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for i, (name, source, mode) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_manifest", entries = [":file_" + str(i) for i in range(len(_FILES))], visibility = ["//visibility:public"])
+
+# Preserve the imported conversion/merge commands and expected bytes without
+# depending on the shell ATF bootstrap for these pure stream transformations.
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_CASES = {
+    "convert_C": ("d_convert.in", "d_convert_C.out", ["-C"]),
+    "convert_C_S": ("d_convert.in", "d_convert_C_S.out", ["-C", "-S"]),
+    "convert_D": ("d_convert.in", "d_convert_D.out", ["-D"]),
+    "convert_D_S": ("d_convert.in", "d_convert_D_S.out", ["-D", "-S"]),
+    "merge": ("d_merge.in", "d_merge_C_M.out", ["-C", "-M"]),
+    "merge_S": ("d_merge.in", "d_merge_C_M_S.out", ["-C", "-M", "-S"]),
+}
+[bsd_compare_test(name = flavor + "_" + name, program = "//usr.sbin/nmtree:mtree",
+    input = "//contrib/netbsd-tests/usr.sbin/mtree:" + case[0], expected = "//contrib/netbsd-tests/usr.sbin/mtree:" + case[1],
+    expected_stderr = "empty", arguments = ["-F", flavor] + case[2] + ["-K", "all"],
+    runtime_lib = ["//lib/libmd:md_shared", "//lib/libutil:util_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small") for flavor in ["mtree", "netbsd6"] for name, case in _CASES.items()]
+test_suite(name = "stream_tests", tests = [":" + flavor + "_" + name for flavor in ["mtree", "netbsd6"] for name in _CASES], visibility = ["//visibility:public"])

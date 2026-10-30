@@ -28,6 +28,7 @@
 #include "libservice.h"
 #include "service_bootstrap.h"
 #include "service_private.h"
+#include "lookup_identity.h"
 #include "service_runtime.h"
 #include "switchboard_ctl.h"
 #include "switchboard_svc_proto.h"
@@ -1096,7 +1097,9 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 	};
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_session *session;
-	int dupfd, error;
+	int dupfd, error, pd = -1;
+	struct service_lookup_owned owned = {.process = &pd, .reply = &reply_fd,
+	    .session = &session};
 
 	*session_fdp = -1;
 	reply_fd = -1;
@@ -1127,13 +1130,19 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 	req.op = SVC_OP_LOOKUP;
 	strlcpy(req.name, name, sizeof(req.name));
 
-	if (service_session_call(session, &message, &reply, &options) == -1) {
-		error = errno;
-		service_session_close(session);
-		errno = error;
-		return (-1);
+	if (service_lookup_identity(&pd) == -1) {
+		error = errno; service_session_close(session); return (errno = error, -1);
 	}
-	service_session_close(session);
+	message.fds = pd >= 0 ? &pd : NULL;
+	message.nfds = pd >= 0 ? 1 : 0;
+	pthread_cleanup_push(service_lookup_cleanup, &owned);
+	error = service_session_call(session, &message, &reply, &options) == -1 ? errno : 0;
+	service_session_close(session); session = NULL;
+	if (pd >= 0) close(pd);
+	pd = -1;
+	pthread_cleanup_pop(error != 0);
+	if (error != 0)
+		return (errno = error, -1);
 
 	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
 	    reply_data.status > ELAST ||

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+copy_file(name = "sha256", src = "//sbin/md5:md5", out = "aliases/sha256", is_executable = True, allow_symlink = True)
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['posixacl', 'nfs4acl', 'sunoj', 'suj', 'gjournal_retired']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "tunefs_test.sh",
+    cleanup = case != "gjournal_retired",
+    tags = ["manual", "requires-root", "requires-vm"] if case != "gjournal_retired" else [],
+    config_files = {"//lib/libmagic:magic_compiled": "magic"} if case != "gjournal_retired" else {},
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//sbin/tunefs:tunefs', '//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/dirname:dirname', '//usr.bin/tr:tr', ':sha256', '//sbin/newfs:newfs', '//sbin/mdconfig:mdconfig', '//usr.bin/file:file', '//bin/cat:cat'],
+    runtime_lib = ['//lib/atf/libatf-c:atf_c_shared', '//lib/atf/libatf-c++:atf_cxx_shared', '//lib/libc++:cxx_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/msun:m_shared', '//lib/libedit:edit_shared', '//lib/ncurses/tinfo:tinfo_shared', '@bsd_sdk//toolchain:sysroot/lib/libc.so.7', '@bsd_sdk//toolchain:sysroot/lib/libsys.so.7', '@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1', '//lib/libutil:util_shared', '//lib/libufs:ufs_shared', '//lib/libgeom:geom_shared', '//lib/libexpat:bsdxml_shared', '//lib/libsbuf:sbuf_shared', '//lib/libmagic:magic_shared', '//lib/libz:z_shared', '//lib/libmd:md_shared', '//lib/libcasper/libcasper:casper_shared', '//lib/libcasper/services/cap_fileargs:cap_fileargs_shared', '//lib/libnv:nv_shared'],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "medium",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "tunefs_test", body = "tunefs_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["tunefs_test"], interfaces = {"tunefs_test": "atf"})
+[bsd_install_file(name = target, src = source, destination = "/usr/tests/sbin/tunefs/" + filename,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"])
+ for target, source, filename, mode in [("install_shell", ":tunefs_test", "tunefs_test", "0555"), ("install_kyuafile", ":kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//sbin/tunefs:__pkg__"])

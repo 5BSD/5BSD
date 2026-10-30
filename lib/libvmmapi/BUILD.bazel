@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["vmmapi.h"], strip_include_prefix = ".",
+    deps = ["//sys/sys:vmmapi_headers", "//sys/vm:vmmapi_headers", "//sys/amd64/include:vmmapi_headers", "//sys/dev/vmm:vmmapi_headers"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_library(name = "vmmapi", srcs = ["vmmapi.c", "vmmapi_dirty_log.c", "vmmapi_memory.c", "ppt.c", "amd64/vmmapi_machdep.c", "amd64/vmmapi_freebsd_machdep.c"],
+    hdrs = ["internal.h", "vmmapi_memory.h"], strip_include_prefix = ".",
+    deps = [":headers", "//lib/libutil:util"], local_defines = ["WITH_VMMAPI_SNAPSHOT"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":vmmapi"], visibility = ["//visibility:public"])
+cc_shared_library(name = "vmmapi_shared", deps = [":vmmapi"], shared_lib_name = "libvmmapi.so.7",
+    dynamic_deps = ["//lib/libutil:util_shared"],
+    user_link_flags = ["-Wl,-soname,libvmmapi.so.7", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libvmmapi","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

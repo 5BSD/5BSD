@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load(":sources.bzl", "LOADER_SOURCES", "LIBRARY_SOURCES", "SSL_SOURCES")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "bearssl", srcs = ["//contrib/bearssl:" + p for p in LOADER_SOURCES + LIBRARY_SOURCES] + select({"//tools/build/bazel/config:bearssl_ssl_enabled": ["//contrib/bearssl:" + p for p in SSL_SOURCES], "//conditions:default": []}),
+    deps = ["//contrib/bearssl:headers", "//contrib/bearssl:internal_headers", "//contrib/bearssl:tool_headers"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":bearssl"], visibility = ["//visibility:public"])
+cc_shared_library(name = "bearssl_shared", deps = [":bearssl"], shared_lib_name = "libbearssl.so.5", user_link_flags = ["-Wl,-soname,libbearssl.so.5", "-Wl,-z,defs"], visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Unmodified upstream known-answer and arithmetic tests; no arguments only
+# prints usage, so explicitly request the complete suite. The full upstream
+# test requires algorithms provided by the optional SSL configuration.
+cc_test(
+    name = "crypto_test",
+    srcs = ["//contrib/bearssl:test/test_crypto.c"],
+    deps = [":bearssl", "//contrib/bearssl:internal_headers"],
+    args = ["all"],
+    size = "large",
+    timeout = "long",
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:bearssl_ssl_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)

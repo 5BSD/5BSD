@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_rpc.c", "t_xdr.c", "h_testbits.x"], visibility = ["//lib/libc/tests/rpc:__pkg__"])

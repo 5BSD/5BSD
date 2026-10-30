@@ -30,7 +30,7 @@ c=r'''
 #endif
 static int starts, ends, calls, locks, returned, snapshots, absent, skipped;
 static int args_enabled=1, capture=0;
-static int observed_int, zero_calls, eight_calls;
+static int observed_int, zero_calls, eight_calls, anon_calls;
 static uint64_t observed_wide;
 static void snapshot(const char *hook, unsigned n, const uint64_t *v) {
  snapshots++;
@@ -46,6 +46,8 @@ static void snapshot(const char *hook, unsigned n, const uint64_t *v) {
  } else if (!strcmp(hook,"cred_setcred_enter")) assert(n==0);
  else if (!strcmp(hook,"vnode_create_extattr")) {
   assert(n==8); for (unsigned i=0;i<n;i++) assert(v[i]==0);
+ } else if (!strcmp(hook,"mount_check_mount_anon")) {
+  assert(n==3 && v[0]==0x10 && v[1]==0x20 && v[2]==0x30);
  } else { assert(n==1); capture=(int)v[0]; }
 }
 static void probe_hook__done(const char *h, const char *p, int v, int kind) {
@@ -74,6 +76,7 @@ static int mac_error_select(int a,int b) { return a?a:b; }
 struct ucred; struct file; struct vnode; struct label; struct mount; struct componentname;
 struct ops {
  int (*mpo_check)(int); void (*mpo_perform)(int);
+ int (*mpo_mount_check_mount_anon)(struct ucred *,struct mount *,struct label *);
  int (*mpo_file_check_ioctl)(struct ucred *,struct file *,int,u_long);
  int (*mpo_vnode_check_setutimes)(struct ucred *,struct vnode *,struct label *,struct timespec,struct timespec);
  void (*mpo_cred_setcred_enter)(void);
@@ -97,6 +100,10 @@ static int ioctl_hook(struct ucred *c,struct file *f,int fd,u_long cmd) {
 static int times_hook(struct ucred *c,struct vnode *v,struct label *l,struct timespec at,struct timespec mt) {
  assert(!c && !v && !l && at.tv_sec==-7 && mt.tv_nsec==987);return 0;
 }
+static int anon_hook(struct ucred *c,struct mount *m,struct label *l) {
+ assert((uintptr_t)c==0x10 && (uintptr_t)m==0x20 && (uintptr_t)l==0x30);
+ anon_calls++;return EACCES;
+}
 static void zero_hook(void) { zero_calls++; }
 static int eight_hook(struct ucred *c,struct mount *m,struct label *l,struct vnode *v,struct label *l2,struct vnode *v2,struct label *l3,struct componentname *n) {
  assert(!c && !m && !l && !v && !l2 && !v2 && !l3 && !n);eight_calls++;return 0;
@@ -107,7 +114,7 @@ static int eight_hook(struct ucred *c,struct mount *m,struct label *l,struct vno
 #define MAC_HOOK_ARGS_check(p,a) SDT_PROBE4(mac_framework,,,hook__args,"check",(p)->mpc_name,1,((const uint64_t[]){(uint64_t)(a)}))
 #define MAC_HOOK_ARGS_perform(p,a) SDT_PROBE4(mac_framework,,,hook__args,"perform",(p)->mpc_name,1,((const uint64_t[]){(uint64_t)(a)}))
 int main(void) {
- struct ops ops={.mpo_check=check,.mpo_perform=perform,.mpo_file_check_ioctl=ioctl_hook,.mpo_vnode_check_setutimes=times_hook,.mpo_cred_setcred_enter=zero_hook,.mpo_vnode_create_extattr=eight_hook},empty={0};
+ struct ops ops={.mpo_mount_check_mount_anon=anon_hook,.mpo_check=check,.mpo_perform=perform,.mpo_file_check_ioctl=ioctl_hook,.mpo_vnode_check_setutimes=times_hook,.mpo_cred_setcred_enter=zero_hook,.mpo_vnode_create_extattr=eight_hook},empty={0};
  struct mac_policy_conf one={.mpc_ops=&ops,.mpc_name="one"},two={.mpc_ops=&ops,.mpc_name="two"},missing={.mpc_ops=&empty,.mpc_name="absent"};
  int error,result,v=0;
  LIST_INSERT_HEAD(&mac_static_policy_list,&one,mpc_list);
@@ -140,6 +147,7 @@ int main(void) {
  error=MAC_POLICY_CALL_INT(vnode_check_setutimes,&one,NULL,NULL,NULL,at,mt);assert(error==0);
  MAC_POLICY_PERFORM_NOSLEEP(cred_setcred_enter);assert(zero_calls==2);
  MAC_POLICY_CHECK(vnode_create_extattr,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);assert(eight_calls==2 && error==0);
+ MAC_POLICY_CHECK(mount_check_mount_anon,(struct ucred *)0x10,(struct mount *)0x20,(struct label *)0x30);assert(anon_calls==2 && error==EACCES);
 #ifndef HOOKS
  assert(starts==0 && ends==0 && snapshots==0 && absent==0 && skipped==0);
 #endif

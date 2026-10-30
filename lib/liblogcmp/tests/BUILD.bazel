@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+
+# Match Make's direct client compilation and static linkage. The lifecycle
+# fixture supplies discovery functions; generated bindings are an explicit dependency.
+# Do not inherit the production client's libservice dependency in that fixture.
+[cc_binary(name = name, srcs = [name + ".c", "//lib/liblogcmp:logcmp_wakeup.c"] +
+    (["logcmp_client_impl.c"] if name == "client_lifecycle_test" else ["//lib/liblogcmp:logcmp.c"]) +
+    (["fake_service.c", "fake_service.h"] if name == "client_lifecycle_test" else []),
+    deps = ["//lib/liblogcmp:headers", "//lib/liblogcmp:test_private_headers", "//lib/libshmring:shmring", "//lib/liblogcmp:generated_bindings", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/liblogcmp:generated_headers", "//lib/libfidl:fidl",
+            "//lib/libchannel:channel", "//lib/libservice:headers", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"] +
+           (["//lib/libservice:service"] if name == "logcmp_test" else []),
+    linkopts = ["-static"], linkstatic = True)
+ for name in ["logcmp_test", "client_lifecycle_test"]]
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "liblogcmp-tests", bindir = "/usr/tests/lib/liblogcmp")
+ for name in ["logcmp_test", "client_lifecycle_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["client_lifecycle_test", "logcmp_test"],
+    interfaces = {"logcmp_test": "atf", "client_lifecycle_test": "atf"},
+    metadata = {"client_lifecycle_test": '{"required_user":"root","timeout":"300"}'})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/liblogcmp/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=liblogcmp-tests"])
+[bsd_install_file(name = "install_" + n, src = "//contrib/fuchsia:" + n,
+    destination = "/usr/share/licenses/liblogcmp-tests/fuchsia/" + n,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=liblogcmp-tests"])
+ for n in ["LICENSE", "PATENTS"]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_LICENSE", ":install_PATENTS"],
+    visibility = ["//lib/liblogcmp:__pkg__"])
+[bsd_kyua_test(name = name, program = ":" + program, interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    test_metadata = '{"required_user":"root"}' if name == "lifecycle_tests" else "{}",
+    case_timeout = 300 if name == "lifecycle_tests" else 0,
+    tags = ["manual", "requires-matching-kernel"] if name == "lifecycle_tests" else [],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name, program in [("native_tests", "logcmp_test"), ("lifecycle_tests", "client_lifecycle_test")]]

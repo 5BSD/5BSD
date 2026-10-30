@@ -59,7 +59,7 @@ pwdb_check(void)
 	args[i++] = _PATH_PWD_MKDB;
 	args[i++] = "-C";
 
-	if (strcmp(conf.etcpath, _PATH_PWD) != 0) {
+	if (conf.altroot) {
 		args[i++] = "-d";
 		args[i++] = conf.etcpath;
 	}
@@ -96,7 +96,7 @@ pw_update(struct passwd * pwd, char const * user)
 	if (user != NULL)
 		old_pw = GETPWNAM(user);
 
-	if (pw_init(conf.etcpath, NULL))
+	if (pw_init(conf.altroot ? conf.etcpath : NULL, NULL))
 		err(1, "pw_init()");
 	if ((pfd = pw_lock()) == -1) {
 		pw_fini();

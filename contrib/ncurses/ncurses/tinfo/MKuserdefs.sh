@@ -51,7 +51,14 @@ cat <<'EOF'
 #if NCURSES_XNAMES
 EOF
 
-cat "$@" | ./make_hash 1 user "$OPT1"
+# make_hash may stop after filling its table. A regular input file avoids
+# SIGPIPE in the producer and permits callers to check all command failures.
+data_file=hash-input.$$
+trap 'rm -f "$data_file"' 0
+trap 'exit 1' 1 2 3 15
+cat "$@" > "$data_file" || exit 1
+
+"${MAKE_HASH:-./make_hash}" 1 user "$OPT1" < "$data_file"
 
 cat <<EOF
 

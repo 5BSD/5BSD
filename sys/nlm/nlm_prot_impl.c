@@ -62,6 +62,8 @@
 #include <rpc/rpc_com.h>
 #include <rpc/rpcb_prot.h>
 
+#include <security/mac/mac_framework.h>
+
 SDT_PROVIDER_DEFINE(nlm);
 SDT_PROBE_DEFINE2(nlm, , , recovery__start, "struct nlm_host *", "int");
 SDT_PROBE_DEFINE2(nlm, , , recovery__done, "struct nlm_host *", "int");
@@ -1780,7 +1782,7 @@ nlm_get_vfs_state(struct nlm_host *host, struct svc_req *rqstp,
 		return (ESTALE);
 	}
 
-	/* accmode == 0 means don't check, since it is an unlock. */
+	/* accmode == 0 means cancellation or unlock, not new admission. */
 	if (accmode != 0) {
 		error = VFS_CHECKEXP(vs->vs_mp,
 		    (struct sockaddr *)&host->nh_addr, &exflags, &credanon,
@@ -1801,6 +1803,12 @@ nlm_get_vfs_state(struct nlm_host *host, struct svc_req *rqstp,
 	vs->vs_vnlocked = TRUE;
 
 	if (accmode != 0) {
+#ifdef MAC
+		/* Do not let the legacy VWRITE fallback override mandatory denial. */
+		error = mac_vnode_check_fh(curthread->td_ucred, vs->vs_vp);
+		if (error)
+			goto out;
+#endif
 		if (!svc_getcred(rqstp, &cred, NULL)) {
 			error = EINVAL;
 			goto out;
@@ -2040,11 +2048,12 @@ nlm_do_lock(nlm4_lockargs *argp, nlm4_res *result, struct svc_req *rqstp,
 		 * First we need to check and see if there is an
 		 * existing blocked lock that matches. This could be a
 		 * badly behaved client or an RPC re-send. If we find
-		 * one, just return nlm4_blocked.
+		 * one for the same vnode, just return nlm4_blocked.
 		 */
 		mtx_lock(&host->nh_lock);
 		TAILQ_FOREACH(af, &host->nh_pending, af_link) {
-			if (af->af_fl.l_start == fl.l_start
+			if (af->af_vp == vs.vs_vp
+			    && af->af_fl.l_start == fl.l_start
 			    && af->af_fl.l_len == fl.l_len
 			    && af->af_fl.l_pid == fl.l_pid
 			    && af->af_fl.l_type == fl.l_type) {
@@ -2203,13 +2212,14 @@ nlm_do_cancel(nlm4_cancargs *argp, nlm4_res *result, struct svc_req *rqstp,
 		fl.l_type = F_RDLCK;
 
 	/*
-	 * First we need to try and find the async lock request - if
+	 * First we need to find the async lock request for this vnode - if
 	 * there isn't one, we give up and return nlm4_denied.
 	 */
 	mtx_lock(&host->nh_lock);
 
 	TAILQ_FOREACH(af, &host->nh_pending, af_link) {
-		if (af->af_fl.l_start == fl.l_start
+		if (af->af_vp == vs.vs_vp
+		    && af->af_fl.l_start == fl.l_start
 		    && af->af_fl.l_len == fl.l_len
 		    && af->af_fl.l_pid == fl.l_pid
 		    && af->af_fl.l_type == fl.l_type) {

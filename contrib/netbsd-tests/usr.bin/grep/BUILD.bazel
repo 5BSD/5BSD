@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['d_input', 'd_word_regexps.out', 'd_begin_end_a.out', 'd_begin_end_b.out', 'd_ignore_case.out', 'd_invert.in', 'd_invert.out', 'd_whole_line.out'], visibility = ["//usr.bin/grep/tests:__pkg__"])

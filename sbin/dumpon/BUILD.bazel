@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "dumpon", srcs = ["dumpon.c"],
+
+    deps = select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}),
+    dynamic_deps = select({"//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}),
+    local_defines = select({"//tools/build/bazel/config:openssl_enabled": ["HAVE_CRYPTO", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "dumpon", manual = "dumpon.8",
+    package = "runtime", bindir = "/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

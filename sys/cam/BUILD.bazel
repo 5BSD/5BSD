@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["**/*.h"]), strip_include_prefix = ".", include_prefix = "cam",
+    deps = ["//sys/dev/nvme:headers"], visibility = ["//visibility:public"])
+exports_files(['cam.c', 'scsi/scsi_all.c', 'scsi/scsi_da.c', 'scsi/scsi_sa.c', 'ata/ata_all.c', 'nvme/nvme_all.c', 'scsi/smp_all.c'], visibility = ["//lib/libcam:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = ["mmc/mmc_sim_if.m"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['ata/ata_all.h', 'cam.h', 'cam_ccb.h', 'cam_debug.h', 'cam_queue.h', 'cam_sim.h', 'cam_xpt.h', 'ctl/ctl.h', 'ctl/ctl_backend.h', 'ctl/ctl_io.h', 'ctl/ctl_ioctl.h', 'ctl/ctl_nvme_all.h', 'ctl/ctl_scsi_all.h', 'ctl/ctl_util.h', 'mmc/mmc.h', 'mmc/mmc_all.h', 'mmc/mmc_bus.h', 'nvme/nvme_all.h', 'scsi/scsi_all.h', 'scsi/scsi_message.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+exports_files(['ctl/ctl_nvme_all.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+exports_files(['ctl/ctl_scsi_all.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+exports_files(['ctl/ctl_util.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])

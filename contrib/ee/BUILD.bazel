@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ee.c", "ee_version.h", "ee.1", "ee.msg"], visibility = ["//usr.bin/ee:__pkg__"])

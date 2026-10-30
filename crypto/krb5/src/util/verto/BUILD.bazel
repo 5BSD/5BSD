@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["module.c", "verto.c", "verto-k5ev.c", "Symbols.ev", "verto.h", "verto-module.h"])
+cc_library(
+    name = "headers",
+    hdrs = ["verto.h", "verto-module.h", "module.h", "ev.h", "ev_vars.h", "ev_wrap.h",
+            "ev.c", "ev_poll.c", "ev_select.c", "ev_win32.c"],
+    includes = ["."],
+    visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"],
+)

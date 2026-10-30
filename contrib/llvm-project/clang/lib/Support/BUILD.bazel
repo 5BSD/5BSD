@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "clangminimal", srcs = ["RISCVVIntrinsicUtils.cpp"], deps = ["//contrib/llvm-project/clang/include:support_headers", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+# Full libclang compilation contract, distinct from bootstrap clangminimal.
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libclang; not an additional installed library.
+cc_library(name = "support", srcs = ["RISCVVIntrinsicUtils.cpp"],
+    deps = ["//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/clang/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}) + select({"//tools/build/bazel/config:clang_full_enabled": ["CLANG_ENABLE_STATIC_ANALYZER"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":support"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":support", pic = True, visibility = ["//visibility:public"])

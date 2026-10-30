@@ -26,8 +26,6 @@ shutdown=ShutdownEvidence(qmpdir)
 cmd += shutdown.arguments
 if args.qemu_data:cmd += ['-L',str(args.qemu_data.resolve())]
 (w/'command.json').write_text(json.dumps(cmd,indent=2)+'\n')
-p=subprocess.Popen(cmd)
-shutdown.start(p)
 forced=False;diagnosed=0;next_diagnosis=0;started=time.monotonic();deadline=started+args.timeout
 def quiet(path,settle=3,limit=60):
  end=time.monotonic()+limit;size=-1;stable=time.monotonic()
@@ -36,7 +34,9 @@ def quiet(path,settle=3,limit=60):
   if n!=size:size=n;stable=time.monotonic()
   elif time.monotonic()-stable>=settle:return
   time.sleep(0.5)
+p=subprocess.Popen(cmd)
 try:
+ shutdown.start(p)
  while p.poll() is None and time.monotonic()<deadline:
   s=log.read_text(errors='replace') if log.exists() else ''
   if any(x in s for x in ['panic:','Fatal trap','lock order reversal']):break

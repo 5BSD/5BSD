@@ -2,6 +2,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/types.h>
+#include <sys/capsicum.h>
+#include <fcntl.h>
+
 #include <atf-c.h>
 #include <errno.h>
 #include <stdio.h>
@@ -244,8 +248,68 @@ ATF_TC_BODY(shipped_pressure_policy, tc)
 	ATF_CHECK(!sysctlcmp_config_permits(&config, label, "kern.maxfiles", true));
 }
 
+
+ATF_TC_WITHOUT_HEAD(strict_policy_inputs);
+ATF_TC_BODY(strict_policy_inputs, tc)
+{
+	struct sysctlcmp_config config;
+	const char *bad[] = {
+	    "\"default\\u0000suffix\" { write = [\"net\"]; };",
+	    "default { \"write\\u0000suffix\" = [\"net\"]; };",
+	    "default { write = [\"net\\u0000suffix\"]; };",
+	    "clients { \"org.test\\u0000suffix\" { write = [\"net\"]; }; };",
+	    "default { write = [\"net\"]; }; unknown = true;",
+	    "default { write = [\"net\"]; }; default { write = [\"kern\"]; };",
+	    "default { write = [\"net\"]; write = [\"kern\"]; };",
+	    "default { write = [\"net\",\"net\"]; };",
+	    "clients { org.test { write = [\"net\"]; }; org.test { write = [\"kern\"]; }; };",
+	};
+	FILE *file;
+
+	(void)tc;
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		ATF_CHECK_MSG(load_text(&config, bad[i]) == -1,
+		    "accepted malformed input: %s", bad[i]);
+		ATF_CHECK(!sysctlcmp_config_permits(&config, "org.test", "net.inet", true));
+		ATF_CHECK_EQ(0, config.nclients);
+	}
+	file = fopen("external.ucl", "w");
+	ATF_REQUIRE(file != NULL);
+	ATF_REQUIRE(fputs("default { write = [\"net\"]; };", file) >= 0);
+	ATF_REQUIRE_EQ(0, fclose(file));
+	ATF_CHECK_EQ(-1, load_text(&config, ".include \"external.ucl\"\n"));
+	ATF_CHECK(!sysctlcmp_config_permits(&config, "org.test", "net.inet", true));
+	ATF_REQUIRE_EQ(0, unlink("external.ucl"));
+}
+
+
+ATF_TC_WITHOUT_HEAD(confined_descriptor_policy);
+ATF_TC_BODY(confined_descriptor_policy, tc)
+{
+	struct sysctlcmp_config config;
+	const char text[] = "default { write = [\"net\"]; };";
+	char path[] = "confined-policy.XXXXXX";
+	cap_rights_t rights;
+	int fd;
+
+	(void)tc;
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(text) - 1), write(fd, text, sizeof(text) - 1));
+	cap_rights_init(&rights, CAP_PREAD, CAP_FSTAT);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(fd, &rights));
+	ATF_REQUIRE_EQ(0, cap_enter());
+	/* The descriptor is at EOF and has no ordinary namespace authority. */
+	ATF_REQUIRE_EQ(0, sysctlcmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(sysctlcmp_config_permits(&config, "org.test", "net.inet", true));
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, confined_descriptor_policy);
+	ATF_TP_ADD_TC(tp, strict_policy_inputs);
 	ATF_TP_ADD_TC(tp, shipped_pressure_policy);
 	ATF_TP_ADD_TC(tp, shipped_network_policy);
 

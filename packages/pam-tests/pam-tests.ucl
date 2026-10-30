@@ -1,0 +1,5 @@
+comment = "Tests for PAM module resolution and policy includes"
+
+desc = <<EOD
+Tests for PAM module resolution and policy includes.
+EOD

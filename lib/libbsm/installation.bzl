@@ -1,0 +1,171 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+
+
+
+MANUALS = {'au_class.3': '//contrib/openbsm:libbsm/au_class.3',
+ 'au_control.3': '//contrib/openbsm:libbsm/au_control.3',
+ 'au_domain.3': '//contrib/openbsm:libbsm/au_domain.3',
+ 'au_errno.3': '//contrib/openbsm:libbsm/au_errno.3',
+ 'au_event.3': '//contrib/openbsm:libbsm/au_event.3',
+ 'au_fcntl_cmd.3': '//contrib/openbsm:libbsm/au_fcntl_cmd.3',
+ 'au_free_token.3': '//contrib/openbsm:libbsm/au_free_token.3',
+ 'au_io.3': '//contrib/openbsm:libbsm/au_io.3',
+ 'au_mask.3': '//contrib/openbsm:libbsm/au_mask.3',
+ 'au_notify.3': '//contrib/openbsm:libbsm/au_notify.3',
+ 'au_open.3': '//contrib/openbsm:libbsm/au_open.3',
+ 'au_socket_type.3': '//contrib/openbsm:libbsm/au_socket_type.3',
+ 'au_token.3': '//contrib/openbsm:libbsm/au_token.3',
+ 'au_user.3': '//contrib/openbsm:libbsm/au_user.3',
+ 'audit.2': '//contrib/openbsm:man/audit.2',
+ 'audit_submit.3': '//contrib/openbsm:libbsm/audit_submit.3',
+ 'auditctl.2': '//contrib/openbsm:man/auditctl.2',
+ 'auditon.2': '//contrib/openbsm:man/auditon.2',
+ 'getaudit.2': '//contrib/openbsm:man/getaudit.2',
+ 'getauid.2': '//contrib/openbsm:man/getauid.2',
+ 'libbsm.3': '//contrib/openbsm:libbsm/libbsm.3',
+ 'setaudit.2': '//contrib/openbsm:man/setaudit.2',
+ 'setauid.2': '//contrib/openbsm:man/setauid.2'}
+MANUAL_LINKS = [('libbsm.3', 'bsm.3'),
+ ('libbsm.3', 'au_fcntl_cmd_to_bsm.3'),
+ ('au_class.3', 'getauclassent.3'),
+ ('au_class.3', 'getauclassent_r.3'),
+ ('au_class.3', 'getauclassnam.3'),
+ ('au_class.3', 'getauclassnam_r.3'),
+ ('au_class.3', 'setauclass.3'),
+ ('au_class.3', 'endauclass.3'),
+ ('au_control.3', 'setac.3'),
+ ('au_control.3', 'endac.3'),
+ ('au_control.3', 'getacdir.3'),
+ ('au_control.3', 'getacmin.3'),
+ ('au_control.3', 'getacfilesz.3'),
+ ('au_control.3', 'getacflg.3'),
+ ('au_control.3', 'getacna.3'),
+ ('au_control.3', 'getacpol.3'),
+ ('au_control.3', 'getacqsize.3'),
+ ('au_control.3', 'au_poltostr.3'),
+ ('au_control.3', 'au_strtopol.3'),
+ ('au_domain.3', 'au_bsm_to_domain.3'),
+ ('au_domain.3', 'au_domain_to_bsm.3'),
+ ('au_errno.3', 'au_bsm_to_errno.3'),
+ ('au_errno.3', 'au_errno_to_bsm.3'),
+ ('au_errno.3', 'au_strerror.3'),
+ ('au_event.3', 'setauevent.3'),
+ ('au_event.3', 'endauevent.3'),
+ ('au_event.3', 'getauevent.3'),
+ ('au_event.3', 'getauevent_r.3'),
+ ('au_event.3', 'getauevnam.3'),
+ ('au_event.3', 'getauevnam_r.3'),
+ ('au_event.3', 'getauevnum.3'),
+ ('au_event.3', 'getauevnum_r.3'),
+ ('au_event.3', 'getauevnonam.3'),
+ ('au_event.3', 'getauevnonam_r.3'),
+ ('au_fcntl_cmd.3', 'au_bsm_to_fcntl_cmd.3'),
+ ('au_fcntl_cmd.3', 'au_fcntl_cmd_t_bsm.3'),
+ ('au_io.3', 'au_fetch_tok.3'),
+ ('au_io.3', 'au_print_tok.3'),
+ ('au_io.3', 'au_read_rec.3'),
+ ('au_mask.3', 'au_preselect.3'),
+ ('au_mask.3', 'getauditflagsbin.3'),
+ ('au_mask.3', 'getauditflagschar.3'),
+ ('au_notify.3', 'au_get_state.3'),
+ ('au_notify.3', 'au_notify_initialize.3'),
+ ('au_notify.3', 'au_notify_terminate.3'),
+ ('au_open.3', 'au_close.3'),
+ ('au_open.3', 'au_close_buffer.3'),
+ ('au_open.3', 'au_close_token.3'),
+ ('au_open.3', 'au_write.3'),
+ ('au_socket_type.3', 'au_bsm_to_socket_type.3'),
+ ('au_socket_type.3', 'au_socket_type_to_bsm.3'),
+ ('au_token.3', 'au_to_arg32.3'),
+ ('au_token.3', 'au_to_arg64.3'),
+ ('au_token.3', 'au_to_arg.3'),
+ ('au_token.3', 'au_to_attr32.3'),
+ ('au_token.3', 'au_to_attr64.3'),
+ ('au_token.3', 'au_to_data.3'),
+ ('au_token.3', 'au_to_exit.3'),
+ ('au_token.3', 'au_to_groups.3'),
+ ('au_token.3', 'au_to_newgroups.3'),
+ ('au_token.3', 'au_to_in_addr.3'),
+ ('au_token.3', 'au_to_in_addr_ex.3'),
+ ('au_token.3', 'au_to_ip.3'),
+ ('au_token.3', 'au_to_ipc.3'),
+ ('au_token.3', 'au_to_ipc_perm.3'),
+ ('au_token.3', 'au_to_iport.3'),
+ ('au_token.3', 'au_to_opaque.3'),
+ ('au_token.3', 'au_to_file.3'),
+ ('au_token.3', 'au_to_text.3'),
+ ('au_token.3', 'au_to_path.3'),
+ ('au_token.3', 'au_to_process32.3'),
+ ('au_token.3', 'au_to_process64.3'),
+ ('au_token.3', 'au_to_process.3'),
+ ('au_token.3', 'au_to_process32_ex.3'),
+ ('au_token.3', 'au_to_process64_ex.3'),
+ ('au_token.3', 'au_to_process_ex.3'),
+ ('au_token.3', 'au_to_return32.3'),
+ ('au_token.3', 'au_to_return64.3'),
+ ('au_token.3', 'au_to_return.3'),
+ ('au_token.3', 'au_to_seq.3'),
+ ('au_token.3', 'au_to_sock_inet32.3'),
+ ('au_token.3', 'au_to_sock_inet128.3'),
+ ('au_token.3', 'au_to_sock_inet.3'),
+ ('au_token.3', 'au_to_socket_ex.3'),
+ ('au_token.3', 'au_to_subject32.3'),
+ ('au_token.3', 'au_to_subject64.3'),
+ ('au_token.3', 'au_to_subject.3'),
+ ('au_token.3', 'au_to_subject32_ex.3'),
+ ('au_token.3', 'au_to_subject64_ex.3'),
+ ('au_token.3', 'au_to_subject_ex.3'),
+ ('au_token.3', 'au_to_me.3'),
+ ('au_token.3', 'au_to_exec_args.3'),
+ ('au_token.3', 'au_to_exec_env.3'),
+ ('au_token.3', 'au_to_header.3'),
+ ('au_token.3', 'au_to_header32.3'),
+ ('au_token.3', 'au_to_header32_ex.3'),
+ ('au_token.3', 'au_to_header64.3'),
+ ('au_token.3', 'au_to_trailer.3'),
+ ('au_token.3', 'au_to_zonename.3'),
+ ('au_user.3', 'setauuser.3'),
+ ('au_user.3', 'endauuser.3'),
+ ('au_user.3', 'getauuserent.3'),
+ ('au_user.3', 'getauuserent_r.3'),
+ ('au_user.3', 'getauusernam.3'),
+ ('au_user.3', 'getauusernam_r.3'),
+ ('au_user.3', 'au_user_mask.3'),
+ ('au_user.3', 'getfauditflags.3'),
+ ('getaudit.2', 'getaudit_addr.2'),
+ ('setaudit.2', 'setaudit_addr.2')]
+
+def library_installation(name):
+    bsd_debug_split(name = name + "_debug", src = ":bsm_shared",
+        binary_name = name + "/libbsm.so.3", debug_name = name + "/libbsm.so.3.debug",
+        objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+    bsd_strip_binary(name = name + "_stripped", src = ":" + name + "_debug", output = name + "/stripped/libbsm.so.3",
+        strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+    native.filegroup(name = name + "_symbols", srcs = [":" + name + "_debug"], output_group = "debug_files")
+    files = [
+        (":static_archive", "/usr/lib/libbsm.a", ["package=audit", "dev"]),
+        (":" + name + "_stripped", "/usr/lib/libbsm.so.3", ["package=audit", "lib"]),
+        (":" + name + "_symbols", "/usr/lib/debug/usr/lib/libbsm.so.3.debug", ["package=audit", "dbg"]),
+    ]
+    for header in ["audit_uevents.h", "libbsm.h"]:
+        files.append(("//contrib/openbsm:bsm/" + header, "/usr/include/bsm/" + header, ["package=audit", "dev"]))
+    man_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=audit-man"], "//conditions:default": ["package=audit-dev"]})
+    for manual in MANUALS:
+        target = name + "_manual_" + manual
+        bsd_compress(name = target, src = MANUALS[manual], output = name + "/" + manual + ".gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+        files.append((":" + target, "/usr/share/man/man" + manual[-1] + "/" + manual + ".gz", man_tags))
+    entries = []
+    for source, destination, tags in files:
+        target = name + "_file_" + destination.replace("/", "_")
+        bsd_install_file(name = target, src = source, destination = destination,
+            owner = "root", group = "wheel", mode = "0444", install_tags = tags)
+        entries.append(":" + target)
+    bsd_install_link(name = name + "_link", destination = "/usr/lib/libbsm.so", target = "libbsm.so.3",
+        kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=audit", "dev"])
+    for source, alias in MANUAL_LINKS:
+        target = name + "_alias_" + alias
+        bsd_install_link(name = target, destination = "/usr/share/man/man" + alias[-1] + "/" + alias + ".gz", target = "/usr/share/man/man" + source[-1] + "/" + source + ".gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
+        entries.append(":" + target)
+    bsd_install_manifest(name = name, entries = entries + [":" + name + "_link"], visibility = ["//visibility:public"])

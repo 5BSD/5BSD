@@ -10,6 +10,8 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <lookup_identity.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
@@ -36,7 +38,7 @@
 /*
  * --- Layout contract (compile-time) ---------------------------------------
  */
-_Static_assert(sizeof(struct svc_new_client_msg) == 752,
+_Static_assert(sizeof(struct svc_new_client_msg) == 760,
     "svc_new_client_msg wire layout");
 _Static_assert(offsetof(struct svc_new_client_msg, client_nonce) == 416,
     "client_nonce layout");
@@ -67,7 +69,7 @@ ATF_TC_BODY(wire_layout, tc)
 
 	(void)tc;
 	/* Runtime mirrors of the static asserts, so a report shows numbers. */
-	ATF_CHECK_EQ(752u, (unsigned)sizeof(nc));
+	ATF_CHECK_EQ(760u, (unsigned)sizeof(nc));
 	ATF_CHECK_EQ(64u, (unsigned)sizeof(nc.client_label));
 	ATF_CHECK_EQ(760u, (unsigned)sizeof(id));
 	ATF_CHECK_EQ(56u, (unsigned)sizeof(md));
@@ -219,8 +221,96 @@ ATF_TC_CLEANUP(sender_abi_round_trip, tc)
 	(void)tc;
 }
 
+ATF_TC_WITHOUT_HEAD(lookup_process_descriptor_modes);
+ATF_TC_BODY(lookup_process_descriptor_modes, tc)
+{
+	cap_rights_t rights, expected;
+	pid_t pid, child;
+	int fd, status;
+	u_int mode;
+
+	ATF_REQUIRE_EQ(0, cap_getmode(&mode));
+	ATF_REQUIRE_EQ(0, mode);
+	ATF_REQUIRE_EQ(0, service_lookup_identity(&fd));
+	if (fd == -1) atf_tc_skip("process descriptor acquisition unavailable");
+	ATF_REQUIRE_EQ(0, pdgetpid(fd, &pid));
+	ATF_CHECK_EQ(getpid(), pid);
+	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	cap_rights_init(&expected, CAP_PDGETPID, CAP_EVENT, CAP_KQUEUE_EVENT);
+	ATF_CHECK(cap_rights_contains(&rights, &expected));
+	ATF_CHECK(cap_rights_contains(&expected, &rights));
+	ATF_REQUIRE_EQ(0, cap_getmode(&mode)); ATF_CHECK_EQ(0, mode);
+	close(fd);
+	child = fork(); ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (cap_enter() == -1) _exit(1);
+		if (service_lookup_identity(&fd) == -1 || fd == -1) _exit(2);
+		if (pdgetpid(fd, &pid) == -1 || pid != getpid()) _exit(3);
+		if (cap_rights_get(fd, &rights) == -1 ||
+		    !cap_rights_contains(&expected, &rights)) _exit(4);
+		close(fd); _exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status)); ATF_CHECK_EQ(0, WEXITSTATUS(status));
+}
+
+struct lookup_cancel_fixture {
+	int process, reply, ready[2], gate[2];
+};
+static void *
+lookup_cancel_worker(void *arg)
+{
+	struct lookup_cancel_fixture *fixture = arg;
+	struct service_lookup_owned owned = {.process = &fixture->process,
+	    .reply = &fixture->reply};
+	int old;
+	char byte;
+
+	pthread_cleanup_push(service_lookup_cleanup, &owned);
+	(void)pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old);
+	ssize_t count;
+	do { count = write(fixture->ready[1], "r", 1); } while (count == -1 && errno == EINTR);
+	if (count != 1) abort();
+	do { count = read(fixture->gate[0], &byte, 1); } while (count == -1 && errno == EINTR);
+	if (count != 1) abort();
+	/* Model cancellation delivered when the inner RPC restores the outer
+	 * state after returning an owned reply descriptor. */
+	(void)pthread_setcancelstate(old, NULL);
+	pthread_testcancel();
+	pthread_cleanup_pop(1);
+	return (NULL);
+}
+ATF_TC_WITHOUT_HEAD(lookup_cancellation_closes_owned_fds);
+ATF_TC_BODY(lookup_cancellation_closes_owned_fds, tc)
+{
+	struct lookup_cancel_fixture fixture;
+	pthread_t thread;
+	int pair[2], process, reply, unrelated;
+	void *result;
+	char byte;
+
+	ATF_REQUIRE_EQ(0, pipe(pair));
+	fixture.process = process = pair[0]; fixture.reply = reply = pair[1];
+	unrelated = dup(process); ATF_REQUIRE(unrelated >= 0);
+	ATF_REQUIRE_EQ(0, pipe(fixture.ready)); ATF_REQUIRE_EQ(0, pipe(fixture.gate));
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, lookup_cancel_worker, &fixture));
+	ATF_REQUIRE_EQ(1, read(fixture.ready[0], &byte, 1));
+	ATF_REQUIRE_EQ(0, pthread_cancel(thread));
+	ATF_REQUIRE_EQ(1, write(fixture.gate[1], "g", 1));
+	ATF_REQUIRE_EQ(0, pthread_join(thread, &result));
+	ATF_CHECK(result == PTHREAD_CANCELED);
+	ATF_CHECK_EQ(-1, fixture.process); ATF_CHECK_EQ(-1, fixture.reply);
+	ATF_CHECK_ERRNO(EBADF, fcntl(process, F_GETFD) == -1);
+	ATF_CHECK_ERRNO(EBADF, fcntl(reply, F_GETFD) == -1);
+	ATF_CHECK(fcntl(unrelated, F_GETFD) >= 0);
+	close(unrelated);
+	for (unsigned i = 0; i < 2; i++) { close(fixture.ready[i]); close(fixture.gate[i]); }
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, lookup_cancellation_closes_owned_fds);
+	ATF_TP_ADD_TC(tp, lookup_process_descriptor_modes);
 	ATF_TP_ADD_TC(tp, wire_layout);
 	ATF_TP_ADD_TC(tp, sender_abi_round_trip);
 	return (atf_no_error());

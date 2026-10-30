@@ -329,6 +329,16 @@ allow exec * -> type=trusted set 0
 allow read,write domain=webapp -> domain=webapp set 100
 allow read,write domain=database -> domain=database set 200
 .Ed
+.Ss Object context applicability
+Object process-context constraints are valid only for debug, signal, sched and
+wait operations.
+A rule with an object context and any other operation, including a mixed
+operation list or all operations, is rejected with EINVAL by the kernel.
+Use separate rules for process operations and other object types.
+The kernel does not interpret process UID or TTY constraints as file-owner or
+file-device constraints.
+A rejected atomic rule load preserves the prior rule table.
+This validation does not establish runtime correctness of every context field.
 .Sh SEE ALSO
 .Xr mac_abac 4 ,
 .Xr mac_abac_ctl 8

@@ -127,15 +127,10 @@ main(int argc, char *argv[])
 	uint8_t *buf, *out;
 	size_t bufsz, outsz, rootsz;
 	ssize_t readsz;
-	int dfd, error, fd;
+	int error, fd;
 
-	dfd = open_progdir(argv[0]);
-
-	fd = openat(dfd, "repo.priv", O_RDONLY);
+	fd = open_test_fixture(argc, argv, "repo.priv");
 	assert(fd >= 0);
-
-	close(dfd);
-	dfd = -1;
 
 	error = fstat(fd, &sb);
 	assert(error == 0);

@@ -1,5 +1,11 @@
 # Software policy and service management
 
+This chapter describes the current software-authority implementation. The
+[system security design](../capability/system-security.md) extends the intended
+model with independent user authorization, mandatory system integrity, verified
+boot and authenticated recovery. Those additional protections remain under
+implementation and must not be inferred from software attributes alone.
+
 The system image assigns attributes to approved software. There is no
 `principal-policy.ucl` mapping login accounts to capability grants. UNIX account
 management and authentication retain their UNIX meaning.
@@ -20,9 +26,18 @@ same executable object; moving or linking that object does not create a separate
 software identity.
 
 The attribute admits the approved client to management operations. Running an
-unapproved shell as root does not confer this attribute. Conversely, an ordinary
-UNIX user who can execute the approved client can use its exposed operations.
-This version deliberately has no additional login-user consent policy.
+unapproved shell as root does not confer this attribute. On a development kernel, an ordinary UNIX user who can execute the approved
+client can use its exposed operations. In the mandatory integrity profile,
+management additionally requires an independent live session right. The shipped
+session policy enrolls no authenticator; protected human login remains unfinished.
+
+Control and lifecycle channels are additionally bound to the requesting process
+identity and execution nonce from kernel receive metadata. A forked child or a
+new execution cannot reuse a held control channel. A child may request a fresh
+channel according to its own software eligibility. The broker separately associates authenticator-issued routes with bounded
+principal rights. Neither invocation binding nor the broker's session-issuance
+API proves that a human was authenticated; protected authenticator integration
+remains an implementation gate.
 
 ## Management classes still apply
 

@@ -1,0 +1,5 @@
+# Disposable root-writable credential rejection fixture.
+auth required pam_unix.so protected_passwd=/tmp/protected-credentials protected_login_conf=/etc/login.conf
+account required pam_unix.so protected_passwd=/tmp/protected-credentials protected_login_conf=/etc/login.conf
+session required pam_deny.so
+password required pam_deny.so

@@ -69,11 +69,13 @@ char *ve_error_get(void);
 int ve_error_set(const char *, ...) __printflike(1,2);
 int  ve_self_tests(void);
 
-void fingerprint_info_add(const char *, const char *, const char *,
+int fingerprint_info_add(const char *, const char *, const char *,
     const char *, struct stat *);
 
 char * hexdigest(char *, size_t, unsigned char *, size_t);
 int  verify_fd(int, const char *, off_t, struct stat *);
+/* Registered manifest required; only VE_FINGERPRINT_OK authenticates buf. */
+int  verify_buf(int, const char *, const void *, size_t);
 int  verify_open(const char *, int);
 
 unsigned char *verify_signed(const char *, int);

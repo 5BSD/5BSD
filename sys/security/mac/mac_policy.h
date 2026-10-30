@@ -301,9 +301,13 @@ typedef void	(*mpo_mount_init_label_t)(struct label *label);
 typedef int	(*mpo_mount_check_mount_t)(struct ucred *cred, struct vnode *vp,
 		    struct label *vplabel, struct vfsconf *vfsp,
 		    struct vfsoptlist **optlist, uint64_t fsflags);
+/* Anonymous mounts have no covered vnode. Actor credentials precede any
+ * filesystem-specific credential substitution. The mount is not published. */
+typedef int	(*mpo_mount_check_mount_anon_t)(struct ucred *cred,
+		    struct mount *mp, struct label *mplabel);
 typedef int	(*mpo_mount_check_update_t)(struct ucred *cred,
 		    struct mount *mp, struct label *mplabel,
-		    struct vfsoptlist **optlist, uint64_t fsflags);
+		    struct vfsoptlist **optlist, uint64_t fsflags, bool only_export);
 typedef int	(*mpo_mount_check_unmount_t)(struct ucred *cred,
 		    struct mount *mp, struct label *mplabel, uint64_t flags);
 
@@ -650,6 +654,9 @@ typedef int	(*mpo_vnode_check_deleteextattr_t)(struct ucred *cred,
 typedef int	(*mpo_vnode_check_exec_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *vplabel,
 		    struct image_params *imgp, struct label *execlabel);
+/* Opaque handle creation/use requires a held, locked vnode. */
+typedef int	(*mpo_vnode_check_fh_t)(struct ucred *cred,
+		    struct vnode *vp, struct label *vplabel);
 typedef int	(*mpo_vnode_check_getacl_t)(struct ucred *cred,
 		    struct vnode *vp, struct label *vplabel,
 		    acl_type_t type);
@@ -1005,6 +1012,7 @@ struct mac_policy_ops {
 	mpo_mbuf_init_label_t			mpo_mbuf_init_label;
 
 	mpo_mount_check_mount_t			mpo_mount_check_mount;
+	mpo_mount_check_mount_anon_t		mpo_mount_check_mount_anon;
 	mpo_mount_check_snapshot_create_t	mpo_mount_check_snapshot_create;
 	mpo_mount_check_snapshot_delete_t	mpo_mount_check_snapshot_delete;
 	mpo_mount_check_snapshot_revert_t	mpo_mount_check_snapshot_revert;
@@ -1201,6 +1209,7 @@ struct mac_policy_ops {
 	mpo_vnode_check_deleteacl_t		mpo_vnode_check_deleteacl;
 	mpo_vnode_check_deleteextattr_t		mpo_vnode_check_deleteextattr;
 	mpo_vnode_check_exec_t			mpo_vnode_check_exec;
+	mpo_vnode_check_fh_t		mpo_vnode_check_fh;
 	mpo_vnode_check_getacl_t		mpo_vnode_check_getacl;
 	mpo_vnode_check_getextattr_t		mpo_vnode_check_getextattr;
 	mpo_vnode_check_link_t			mpo_vnode_check_link;
@@ -1330,8 +1339,22 @@ struct mac_policy_conf {
  *   8                       16.x (vsock provider ownership hooks)
  *   9                       16.x (vnode_execve_relabel hooks)
  */
-/* Version 11 adds vnode_check_mmap_image lifetime requests. */
-#define	MAC_VERSION	11
+/* Version 11 added vnode_check_mmap_image lifetime requests.
+ * Version 12 adds anonymous mount admission with original actor credentials.
+ * Version 13 adds bootstrap ZFS reservations and backing-handle admission.
+ * Version 14 adds verified ZFS identity association before mount publication.
+ * Version 15 changes vn_file_context to retain paired content-I/O guards.
+ * Version 16 supplies exact ZFS handle identity and operand role.
+ * Version 17 checks resolved objects and child handle publication.
+ * Version 18 checks affected namespace objects/parents before mutation.
+ * Version 19 checks the selected snapshot for delete and rollback.
+ * Version 20 checks stream source/base and receive target/parent objects.
+ * Version 21 adds typed dataset property admission. */
+/* Version 31 adds non-sleeping ZFS dataset destruction notification.
+ * Version 32 supplies live ancestry during ZFS mount admission.
+ * Version 33 checks dataset boundary preservation during reparenting. */
+/* Version 34 supplies VFS-classified export-only mount updates. */
+#define	MAC_VERSION	34
 
 #define	MAC_POLICY_SET(mpops, mpname, mpfullname, mpflags, privdata_wanted) \
 	static struct mac_policy_conf mpname##_mac_policy_conf = {	\

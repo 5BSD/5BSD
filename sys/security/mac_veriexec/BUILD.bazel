@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "headers", hdrs = ["mac_veriexec.h"], includes = ["../.."], visibility = ["//sys/security/mac:__pkg__", "//sys/security/mac_veriexec_parser:__pkg__"])
+amd64_generic_module_objects(name = "sha1_module", srcs = ["mac_veriexec_sha1.c"], deps = [":headers", "//sys/crypto:sha1_headers"])
+amd64_generic_module_objects(name = "sha256_module", srcs = ["mac_veriexec_sha256.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+amd64_generic_module_objects(name = "sha384_module", srcs = ["mac_veriexec_sha384.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+amd64_generic_module_objects(name = "sha512_module", srcs = ["mac_veriexec_sha512.c"], deps = [":headers", "//sys/crypto/sha2:module_headers"])
+
+cc_library(name = "internal_headers", hdrs = ["mac_veriexec_internal.h"], includes = ["../.."], deps = [":headers"], visibility = ["//sys/security/mac_veriexec_parser:__pkg__"])
+amd64_generic_module_objects(
+    srcs = ["mac_veriexec.c", "veriexec_capimage.c", "veriexec_fingerprint.c", "veriexec_metadata.c"],
+    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
+        "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
+        "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"],
+    copts = select({"//tools/build/bazel/config:veriexec_debug_enabled": ["-DVERIFIED_EXEC_DEBUG"], "//conditions:default": []}),
+)
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+# GENERIC selects capimage verification and the SHA256 registration backend.
+amd64_generic_kernel_objects(name = "generic_builtin",
+    srcs = ["mac_veriexec.c", "veriexec_capimage.c", "veriexec_fingerprint.c", "veriexec_metadata.c", "mac_veriexec_sha256.c"],
+    deps = [":internal_headers", "//sys/security/mac:policy_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_mac_header",
+        "//sys/amd64/conf:generic_opt_veriexec_header", "//sys/fs/nullfs:headers",
+        "//sys/crypto/sha2:module_headers", "//sys/opencrypto:ed25519_headers"])
+
+# Userland rtld requires the syscall ABI, not kernel implementation headers.
+cc_library(name = "rtld_abi_header", hdrs = ["mac_veriexec.h"], strip_include_prefix = "/sys",
+    visibility = ["//libexec/rtld-elf:__pkg__"])

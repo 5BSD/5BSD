@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['llvm-size.cpp', 'Opts.td'], visibility = ["//usr.bin/clang/llvm-size:__pkg__"])

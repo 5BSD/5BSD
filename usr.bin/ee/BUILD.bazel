@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = 'ee', srcs = ['//contrib/ee:ee.c', '//contrib/ee:ee_version.h'],
+    deps = ['//lib/ncurses/tinfo:tinfo', '//lib/ncurses/ncurses:ncurses'], dynamic_deps = ['//lib/ncurses/tinfo:tinfo_shared', '//lib/ncurses/ncurses:ncurses_shared'],
+    local_defines = ["HAS_NCURSES", "HAS_UNISTD", "HAS_STDARG", "HAS_STDLIB", "HAS_SYS_WAIT"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_nls.bzl", "bsd_catalogue")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+_LOCALES = ['C', 'fr_FR.ISO8859-1', 'de_DE.ISO8859-1', 'pl_PL.ISO8859-2', 'uk_UA.KOI8-U', 'pt_BR.ISO8859-1', 'ru_RU.KOI8-R', 'hu_HU.ISO8859-2']
+_LINKS = {'C': ['en_US.ISO8859-1', 'en_US.ISO8859-15'], 'fr_FR.ISO8859-1': ['fr_BE.ISO8859-1', 'fr_BE.ISO8859-15', 'fr_CA.ISO8859-1', 'fr_CA.ISO8859-15', 'fr_CH.ISO8859-1', 'fr_CH.ISO8859-15', 'fr_FR.ISO8859-15'], 'de_DE.ISO8859-1': ['de_AT.ISO8859-1', 'de_AT.ISO8859-15', 'de_CH.ISO8859-1', 'de_CH.ISO8859-15', 'de_DE.ISO8859-15'], 'pt_BR.ISO8859-1': ['pt_PT.ISO8859-1']}
+
+[bsd_catalogue(name = "catalogue_" + locale,
+    sources = ["//contrib/ee:ee.msg" if locale == "C" else "nls/" + locale + "/ee.msg"],
+    output = locale + ".cat", gencat = "//usr.bin/gencat:gencat",
+    cat = "@bsd_sdk//toolchain:cat", redirect = "@bsd_sdk//toolchain:stdout_redirect") for locale in _LOCALES]
+[bsd_install_file(name = "install_catalogue_" + locale, src = ":catalogue_" + locale,
+    destination = "/usr/share/nls/" + locale + "/ee.cat", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=ee"]) for locale in _LOCALES]
+[bsd_install_link(name = "catalogue_link_" + alias, destination = "/usr/share/nls/" + alias + "/ee.cat",
+    target = "../" + locale + "/ee.cat", kind = "symlink", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=ee"]) for locale, aliases in _LINKS.items() for alias in aliases]
+_NLS_ENTRIES = [":install_catalogue_" + locale for locale in _LOCALES] + [":catalogue_link_" + alias for aliases in _LINKS.values() for alias in aliases]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'ee', manual = '//contrib/ee:ee.1', package = "ee", aliases = ["ree", "edit"], extra_entries = select({"//tools/build/bazel/config:nls_enabled": _NLS_ENTRIES, "//conditions:default": []}))
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = select({
+        "//tools/build/bazel/config:nls_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ee","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/share/nls/" + locale: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for locale in _LOCALES} | {"/usr/share/nls": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ee"]}'},
+        "//conditions:default": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ee","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    }),
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

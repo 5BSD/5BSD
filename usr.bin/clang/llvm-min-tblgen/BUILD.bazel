@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# Bootstrap generator: the installed compiler utilities use full libllvm.
+cc_binary(
+    name = "bootstrap",
+    srcs = ["//contrib/llvm-project/llvm/utils/TableGen:" + f for f in ["Basic/TableGen.cpp", "Basic/VTEmitter.cpp", "Basic/TableGen.h", "llvm-min-tblgen.cpp"]],
+    deps = ["//lib/libc:shared_link_interface", "//contrib/llvm-project/llvm/lib:llvmminimal", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libexecinfo:execinfo", "//lib/ncurses/tinfo:tinfo", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libexecinfo:execinfo_shared", "//lib/libelf:elf_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libthr:thr_shared"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    features = ["bsd_test_runtime_paths"],
+    linkopts = ["-Wl,--gc-sections"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+bsd_tablegen(
+    name = "value_types",
+    src = "//contrib/llvm-project/llvm/include:llvm/CodeGen/ValueTypes.td",
+    flags = ["-gen-vt"],
+    output = "llvm/CodeGen/GenVT.inc",
+    tool = ":bootstrap",
+    visibility = ["//visibility:public"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "value_type_headers", hdrs = [":value_types"], strip_include_prefix = ".", visibility = ["//visibility:public"])

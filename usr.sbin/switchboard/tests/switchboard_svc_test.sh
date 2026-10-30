@@ -384,8 +384,11 @@ service_environment_minimal_body()
 	    lifecycle-environment "${WORK}/env-probe.out"
 
 	export SHOULD_NOT_LEAK=secret
+	# Account time restrictions must not inherit the launcher's timezone.
+	export TZ=UTC+11
+	export TZDIR="${WORK}/untrusted-zoneinfo"
 	start_stack
-	unset SHOULD_NOT_LEAK
+	unset SHOULD_NOT_LEAK TZ TZDIR
 	if ! wait_for_file env-probe.out; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not start"
@@ -398,6 +401,8 @@ service_environment_minimal_body()
 	atf_check -s not-exit:0 grep "^CAPSULE_" env-probe.out
 	atf_check -s not-exit:0 grep "^SWITCHBOARD_COMPONENT_FDS=" env-probe.out
 	atf_check -s not-exit:0 grep "SHOULD_NOT_LEAK" env-probe.out
+	atf_check -s not-exit:0 grep "^TZ=" env-probe.out
+	atf_check -s not-exit:0 grep "^TZDIR=" env-probe.out
 	assert_stack_alive
 }
 service_environment_minimal_cleanup()

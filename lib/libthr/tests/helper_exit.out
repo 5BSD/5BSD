@@ -1,0 +1,1 @@
+Test of pthread_exit() in main thread only.

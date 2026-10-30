@@ -1,0 +1,3 @@
+Disable UEFI Secure Boot verification in the EFI loader.
+EFI verification is enabled by default and uses private EFI library objects.
+Disabling it does not provide a protected BIP boot chain.

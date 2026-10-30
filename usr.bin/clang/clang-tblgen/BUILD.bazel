@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# Bootstrap generator: the installed compiler utilities use full libclang/libllvm.
+cc_binary(
+    name = "bootstrap",
+    srcs = ["//contrib/llvm-project/clang/utils/TableGen:" + f for f in ["ASTTableGen.cpp", "ClangASTNodesEmitter.cpp", "ClangASTPropertiesEmitter.cpp", "ClangAttrEmitter.cpp", "ClangBuiltinTemplatesEmitter.cpp", "ClangBuiltinsEmitter.cpp", "ClangCommentCommandInfoEmitter.cpp", "ClangCommentHTMLNamedCharacterReferenceEmitter.cpp", "ClangCommentHTMLTagsEmitter.cpp", "ClangDataCollectorsEmitter.cpp", "ClangDiagnosticsEmitter.cpp", "ClangOpcodesEmitter.cpp", "ClangOpenCLBuiltinEmitter.cpp", "ClangOptionDocEmitter.cpp", "ClangSACheckersEmitter.cpp", "ClangSyntaxEmitter.cpp", "ClangTypeNodesEmitter.cpp", "MveEmitter.cpp", "NeonEmitter.cpp", "RISCVVEmitter.cpp", "SveEmitter.cpp", "TableGen.cpp"]],
+    deps = ["//contrib/llvm-project/clang/utils/TableGen:headers", "//contrib/llvm-project/clang/lib/Support:clangminimal", "//lib/libc:shared_link_interface", "//contrib/llvm-project/llvm/lib:llvmminimal", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libexecinfo:execinfo", "//lib/ncurses/ncurses:ncurses", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libexecinfo:execinfo_shared", "//lib/libelf:elf_shared", "//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libthr:thr_shared"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    features = ["bsd_test_runtime_paths"],
+    linkopts = ["-Wl,--gc-sections"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+alias(name = "attribute_list", actual = "//lib/clang/libclang:clang_Basic_AttrList", visibility = ["//visibility:public"])

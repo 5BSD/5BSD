@@ -380,18 +380,18 @@ startup_launch_system(int kq)
 	free(entries);
 
 	/*
-	 * Do NOT launch the native boot units before /etc/rc.  The kernel mounts
-	 * root read-only; rc remounts it read-write and mounts the tmpfs on
-	 * /Capabilities/Run.  Every unit needs a runtime container under Run/, so a
-	 * launch before that fails with EROFS and the provider never comes up.
-	 * The native units are launched after rc, below.
+	 * Legacy boot relies on rc to prepare writable runtime storage. In the
+	 * mandatory integrity profile, PID 1 has already mounted and claimed Run;
+	 * the authenticated system root stays read-only. Explicit native boot
+	 * activation still follows rc; scoped requests during rc may activate
+	 * providers on demand through the common event loop.
 	 */
 	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
 	launched = 0;
 
 	/*
 	 * Transitional rc world: run /etc/rc once (a oneshot) and block until it
-	 * completes -- but the native plane above is already coming up in parallel.
+	 * completes, servicing native discovery and activation requests while waiting.
 	 * A non-zero /etc/rc is reported for non-convergence.  A test fixture opts
 	 * out via the environment (a fixture must not replay the host's rc, which
 	 * would flip the machine's runlevel state from inside a test).  Per-service

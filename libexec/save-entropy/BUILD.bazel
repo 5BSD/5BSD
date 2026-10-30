@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+bsd_install_file(name = "script", src = "save-entropy.sh", destination = "/usr/libexec/save-entropy",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"])
+bsd_compress(name = "manual", src = "save-entropy.8", output = "save-entropy.8.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man8/save-entropy.8.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
+        "//conditions:default": ["package=utilities"]}))
+bsd_install_manifest(name = "install_manifest", entries = [":script", ":manual_file"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//libexec:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/libexec": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

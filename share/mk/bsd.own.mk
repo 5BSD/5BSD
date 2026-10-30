@@ -200,6 +200,10 @@ LIBGRP?=	${BINGRP}
 LIBMODE?=	${NOBINMODE}
 
 DEBUGDIR?=	/usr/lib/debug
+# Shared debug hierarchy ownership is independent of each binary's file group.
+DEBUGDIROWN?= root
+DEBUGDIRGRP?= wheel
+DEBUGDIRMODE?= 0755
 DEBUGMODE?=	${NOBINMODE}
 DEBUGOWN?=	${BINOWN}
 DEBUGGRP?=	${BINGRP}

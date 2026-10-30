@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["kprop.c", "kpropd.c", "kpropd_rpc.c", "kproplog.c", "kprop_util.c"])
+cc_library(name = "headers", hdrs = ["kprop.h"], includes = ["."], visibility = ["//krb5:__subpackages__"])

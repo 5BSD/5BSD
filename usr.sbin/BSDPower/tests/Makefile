@@ -51,7 +51,7 @@ LIBADD.${test}= ${POWER_FIDL_LIBADD}
 NO_SHARED.${test}= yes
 TEST_METADATA.${test}+= timeout="120"
 .endfor
-TEST_METADATA.reactor_test+= timeout="180"
+TEST_METADATA.reactor_test= timeout="180"
 
 # VM latency probe (tools/build/fuchsia/daemon_bench.h, vm-daemons.sh):
 # the real client and per-session server in one process pair.  libchannel is
@@ -79,8 +79,18 @@ WARNS.next_peer= 0
 FILESGROUPS+= FIDL_NOTICE UCL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdpower-tests/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 UCL_NOTICE= ${SRCTOP}/contrib/libucl/COPYING
 UCL_NOTICEDIR= /usr/share/licenses/bsdpower-tests/libucl
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= UCL_NOTICEPARENT
+UCL_NOTICEPARENT= ${UCL_NOTICEDIR:H}
+UCL_NOTICEPARENTTAGS= ${UCL_NOTICEDIRTAGS}
 
 .PATH:	${SRCTOP}/usr.sbin/BSDPower ${.CURDIR}/evolution
 

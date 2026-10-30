@@ -128,6 +128,7 @@ GEOM_PART_GPT	opt_geom.h
 GEOM_PART_LDM	opt_geom.h
 GEOM_PART_MBR	opt_geom.h
 GEOM_RAID	opt_geom.h
+GEOM_VERITY	opt_geom.h
 GEOM_UZIP	opt_geom.h
 GEOM_UZIP_DEBUG	opt_geom.h
 IFLIB		opt_iflib.h

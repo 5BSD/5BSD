@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "savecore", srcs = ["savecore.c"],
+    deps = ["//lib/libxo/libxo:xo", "//lib/libz:z", "//lib/libzstd:zstd", "//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_fileargs:cap_fileargs", "//lib/libcasper/services/cap_syslog:cap_syslog"], dynamic_deps = ["//lib/libxo/libxo:xo_shared", "//lib/libz:z_shared", "//lib/libzstd:zstd_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libcasper/services/cap_syslog:cap_syslog_shared"],
+    local_defines = ["WITH_CASPER"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:casper_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "savecore", manual = "savecore.8",
+    package = "runtime", bindir = "/sbin", man_section = "8", extra_entries = [":minfree_install"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | {"/var/crash": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=utilities"]}'},
+    mtree_specs = {"//etc/mtree:BSD.var.dist": "/var", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "minfree_install", src = "minfree", destination = "/var/crash/minfree", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+
+bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/savecore/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | {"/var/crash": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=utilities"]}'} | select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/sbin/savecore": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.var.dist": "/var", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

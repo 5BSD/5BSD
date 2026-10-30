@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <arpa/inet.h>
 
+#include <ctype.h>
 #include <db.h>
 #include <err.h>
 #include <errno.h>
@@ -69,6 +70,9 @@ static enum state { FILE_INSECURE, FILE_SECURE, FILE_ORIG } clean;
 static struct passwd pwd;			/* password structure */
 static char *pname;				/* password file name */
 static char prefix[MAXPATHLEN];
+static char **declared_shells;
+
+static char **read_shells(const char *);
 
 static int is_comment;	/* flag for comments */
 static char line[LINE_MAX];
@@ -85,14 +89,15 @@ main(int argc, char *argv[])
 {
 	static char verskey[] = _PWD_VERSION_KEY;
 	char version = _PWD_CURRENT_VERSION;
-	DB *dp, *sdp, *pw_db;
+	DB *dp, *sdp;
 	DBT data, sdata, key;
 	FILE *fp, *oldfp;
 	sigset_t set;
+	struct stat input_stat;
 	int ch, cnt, ypcnt, makeold, tfd, yp_enabled = 0;
 	unsigned int len;
 	uint32_t store;
-	const char *t;
+	const char *t, *shells_path = NULL;
 	char *p;
 	char buf[MAX(MAXPATHLEN, LINE_MAX * 2)];
 	char sbuf[MAX(MAXPATHLEN, LINE_MAX * 2)];
@@ -109,7 +114,7 @@ main(int argc, char *argv[])
 	makeold = 0;
 	username = NULL;
 	oldfp = NULL;
-	while ((ch = getopt(argc, argv, "Cd:iNps:u:v")) != -1)
+	while ((ch = getopt(argc, argv, "Cd:iNps:S:u:v")) != -1)
 		switch(ch) {
 		case 'C':                       /* verify only */
 			Cflag = 1;
@@ -126,6 +131,9 @@ main(int argc, char *argv[])
 			break;
 		case 'p':			/* create V7 "file.orig" */
 			makeold = 1;
+			break;
+		case 'S':
+			shells_path = optarg;
 			break;
 		case 's':			/* change default cachesize */
 			openinfo.cachesize = atoi(optarg) * 1024 * 1024;
@@ -144,6 +152,9 @@ main(int argc, char *argv[])
 	if (argc != 1 || (username && (*username == '+' || *username == '-')))
 		usage();
 
+	if (shells_path != NULL)
+		declared_shells = read_shells(shells_path);
+
 	/*
 	 * This could be changed to allow the user to interrupt.
 	 * Probably not worth the effort.
@@ -160,7 +171,6 @@ main(int argc, char *argv[])
 	(void)umask(0);
 
 	pname = *argv;
-
 	/*
 	 * Open and lock the original password file.  We have to check
 	 * the hardlink count after we get the lock to handle any potential
@@ -219,17 +229,14 @@ main(int argc, char *argv[])
 			error(sbuf);
 
 		/*
-		 * Do some trouble to check if we should store this users 
-		 * uid. Don't use getpwnam/getpwuid as that interferes 
-		 * with NIS.
+		 * Preserve the target database's canonical mapping for duplicate
+		 * UIDs.  Consult the copy already opened above, including with -d;
+		 * the host database and NSS must not decide target ownership.
 		 */
-		pw_db = dbopen(_PATH_MP_DB, O_RDONLY, 0, DB_HASH, NULL);
-		if (!pw_db)
-			error(_MP_DB);
 
 		key.data = verskey;
 		key.size = sizeof(verskey)-1;
-		if ((pw_db->get)(pw_db, &key, &data, 0) == 0)
+		if ((dp->get)(dp, &key, &data, 0) == 0)
 			use_version = *(unsigned char *)data.data;
 		else
 			use_version = 3;
@@ -240,7 +247,7 @@ main(int argc, char *argv[])
 		memmove(buf + 1, username, MIN(len, sizeof(buf) - 1));
 		key.data = (u_char *)buf;
 		key.size = len + 1;
-		if ((pw_db->get)(pw_db, &key, &data, 0) == 0) {
+		if ((dp->get)(dp, &key, &data, 0) == 0) {
 			p = (char *)data.data;
 
 			/* jump over pw_name and pw_passwd, to get to pw_uid */
@@ -254,7 +261,7 @@ main(int argc, char *argv[])
 			key.data = (u_char *)buf;
 			key.size = sizeof(store) + 1;
 
-			if ((pw_db->get)(pw_db, &key, &data, 0) == 0) {
+			if ((dp->get)(dp, &key, &data, 0) == 0) {
 				/* First field of data.data holds pw_pwname */
 				if (!strcmp(data.data, username))
 					methoduid = 0;
@@ -266,8 +273,6 @@ main(int argc, char *argv[])
 		} else {
 			methoduid = R_NOOVERWRITE;
 		}
-		if ((pw_db->close)(pw_db))
-			error("close pw_db");
 		method = 0;
 	} else {
 		dp = dbopen(buf,
@@ -491,8 +496,12 @@ main(int argc, char *argv[])
 			error("close old");
 	}
 
-	/* Set master.passwd permissions, in case caller forgot. */
-	(void)fchmod(fileno(fp), S_IRUSR|S_IWUSR);
+	/* Preserve an already-correct input, including filesystem flags. */
+	if (fstat(fileno(fp), &input_stat) == -1)
+		error("stat password input");
+	if ((input_stat.st_mode & ALLPERMS) != PERM_SECURE &&
+	    fchmod(fileno(fp), PERM_SECURE) == -1)
+		error("set password input permissions");
 
 	/* Install as the real password files. */
 	(void)snprintf(buf, sizeof(buf), "%s/%s.tmp", prefix, _MP_DB);
@@ -561,7 +570,8 @@ scan(FILE *fp, struct passwd *pw)
 	} else
 		is_comment = 0;
 
-	if (!__pw_scan(line, pw, _PWSCAN_WARN|_PWSCAN_MASTER)) {
+	if (!__pw_scan_shells(line, pw, _PWSCAN_WARN|_PWSCAN_MASTER,
+	    (const char *const *)declared_shells)) {
 		warnx("at line #%d", lcnt);
 fmt:		errno = EFTYPE;	/* XXX */
 		error(pname);
@@ -661,6 +671,46 @@ usage(void)
 {
 
 	(void)fprintf(stderr,
-"usage: pwd_mkdb [-CiNp] [-d directory] [-s cachesize] [-u username] file\n");
+"usage: pwd_mkdb [-CiNp] [-d directory] [-s cachesize] [-S shells] [-u username] file\n");
 	exit(1);
+}
+
+/* Explicit shell files never fall back to the build host's shell policy. */
+static char **
+read_shells(const char *path)
+{
+	FILE *fp;
+	char *linebuf = NULL, *start, *end, **shells, **grown;
+	size_t capacity = 0, count = 0;
+	ssize_t length;
+
+	if ((fp = fopen(path, "r")) == NULL)
+		err(1, "%s", path);
+	if ((shells = calloc(1, sizeof(*shells))) == NULL)
+		err(1, "calloc");
+	while ((length = getline(&linebuf, &capacity, fp)) != -1) {
+		if (memchr(linebuf, '\0', (size_t)length) != NULL)
+			errx(1, "%s: embedded NUL in shell list", path);
+		/* Match getusershell's path/comment token convention. */
+		for (start = linebuf; *start != '\0' && *start != '#' && *start != '/'; start++)
+			;
+		if (*start != '/')
+			continue;
+		for (end = start; *end != '\0' && *end != '#' && !isspace((unsigned char)*end); end++)
+			;
+		*end = '\0';
+		grown = reallocarray(shells, count + 2, sizeof(*shells));
+		if (grown == NULL)
+			err(1, "reallocarray");
+		shells = grown;
+		if ((shells[count++] = strdup(start)) == NULL)
+			err(1, "strdup");
+		shells[count] = NULL;
+	}
+	if (ferror(fp))
+		err(1, "%s", path);
+	if (fclose(fp) != 0)
+		err(1, "%s", path);
+	free(linebuf);
+	return (shells);
 }

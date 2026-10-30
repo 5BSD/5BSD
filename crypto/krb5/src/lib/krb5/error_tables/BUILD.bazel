@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['krb5_err.et', 'k5e1_err.et', 'kdb5_err.et', 'kv5m_err.et', 'krb524_err.et', 'asn1_err.et'], visibility = ["//krb5:__subpackages__"])

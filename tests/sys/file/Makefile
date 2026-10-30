@@ -2,6 +2,9 @@ TESTSDIR=	${TESTSBASE}/sys/file
 
 BINDIR=		${TESTSDIR}
 
+ATF_TESTS_C+=	tty_open_test
+ATF_TESTS_C+=	devctl_device_test
+ATF_TESTS_C+=	fd_device_test
 ATF_TESTS_C+=	path_test
 ATF_TESTS_C+=	closefrom_test
 TAP_TESTS_C+=	dup_test

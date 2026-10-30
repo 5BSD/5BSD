@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+bsd_template(name = "target_description", template = "target.xml.in", output = "target.xml",
+    substitutions = {"@ARCH@": "i386:x86-64", "@INCLUDES@": '  <xi:include href="amd64.xml"/>\n'},
+    target_compatible_with = ["@platforms//cpu:x86_64"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+[bsd_install_file(name = "install_" + name, src = src, destination = "/usr/share/bhyve/gdb/" + name,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bhyve"])
+ for name, src in [("target.xml", ":target_description"), ("amd64.xml", "amd64.xml")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_target.xml", ":install_amd64.xml"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {"/usr/share/bhyve/gdb": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

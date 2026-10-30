@@ -46,17 +46,22 @@ def select_available(flags, available):
     return ['--available', available, *flags]
 
 
-def generate(fidlc, schemas, flags, root):
+def generate(fidlc, schemas, flags, root, templates=TEMPLATES):
     """Compile SCHEMAS and write the bindings below ROOT."""
-    generator = load_generator()
-    from generate_bsd_c import generate_c
     ir_path = root / 'ir.json'
     command = [fidlc, '--json', str(ir_path), *flags]
     for schema in schemas:
         command += ['--files', str(schema)]
     subprocess.run(command, check=True)
+    return generate_from_ir(ir_path, root, templates)
+
+
+def generate_from_ir(ir_path, root, templates=TEMPLATES):
+    """Generate bindings from a separately declared compiler output."""
+    generator = load_generator()
+    from generate_bsd_c import generate_c
     tree = root / 'tree'
-    ir, cpp = generator.generate(ir_path, tree, TEMPLATES)
+    ir, cpp = generator.generate(ir_path, tree, templates)
     generate_c(ir, tree, cpp, [])
     return tree
 
@@ -91,25 +96,45 @@ def publish(tree, out):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--fidlc', default='fidlc')
+    p.add_argument('--fidlc', help='schema compiler (default: fidlc)')
     p.add_argument('--out', required=True, type=Path)
     p.add_argument('--stamp', type=Path)
+    p.add_argument('--ir', type=Path, help='consume compiled IR instead of running fidlc')
+    p.add_argument('--templates', type=Path, default=TEMPLATES)
+    p.add_argument('--expected-output', action='append', default=[],
+                   help='exact generated file inventory relative to --out; repeat for each file')
     p.add_argument('--fidlc-flag', action='append', default=[],
                    help='extra fidlc argument, e.g. --fidlc-flag=--available '
                    '--fidlc-flag=bsd:2')
-    p.add_argument('--available', metavar='PLATFORM:VERSION', default='bsd:1',
+    p.add_argument('--available', metavar='PLATFORM:VERSION',
                    help='platform version selected unless a --fidlc-flag '
                    'already selects --available (default bsd:1; empty for '
                    'none)')
-    p.add_argument('schemas', nargs='+', type=Path)
+    p.add_argument('schemas', nargs='*', type=Path)
     a = p.parse_args()
+    if bool(a.ir) == bool(a.schemas):
+        p.error('provide either --ir or one or more schemas')
+    if a.ir and (a.fidlc_flag or a.fidlc is not None or a.available is not None):
+        p.error('compiler options cannot change an already compiled IR')
     a.out.parent.mkdir(parents=True, exist_ok=True)
     try:
         with tempfile.TemporaryDirectory(prefix='.fidlgen-',
                                          dir=a.out.parent) as temporary:
-            tree = generate(a.fidlc, a.schemas,
-                            select_available(a.fidlc_flag, a.available),
-                            Path(temporary))
+            if a.ir:
+                tree = generate_from_ir(a.ir, Path(temporary), a.templates)
+            else:
+                tree = generate(a.fidlc or 'fidlc', a.schemas,
+                                select_available(a.fidlc_flag, 'bsd:1' if a.available is None else a.available),
+                                Path(temporary), a.templates)
+            if a.expected_output:
+                expected = {Path(value) for value in a.expected_output}
+                if len(expected) != len(a.expected_output) or any(path.is_absolute() or '..' in path.parts for path in expected):
+                    raise ValueError('unique relative generated outputs required')
+                actual = {path.relative_to(tree) for path in tree.rglob('*') if path.is_file()}
+                if actual != expected:
+                    raise ValueError('generated file inventory mismatch: missing=' +
+                                     repr(sorted(map(str, expected - actual))) +
+                                     ', unexpected=' + repr(sorted(map(str, actual - expected))))
             publish(tree, a.out)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         p.exit(1, f'{p.prog}: {", ".join(map(str, a.schemas))}: {error}\n')

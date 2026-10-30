@@ -10,6 +10,15 @@ __<bsd.suffixes-extra.mk>__:	.NOTMAIN
 PICFLAG?=-fpic
 PIEFLAG?=-fpie
 
+# Share effective NOSSP policy with native graph exporters. Keep these recursive
+# so per-source automatic-variable flags are expanded in the compiler context.
+_NOSSP_CFLAGS= ${CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//}
+_NOSSP_SHARED_CFLAGS= ${SHARED_CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//}
+_NOSSP_CXXFLAGS= ${CXXFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//}
+_NOSSP_SHARED_CXXFLAGS= ${SHARED_CXXFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//}
+_NOSSP_ASFLAGS= ${CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//}
+_NOSSP_SHARED_ASFLAGS= ${SHARED_CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//}
+
 .c.pico:
 	${CC} ${PICFLAG} -DPIC \
 	    ${SHARED_CFLAGS} ${CFLAGS} \
@@ -18,8 +27,8 @@ PIEFLAG?=-fpie
 
 .c.nossppico:
 	${CC} ${PICFLAG} -DPIC \
-	    ${SHARED_CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//} \
-	    ${CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//} \
+	    ${_NOSSP_SHARED_CFLAGS} \
+	    ${_NOSSP_CFLAGS} \
 	    -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
 
@@ -36,8 +45,8 @@ PIEFLAG?=-fpie
 
 .cc.nossppico .C.nossppico .cpp.nossppico .cxx.nossppico:
 	${CXX} ${PICFLAG} -DPIC \
-	    ${SHARED_CXXFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//} \
-	    ${CXXFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//:C/^-fsanitize.*$//} \
+	    ${_NOSSP_SHARED_CXXFLAGS} \
+	    ${_NOSSP_CXXFLAGS} \
 	    -c ${.IMPSRC} -o ${.TARGET}
 
 .cc.pieo .C.pieo .cpp.pieo .cxx.pieo:
@@ -66,8 +75,8 @@ PIEFLAG?=-fpie
 
 .asm.nossppico:
 	${CC:N${CCACHE_BIN}} -x assembler-with-cpp ${PICFLAG} -DPIC \
-	    ${SHARED_CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//} \
-	    ${CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//} \
+	    ${_NOSSP_SHARED_ASFLAGS} \
+	    ${_NOSSP_ASFLAGS} \
 	    ${ACFLAGS} \
 	    -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}
@@ -86,8 +95,8 @@ PIEFLAG?=-fpie
 
 .S.nossppico:
 	${CC:N${CCACHE_BIN}} ${PICFLAG} -DPIC \
-	    ${SHARED_CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//} \
-	    ${CFLAGS:C/^-fstack-protector.*$//:C/^-fstack-clash-protection.*$//} \
+	    ${_NOSSP_SHARED_ASFLAGS} \
+	    ${_NOSSP_ASFLAGS} \
 	    ${ACFLAGS} \
 	    -c ${.IMPSRC} -o ${.TARGET}
 	${CTFCONVERT_CMD}

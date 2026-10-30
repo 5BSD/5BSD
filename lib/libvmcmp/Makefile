@@ -22,6 +22,11 @@ VMCMP_SCHEMAPACKAGE= libvmcmp-dev
 FILESGROUPS+= VMCMP_NOTICE
 VMCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 VMCMP_NOTICEDIR= /usr/share/licenses/libvmcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= VMCMP_NOTICEPARENT
+VMCMP_NOTICEPARENT= ${VMCMP_NOTICEDIR:H}
+VMCMP_NOTICEPARENTTAGS= ${VMCMP_NOTICEDIRTAGS}
+
 INCS=	vmcmp.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

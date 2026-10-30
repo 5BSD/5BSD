@@ -1330,7 +1330,7 @@ dmu_recv_begin(const char *tofs, const char *tosnap,
     dmu_replay_record_t *drr_begin, boolean_t force, boolean_t heal,
     boolean_t resumable, nvlist_t *localprops, nvlist_t *hidden_args,
     const char *origin, dmu_recv_cookie_t *drc, zfs_file_t *fp,
-    offset_t *voffp)
+    offset_t *voffp, const dmu_recv_io_t *io)
 {
 	dmu_recv_begin_arg_t drba = { 0 };
 	int err = 0;
@@ -1339,6 +1339,7 @@ dmu_recv_begin(const char *tofs, const char *tosnap,
 	crhold(cr);
 
 	memset(drc, 0, sizeof (dmu_recv_cookie_t));
+	drc->drc_io = io;
 	drc->drc_drr_begin = drr_begin;
 	drc->drc_drrb = &drr_begin->drr_u.drr_begin;
 	drc->drc_tosnap = tosnap;
@@ -1652,8 +1653,10 @@ receive_read(dmu_recv_cookie_t *drc, int len, void *buf)
 	while (done < len) {
 		ssize_t resid = len - done;
 		zfs_file_t *fp = drc->drc_fp;
-		int err = zfs_file_read(fp, (char *)buf + done,
-		    len - done, &resid);
+		int err = drc->drc_io != NULL ?
+		    drc->drc_io->read(drc, (char *)buf + done, len - done,
+		    &resid, drc->drc_io->argument) :
+		    zfs_file_read(fp, (char *)buf + done, len - done, &resid);
 		if (err == 0 && resid == len - done) {
 			/*
 			 * Note: ECKSUM or ZFS_ERR_STREAM_TRUNCATED indicates

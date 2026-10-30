@@ -107,11 +107,36 @@ static fo_fspacectl_t	vn_fspacectl;
 
 
 
+/*
+ * Security consumers need text exclusion to cover existing shared writable
+ * mappings as well as open writers.  Only the UFS and ZFS backends have been
+ * admitted for this use.  In particular, tmpfs tracks shared writers in
+ * swp.writemappings rather than v_writecount; its VOP_SET_TEXT does not exclude
+ * them.  Stacked, remote and userspace filesystems require a separate audit.
+ *
+ * This predicate acquires no pin.  Callers must hold the vnode lock across the
+ * check, verification and VOP_SET_TEXT, and retain the text reference for the
+ * entire lifetime of the verified contents.  It does not prevent raw-device
+ * writes or establish signer trust.
+ */
+bool
+vn_text_pin_supported(struct vnode *vp)
+{
+	const char *name;
+
+	ASSERT_VOP_LOCKED(vp, "vn_text_pin_supported");
+	if (vp->v_type != VREG || VN_IS_DOOMED(vp) || vp->v_mount == NULL)
+		return (false);
+	name = vp->v_mount->mnt_vfc->vfc_name;
+	return (strcmp(name, "ufs") == 0 || strcmp(name, "zfs") == 0);
+}
+
 /* Nested calls restore the previous context, including after I/O faults. */
 void
 vn_file_context_enter(struct vn_file_context *ctx, struct file *fp,
     struct file *fp2, int openflags)
 {
+	bzero(ctx, sizeof(*ctx));
 	ctx->previous = curthread->td_vnfile;
 	ctx->fp = fp;
 	ctx->fp2 = fp2;
@@ -122,8 +147,23 @@ vn_file_context_enter(struct vn_file_context *ctx, struct file *fp,
 void
 vn_file_context_leave(struct vn_file_context *ctx)
 {
+	struct vn_io_guard *guard;
+
 	MPASS(curthread->td_vnfile == ctx);
 	curthread->td_vnfile = ctx->previous;
+	while ((guard = ctx->io_guards) != NULL) {
+		ctx->io_guards = guard->next;
+		guard->release(guard);
+	}
+}
+
+void
+vn_file_context_guard(struct vn_file_context *ctx, struct vn_io_guard *guard)
+{
+	MPASS(curthread->td_vnfile == ctx && ctx->synchronous_io);
+	MPASS(guard->release != NULL);
+	guard->next = ctx->io_guards;
+	ctx->io_guards = guard;
 }
 
 struct vn_file_context *
@@ -148,6 +188,7 @@ vn_openfile_io_fault(struct file *fp, struct uio *uio, struct ucred *cred,
 		mp = vfs_ref_from_vp(fp->f_vnode);
 	}
 	vn_file_context_enter(&ctx, fp, NULL, 0);
+	ctx.synchronous_io = true;
 	error = vn_io_fault(fp, uio, cred, flags, td);
 	vn_file_context_leave(&ctx);
 	if (mp != NULL)
@@ -162,6 +203,10 @@ vn_openfile_truncate(struct file *fp, off_t length, struct ucred *cred, struct t
 	int error;
 
 	vn_file_context_enter(&ctx, fp, NULL, 0);
+	/* Truncation performs the write and truncate MAC checks synchronously.
+	 * Keep any admitted write guard until the operation (including retries)
+	 * completes, just as the synchronous read/write wrapper does. */
+	ctx.synchronous_io = true;
 	error = vn_truncate(fp, length, cred, td);
 	vn_file_context_leave(&ctx);
 	return (error);
@@ -3525,7 +3570,6 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 			return (EACCES);
 	} else {
 		maxprot |= VM_PROT_WRITE;
-		cap_maxprot |= VM_PROT_WRITE;
 	}
 	maxprot &= cap_maxprot;
 

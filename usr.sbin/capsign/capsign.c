@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +17,49 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <libcapbundle.h>
+
+/* Trust-catalogue input must not conceal another PEM object or private data. */
+static EVP_PKEY *
+public_key_only(const char *path)
+{
+	struct stat st;
+	char header[64];
+	FILE *stream;
+	EVP_PKEY *key;
+	off_t start;
+	int fd, ch;
+
+	fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+	if (fd < 0 || fstat(fd, &st) != 0)
+		err(1, "%s", path);
+	if (!S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > 4096)
+		errx(1, "a bounded regular public-key file is required");
+	stream = fdopen(fd, "r");
+	if (stream == NULL)
+		err(1, "fdopen");
+	do {
+		ch = fgetc(stream);
+	} while (ch != EOF && isspace((unsigned char)ch));
+	if (ch == EOF || ungetc(ch, stream) == EOF ||
+	    (start = ftello(stream)) < 0 ||
+	    fgets(header, sizeof(header), stream) == NULL ||
+	    (strcmp(header, "-----BEGIN PUBLIC KEY-----\n") != 0 &&
+	    strcmp(header, "-----BEGIN PUBLIC KEY-----\r\n") != 0))
+		errx(1, "a single public-key-only PEM object is required");
+	if (fseeko(stream, start, SEEK_SET) != 0)
+		err(1, "seek public key");
+	key = PEM_read_PUBKEY(stream, NULL, NULL, NULL);
+	if (key == NULL)
+		errx(1, "cannot parse public key");
+	do {
+		ch = fgetc(stream);
+	} while (ch != EOF && isspace((unsigned char)ch));
+	if (ch != EOF || ferror(stream))
+		errx(1, "a single public-key-only PEM object is required");
+	if (fclose(stream) != 0)
+		err(1, "close public key");
+	return (key);
+}
 
 static char *temporary;
 static void
@@ -243,12 +287,7 @@ main(int argc, char **argv)
 		unsigned char raw[CAPIMAGE_KEY_SIZE];
 		size_t length = sizeof(raw);
 		if (argc != 0 || public == NULL) usage();
-		fd = open(public, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-		if (fd < 0) err(1, "%s", public);
-		stream = fdopen(fd, "r");
-		if (stream == NULL) err(1, "fdopen");
-		EVP_PKEY *pkey = PEM_read_PUBKEY(stream, NULL, NULL, NULL);
-		fclose(stream);
+		EVP_PKEY *pkey = public_key_only(public);
 		if (pkey == NULL || EVP_PKEY_base_id(pkey) != EVP_PKEY_ED25519 ||
 		    EVP_PKEY_get_raw_public_key(pkey, raw, &length) != 1 || length != sizeof(raw))
 			errx(1, "an Ed25519 public key is required");

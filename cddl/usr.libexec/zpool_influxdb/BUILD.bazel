@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "zpool_influxdb",
+    srcs = ["//sys/contrib/openzfs:cmd/zpool_influxdb/zpool_influxdb.c", "//sys/modules/zfs:zfs_config.h"],
+    deps = ["//cddl/lib/libnvpair:nvpair", "//cddl/lib/libspl:spl", "//cddl/lib/libzfs:zfs", "//sys/contrib/openzfs:spl_headers"],
+    dynamic_deps = ["//cddl/lib/libnvpair:nvpair_shared", "//cddl/lib/libspl:spl_shared", "//cddl/lib/libzfs:zfs_shared"],
+    local_defines = ["IN_BASE", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY", 'SYSCONFDIR=\\\"/etc\\\"', 'PKGDATADIR=\\\"/usr/share/zfs\\\"'],
+    copts = ["-std=c99", "-fPIE", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h", "-include", "sys/modules/zfs/zfs_config.h"],
+    linkopts = ["-pie", "-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "zpool_influxdb", manual = "//sys/contrib/openzfs:man/man8/zpool_influxdb.8", package = "zfs", bindir = "/usr/libexec/zfs", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

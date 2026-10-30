@@ -72,6 +72,8 @@
  *
  * Options:
  *	-v	Verbose.
+ *	-d	Resolve the named kernel provider; soft/software selects the
+ *		software class and may temporarily enable user software crypto.
  *	-z	Run all algorithms on a variety of buffer sizes.
  *
  * Supported algorithms:
@@ -361,6 +363,11 @@ enable_user_soft(void)
 	int on = 1;
 	size_t cursize = sizeof(curstate);
 
+	/* Avoid a privileged write when the requested setting is already active. */
+	if (sysctlbyname(CRYPT_SOFT_ALLOW, &curstate, &cursize, NULL, 0) == -1)
+		err(1, "sysctl(%s)", CRYPT_SOFT_ALLOW);
+	if (curstate != 0)
+		return;
 	if (sysctlbyname(CRYPT_SOFT_ALLOW, &curstate, &cursize,
 	    &on, sizeof(on)) == 0) {
 		if (curstate == 0)
@@ -375,10 +382,9 @@ crlookup(const char *devname)
 {
 	struct crypt_find_op find;
 
-	if (strncmp(devname, "soft", 4) == 0 ||
-	    strncmp(devname, "ossl", 4) == 0 ||
-	    strncmp(devname, "aesni", 5) == 0 ||
-	    strncmp(devname, "armv8crypto", 11) == 0) {
+	/* Only the explicit class aliases permit arbitrary software selection.
+	 * Named providers must be resolved by CIOCFINDDEV, not substituted. */
+	if (strcmp(devname, "soft") == 0 || strcmp(devname, "software") == 0) {
 		enable_user_soft();
 		return CRYPTO_FLAG_SOFTWARE;
 	}

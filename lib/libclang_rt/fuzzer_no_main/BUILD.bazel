@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "fuzzer_no_main",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerCrossOver.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerDataFlowTrace.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerDriver.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtFunctionsDlsym.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtFunctionsWeak.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerExtraCounters.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerFork.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerIO.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerIOPosix.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerLoop.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerMerge.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerMutate.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerSHA1.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerTracePC.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtil.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtilLinux.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/fuzzer:FuzzerUtilPosix.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/fuzzer:headers"],
+)

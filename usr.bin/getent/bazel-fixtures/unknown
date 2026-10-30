@@ -1,0 +1,4 @@
+Unknown database: nonexistent-database
+Usage: getent database [key ...]
+       database may be one of:
+	 ethers group hosts netgroup networks passwd protocols rpc services shells utmpx

@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["libnvmf.h"], strip_include_prefix = ".",
+    deps = ["//sys/dev/nvmf:headers"], visibility = ["//visibility:public"])
+# INTERNAL library: ordinary and PIE archives, not an installed shared library.
+[
+    cc_library(name = "crc" + suffix, srcs = ["//sys/libkern:gsb_crc32.c"],
+        copts = flags + ["-Wno-cast-align"], linkstatic = True, target_compatible_with = _PLATFORM)
+    for suffix, flags in [("", []), ("_pie", ["-fPIE", "-DPIC"])]
+]
+[
+    cc_library(name = "nvmf" + suffix,
+        srcs = ["nvmf_controller.c", "nvmf_host.c", "nvmf_tcp.c", "nvmf_transport.c", "internal.h", "//sys/dev/nvmf:controller/nvmft_subr.c"],
+        deps = [":headers", ":crc" + suffix, "//lib/libnv:nv"],
+        implementation_deps = ["//sys/dev/nvmf:private_headers"],
+        copts = flags, linkstatic = True, target_compatible_with = _PLATFORM,
+        visibility = ["//visibility:public"])
+    for suffix, flags in [("", []), ("_pie", ["-fPIE", "-DPIC"])]
+]
+bsd_component_archive(name = "static_archive", groups = [":crc", ":nvmf"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":crc_pie", ":nvmf_pie"], visibility = ["//visibility:public"])

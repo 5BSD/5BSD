@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_create.sh"], visibility = ["//sbin/newfs_msdos/tests:__pkg__"])

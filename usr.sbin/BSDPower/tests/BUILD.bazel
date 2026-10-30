@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Keep the installed executable's linkage identical to Make. The runtime-only
+# variant resolves declared candidate libraries, including transitive libc deps.
+[cc_binary(name = "config_test" + suffix, srcs = ["config_test.c", "//usr.sbin/BSDPower:config.c"],
+    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libucl:ucl_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for suffix in ["", "_runtime"]]
+bsd_kyua_test(name = "config_test_run", program = ":config_test_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/libucl:ucl_shared": "libprivateucl.so.1", "//lib/msun:m_shared": "libm.so.5",
+        "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+# Preserve direct provider compilation and the maintained included-source fixtures.
+[cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDPower:config.c"] +
+        (["//usr.sbin/BSDPower:BSDPower.c"] if name == "provider_test" else ["reactor_impl.c"] if name == "reactor_test" else []),
+    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl",
+        "//lib/atf/libatf-c:atf_c", "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers"],
+    local_defines = ["BSDPOWER_TESTING"] if name != "lease_test" else [],
+    copts = ["-Wno-unused-function"] if name == "lease_test" else [],
+    linkopts = ["-static"] + (["-Wl,--wrap=service_listener_fd,--wrap=service_listener_accept,--wrap=service_provider_quiescing,--wrap=service_provider_quiesce_complete"] if name == "reactor_test" else []),
+    linkstatic = True)
+ for name in ["provider_test", "lease_test", "reactor_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", case_timeout = 180 if name == "reactor_test" else 120,
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    tags = [] if name == "lease_test" else ["manual", "requires-matching-kernel"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["provider_test", "lease_test", "reactor_test"]]
+
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+bsd_fidl_ir(name = "next_ir", schemas = ["evolution/powercmp_next.fidl"], available = "bsd:2",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "next_bindings", ir = ":next_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.power.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.power.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+
+filegroup(name = "next_sources", srcs = [":next_bindings"], output_group = "sources")
+filegroup(name = "next_header_files", srcs = [":next_bindings"], output_group = "headers")
+cc_library(name = "next_headers", hdrs = [":next_header_files"], strip_include_prefix = "next_bindings")
+# Make links all three generated objects directly into this standalone peer.
+cc_library(name = "next_codec", srcs = [":next_sources"],
+    deps = [":next_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, alwayslink = True)
+# The newer peer must never inherit the production bsd:1 generated headers.
+cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
+    deps = [":next_headers", ":next_codec", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libc++:cxx"],
+    linkopts = ["-static"], linkstatic = True)
+
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c",
+        "//usr.sbin/BSDPower:config.c"],
+    deps = ["//usr.sbin/BSDPower:test_headers", "//lib/libpowercmp:powercmp",
+        "//lib/libpowercmp:generated_headers", "//lib/libfidl:fidl",
+        "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl",
+        "//lib/atf/libatf-c:atf_c"],
+    local_defines = ["BSDPOWER_TESTING"], linkopts = ["-static"], linkstatic = True)
+bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",
+    suite_files = {":next_peer": "next_peer"}, case_timeout = 120,
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    tags = ["manual", "requires-matching-kernel"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+
+
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDPower:config.c"],
+    deps = ["//usr.sbin/BSDPower:test_headers", "//tools/build/fuchsia:daemon_bench_headers",
+        "//lib/libpowercmp:client_source_headers", "//lib/libpowercmp:powercmp",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl"],
+    dynamic_deps = ["//lib/libpowercmp:powercmp_shared", "//lib/libfidl:fidl_shared", "//lib/libchannel:channel_shared",
+        "//lib/libservice:service_shared", "//lib/libucl:ucl_shared"],
+    local_defines = ["BSDPOWER_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
+
+load(":installation.bzl", "PROGRAMS")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "runtime-tests", bindir = "/usr/tests/usr.sbin/BSDPower") for name in PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["config_test", "evolution_test", "lease_test", "provider_test", "reactor_test"],
+    interfaces = {n: "atf" for n in ["config_test", "evolution_test", "lease_test", "provider_test", "reactor_test"]},
+    metadata = {n: '{"timeout":"120"}' for n in ["evolution_test", "lease_test", "provider_test"]} | {"reactor_test": '{"timeout":"180"}'})
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=runtime-tests"])
+ for name, src, dest in [
+    ("install_kyuafile", ":kyuafile", "/usr/tests/usr.sbin/BSDPower/Kyuafile"),
+    ("install_license", "//contrib/fuchsia:LICENSE", "/usr/share/licenses/bsdpower-tests/fuchsia/LICENSE"),
+    ("install_patents", "//contrib/fuchsia:PATENTS", "/usr/share/licenses/bsdpower-tests/fuchsia/PATENTS"),
+    ("install_ucl_notice", "//contrib/libucl:COPYING", "/usr/share/licenses/bsdpower-tests/libucl/COPYING"),
+ ]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_license", ":install_patents", ":install_ucl_notice"],
+    visibility = ["//usr.sbin/BSDPower:__pkg__"])

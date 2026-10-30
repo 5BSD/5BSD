@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "headers", hdrs = ["pseudofs.h", "pseudofs_internal.h"], includes = ["../.."],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+_KERNEL_SOURCES = ["pseudofs.c", "pseudofs_fileno.c", "pseudofs_vncache.c", "pseudofs_vnops.c"]
+_KERNEL_DEPS = [":headers", "//sys/amd64/conf:generic_opt_pseudofs_header"]
+amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
+amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)

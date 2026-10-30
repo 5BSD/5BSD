@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['auxhelper.cc', 'dynamic_cast.cc', 'exception.cc', 'guard.cc', 'libelftc_dem_gnu3.c', 'memory.cc', 'stdexcept.cc', 'terminate.cc', 'typeinfo.cc'], visibility = ["//lib/libcxxrt:__pkg__", "//lib/libc++:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."], visibility = ["//visibility:public"])
+
+exports_files(["cxxabi.h"], visibility = ["//lib/libc++:__pkg__"])
+
+# Public installed ABI API without the private implementation include root.
+cc_library(name = "public_headers", hdrs = ["cxxabi.h"], strip_include_prefix = ".",
+    visibility = ["//visibility:public"])

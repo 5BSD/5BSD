@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
+bsd_yacc(name = "parser", src = "expr.y", output = "expr.c", header = "expr.h",
+    yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+cc_library(name = "headers", hdrs = [":parser_header"], strip_include_prefix = ".")
+cc_binary(name = "expr", srcs = [":parser_source"], deps = [":headers"], copts = ["-fPIE", "-fwrapv", "-Wno-missing-variable-declarations"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "expr", manual = "expr.1", package = "runtime", bindir = "/bin", man_section = "1")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//bin:__pkg__"],
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

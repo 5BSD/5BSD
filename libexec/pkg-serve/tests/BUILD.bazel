@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ["greeting", "unknown_command", "get_missing_file", "get_file", "get_file_leading_slash", "get_file_uptodate", "get_directory", "get_missing_age", "get_bad_age", "get_empty_arg", "path_traversal", "get_subdir_file", "multiple_gets", "bad_basedir"]
+[bsd_atf_test(
+    name = case,
+    case_name = case,
+    body = "pkg_serve_test.sh",
+    config_files = {"//libexec/pkg-serve:pkg-serve": "pkg_serve"},
+    data = ["//libexec/rtld-elf:rtld_binary"],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ["//bin/mkdir:mkdir", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/rm:rm", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff"],
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libregex:regex_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in CASES]
+test_suite(name = "tests", tests = [":" + case for case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "pkg_serve_test", body = "pkg_serve_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["pkg_serve_test"], interfaces = {"pkg_serve_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":pkg_serve_test",
+    destination = "/usr/tests/libexec/pkg-serve/pkg_serve_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/libexec/pkg-serve/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])

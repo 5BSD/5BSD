@@ -80,11 +80,20 @@ SRCS+= rtld_malloc.c
 
 LIBSYS_SRCTOP=	${.CURDIR:H}/libsys
 .if exists(${LIBSYS_SRCTOP}/${MACHINE_CPUARCH}/_umtx_op_err.S)
-.PATH: ${LIBSYS_SRCTOP}/${MACHINE_CPUARCH}
+_LIBTHR_UMTX_SOURCE= ${LIBSYS_SRCTOP}/${MACHINE_CPUARCH}/_umtx_op_err.S
 .else
-.PATH: ${LIBSYS_SRCTOP}
+_LIBTHR_UMTX_SOURCE= ${LIBSYS_SRCTOP}/_umtx_op_err.c
 .endif
+.PATH: ${_LIBTHR_UMTX_SOURCE:H}
 OBJS+=	_umtx_op_err.o
+
+# Preserve this object's established archive position while exposing its source
+# to native build graph exporters. Variant inventories expand after bsd.lib.mk.
+VARIANT_SOURCE_OBJECTS+= ${OBJS:M_umtx_op_err.o} ${SOBJS:M_umtx_op_err.pico} \
+    ${PIEOBJS:M_umtx_op_err.pieo} ${NOSSPSOBJS:M_umtx_op_err.nossppico}
+.for _suffix in o pico pieo nossppico
+VARIANT_SOURCE._umtx_op_err.${_suffix}= ${_LIBTHR_UMTX_SOURCE}
+.endfor
 
 .if ${MK_INSTALLLIB} != "no"
 SYMLINKS+=lib${LIB}.a ${LIBDIR}/libpthread.a

@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+load(":sources.bzl", "MATH_SOURCES", "TEXTUAL_SOURCES")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = glob(["src/*.h", "x86/*.h", "ld80/*.h"]),
+    includes = ["x86", "ld80", "amd64", "src"], visibility = ["//lib/libgcc_s:__pkg__"])
+cc_library(name = "m", srcs = MATH_SOURCES, textual_hdrs = TEXTUAL_SOURCES,
+    implementation_deps = [":headers", "//lib/libc/include:math_headers"],
+    local_defines = ["_RENAME_FMA", "_RENAME_FMAF"],
+    copts = ["-fno-math-errno", "-ffp-exception-behavior=maytrap", "-fno-common"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":m"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map", "amd64/Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+
+cc_shared_library(name = "m_shared", deps = [":m"], shared_lib_name = "libm.so.5",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,libm.so.5", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_test(name = "math_" + variant, srcs = ["native_math_test.c"],
+    deps = ([":archive_link", ":headers"] if variant == "static" else [":m", ":headers"]),
+    dynamic_deps = [] if variant == "static" else [":m_shared"],
+    copts = ["-fno-builtin", "-frounding-math", "-ffp-exception-behavior=strict"],
+    features = [] if variant == "static" else ["bsd_test_runtime_paths"], linkstatic = variant == "static",
+    size = "small", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+
+load(":installation.bzl", "math_installation")
+math_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    target_compatible_with = _PLATFORM,
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+exports_files(["src/s_scalbn.c"], visibility = ["//lib/libc/amd64/gen:__pkg__", "//lib/libgcc_s:__pkg__"])
+
+exports_files(['src/s_fabs.c', 'src/s_fabsf.c', 'src/s_fabsl.c', 'src/s_fmax.c', 'src/s_fmaxf.c', 'src/s_logb.c', 'src/s_logbf.c', 'src/s_scalbnf.c', 'src/s_fmaxl.c', 'src/s_logbl.c', 'src/s_scalbnl.c'], visibility = ["//lib/libgcc_s:__pkg__"])

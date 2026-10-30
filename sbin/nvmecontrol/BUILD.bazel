@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h"]), strip_include_prefix = ".",
+    deps = ["//sys/dev/nvme:headers", "//lib/libnvmf:headers"], visibility = ["//sbin/camcontrol:__pkg__", "//sbin/nvmecontrol:__subpackages__"])
+exports_files(["identify_ext.c", "nc_util.c"], visibility = ["//sbin/camcontrol:__pkg__", "//sbin/nvmecontrol:__subpackages__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "nvmecontrol", srcs = ['comnd.c', 'connect.c', 'devlist.c', 'disconnect.c', 'discover.c', 'fabrics.c', 'firmware.c', 'format.c', 'identify.c', 'identify_ext.c', 'logpage.c', 'nc_util.c', 'ns.c', 'nsid.c', '//sys/dev/nvme:nvme_util.c', 'nvmecontrol.c', 'passthru.c', 'perftest.c', 'power.c', 'reconnect.c', 'reset.c', 'resv.c', 'sanitize.c', 'selftest.c', 'telemetry.c'],
+    deps = [":headers"] + ['//lib/libnvmf:nvmf_pie', '//lib/libnv:nv', '//lib/libsbuf:sbuf', '//lib/libutil:util'],
+    dynamic_deps = ['//lib/libnv:nv_shared', '//lib/libsbuf:sbuf_shared', '//lib/libutil:util_shared'],
+    copts = ["-fPIE"], linkopts = ["-pie", "-rdynamic"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "nvmecontrol", manual = "nvmecontrol.8", package = "nvme-tools", bindir = "/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//sbin:__pkg__"],
+    manifests = [":install_manifest"] + ["//sbin/nvmecontrol/modules/" + name + ":install_manifest" for name in ["intel", "micron", "samsung", "wdc"]],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=nvme-tools","dbg"]}' for d in ['/usr/lib/debug/sbin', '/usr/lib/debug/lib', '/usr/lib/debug/lib/nvmecontrol']},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/nvme-tools:__pkg__"])

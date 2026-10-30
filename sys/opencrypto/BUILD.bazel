@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "cryptodev_headers", hdrs = ["cryptodev.h", "_cryptodev.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/kern:__pkg__", "//sys/geom/eli:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))
+
+cc_library(name = "ed25519_headers", hdrs = ["cryptodesc_ed25519.h"], includes = [".."], visibility = ["//sys/security/mac_veriexec:__pkg__"])

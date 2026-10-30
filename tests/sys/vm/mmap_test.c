@@ -25,6 +25,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/mman.h>
 #include <sys/sysctl.h>
 
@@ -296,6 +297,49 @@ ATF_TC_BODY(mmap__write_only, tc)
 	munmap(p, pagesize);
 }
 
+ATF_TC_WITHOUT_HEAD(mmap__maxprot_file);
+ATF_TC_BODY(mmap__maxprot_file, tc)
+{
+	cap_rights_t rights;
+	char path[] = "mapping.XXXXXX", byte;
+	char *mapping;
+	int fd, pagesize;
+
+	pagesize = getpagesize();
+	ATF_REQUIRE(pagesize > 0);
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(unlink(path) == 0);
+	ATF_REQUIRE(ftruncate(fd, pagesize) == 0);
+	ATF_REQUIRE_EQ(1, pwrite(fd, "a", 1, 0));
+	cap_rights_init(&rights, CAP_READ, CAP_SEEK, CAP_MMAP_R);
+	ATF_REQUIRE(cap_rights_limit(fd, &rights) == 0);
+
+	mapping = mmap(NULL, pagesize, PROT_READ | PROT_MAX(PROT_READ),
+	    MAP_PRIVATE, fd, 0);
+	ATF_REQUIRE(mapping != MAP_FAILED);
+	ATF_REQUIRE_EQ('a', mapping[0]);
+	ATF_REQUIRE_ERRNO(EACCES,
+	    mprotect(mapping, pagesize, PROT_READ | PROT_WRITE) == -1);
+	ATF_REQUIRE_ERRNO(EACCES,
+	    mprotect(mapping, pagesize, PROT_READ | PROT_EXEC) == -1);
+	ATF_REQUIRE_EQ('a', mapping[0]);
+	ATF_REQUIRE(munmap(mapping, pagesize) == 0);
+
+	/* A read-limited descriptor still supports ordinary private COW. */
+	mapping = mmap(NULL, pagesize, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE, fd, 0);
+	ATF_REQUIRE(mapping != MAP_FAILED);
+	mapping[0] = 'b';
+	ATF_REQUIRE_EQ('b', mapping[0]);
+	ATF_REQUIRE_EQ(1, pread(fd, &byte, 1, 0));
+	ATF_REQUIRE_EQ('a', byte);
+	ATF_REQUIRE(munmap(mapping, pagesize) == 0);
+	ATF_REQUIRE_ERRNO(ENOTCAPABLE,
+	    mmap(NULL, pagesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0) == MAP_FAILED);
+	ATF_REQUIRE(close(fd) == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(mmap__maxprot_basic);
 ATF_TC_BODY(mmap__maxprot_basic, tc)
 {
@@ -399,6 +443,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mmap__dev_zero_private);
 	ATF_TP_ADD_TC(tp, mmap__dev_zero_shared);
 	ATF_TP_ADD_TC(tp, mmap__write_only);
+	ATF_TP_ADD_TC(tp, mmap__maxprot_file);
 	ATF_TP_ADD_TC(tp, mmap__maxprot_basic);
 	ATF_TP_ADD_TC(tp, mmap__maxprot_shm);
 	ATF_TP_ADD_TC(tp, mmap__device_reinsert);

@@ -3,10 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * BSDTime per-label policy: which labels may step/slew the clock.  Mirrors the
- * hardened UCL load of the sibling providers (BSDSysctl/BSDNetwork).
+ * BSDTime per-label policy: which labels may step/slew the clock.  The policy is a
+ * bounded data-only input; unknown or ambiguous grants reject the whole file.
  */
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -46,19 +47,58 @@ valid_label(const char *label, size_t length)
 	return (true);
 }
 
-/* Read a boolean "set" member from a client/default object (absent => false). */
+/* Validate length-delimited keys before any C-string lookup. */
 static bool
-object_set_flag(const ucl_object_t *obj)
+valid_keys(const ucl_object_t *obj, const char *const *keys, size_t count)
+{
+	const ucl_object_t *entry;
+	ucl_object_iter_t it = NULL;
+	size_t i;
+
+	if (obj == NULL || ucl_object_type(obj) != UCL_OBJECT)
+		return (false);
+	while ((entry = ucl_object_iterate(obj, &it, true)) != NULL) {
+		if (entry->key == NULL || strlen(entry->key) != entry->keylen ||
+		    entry->next != NULL)
+			return (false);
+		for (i = 0; i < count; i++)
+			if (strcmp(entry->key, keys[i]) == 0)
+				break;
+		if (i == count)
+			return (false);
+	}
+	return (true);
+}
+
+static bool
+valid_permissions(const ucl_object_t *obj)
+{
+	static const char *const keys[] = { "set" };
+	const ucl_object_t *entry;
+	ucl_object_iter_t it = NULL;
+
+	if (!valid_keys(obj, keys, sizeof(keys) / sizeof(keys[0])))
+		return (false);
+	while ((entry = ucl_object_iterate(obj, &it, true)) != NULL)
+		if (ucl_object_type(entry) != UCL_BOOLEAN)
+			return (false);
+	return (true);
+}
+
+/* Called only after validating the entire permission object. */
+static bool
+object_set_flag(const ucl_object_t *obj, const char *key)
 {
 	const ucl_object_t *v;
 
-	v = ucl_object_lookup(obj, "set");
+	v = ucl_object_lookup(obj, key);
 	return (v != NULL && ucl_object_toboolean(v));
 }
 
 static int
 config_parse(const char *text, struct timecmp_config *config)
 {
+	static const char *const keys[] = { "default", "clients" };
 	struct ucl_parser *parser;
 	const ucl_object_t *root, *def, *clients, *entry;
 	ucl_object_iter_t it;
@@ -66,22 +106,24 @@ config_parse(const char *text, struct timecmp_config *config)
 	size_t label_len;
 	int result;
 
-	parser = ucl_parser_new(0);
+	parser = ucl_parser_new(UCL_PARSER_NO_FILEVARS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_IMPLICIT_ARRAYS);
 	if (parser == NULL)
 		return (errno = ENOMEM, -1);
 	result = -1;
-	if (!ucl_parser_add_string(parser, text, strlen(text)) ||
+	if (!ucl_parser_add_chunk_full(parser, (const unsigned char *)text,
+	    strlen(text), 0, UCL_DUPLICATE_ERROR, UCL_PARSE_UCL) ||
 	    ucl_parser_get_error(parser) != NULL)
 		goto out;
 	root = ucl_parser_get_object(parser);
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT)
+	if (!valid_keys(root, keys, sizeof(keys) / sizeof(keys[0])))
 		goto out_root;
 
 	def = ucl_object_lookup(root, "default");
 	if (def != NULL) {
-		if (ucl_object_type(def) != UCL_OBJECT)
+		if (!valid_permissions(def))
 			goto out_root;
-		config->default_set = object_set_flag(def);
+		config->default_set = object_set_flag(def, "set");
 	}
 
 	clients = ucl_object_lookup(root, "clients");
@@ -90,17 +132,17 @@ config_parse(const char *text, struct timecmp_config *config)
 			goto out_root;
 		it = NULL;
 		while ((entry = ucl_object_iterate(clients, &it, true)) != NULL) {
-			if (ucl_object_type(entry) != UCL_OBJECT)
+			if (entry->next != NULL || !valid_permissions(entry))
 				goto out_root;
 			label = ucl_object_key(entry);
-			label_len = label != NULL ? strlen(label) : 0;
+			label_len = entry->keylen;
 			if (!valid_label(label, label_len) ||
 			    config->nclients >= TIMECMP_MAX_CLIENTS)
 				goto out_root;
 			(void)strlcpy(config->clients[config->nclients].label,
 			    label, sizeof(config->clients[0].label));
 			config->clients[config->nclients].may_set =
-			    object_set_flag(entry);
+			    object_set_flag(entry, "set");
 			config->nclients++;
 		}
 	}
@@ -117,14 +159,18 @@ out:
 int
 timecmp_config_load_fd(struct timecmp_config *config, int fd)
 {
-	struct stat status;
+	struct stat status, after;
+	struct timecmp_config candidate;
 	char *text;
 	ssize_t amount;
 	size_t done;
 	int error, result;
 
-	if (config == NULL || fd < 0)
+	if (config == NULL) {
+		if (fd >= 0)
+			(void)close(fd);
 		return (errno = EINVAL, -1);
+	}
 	timecmp_config_defaults(config);
 	if (fstat(fd, &status) == -1)
 		goto fail;
@@ -149,7 +195,8 @@ timecmp_config_load_fd(struct timecmp_config *config, int fd)
 		goto fail;
 	done = 0;
 	for (;;) {
-		amount = read(fd, text + done, TIMECMP_CONFIG_FILE_MAX + 1 - done);
+		amount = pread(fd, text + done,
+		    TIMECMP_CONFIG_FILE_MAX + 1 - done, (off_t)done);
 		if (amount == -1 && errno == EINTR)
 			continue;
 		if (amount == -1)
@@ -162,6 +209,16 @@ timecmp_config_load_fd(struct timecmp_config *config, int fd)
 			goto fail_text;
 		}
 	}
+	if (fstat(fd, &after) == -1)
+		goto fail_text;
+	if (done != (size_t)status.st_size || after.st_size != status.st_size ||
+	    after.st_mode != status.st_mode || after.st_uid != status.st_uid ||
+	    after.st_gid != status.st_gid ||
+	    timespeccmp(&after.st_mtim, &status.st_mtim, !=) ||
+	    timespeccmp(&after.st_ctim, &status.st_ctim, !=)) {
+		errno = EINVAL;
+		goto fail_text;
+	}
 	(void)close(fd);
 	fd = -1;
 	if (memchr(text, '\0', done) != NULL) {
@@ -169,14 +226,15 @@ timecmp_config_load_fd(struct timecmp_config *config, int fd)
 		goto fail_text;
 	}
 	text[done] = '\0';
-	timecmp_config_defaults(config);
-	result = config_parse(text, config);
+	timecmp_config_defaults(&candidate);
+	result = config_parse(text, &candidate);
 	error = result == -1 ? errno : 0;
 	free(text);
 	if (result == -1) {
 		timecmp_config_defaults(config);
 		return (errno = error, -1);
 	}
+	*config = candidate;
 	return (0);
 fail_text:
 	error = errno;
@@ -198,9 +256,12 @@ timecmp_config_load(struct timecmp_config *config, const char *path)
 {
 	int fd;
 
-	if (config == NULL || path == NULL)
+	if (config == NULL)
 		return (errno = EINVAL, -1);
-	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	timecmp_config_defaults(config);
+	if (path == NULL)
+		return (errno = EINVAL, -1);
+	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
 		timecmp_config_defaults(config);
 		return (errno == ENOENT ? 0 : -1);

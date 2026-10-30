@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["include/yaml.h"], strip_include_prefix = "include", visibility = ["//visibility:public"])
+cc_library(name = "private_headers", hdrs = ["src/yaml_private.h"], strip_include_prefix = "src", visibility = ["//lib/libyaml:__pkg__"])
+exports_files(["src/api.c", "src/dumper.c", "src/emitter.c", "src/loader.c", "src/parser.c", "src/reader.c", "src/scanner.c", "src/writer.c", "include/yaml.h"], visibility = ["//lib/libyaml:__pkg__"])

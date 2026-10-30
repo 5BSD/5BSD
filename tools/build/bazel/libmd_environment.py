@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 
 
 def digest(path):
@@ -47,6 +48,7 @@ class BuildEnvironment:
         self.inputs = {str(p):digest(p) for p in [self.make,self.profile,recorded,
             self.src/'Makefile',self.src/'Makefile.inc1']}
         self.commands = []
+        self._commands_lock = threading.Lock()
         identity = self.query(['-V','OBJTOP','-V','MACHINE','-V','MACHINE_ARCH','-V','${CC}','-V','PATH'], component=self.src/'lib/libmd', bind_objtop=False)
         rows = identity.splitlines()
         if len(rows)!=5 or rows[:3] != [str(self.objtop),'amd64','amd64']:
@@ -80,7 +82,8 @@ class BuildEnvironment:
         outer = [str(self.make),'-C',str(self.src),*self.fixed,*self.options,
                  'buildenv','BUILDENV_SHELL='+shlex.join(inner)]
         done = subprocess.run(outer,env=self.env,capture_output=True,text=True)
-        self.commands.append({'argv':outer,'status':done.returncode,'stderr':done.stderr})
+        with self._commands_lock:
+            self.commands.append({'argv':outer,'status':done.returncode,'stderr':done.stderr})
         if done.returncode:
             raise ValueError('buildenv query failed: '+done.stderr+done.stdout)
         first,separator,output=done.stdout.partition('\n')

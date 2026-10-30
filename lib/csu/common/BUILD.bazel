@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["crtbrand.S"], visibility = ["//libexec/rtld-elf:__pkg__", "//lib/csu/amd64:__pkg__"])
+cc_library(name = "notes_header", hdrs = ["notes.h"], strip_include_prefix = ".",
+    visibility = ["//libexec/rtld-elf:__pkg__", "//lib/csu/amd64:__pkg__"])
+
+exports_files(["crtbegin.c", "crtend.c", "feature_note.S", "ignore_init_note.S"],
+    visibility = ["//lib/csu/amd64:__pkg__"])
+cc_library(name = "csu_header", hdrs = ["csu_common.h"], strip_include_prefix = ".",
+    visibility = ["//lib/csu/amd64:__pkg__"])

@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+cc_library(name = "headers", hdrs = ['libusb20.h', 'libusb20_desc.h', 'usb.h', 'libusb.h', 'libusb10.h', 'libusb20_int.h'], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "usb", srcs = ['libusb20.c', 'libusb20_desc.c', 'libusb20_ugen20.c', 'libusb01.c', 'libusb10.c', 'libusb10_desc.c', 'libusb10_hotplug.c', 'libusb10_io.c'], deps = [":headers", "//lib/libthr:thr"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":usb"], visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "usb_shared", deps = [":usb"], dynamic_deps = ["//lib/libthr:thr_shared"], shared_lib_name = "libusb.so.4",
+    additional_linker_inputs = [":version_map"], user_link_flags = ["-Wl,-soname,libusb.so.4", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,-z,defs"], visibility = ["//visibility:public"])
+[expand_template(name = "pc_" + name, template = name + ".in", out = name, substitutions = {"@libdir@": "/usr/lib", "@sharedlibdir@": "/usr/lib", "@includedir@": "/usr/include"}) for name in ['libusb-0.1.pc', 'libusb-1.0.pc', 'libusb-2.0.pc']]
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

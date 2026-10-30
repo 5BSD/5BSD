@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "in_cksum_test", srcs = ["in_cksum_test.c", "//sbin/ping:utils.c", "//sbin/ping:utils.h"],
+    deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_CASES = ["aligned_even_length", "aligned_odd_length", "unaligned_even_length", "unaligned_odd_length"]
+[bsd_atf_test(name = "native_" + case, case_name = case, interface = "program", body = ":in_cksum_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _CASES], visibility = ["//visibility:public"])
+
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_test", program = "in_cksum_test", manual = "", package = "tests", bindir = "/usr/tests/sbin/ping")
+bsd_script_wrapper(name = "ping_test", body = "ping_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_script_wrapper(name = "pytest_wrapper", body = "test_ping.py", interpreter = "/usr/libexec/atf_pytest_wrapper -P /usr/tests", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["in_cksum_test", "ping_test", "test_ping.py"], interfaces = {n: "atf" for n in ["in_cksum_test", "ping_test", "test_ping.py"]}, metadata = {"ping_test": '{"is_exclusive":"true"}', "test_ping.py": '{"required_programs":"pytest"}'})
+_FILES = [("ping_test", ":ping_test", "0555"), ("test_ping.py", ":pytest_wrapper", "0555"), ("Kyuafile", ":kyuafile", "0444")] + [(n, n, "0444") for n in ["ping_c1_s56_t1.out", "ping_6_c1_s8_t1.out", "ping_c1_s56_t1_S127.out", "ping_c1_s8_t1_S1.out", "injection.py"]]
+[bsd_install_file(name = "install_extra_" + str(i), src = src, destination = "/usr/tests/sbin/ping/" + n, owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for i, (n, src, mode) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_extra_" + str(i) for i in range(len(_FILES))], visibility = ["//sbin/ping:__pkg__"])

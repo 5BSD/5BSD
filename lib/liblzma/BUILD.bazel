@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+cc_library(
+    name = "configuration", hdrs = ["config.h"], strip_include_prefix = "/lib/liblzma",
+    visibility = ["//usr.bin/xz:__pkg__", "//usr.bin/xzdec:__pkg__", "//usr.bin/lzmainfo:__pkg__"],
+)
+cc_library(
+    name = "lzma", srcs = ['//contrib/xz:src/common/tuklib_physmem.c', '//contrib/xz:src/common/tuklib_cpucores.c', '//contrib/xz:src/liblzma/common/common.c', '//contrib/xz:src/liblzma/common/block_util.c', '//contrib/xz:src/liblzma/common/easy_preset.c', '//contrib/xz:src/liblzma/common/filter_common.c', '//contrib/xz:src/liblzma/common/hardware_physmem.c', '//contrib/xz:src/liblzma/common/hardware_cputhreads.c', '//contrib/xz:src/liblzma/common/index.c', '//contrib/xz:src/liblzma/common/stream_flags_common.c', '//contrib/xz:src/liblzma/common/string_conversion.c', '//contrib/xz:src/liblzma/common/vli_size.c', '//contrib/xz:src/liblzma/common/alone_encoder.c', '//contrib/xz:src/liblzma/common/block_buffer_encoder.c', '//contrib/xz:src/liblzma/common/block_encoder.c', '//contrib/xz:src/liblzma/common/block_header_encoder.c', '//contrib/xz:src/liblzma/common/easy_buffer_encoder.c', '//contrib/xz:src/liblzma/common/easy_encoder.c', '//contrib/xz:src/liblzma/common/easy_encoder_memusage.c', '//contrib/xz:src/liblzma/common/filter_buffer_encoder.c', '//contrib/xz:src/liblzma/common/filter_encoder.c', '//contrib/xz:src/liblzma/common/filter_flags_encoder.c', '//contrib/xz:src/liblzma/common/index_encoder.c', '//contrib/xz:src/liblzma/common/lzip_decoder.c', '//contrib/xz:src/liblzma/common/microlzma_encoder.c', '//contrib/xz:src/liblzma/common/microlzma_decoder.c', '//contrib/xz:src/liblzma/common/stream_buffer_encoder.c', '//contrib/xz:src/liblzma/common/stream_encoder.c', '//contrib/xz:src/liblzma/common/stream_flags_encoder.c', '//contrib/xz:src/liblzma/common/vli_encoder.c', '//contrib/xz:src/liblzma/common/alone_decoder.c', '//contrib/xz:src/liblzma/common/auto_decoder.c', '//contrib/xz:src/liblzma/common/block_buffer_decoder.c', '//contrib/xz:src/liblzma/common/block_decoder.c', '//contrib/xz:src/liblzma/common/block_header_decoder.c', '//contrib/xz:src/liblzma/common/easy_decoder_memusage.c', '//contrib/xz:src/liblzma/common/file_info.c', '//contrib/xz:src/liblzma/common/filter_buffer_decoder.c', '//contrib/xz:src/liblzma/common/filter_decoder.c', '//contrib/xz:src/liblzma/common/filter_flags_decoder.c', '//contrib/xz:src/liblzma/common/index_decoder.c', '//contrib/xz:src/liblzma/common/index_hash.c', '//contrib/xz:src/liblzma/common/stream_buffer_decoder.c', '//contrib/xz:src/liblzma/common/stream_decoder.c', '//contrib/xz:src/liblzma/common/stream_decoder_mt.c', '//contrib/xz:src/liblzma/common/stream_flags_decoder.c', '//contrib/xz:src/liblzma/common/stream_encoder_mt.c', '//contrib/xz:src/liblzma/common/vli_decoder.c', '//contrib/xz:src/liblzma/common/outqueue.c', '//contrib/xz:src/liblzma/check/check.c', '//contrib/xz:src/liblzma/check/crc32_fast.c', '//contrib/xz:src/liblzma/check/crc64_fast.c', '//contrib/xz:src/liblzma/lz/lz_encoder.c', '//contrib/xz:src/liblzma/lz/lz_encoder_mf.c', '//contrib/xz:src/liblzma/lz/lz_decoder.c', '//contrib/xz:src/liblzma/lzma/lzma_encoder.c', '//contrib/xz:src/liblzma/lzma/lzma_encoder_presets.c', '//contrib/xz:src/liblzma/lzma/lzma_encoder_optimum_fast.c', '//contrib/xz:src/liblzma/lzma/lzma_encoder_optimum_normal.c', '//contrib/xz:src/liblzma/lzma/fastpos_table.c', '//contrib/xz:src/liblzma/lzma/lzma_decoder.c', '//contrib/xz:src/liblzma/lzma/lzma2_encoder.c', '//contrib/xz:src/liblzma/lzma/lzma2_decoder.c', '//contrib/xz:src/liblzma/rangecoder/price_table.c', '//contrib/xz:src/liblzma/delta/delta_common.c', '//contrib/xz:src/liblzma/delta/delta_encoder.c', '//contrib/xz:src/liblzma/delta/delta_decoder.c', '//contrib/xz:src/liblzma/simple/simple_coder.c', '//contrib/xz:src/liblzma/simple/simple_encoder.c', '//contrib/xz:src/liblzma/simple/simple_decoder.c', '//contrib/xz:src/liblzma/simple/x86.c', '//contrib/xz:src/liblzma/simple/powerpc.c', '//contrib/xz:src/liblzma/simple/ia64.c', '//contrib/xz:src/liblzma/simple/arm.c', '//contrib/xz:src/liblzma/simple/arm64.c', '//contrib/xz:src/liblzma/simple/armthumb.c', '//contrib/xz:src/liblzma/simple/riscv.c', '//contrib/xz:src/liblzma/simple/sparc.c'],
+    deps = ["//contrib/xz:headers", "//lib/libmd:md_link"],
+    implementation_deps = [":configuration", "//contrib/xz:internal_headers"],
+    local_defines = ["HAVE_CONFIG_H", "TUKLIB_SYMBOL_PREFIX=lzma_"], linkopts = ["-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_configured_version_map(
+    name = "version_map", symbol_maps = ["Symbol.map"], versions = "Versions.def",
+    generator = "//share/mk:version_gen.awk", cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang", compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk", awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+cc_shared_library(
+    name = "lzma_shared", deps = [":lzma"], dynamic_deps = ["//lib/libmd:md_shared"],
+    shared_lib_name = "liblzma.so.5", additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,liblzma.so.5", "-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_pkgconfig.bzl", "bsd_header_pkgconfig")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load(":installation.bzl", "lzma_installation")
+bsd_header_pkgconfig(
+    name = "pkgconfig", template = "//contrib/xz:src/liblzma/liblzma.pc.in",
+    header = "//contrib/xz:src/liblzma/api/lzma/version.h",
+    version_patterns = ["^#define LZMA_VERSION_MAJOR ([0-9]+)$", "^#define LZMA_VERSION_MINOR ([0-9]+)$", "^#define LZMA_VERSION_PATCH ([0-9]+)$"],
+    version_field = "PACKAGE_VERSION", output = "liblzma.pc",
+    substitutions = {"prefix": "/usr", "exec_prefix": "/usr", "libdir": "/usr/lib",
+        "includedir": "/usr/include", "LIBS": "-pthread -lmd", "PTHREAD_CFLAGS": "",
+        "PACKAGE_URL": "https://tukaani.org/xz/"},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+bsd_debug_split(
+    name = "debug", src = ":lzma_shared", binary_name = "install/liblzma.so.5", debug_name = "install/liblzma.so.5.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+)
+bsd_strip_binary(
+    name = "stripped", src = ":debug", output = "stripped/liblzma.so.5",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+)
+lzma_installation(name = "install_manifest")

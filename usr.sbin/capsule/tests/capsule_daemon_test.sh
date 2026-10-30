@@ -4,6 +4,15 @@ export PATH
 # SPDX-License-Identifier: BSD-2-Clause
 #
 
+# Lifecycle cases must not consume the installed machine's policy.
+prepare_lifecycle()
+{
+	capsule_bin=$(atf_config_get capsule capsule)
+	conffile="$(pwd)/lifecycle.conf"
+	printf '%s\n' '# Test-local lifecycle configuration.' > "$conffile"
+	chmod 600 "$conffile"
+}
+
 atf_test_case foreground_lifecycle cleanup
 foreground_lifecycle_head()
 {
@@ -13,12 +22,13 @@ foreground_lifecycle_body()
 {
 	local pid pidfile
 
+	prepare_lifecycle
 	pidfile="$(pwd)/capsule.pid"
 
 	atf_check -s not-exit:0 -e match:"usage: capsule" \
-	    capsule -T unexpected
+	    "$capsule_bin" -T -f "$conffile" unexpected
 
-	capsule -T -p "$pidfile" &
+	"$capsule_bin" -T -f "$conffile" -p "$pidfile" &
 	pid=$!
 
 	atf_check -s exit:0 -o ignore sh -c \
@@ -51,14 +61,15 @@ duplicate_pidfile_body()
 {
 	local pid pidfile
 
+	prepare_lifecycle
 	pidfile="$(pwd)/capsule.pid"
-	capsule -T -p "$pidfile" &
+	"$capsule_bin" -T -f "$conffile" -p "$pidfile" &
 	pid=$!
 
 	atf_check -s exit:0 -o ignore sh -c \
 	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
 	atf_check -s not-exit:0 -e match:"already running" \
-	    capsule -T -p "$pidfile"
+	    "$capsule_bin" -T -f "$conffile" -p "$pidfile"
 	atf_check -s exit:0 kill -TERM "$pid"
 	wait "$pid"
 	rc=$?

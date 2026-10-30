@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//lib/libcompiler_rt:sources.bzl", "AMD64_BUILTIN_SOURCES")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_COMMON = ["-D_LIBUNWIND_IS_NATIVE_ONLY", "-D_LIBUNWIND_USE_FRAME_HEADER_CACHE", "-DCOMPILER_RT_HAS_FLOAT16", "-DCOMPILER_RT_HAS_BFLOAT16"]
+_DEPS = ["//contrib/llvm-project/compiler-rt/lib/builtins:headers", "//contrib/llvm-project/libunwind/include:headers", "//contrib/llvm-project/libunwind/src:headers"]
+# Shared runtime builtins must retain default visibility, unlike libcompiler_rt.a.
+cc_library(name = "builtins", srcs = ["//contrib/llvm-project/compiler-rt/lib/builtins:" + n for n in AMD64_BUILTIN_SOURCES], deps = _DEPS + ["//lib/libcompiler_rt:compiler_rt"], copts = _COMMON, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'personality', srcs = ['//contrib/llvm-project/compiler-rt/lib/builtins:gcc_personality_v0.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'c_unwind', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-sjlj.c', '//contrib/llvm-project/libunwind/src:UnwindLevel1.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'frame', srcs = ['//contrib/llvm-project/libunwind/src:UnwindLevel1-gcc-ext.c'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables', '-D_LIBUNWIND_SUPPORT_FRAME_APIS'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'cpp_unwind', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-EHABI.cpp', '//contrib/llvm-project/libunwind/src:libunwind.cpp'], deps = _DEPS, copts = _COMMON + ['-fno-exceptions', '-funwind-tables', '-fno-rtti'], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = 'registers', srcs = ['//contrib/llvm-project/libunwind/src:UnwindRegistersRestore.S', '//contrib/llvm-project/libunwind/src:UnwindRegistersSave.S'], deps = _DEPS, copts = _COMMON + [], features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "math", srcs = ['//lib/msun:src/s_fabs.c', '//lib/msun:src/s_fabsf.c', '//lib/msun:src/s_fabsl.c', '//lib/msun:src/s_fmax.c', '//lib/msun:src/s_fmaxf.c', '//lib/msun:src/s_logb.c', '//lib/msun:src/s_logbf.c', '//lib/msun:src/s_scalbn.c', '//lib/msun:src/s_scalbnf.c', '//lib/msun:src/s_fmaxl.c', '//lib/msun:src/s_logbl.c', '//lib/msun:src/s_scalbnl.c'], deps = ["//lib/msun:headers", "//lib/libc/include:math_headers"], copts = _COMMON, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map", "SymbolDefault.map"],
+    versions = "Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This amd64-only target needs compiler architecture macros for its ABI map.
+    cpp_flags = ["-P", "-nostdinc", "--target=x86_64-unknown-freebsd"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "gcc_s_shared", deps = [':builtins', ':personality', ':c_unwind', ':frame', ':cpp_unwind', ':registers', ':math'], shared_lib_name = "libgcc_s.so.1", additional_linker_inputs = [":version_map"], user_link_flags = ["-nodefaultlibs", "-lc", "-Wl,-Bsymbolic", "-Wl,-soname,libgcc_s.so.1", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_template(name = "linker_script", template = "libgcc_s.ldscript", output = "libgcc_s.so", substitutions = {"@@SHLIB@@": "/lib/libgcc_s.so.1", "@@LIBDIR@@": "/usr/lib"})
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=clibs","dbg"]}' for d in ["/usr/lib/debug/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(
+    name = "backtrace_test",
+    srcs = ["backtrace_test.c"],
+    deps = ["//contrib/llvm-project/libunwind/include:headers"],
+    data = [":gcc_s_shared"],
+    args = ["$(rootpath :gcc_s_shared)"],
+    copts = ["-UNDEBUG", "-funwind-tables"],
+    linkopts = ["-Wl,--export-dynamic"],
+    linkstatic = True,
+    target_compatible_with = _PLATFORM,
+    size = "small",
+)

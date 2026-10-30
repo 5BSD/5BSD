@@ -39,6 +39,8 @@
 
 #include "capsule_daemon.h"
 #include "capsule.h"
+#include "protected_storage.h"
+#include "protected_crypto.h"
 #include "capsule_svc_proto.h"
 #include "capsule_ctl.h"		/* struct ctl_reply for cmd_reload() */
 #include "switchboard_ctl.h"		/* SWITCHBOARD_CTL_SUMMARY_MAX */
@@ -69,7 +71,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 	int i;
 
 	/*
-	 * Every delegated descriptor crosses exactly this one message edge.
+	 * Delegated authority descriptors cross exactly this one message edge.
 	 * CAP_XFER_ONCE is consumed atomically by SENDMSG and the receiving
 	 * descriptor is installed as CAP_XFER_NONE.
 	 */
@@ -106,6 +108,7 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 	return (0);
 }
 
+
 /*
  * Validate that a path is within Capsule's claimed set.
  */
@@ -113,6 +116,34 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 
 /* Convenience wrapper using the global config. */
 #define	net_is_claimed(r)	claim_net_covered(&od.cfg, (r))
+
+static void
+handle_boot_storage(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct capsule_boot_storage_req *req;
+	int fd, error;
+
+	if (!validate_boot_req(payload, len, &req, &error)) {
+		proto_reply(error, reply_token, NULL, 0);
+		return;
+	}
+	/* The exclusive, nonce-bound manager channel is the request authority.
+	 * SwitchBoard checks verified system Core provenance before requesting. */
+	switch (req->op) {
+	case CAPSULE_OP_BOOT_CRYPTO:
+		fd = protected_crypto_open(req->recipient);
+		break;
+	default: /* validate_boot_req admits only the named boot operations. */
+		fd = protected_storage_derive(req->recipient);
+		break;
+	}
+	if (fd == -1)
+		proto_reply(errno, reply_token, NULL, 0);
+	else {
+		proto_reply(0, reply_token, &fd, 1);
+		close(fd);
+	}
+}
 
 static void
 handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
@@ -415,6 +446,7 @@ proto_dispatch_one(void)
 {
 	struct mac_capability_recvmsg_args ra;
 	union {
+		struct capsule_boot_storage_req storage;
 		struct capsule_net_req net;
 		struct capsule_vsock_req vsock;
 		struct capsule_system_req system;
@@ -485,6 +517,10 @@ proto_dispatch_one(void)
 	clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
 	switch (op) {
+	case CAPSULE_OP_BOOT_STORAGE:
+	case CAPSULE_OP_BOOT_CRYPTO:
+		handle_boot_storage(&buf, ra.payload_len, ra.reply_token);
+		break;
 	case CAPSULE_OP_MINT_NET:
 		handle_mint_net(&buf, ra.payload_len, ra.reply_token);
 		break;

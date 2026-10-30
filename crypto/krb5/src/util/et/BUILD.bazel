@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["compile_et.sh", "compile_et.1", "com_err.c", "error_message.c", "et_name.c", "com_err.h", "com_err.3", "et_c.awk", "et_h.awk", "et1.et", "et2.et", "t_com_err.c"], visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"])
+cc_library(name = "headers", hdrs = ["com_err.h", "error_table.h", "mit-sipb-copyright.h"], includes = ["."], deps = ["//crypto/krb5/src/include:support_headers"], visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"])

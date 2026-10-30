@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['ibnetdisc.h', 'ibnetdisc_osd.h'], visibility = ["//lib/ofed/include:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["ibnetdisc.h", "ibnetdisc_osd.h"], strip_include_prefix = ".", include_prefix = "infiniband", deps = ["//contrib/ofed/libibmad:headers", "//contrib/ofed/opensm:common_headers"], visibility = ["//visibility:public"])
+
+exports_files(["chassis.c", "g_hash_table.cpp", "ibnetdisc.c", "ibnetdisc_cache.c", "query_smp.c", "libibnetdisc.map", "man/ibnd_discover_fabric.3", "man/ibnd_find_node_guid.3", "man/ibnd_iter_nodes.3"], visibility = ["//lib/ofed/libibnetdisc:__pkg__"])
+cc_library(name = "private_headers", hdrs = ["chassis.h", "config.h", "internal.h"], strip_include_prefix = ".", deps = [":headers"], visibility = ["//lib/ofed/libibnetdisc:__pkg__"])

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "kinit", srcs = ["//crypto/krb5/src/clients/kinit:" + f for f in ["kinit.c", "kinit_kdb.c", "extern.h"]],
+    deps = ["//crypto/krb5/src/include:internal_headers"] + ['//krb5/lib/kadm5srv:kadm5srv_mit', '//krb5/lib/kdb:kdb5', '//krb5/lib/rpc:gssrpc', '//krb5/lib/gssapi:gssapi_krb5'] + ['//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support', '//lib/libsys:sys'],
+    dynamic_deps = ['//krb5/lib/kadm5srv:kadm5srv_mit_shared', '//krb5/lib/kdb:kdb5_shared', '//krb5/lib/rpc:gssrpc_shared', '//krb5/lib/gssapi:gssapi_krb5_shared'] + ['//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//lib/libsys:sys_shared'], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "kinit", manual = "//crypto/krb5/src/man:kinit.man", package = "kerberos")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

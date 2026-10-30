@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['drill.c', 'drill_util.c', 'error.c', 'root.c', 'work.c', 'chasetrace.c', 'dnssec.c', 'securetrace.c', 'drill.1'], visibility = ["//usr.bin/drill:__pkg__"])
+cc_library(name = "headers", hdrs = ["drill.h", "drill_util.h"], includes = ["."], visibility = ["//usr.bin/drill:__pkg__"])

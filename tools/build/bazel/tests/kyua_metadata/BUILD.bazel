@@ -1,0 +1,2 @@
+load(":tests.bzl", "metadata_tests")
+metadata_tests(name = "tests")

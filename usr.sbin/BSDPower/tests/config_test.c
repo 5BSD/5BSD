@@ -3,11 +3,16 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Policy-boundary tests for BSDTime.  Suspending the machine is the
- * privileged surface; the per-label power.conf ACL is the ONLY thing standing
- * between a caller and an ACPI suspend, so these hammer the deny path.
+ * Policy-boundary tests for BSDPower.  Suspending the machine is the
+ * privileged surface; these cases exercise power.conf validation and label-based operation
+ * checks. They do not establish independent user or service authorization.
  */
+#include <sys/types.h>
+#include <sys/capsicum.h>
+#include <sys/stat.h>
+
 #include <atf-c.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,6 +116,8 @@ ATF_TC_BODY(null_and_empty_are_denied, tc)
 	ATF_CHECK(!powercmp_config_permits_suspend(NULL, "org.any"));
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, NULL));
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, ""));
+	ATF_REQUIRE_ERRNO(EINVAL, powercmp_config_load(&config, NULL) == -1);
+	ATF_CHECK(!powercmp_config_permits_suspend(&config, "org.any"));
 }
 
 /* A malformed config fails soft: -1, and the config is left default-deny. */
@@ -123,7 +130,7 @@ ATF_TC_BODY(malformed_fails_soft, tc)
 	ATF_CHECK(!config.default_suspend);
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "x"));
 	/* a bogus non-boolean set value must not silently grant */
-	ATF_CHECK_EQ(0, load_text(&config,
+	ATF_CHECK_EQ(-1, load_text(&config,
 	    "clients { \"y\" { suspend = \"yes-please\"; } }\n"));
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "y"));
 }
@@ -143,20 +150,144 @@ ATF_TC_BODY(inhibit_is_separate, tc)
 {
  struct powercmp_config config;
  ATF_REQUIRE_EQ(0, load_text(&config,
-     "clients { a { suspend = true; } b { inhibit = true; } c { inhibit = 1; } }"));
+     "clients { a { suspend = true; } b { inhibit = true; } c { inhibit = false; } }"));
  ATF_CHECK(!powercmp_config_permits_inhibit(&config, "a"));
  ATF_CHECK(powercmp_config_permits_inhibit(&config, "b"));
  ATF_CHECK(!powercmp_config_permits_suspend(&config, "b"));
  ATF_CHECK(!powercmp_config_permits_inhibit(&config, "c"));
  ATF_CHECK(!powercmp_config_permits_inhibit(&config, "unknown"));
- ATF_REQUIRE_EQ(0, load_text(&config, "clients { a { inhibit = true; inhibit = false; } }"));
+ ATF_REQUIRE_EQ(-1, load_text(&config, "clients { a { inhibit = true; inhibit = false; } }"));
  ATF_CHECK(!powercmp_config_permits_inhibit(&config, "a"));
+}
+
+
+ATF_TC_WITHOUT_HEAD(reject_ambiguous_policy);
+ATF_TC_BODY(reject_ambiguous_policy, tc)
+{
+ struct powercmp_config config;
+ const char *bad[] = {
+     "default { suspend = true; }; unexpected = true;",
+     "default { suspend = true; suspend = false; };",
+     "default { suspend = true; }; default { suspend = false; };",
+     "default { suspend = 1; };",
+     "default { suspend = \"yes\"; };",
+     "default { suspend = null; };",
+     "default { suspend = []; };",
+     "default { suspend = true; unknown = false; };",
+     "default { suspend = true; }; clients = [];",
+     "clients { \"org.test\" { suspend = true; }; \"org.test\" { suspend = false; }; };",
+     "clients { \"org.test\" { suspend = true; unknown = false; }; };",
+     "clients { \"org.test\\u0000suffix\" { suspend = true; }; };",
+     "\"default\\u0000suffix\" { suspend = true; };",
+     "default { \"suspend\\u0000suffix\" = true; };",
+     "clients { \"org.test\" { suspend = true; }; \"bad name\" { suspend = true; }; };",
+ };
+ (void)tc;
+ for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+     ATF_REQUIRE_EQ(0, load_text(&config, "default { suspend = true; };"));
+     ATF_CHECK_MSG(load_text(&config, bad[i]) == -1,
+         "accepted malformed policy: %s", bad[i]);
+     ATF_CHECK(!powercmp_config_permits_suspend(&config, "org.test"));
+     ATF_CHECK(!powercmp_config_permits_suspend(&config, "unlisted"));
+     ATF_CHECK_EQ(0, config.nclients);
+ }
+}
+
+ATF_TC_WITHOUT_HEAD(no_external_policy);
+ATF_TC_BODY(no_external_policy, tc)
+{
+ struct powercmp_config config;
+ FILE *file;
+ (void)tc;
+ file = fopen("external-policy.ucl", "w");
+ ATF_REQUIRE(file != NULL);
+ ATF_REQUIRE(fputs("default { suspend = true; };", file) >= 0);
+ ATF_REQUIRE_EQ(0, fclose(file));
+ ATF_CHECK_EQ(-1, load_text(&config, ".include \"external-policy.ucl\"\n"));
+ ATF_CHECK(!powercmp_config_permits_suspend(&config, "org.test"));
+ ATF_CHECK_EQ(0, unlink("external-policy.ucl"));
+}
+
+
+static int
+policy_fd(const char *text, size_t length)
+{
+	char path[] = "policy.XXXXXX";
+	int fd;
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ((ssize_t)length, write(fd, text, length));
+	return (fd);
+}
+
+ATF_TC_WITHOUT_HEAD(descriptor_policy);
+ATF_TC_BODY(descriptor_policy, tc)
+{
+	const char valid[] = "default { suspend = true; };";
+	const char raw_nul[] = "default { suspend = true; };\0ignored";
+	struct powercmp_config config;
+	char *text;
+	int fd, fds[2];
+
+	(void)tc;
+	fd = policy_fd(valid, sizeof(valid) - 1);
+	/* Input offset is at EOF; policy must still be read from offset zero. */
+	ATF_REQUIRE_EQ(0, powercmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(powercmp_config_permits_suspend(&config, "org.test"));
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	fd = policy_fd(raw_nul, sizeof(raw_nul) - 1);
+	ATF_REQUIRE_EQ(-1, powercmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(!powercmp_config_permits_suspend(&config, "org.test"));
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	fd = policy_fd(valid, sizeof(valid) - 1);
+	ATF_REQUIRE_EQ(0, fchmod(fd, 0660));
+	ATF_REQUIRE_ERRNO(EPERM, powercmp_config_load_fd(&config, fd) == -1);
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	ATF_REQUIRE_EQ(0, pipe(fds));
+	ATF_REQUIRE_ERRNO(EINVAL, powercmp_config_load_fd(&config, fds[0]) == -1);
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
+	close(fds[1]);
+	text = malloc(POWERCMP_CONFIG_FILE_MAX + 1);
+	ATF_REQUIRE(text != NULL);
+	memset(text, ' ', POWERCMP_CONFIG_FILE_MAX + 1);
+	memcpy(text, valid, sizeof(valid) - 1);
+	fd = policy_fd(text, POWERCMP_CONFIG_FILE_MAX);
+	ATF_REQUIRE_EQ(0, powercmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(powercmp_config_permits_suspend(&config, "org.test"));
+	fd = policy_fd(text, POWERCMP_CONFIG_FILE_MAX + 1);
+	ATF_REQUIRE_ERRNO(EFBIG, powercmp_config_load_fd(&config, fd) == -1);
+	ATF_REQUIRE(!powercmp_config_permits_suspend(&config, "org.test"));
+	free(text);
+}
+
+ATF_TC_WITHOUT_HEAD(confined_policy);
+ATF_TC_BODY(confined_policy, tc)
+{
+	const char valid[] = "clients { org.test { suspend = true; }; };";
+	struct powercmp_config config;
+	cap_rights_t rights;
+	int fd;
+
+	(void)tc;
+	fd = policy_fd(valid, sizeof(valid) - 1);
+	cap_rights_init(&rights, CAP_PREAD, CAP_FSTAT);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(fd, &rights));
+	ATF_REQUIRE_EQ(0, cap_enter());
+	ATF_REQUIRE_EQ(0, powercmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(powercmp_config_permits_suspend(&config, "org.test"));
+	ATF_REQUIRE(!powercmp_config_permits_suspend(&config, "org.other"));
 }
 
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, inhibit_is_separate);
+	ATF_TP_ADD_TC(tp, descriptor_policy);
+	ATF_TP_ADD_TC(tp, confined_policy);
+	ATF_TP_ADD_TC(tp, reject_ambiguous_policy);
+	ATF_TP_ADD_TC(tp, no_external_policy);
 	ATF_TP_ADD_TC(tp, default_denies_all);
 	ATF_TP_ADD_TC(tp, explicit_grant_is_scoped);
 	ATF_TP_ADD_TC(tp, listed_but_false_is_denied);

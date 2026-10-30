@@ -113,6 +113,9 @@ then be processed inside the jail.
 Format output for human, rather than machine, readability.
 .It Fl i
 Ignore unknown OIDs.
+Only a name lookup that reports ENOENT is ignored.
+Other lookup failures and failures reading an explicitly named variable produce
+a nonzero exit status.
 The purpose is to make use of
 .Nm
 for collecting data from a variety of machines (not all of which

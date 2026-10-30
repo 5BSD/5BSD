@@ -5,18 +5,12 @@
 # decides WHICH modules may load.  A module whose name is not listed is refused
 # with EPERM and logged, no matter which client asks.
 #
-# This file is optional.  When it is absent, bsdextension's built-in allow-list
-# stands: the exact set of extensions the base system loads on demand today
-# (cryptodev, vhid, zfs, Linux runtime support, WASPNest, graphics and CPU
-# telemetry).
-# When present, "allowed_extensions" REPLACES that
-# built-in set — so an operator narrows or extends the policy in one place.
+# This is required startup policy. The executable contains no module grants.
+# Select the permitted modules here; the array is the complete base grant set.
+# Missing or malformed policy stops startup. Failed reloads keep the last
+# accepted policy. An empty array explicitly denies all module requests.
 # Each entry must be a single, safe module name (no "/", not "." or "..").
 #
-# NB (libucl parser pitfall): the FIRST array element must follow "[" directly,
-# with no comment line in between -- the bundled libucl mis-parses a comment as
-# the first token inside an array and rejects the whole file (EINVAL).  Per-entry
-# comments are fine once at least one element precedes them.
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack

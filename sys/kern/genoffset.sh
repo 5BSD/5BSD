@@ -36,6 +36,13 @@ usage()
 work()
 (
     local last off x1 x2 x3 struct field type lastoff lasttype asserts
+    local symbols offsets
+
+    # Capture each fallible stage before emitting a seemingly valid include.
+    symbols=$(${NM:='nm'} ${NMFLAGS} -t d "$1") || return
+    offsets=$(printf '%s\n' "$symbols" | grep __assym_offset__) || return
+    offsets=$(printf '%s\n' "$offsets" | sed -e 's/__/ /g') || return
+    offsets=$(printf '%s\n' "$offsets" | sort -k 4 -k 1 -n) || return
 
     echo "#ifndef _OFFSET_INC_"
     echo "#define _OFFSET_INC_"
@@ -43,7 +50,7 @@ work()
     last=
     asserts=
     while read off x1 x2 struct field type x3; do
-	off=$(echo "$off" | sed -E 's/^0+//')
+	off=$(echo "$off" | sed -E 's/^0+//') || return
 	if [ "$last" != "$struct" ]; then
 	    if [ -n "$last" ]; then
 		echo "};"
@@ -59,7 +66,7 @@ work()
 	lasttype="$type"
 	asserts="${asserts}_SA(${struct}, ${field}, ${off});\n"
     done <<EOT
-$(${NM:='nm'} ${NMFLAGS} -t d "$1" | grep __assym_offset__ | sed -e 's/__/ /g' | sort -k 4 -k 1 -n)
+$offsets
 EOT
     echo "};"
     echo "#define _SA(s,f,o) _Static_assert(__builtin_offsetof(struct s ## _lite, f) == o, \\"

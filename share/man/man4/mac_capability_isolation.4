@@ -31,6 +31,12 @@ instance fd.
 When the instance fd is closed or revoked, all claims held by that
 instance are released automatically.
 .Pp
+These are transient claims.
+Owner-instance loss removes the restriction; it does not retain a mandatory
+deny boundary.
+Persistent BSD Integrity Protection storage requires an independently retained
+boundary whose lifetime is not tied to a provider connection.
+.Pp
 All operations use
 .Dv MAC_CAPABILITY_CALL
 (synchronous).
@@ -46,7 +52,7 @@ The following vnode operations are gated by MACF hooks when a vnode
 is claimed:
 .Bl -dash -compact
 .It
-open, exec (content access)
+open, read, write, exec (content access)
 .It
 unlink, link, rename (namespace mutation)
 .It
@@ -56,12 +62,36 @@ stat, access, readlink (information disclosure)
 .It
 connect on AF_UNIX sockets (socket access)
 .It
-lookup on directories (gates access to entire subtree)
+lookup through claimed directories
 .El
+.Pp
+A directory claim is not recursive: it does not claim child vnodes.
+It gates traversal through that directory and operations on the directory
+itself.
+An already-open descriptor for an unclaimed child, or an alternate path to that
+child, does not traverse the claimed directory and receives no content
+protection from that claim.
+A directory lookup token likewise does not impose a read-only policy on
+unclaimed child files.
+Protect content with explicit file claims or a separately enforced storage
+boundary; do not infer recursive protection from the directory claim.
 .Pp
 An already-open file descriptor may still be passed via
 .Dv SCM_RIGHTS ;
-only new vnode operations are gated.
+read and write operations check the current caller's authority even when the
+descriptor was opened before the claim.
+This does not retract data already read or promise revocation of existing
+readable memory mappings.
+New mappings check the maximum protections, including permissions that could
+later be enabled with
+.Xr mprotect 2 .
+Read or private-write capability requires
+.Dv FI_FS_READ ;
+execute capability requires
+.Dv FI_FS_EXEC .
+Callers holding narrower authority must bound mapping protections with
+.Dv PROT_MAX .
+Shared mappings that could become writable remain refused for claimed files.
 .Pp
 File operations:
 .Bl -tag -width FI_OP_AUTHORIZE
@@ -114,9 +144,9 @@ The following action masks are used with
 and
 .Dv FI_OP_QUERY :
 .Bl -column "FI_FS_UIPC_CONNECT" "0x2000" -offset indent
-.It Dv FI_FS_LOOKUP Ta 0x0001 Ta directory traversal
-.It Dv FI_FS_STAT Ta 0x0002 Ta stat, access
-.It Dv FI_FS_READ Ta 0x0004 Ta read, readlink
+.It Dv FI_FS_LOOKUP Ta 0x0001 Ta directory traversal and changing working or root directory
+.It Dv FI_FS_STAT Ta 0x0002 Ta stat, access, list extended attribute names
+.It Dv FI_FS_READ Ta 0x0004 Ta read, directory enumeration, readlink, read extended attribute values
 .It Dv FI_FS_WRITE Ta 0x0008 Ta write
 .It Dv FI_FS_APPEND Ta 0x0010 Ta append
 .It Dv FI_FS_CREATE Ta 0x0020 Ta create
@@ -125,7 +155,7 @@ and
 .It Dv FI_FS_RENAME_TO Ta 0x0100 Ta rename destination
 .It Dv FI_FS_LINK Ta 0x0200 Ta link
 .It Dv FI_FS_EXEC Ta 0x0400 Ta exec
-.It Dv FI_FS_SETATTR Ta 0x0800 Ta chmod, chown, chflags, utimes
+.It Dv FI_FS_SETATTR Ta 0x0800 Ta chmod, chown, chflags, utimes, set/delete extended attributes
 .It Dv FI_FS_TRUNCATE Ta 0x1000 Ta truncate
 .It Dv FI_FS_UIPC_CONNECT Ta 0x2000 Ta AF_UNIX connect
 .It Dv FI_FS_ALL Ta 0x3fff Ta all of the above

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//bin/sh/tests:installation.bzl", "shell_test_group")
+
+shell_test_group(
+    fixtures = [
+        "assignment-error1.0",
+        "assignment-error2.0",
+        "backquote-error1.0",
+        "backquote-error2.0",
+        "bad-binary1.126",
+        "bad-keyword1.0",
+        "bad-parm-exp1.0",
+        "bad-parm-exp2.2",
+        "bad-parm-exp2.2.stderr",
+        "bad-parm-exp3.2",
+        "bad-parm-exp3.2.stderr",
+        "bad-parm-exp4.2",
+        "bad-parm-exp4.2.stderr",
+        "bad-parm-exp5.2",
+        "bad-parm-exp5.2.stderr",
+        "bad-parm-exp6.2",
+        "bad-parm-exp6.2.stderr",
+        "bad-parm-exp7.0",
+        "bad-parm-exp8.0",
+        "option-error.0",
+        "redirection-error.0",
+        "redirection-error2.2",
+        "redirection-error3.0",
+        "redirection-error4.0",
+        "redirection-error5.0",
+        "redirection-error6.0",
+        "redirection-error7.0",
+        "redirection-error8.0",
+        "script-error1.0",
+        "write-error1.0"
+],
+)

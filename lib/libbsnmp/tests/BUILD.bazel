@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "bsnmpd_test", srcs = ["bsnmpd_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libbsnmp/libbsnmp:bsnmp", "//contrib/bsnmp/lib:public_headers"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libbsnmp/libbsnmp:bsnmp_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_atf_test(name = "native_regression", case_name = "sa_19_20_bsnmp_test",
+    interface = "program", body = ":bsnmpd_test",
+    runtime_lib = ["//lib/libbsnmp/libbsnmp:bsnmp_shared", "//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({
+        "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+        "//conditions:default": []}),
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "bsnmpd_test", manual = "", package = "tests", bindir = "/usr/tests/lib/libbsnmp")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsnmpd_test"], interfaces = {"bsnmpd_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libbsnmp/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libbsnmp:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["llvm-ar.cpp"], visibility = ["//usr.bin/clang/llvm-ar:__pkg__"])

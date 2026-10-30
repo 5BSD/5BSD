@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(['mad.h', 'mad_osd.h'], visibility = ["//lib/ofed/include:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['bm.c', 'cc.c', 'dump.c', 'fields.c', 'gs.c', 'mad.c', 'portid.c', 'register.c', 'resolve.c', 'rpc.c', 'sa.c', 'serv.c', 'smp.c', 'vendor.c', 'libibmad.map'], visibility = ["//lib/ofed/libibmad:__pkg__"])
+cc_library(name = "headers", hdrs = ['mad.h', 'mad_osd.h'], strip_include_prefix = ".", include_prefix = "infiniband", deps = ["//contrib/ofed/include:headers"], visibility = ["//visibility:public"])
+cc_library(name = "private_headers", hdrs = ['config.h', 'mad_internal.h'], strip_include_prefix = ".", deps = [":headers"], visibility = ["//lib/ofed/libibmad:__pkg__"])

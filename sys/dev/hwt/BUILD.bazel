@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "hook_headers", hdrs = ["hwt_hook.h"], includes = ["../.."],
+    visibility = ["//sys/kern:__pkg__"])

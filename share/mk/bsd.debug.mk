@@ -60,7 +60,16 @@ CTFFLAGS+= -g
 
 _debuginstall:
 .if ${MK_DEBUG_FILES} != "no" && defined(DEBUGFILE)
-.if defined(DEBUGMKDIR)
+.if defined(DEBUGDIR) && ${DEBUGFILEDIR:M${DEBUGDIR}/*} != ""
+	@debug_path=${DEBUGFILEDIR:Q}; debug_root=${DEBUGDIR:Q}; set --; \
+	while [ "$$debug_path" != "$$debug_root" ]; do \
+		set -- "$$debug_path" "$$@"; debug_path=$${debug_path%/*}; \
+	done; \
+	for debug_path do \
+		${INSTALL} ${TAG_ARGS:D${TAG_ARGS},dbg} -d -m ${DEBUGDIRMODE} \
+		    -o ${DEBUGDIROWN} -g ${DEBUGDIRGRP} "${DESTDIR}$$debug_path" || exit 1; \
+	done
+.elif defined(DEBUGMKDIR) || defined(NO_ROOT)
 	${INSTALL} ${TAG_ARGS:D${TAG_ARGS},dbg} -o ${DEBUGOWN} -g ${DEBUGGRP} -d \
 	    ${DESTDIR}${DEBUGFILEDIR}
 .endif

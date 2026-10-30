@@ -145,16 +145,28 @@ mac_mount_check_mount(struct ucred *cred, struct vnode *vp,
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE2(mount_check_mount_anon, "struct ucred *",
+    "struct mount *");
+int
+mac_mount_check_mount_anon(struct ucred *cred, struct mount *mp)
+{
+	int error;
+
+	MAC_POLICY_CHECK(mount_check_mount_anon, cred, mp, mp->mnt_label);
+	MAC_CHECK_PROBE2(mount_check_mount_anon, error, cred, mp);
+	return (error);
+}
+
 MAC_CHECK_PROBE_DEFINE5(mount_check_update, "struct ucred *",
     "struct mount *", "struct label *", "struct vfsoptlist **", "uint64_t");
 int
 mac_mount_check_update(struct ucred *cred, struct mount *mp,
-	    struct vfsoptlist **optlist, uint64_t fsflags)
+	    struct vfsoptlist **optlist, uint64_t fsflags, bool only_export)
 {
 	int error;
 
 	MAC_POLICY_CHECK(mount_check_update, cred, mp, mp->mnt_label,
-	    optlist, fsflags);
+	    optlist, fsflags, only_export);
 	MAC_CHECK_PROBE5(mount_check_update, error, cred, mp, mp->mnt_label,
 	    optlist, fsflags);
 
@@ -1512,3 +1524,15 @@ mac_vnode_assert_locked(struct vnode *vp, const char *func)
 	ASSERT_VOP_LOCKED(vp, func);
 }
 #endif
+
+MAC_CHECK_PROBE_DEFINE2(vnode_check_fh, "struct ucred *", "struct vnode *");
+int
+mac_vnode_check_fh(struct ucred *cred, struct vnode *vp)
+{
+	int error;
+
+	ASSERT_VOP_LOCKED(vp, "mac_vnode_check_fh");
+	MAC_POLICY_CHECK(vnode_check_fh, cred, vp, vp->v_label);
+	MAC_CHECK_PROBE2(vnode_check_fh, error, cred, vp);
+	return (error);
+}

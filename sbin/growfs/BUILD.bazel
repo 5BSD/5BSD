@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "growfs", srcs = ["growfs.c", "debug.h"] + select({":gfsdbg_enabled": ["debug.c"], "//conditions:default": []}),
+
+    deps = ["//lib/libufs:ufs", "//lib/libutil:util"], dynamic_deps = ["//lib/libufs:ufs_shared", "//lib/libutil:util_shared"],
+    local_defines = select({":gfsdbg_enabled": ["FS_DEBUG"], "//conditions:default": []}),
+    copts = ["-fPIE"] + select({":gfsdbg_enabled": ["-Wno-cast-align"], "//conditions:default": []}), linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "growfs", manual = "growfs.8",
+    package = "ufs", bindir = "/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ufs","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+# Mirrors Make's explicitly enabled GFSDBG developer variant.
+bool_flag(name = "gfsdbg", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "gfsdbg_enabled", flag_values = {":gfsdbg": "true"})
+
+exports_files(["debug.c"], visibility = ["//sbin/ffsinfo:__pkg__"])
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "debug_headers", hdrs = ["debug.h"], strip_include_prefix = ".", visibility = ["//sbin/ffsinfo:__pkg__"])

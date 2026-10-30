@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "cryptodesc_api_test", srcs = ["cryptodesc_api_test.c", "//lib/libcryptodesc:cryptodesc.c"],
+    deps = ["//lib/libcryptodesc:headers", "//lib/atf/libatf-c:atf_c"],
+    linkstatic = True, linkopts = ["-static"])
+bsd_kyua_test(name = "cryptodesc_api_test_run", program = ":cryptodesc_api_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "cryptodesc_api_test", manual = "", package = "libcryptodesc-tests", bindir = "/usr/tests/lib/libcryptodesc")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["cryptodesc_api_test"], interfaces = {"cryptodesc_api_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcryptodesc/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcryptodesc-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcryptodesc:__pkg__"])

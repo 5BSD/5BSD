@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['authorization.c', 'ccache.c', 'heuristic.c', 'krb_auth_su.c', 'main.c', 'xmalloc.c', 'ksu.h'])

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# Preserve per-source aliasing flags only on imported netlib routines.
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = 'gdtoa_objects',
+    srcs = ['_hdtoa.c', '_hldtoa.c', '_ldtoa.c', 'glue.c', 'machdep_ldisx.c', '//lib/libc/stdio:floatio.h'],
+    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/amd64:gdtoa_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ['-ftls-model=initial-exec'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = 'netlib_objects',
+    srcs = ['//contrib/gdtoa:strtorx.c', '//contrib/gdtoa:dmisc.c', '//contrib/gdtoa:dtoa.c', '//contrib/gdtoa:gdtoa.c', '//contrib/gdtoa:gethex.c', '//contrib/gdtoa:gmisc.c', '//contrib/gdtoa:hd_init.c', '//contrib/gdtoa:hexnan.c', '//contrib/gdtoa:misc.c', '//contrib/gdtoa:smisc.c', '//contrib/gdtoa:strtod.c', '//contrib/gdtoa:strtodg.c', '//contrib/gdtoa:strtof.c', '//contrib/gdtoa:strtord.c', '//contrib/gdtoa:sum.c', '//contrib/gdtoa:ulp.c'],
+    implementation_deps = ["//contrib/gdtoa:headers", "//lib/libc/include:math_headers", "//lib/libc/locale:gdtoa_headers", "//lib/libc/amd64:gdtoa_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ['-ftls-model=initial-exec', '-fno-strict-aliasing'],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":gdtoa_objects", ":netlib_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":gdtoa_objects", ":netlib_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

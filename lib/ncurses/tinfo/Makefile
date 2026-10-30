@@ -5,11 +5,8 @@ SHLIBDIR?=	/lib
 .include "${.CURDIR:H}/config.mk"
 
 LIB=		tinfow
-SHLIB_MAJOR=	9
+SHLIB_MAJOR=	${NCURSES_SHLIB_MAJOR.${LIB}}
 
-NCURSES_MAJOR!=	egrep 'NCURSES_MAJOR[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
-NCURSES_MINOR!=	egrep 'NCURSES_MINOR[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
-NCURSES_PATCH!=	egrep 'NCURSES_PATCH[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
 
 # From autoconf (!)
 NCURSES_CH_T=		cchar_t
@@ -224,7 +221,7 @@ comp_captab.c: MKcaptab.sh MKcaptab.awk Caps Caps-ncurses make_hash
 	    ${NCURSES_DIR}/include/Caps ${NCURSES_DIR}/include/Caps-ncurses > comp_captab.c
 
 fallback.c: MKfallback.sh
-	sh ${NCURSES_DIR}/ncurses/tinfo/MKfallback.sh "" "" "" > ${.TARGET}.tmp && \
+	sh ${NCURSES_DIR}/ncurses/tinfo/MKfallback.sh "" "" "" "" > ${.TARGET}.tmp && \
 	    mv -f ${.TARGET}.tmp ${.TARGET}
 
 comp_userdefs.c: MKuserdefs.sh Caps Caps-ncurses make_hash
@@ -232,7 +229,7 @@ comp_userdefs.c: MKuserdefs.sh Caps Caps-ncurses make_hash
 	    ${USE_BIG_STRINGS} ${NCURSES_DIR}/include/Caps ${NCURSES_DIR}/include/Caps-ncurses > ${.TARGET}
 
 # Generated headers
-nomacros.h: MKlib_gen.sh curses.h
+nomacros.h: MKlib_gen.sh ncurses_cfg.h ncurses_def.h ncurses_dll.h curses.h term.h unctrl.h
 	LC_ALL=C sh ${NCURSES_DIR}/ncurses/base/MKlib_gen.sh "${CC:N${CCACHE_BIN}} -E ${CFLAGS}" \
 	    "${AWK}" generated < curses.h | fgrep undef > $@
 
@@ -1069,6 +1066,7 @@ gen-pkgconfig: gen-pkgconfig.in
 		s,@NCURSES_MAJOR@,${NCURSES_MAJOR},g ; \
 		s,@NCURSES_MINOR@,${NCURSES_MINOR},g ; \
 		s,@NCURSES_PATCH@,${NCURSES_PATCH},g ; \
+		s,@cf_cv_abi_version@,$$2,g ; \
 		s,@PKG_CFLAGS@,,g ; \
 		s,@EXTRA_PKG_LDFLAGS@,${SSP_CFLAGS},g ; \
 		s,@LDFLAGS@,,g; \
@@ -1078,7 +1076,7 @@ gen-pkgconfig: gen-pkgconfig.in
 		${.ALLSRC} > ${.TARGET}
 
 ${PCFILES}: gen-pkgconfig
-	sh ${.OBJDIR}/gen-pkgconfig ${.TARGET:R}
+	sh ${.OBJDIR}/gen-pkgconfig ${.TARGET:R} ${NCURSES_SHLIB_MAJOR.${.TARGET:R}}
 
 .include <bsd.lib.mk>
 

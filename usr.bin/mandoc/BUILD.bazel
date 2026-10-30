@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "mandoc", srcs = ['//contrib/mandoc:man.c', '//contrib/mandoc:man_macro.c', '//contrib/mandoc:man_validate.c', '//contrib/mandoc:arch.c', '//contrib/mandoc:att.c', '//contrib/mandoc:lib.c', '//contrib/mandoc:mdoc.c', '//contrib/mandoc:mdoc_argv.c', '//contrib/mandoc:mdoc_macro.c', '//contrib/mandoc:mdoc_markdown.c', '//contrib/mandoc:mdoc_state.c', '//contrib/mandoc:mdoc_validate.c', '//contrib/mandoc:st.c', '//contrib/mandoc:eqn.c', '//contrib/mandoc:roff.c', '//contrib/mandoc:roff_escape.c', '//contrib/mandoc:roff_html.c', '//contrib/mandoc:roff_term.c', '//contrib/mandoc:roff_validate.c', '//contrib/mandoc:tbl.c', '//contrib/mandoc:tbl_data.c', '//contrib/mandoc:tbl_layout.c', '//contrib/mandoc:tbl_opts.c', '//contrib/mandoc:chars.c', '//contrib/mandoc:mandoc.c', '//contrib/mandoc:mandoc_aux.c', '//contrib/mandoc:mandoc_dbg.c', '//contrib/mandoc:mandoc_msg.c', '//contrib/mandoc:mandoc_ohash.c', '//contrib/mandoc:mandoc_xr.c', '//contrib/mandoc:msec.c', '//contrib/mandoc:preconv.c', '//contrib/mandoc:read.c', '//contrib/mandoc:eqn_html.c', '//contrib/mandoc:html.c', '//contrib/mandoc:man_html.c', '//contrib/mandoc:mdoc_html.c', '//contrib/mandoc:tbl_html.c', '//contrib/mandoc:mdoc_man.c', '//contrib/mandoc:eqn_term.c', '//contrib/mandoc:man_term.c', '//contrib/mandoc:mdoc_term.c', '//contrib/mandoc:term.c', '//contrib/mandoc:term_ascii.c', '//contrib/mandoc:term_ps.c', '//contrib/mandoc:term_tab.c', '//contrib/mandoc:term_tag.c', '//contrib/mandoc:tbl_term.c', '//contrib/mandoc:dbm.c', '//contrib/mandoc:dbm_map.c', '//contrib/mandoc:mansearch.c', '//contrib/mandoc:dba.c', '//contrib/mandoc:dba_array.c', '//contrib/mandoc:dba_read.c', '//contrib/mandoc:dba_write.c', '//contrib/mandoc:mandocdb.c', '//contrib/mandoc:main.c', '//contrib/mandoc:manpath.c', '//contrib/mandoc:out.c', '//contrib/mandoc:tag.c', '//contrib/mandoc:tree.c'],
+    deps = ["//contrib/mandoc:headers", "//lib/libopenbsd:openbsd_pie", "//lib/libz:z"], dynamic_deps = ["//lib/libz:z_shared"],
+    local_defines = ["HAVE_CONFIG_H"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file", "bsd_install_link")
+_MANUALS = ['mandoc.db.5', 'eqn.7', 'mandoc_char.7', 'tbl.7', 'man.7', 'mdoc.7', 'roff.7', 'apropos.1', 'makewhatis.8']
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=mandoc-man"], "//conditions:default": ["package=mandoc"]})
+[bsd_compress(name = "compressed_" + n, src = "//contrib/mandoc:" + n, output = n + ".gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for n in _MANUALS]
+[bsd_install_file(name = "manual_" + n, src = ":compressed_" + n, destination = "/usr/share/man/man" + n[-1] + "/" + n + ".gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS) for n in _MANUALS]
+_OPTIONAL_MANUALS = ["apropos.1", "makewhatis.8"]
+[bsd_install_link(name = "alias_" + n, destination = "/usr/bin/" + n, target = "/usr/bin/mandoc", kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=mandoc"]) for n in ["whatis", "makewhatis", "apropos"]]
+bsd_install_link(name = "whatis_manual", destination = "/usr/share/man/man1/whatis.1.gz", target = "/usr/share/man/man1/apropos.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_file(name = "trigger", src = "mandoc.ucl", destination = "/usr/share/pkg/triggers/mandoc.ucl", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=mandoc"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "mandoc", manual = "//contrib/mandoc:mandoc.1", package = "mandoc", manual_aliases = ["mdocml"],
+    extra_entries = [":trigger"] + [":manual_" + n for n in _MANUALS if n not in _OPTIONAL_MANUALS] + select({"//tools/build/bazel/config:man_utils_enabled": [":manual_" + n for n in _OPTIONAL_MANUALS] + [":alias_" + n for n in ["whatis", "makewhatis", "apropos"]] + [":whatis_manual"], "//conditions:default": []}))
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=mandoc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/share/pkg/triggers": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=mandoc"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

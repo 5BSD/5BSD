@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["iommu.h", "iommu_types.h"], includes = ["../.."],
+    deps = ["//sys/vm:kernel_headers", "//sys/dev/pci:register_headers"], visibility = ["//sys/kern:__pkg__"])

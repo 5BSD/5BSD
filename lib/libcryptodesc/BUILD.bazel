@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["cryptodesc.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "cryptodesc", srcs = ["cryptodesc.c"], deps = [":headers"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":cryptodesc"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "cryptodesc_shared", deps = [":cryptodesc"], shared_lib_name = "libcryptodesc.so.1",
+    user_link_flags = ["-Wl,-soname,libcryptodesc.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libcryptodesc/tests:install_test", "//lib/libcryptodesc/tests:install_extra"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+        "/usr/tests/lib/libcryptodesc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc-tests"]}',
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc-tests","dbg"]}',
+        "/usr/lib/debug/usr/tests/lib/libcryptodesc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcryptodesc-tests","dbg"]}',
+    }, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+exports_files(["cryptodesc.c"], visibility = ["//lib/libcryptodesc/tests:__pkg__"])

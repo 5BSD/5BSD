@@ -67,197 +67,147 @@ efi_secure_boot_enabled(void)
 		return (-efi_status_to_errno(status));
 	}
 
+	if (length != sizeof(SecureBoot) || SecureBoot > 1)
+		return (-EIO);
+
 	length = sizeof(SetupMode);
 	status = efi_global_getenv("SetupMode", &SetupMode, &length);
-	if (status != EFI_SUCCESS)
-		SetupMode = 0;
+	if (status != EFI_SUCCESS || length != sizeof(SetupMode)) {
+		printf("Failed to read valid \"SetupMode\" variable\n");
+		return (-EIO);
+	}
 
 	printf("   SecureBoot: %d, SetupMode: %d\n", SecureBoot, SetupMode);
 
+	if (SetupMode > 1 || (SecureBoot == 1 && SetupMode != 0))
+		return (-EIO);
 	return (SecureBoot == 1 && SetupMode == 0);
 }
 
-/*
- * Iterate through UEFI variable and extract X509 certificates from it.
- * The EFI_* structures and related guids are defined in UEFI standard.
- */
-static br_x509_certificate*
-efi_get_certs(const char *name, size_t *count)
+/* Database errors must never silently discard a revocation policy. */
+static UINT8 *
+efi_read_database(const char *name, size_t *size)
 {
-	br_x509_certificate *certs;
-	UINT8 *database;
-	EFI_SIGNATURE_LIST *list;
-	EFI_SIGNATURE_DATA *entry;
-	size_t db_size;
-	ssize_t cert_count;
+	UINT8 *data;
+	size_t allocated;
 	EFI_STATUS status;
 
-	database = NULL;
-	certs = NULL;
-	db_size = 0;
-	cert_count = 0;
-
-	/*
-	 * Read variable length and allocate memory for it
-	 */
-	status = efi_getenv(&ImageSecurityDatabaseGUID, name, database, &db_size);
-	if (status != EFI_BUFFER_TOO_SMALL)
+	*size = 0;
+	status = efi_getenv(&ImageSecurityDatabaseGUID, name, NULL, size);
+	if (status == EFI_NOT_FOUND) {
+		*size = 0;
 		return (NULL);
-
-	database = malloc(db_size);
-	if (database == NULL)
-		return (NULL);
-
-	status = efi_getenv(&ImageSecurityDatabaseGUID, name, database, &db_size);
-	if (status != EFI_SUCCESS)
-		goto fail;
-
-	for (list = (EFI_SIGNATURE_LIST*) database;
-	    db_size >= list->SignatureListSize && db_size > 0;
-	    db_size -= list->SignatureListSize,
-	    list = (EFI_SIGNATURE_LIST*)
-	    ((UINT8*)list + list->SignatureListSize)) {
-
-		/* We are only interested in entries containing X509 certs. */
-		if (memcmp(&efiCertX509GUID,
-		    &list->SignatureType,
-		    sizeof(EFI_GUID)) != 0) {
-			continue;
-		}
-
-		entry = (EFI_SIGNATURE_DATA*)
-		    ((UINT8*)list +
-		    sizeof(EFI_SIGNATURE_LIST) +
-		    list->SignatureHeaderSize);
-
-		certs = realloc(certs,
-		    (cert_count + 1) * sizeof(br_x509_certificate));
-		if (certs == NULL) {
-			cert_count = 0;
-			goto fail;
-		}
-
-		certs[cert_count].data_len = list->SignatureSize - sizeof(EFI_GUID);
-		certs[cert_count].data = malloc(certs[cert_count].data_len);
-		if (certs[cert_count].data == NULL)
-			goto fail;
-
-		memcpy(certs[cert_count].data,
-		    entry->SignatureData,
-		    certs[cert_count].data_len);
-
-		cert_count++;
 	}
+	if (status != EFI_BUFFER_TOO_SMALL || *size == 0)
+		panic("Secure Boot: cannot size signature database %s", name);
+	allocated = *size;
+	data = malloc(allocated);
+	if (data == NULL)
+		panic("Secure Boot: cannot allocate signature database %s", name);
+	status = efi_getenv(&ImageSecurityDatabaseGUID, name, data, size);
+	if (status != EFI_SUCCESS || *size == 0 || *size > allocated)
+		panic("Secure Boot: cannot read signature database %s", name);
+	return (data);
+}
 
-	*count = cert_count;
+/* Validate before accessing a list's payload or advancing to the next list. */
+static size_t
+efi_signature_entries(const EFI_SIGNATURE_LIST *list, size_t remaining)
+{
+	size_t payload;
 
-	xfree(database);
+	if (remaining < sizeof(*list) || list->SignatureListSize < sizeof(*list) ||
+	    list->SignatureListSize > remaining ||
+	    list->SignatureHeaderSize > list->SignatureListSize - sizeof(*list) ||
+	    list->SignatureSize <= sizeof(EFI_GUID))
+		panic("Secure Boot: malformed signature database");
+	payload = list->SignatureListSize - sizeof(*list) - list->SignatureHeaderSize;
+	if (payload == 0 || payload % list->SignatureSize != 0)
+		panic("Secure Boot: malformed signature database entries");
+	return (payload / list->SignatureSize);
+}
+
+static br_x509_certificate *
+efi_get_certs(const char *name, size_t *count)
+{
+	UINT8 *database, *cursor, *entry;
+	br_x509_certificate *certs = NULL;
+	EFI_SIGNATURE_LIST *list;
+	size_t remaining, entries, length;
+
+	*count = 0;
+	database = efi_read_database(name, &remaining);
+	for (cursor = database; remaining > 0;
+	    remaining -= list->SignatureListSize, cursor += list->SignatureListSize) {
+		list = (EFI_SIGNATURE_LIST *)cursor;
+		entries = efi_signature_entries(list, remaining);
+		if (memcmp(&efiCertX509GUID, &list->SignatureType, sizeof(EFI_GUID)) != 0)
+			continue;
+		if (list->SignatureHeaderSize != 0)
+			panic("Secure Boot: malformed X509 signature list");
+		entry = cursor + sizeof(*list);
+		length = list->SignatureSize - sizeof(EFI_GUID);
+		for (size_t i = 0; i < entries; i++, entry += list->SignatureSize) {
+			certs = realloc(certs, (*count + 1) * sizeof(*certs));
+			if (certs == NULL)
+				panic("Secure Boot: cannot allocate certificates");
+			certs[*count].data = malloc(length);
+			if (certs[*count].data == NULL)
+				panic("Secure Boot: cannot allocate certificate");
+			certs[*count].data_len = length;
+			memcpy(certs[*count].data, entry + sizeof(EFI_GUID), length);
+			(*count)++;
+		}
+	}
+	free(database);
 	return (certs);
-
-fail:
-	free_certificates(certs, cert_count);
-	xfree(database);
-	return (NULL);
-
 }
 
 /*
- * Extract digests from UEFI "dbx" variable.
- * UEFI standard specifies three types of digest - sha256, sha386, sha512.
+ * Extract revoked certificate TBS hashes, not PE/COFF image hashes.
+ * The existing verifier conservatively revokes these certificates regardless
+ * of the EFI revocation timestamp; it does not implement timestamp exceptions.
  */
-hash_data*
+hash_data *
 efi_get_forbidden_digests(size_t *count)
 {
-	UINT8 *database;
-	hash_data *digests;
+	UINT8 *database, *cursor, *entry;
+	hash_data *digests = NULL;
 	EFI_SIGNATURE_LIST *list;
-	EFI_SIGNATURE_DATA *entry;
-	size_t db_size, header_size, hash_size;
-	int digest_count, entry_count;
-	EFI_STATUS status;
+	size_t remaining, entries, hash_size;
 
-	db_size = 0;
-	digest_count = 0;
-	database = NULL;
-	digests = NULL;
-
-	status = efi_getenv(&ImageSecurityDatabaseGUID, "dbx", database, &db_size);
-	if (status != EFI_BUFFER_TOO_SMALL)
-		return (NULL);
-
-	database = malloc(db_size);
-	if (database == NULL)
-		return (NULL);
-
-	status = efi_getenv(&ImageSecurityDatabaseGUID, "dbx", database, &db_size);
-	if (status != EFI_SUCCESS)
-		goto fail;
-
-
-	for (list = (EFI_SIGNATURE_LIST*) database;
-	    db_size >= list->SignatureListSize && db_size > 0;
-	    db_size -= list->SignatureListSize,
-	    list = (EFI_SIGNATURE_LIST*)
-	    ((UINT8*)list + list->SignatureListSize)) {
-
-		/* We are only interested in entries that contain digests. */
-		if (memcmp(&efiCertX509Sha256GUID, &list->SignatureType,
-		    sizeof(EFI_GUID)) == 0) {
+	*count = 0;
+	database = efi_read_database("dbx", &remaining);
+	for (cursor = database; remaining > 0;
+	    remaining -= list->SignatureListSize, cursor += list->SignatureListSize) {
+		list = (EFI_SIGNATURE_LIST *)cursor;
+		entries = efi_signature_entries(list, remaining);
+		if (memcmp(&efiCertX509Sha256GUID, &list->SignatureType, sizeof(EFI_GUID)) == 0)
 			hash_size = br_sha256_SIZE;
-		} else if (memcmp(&efiCertX509Sha384GUID, &list->SignatureType,
-		    sizeof(EFI_GUID)) == 0) {
+		else if (memcmp(&efiCertX509Sha384GUID, &list->SignatureType, sizeof(EFI_GUID)) == 0)
 			hash_size = br_sha384_SIZE;
-		} else if (memcmp(&efiCertX509Sha5122UID, &list->SignatureType,
-		    sizeof(EFI_GUID)) == 0) {
+		else if (memcmp(&efiCertX509Sha5122UID, &list->SignatureType, sizeof(EFI_GUID)) == 0)
 			hash_size = br_sha512_SIZE;
-		} else {
+		else
 			continue;
-		}
-
-		/*
-		 * A single entry can have multiple digests
-		 * of the same type for some reason.
-		 */
-		header_size = sizeof(EFI_SIGNATURE_LIST) + list->SignatureHeaderSize;
-
-		/* Calculate the number of entries basing on structure size */
-		entry_count = list->SignatureListSize - header_size;
-		entry_count /= list->SignatureSize;
-		entry = (EFI_SIGNATURE_DATA*)((UINT8*)list + header_size);
-		while (entry_count-- > 0) {
-			digests = realloc(digests,
-			    (digest_count + 1) * sizeof(hash_data));
-			if (digests == NULL) {
-				digest_count = 0;
-				goto fail;
-			}
-
-			digests[digest_count].data = malloc(hash_size);
-			if (digests[digest_count].data == NULL)
-				goto fail;
-
-			memcpy(digests[digest_count].data,
-			    entry->SignatureData,
-			    hash_size);
-			digests[digest_count].hash_size = hash_size;
-
-			entry = (EFI_SIGNATURE_DATA*)(entry + list->SignatureSize);
-			digest_count++;
+		if (list->SignatureHeaderSize != 0 ||
+		    list->SignatureSize != sizeof(EFI_GUID) + hash_size + sizeof(EFI_TIME))
+			panic("Secure Boot: malformed certificate revocation list");
+		entry = cursor + sizeof(*list);
+		for (size_t i = 0; i < entries; i++, entry += list->SignatureSize) {
+			digests = realloc(digests, (*count + 1) * sizeof(*digests));
+			if (digests == NULL)
+				panic("Secure Boot: cannot allocate revoked hashes");
+			digests[*count].data = malloc(hash_size);
+			if (digests[*count].data == NULL)
+				panic("Secure Boot: cannot allocate revoked hash");
+			digests[*count].hash_size = hash_size;
+			memcpy(digests[*count].data, entry + sizeof(EFI_GUID), hash_size);
+			(*count)++;
 		}
 	}
-	xfree(database);
-	if (count != NULL)
-		*count = digest_count;
-
+	free(database);
 	return (digests);
-
-fail:
-	while (digest_count--)
-		xfree(digests[digest_count].data);
-
-	xfree(database);
-	xfree(digests);
-	return (NULL);
 }
 
 /* Copy x509 certificates from db */

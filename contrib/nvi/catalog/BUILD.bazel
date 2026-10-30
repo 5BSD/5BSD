@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["dump.c"], visibility = ["//usr.bin/vi/catalog:__pkg__"])
+exports_files(['dutch.base', 'french.base', 'german.base', 'polish.base', 'ru_RU.KOI8-R.base', 'spanish.base', 'swedish.base', 'uk_UA.KOI8-U.base', 'zh_CN.GB2312.base', 'tr_TR.ISO8859-9.base', 'tr_TR.UTF-8.base'], visibility = ["//usr.bin/vi/catalog:__pkg__"])

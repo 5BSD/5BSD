@@ -269,6 +269,33 @@ check_status_fd(int status, int fd)
 
 /* --- Mint operations (return token fds) --- */
 
+static int
+capsule_boot_grant(int channel_fd, const char *recipient, uint32_t op)
+{
+	struct capsule_boot_storage_req req = { .op = op };
+	int fd = -1, status;
+
+	if (recipient == NULL || recipient[0] == '\0' ||
+	    strlcpy(req.recipient, recipient, sizeof(req.recipient)) >= sizeof(req.recipient))
+		return (errno = EINVAL, -1);
+	status = capsule_rpc(channel_fd, &req, sizeof(req), &fd, 1, NULL);
+	return (check_status_fd(status, fd));
+}
+
+int
+capsule_boot_storage(int channel_fd, const char *recipient)
+{
+	return (capsule_boot_grant(channel_fd, recipient, CAPSULE_OP_BOOT_STORAGE));
+}
+
+int
+capsule_boot_crypto(int channel_fd, const char *recipient)
+{
+	return (capsule_boot_grant(channel_fd, recipient, CAPSULE_OP_BOOT_CRYPTO));
+}
+
+
+
 int
 capsule_mint_system(int channel_fd, uint32_t gates)
 {

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["umem.c"], visibility = ["//cddl/lib/libumem:__pkg__"])
+cc_library(name = "headers", hdrs = ["umem.h"], strip_include_prefix = ".", visibility = ["//cddl/lib/libumem:__pkg__"])

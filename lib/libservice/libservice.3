@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd October 12, 2026
+.Dd October 18, 2026
 .Dt LIBSERVICE 3
 .Os
 .Sh NAME
@@ -25,6 +25,7 @@ Service lifecycle library
 .Fn service_idle_shutdown "struct service_context *context" "unsigned seconds"
 .Ft int
 .Fn service_heartbeat "struct service_context *context"
+.Ft int
 .Ft int
 .Fn service_connect "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
@@ -54,6 +55,7 @@ Service lifecycle library
 .Ft int
 .Fn service_provider_expose_sendable "struct service_provider *provider" "const char *name" "struct service_listener **listener"
 .Ft int
+.Ft int
 .Fn service_provider_expose_lazy "struct service_provider *provider" "const char *name" "service_activation_handler activate" "void *argument" "struct service_listener **listener"
 .Ft int
 .Fn service_provider_enter_capability_mode "struct service_provider *provider"
@@ -65,6 +67,7 @@ Service lifecycle library
 .Fn service_listener_close "struct service_listener *listener"
 .Ft int
 .Fn service_listener_accept "struct service_listener *listener" "struct service_identity *identity" "int *session_fd"
+.Ft int
 .Ft int
 .Fn service_worker_protect "uint32_t flags"
 .Ft void
@@ -333,6 +336,10 @@ context object.
 .Fn service_worker_drop_inherited_authority
 then discards every private descriptor retained by libservice before the
 worker enters capability mode.
+It does not clear attached kernel software authority, change UNIX credentials,
+or close application-owned descriptors.
+Callers must not use this function alone as a privilege drop before executing
+untrusted code.
 .Sh MANAGED SESSIONS
 .Fn service_session_create
 consumes
@@ -407,7 +414,8 @@ consume one another's replies.
 .Fn service_install_ambient_lookup
 retains a reference to an existing channel and leaves ownership of the
 supplied descriptor with the caller.
-Discovery installation does not grant permissions.
+Discovery installation does not mint authority. An authenticator-issued route
+retains its separately bounded session rights; ordinary routes carry none.
 SwitchBoard resolves the actual sender's software authority from kernel-stamped
 metadata and checks its attributes against the requested endpoint.
 Possessing a discovery route or running as UID 0 does not supply attributes.
@@ -465,6 +473,24 @@ Their environment locators and original injected descriptors are consumed
 when acquired.
 An unmanaged process cannot create authority by setting the deployment
 variable itself.
+.Pp
+A named bootstrap descriptor of type
+.Dq Li cryptoctl
+must report the supported kernel control-info version, supervisor scope and
+derivation authority, with no owner binding.
+Its descriptor rights must be exactly
+.Dv CAP_IOCTL
+and its ioctl allowlist exactly
+.Dv CIOCGCRYPTOCONTROLINFO
+and
+.Dv CIOCGCRYPTOCONTROL .
+Owner-scoped controls, unrelated descriptors, excess rights and controls unable
+to derive children are rejected with
+.Er EINVAL .
+The kernel query describes control authority; it does not authenticate the
+sender or authorize delivery to a recipient.
+This type check alone does not implement a Capsule boot-policy grant or make
+Crypto startup under BIP operational.
 .Pp
 .Ev CAPABILITY_UNIT_DIR
 names the selected unit directory so a managed program can locate immutable

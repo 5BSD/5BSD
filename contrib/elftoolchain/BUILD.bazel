@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//lib/libelf:sources.bzl", "ELF_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ELF_SOURCES] + ["libelf/" + s for s in ["libelf_convert.m4", "libelf_fsize.m4", "libelf_msize.m4", "elf_types.m4", "Version.map"]], visibility = ["//lib/libelf:__pkg__"])
+cc_library(name = "elf_headers", hdrs = ["libelf/libelf.h", "libelf/gelf.h"], strip_include_prefix = "libelf", deps = ["//sys/sys:elf_headers"], visibility = ["//visibility:public"])
+cc_library(name = "elf_internal_headers", hdrs = glob(["libelf/*.h", "common/*.h"], exclude = ["libelf/libelf.h", "libelf/gelf.h"]), includes = ["libelf", "common"], visibility = ["//lib/libelf:__pkg__"])
+
+load("//lib/libelf:installation_data.bzl", "MANUALS")
+exports_files(["libelf/" + name for name in MANUALS + ["libelf.h", "gelf.h"]], visibility = ["//lib/libelf:__pkg__"])
+
+load("//lib/libelftc:sources.bzl", "ELFTC_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ELFTC_SOURCES if s.startswith("//")], visibility = ["//lib/libelftc:__pkg__"])
+cc_library(name = "elftc_headers", hdrs = ["libelftc/libelftc.h"], strip_include_prefix = "libelftc", deps = [":elf_headers"], visibility = ["//visibility:public"])
+cc_library(name = "elftc_internal_headers", hdrs = glob(["libelftc/*.h", "common/*.h"], exclude = ["libelftc/libelftc.h"]), includes = ["libelftc", "common"], visibility = ["//lib/libelftc:__pkg__"])
+
+exports_files(["size/size.c", "strings/strings.c"], visibility = ["//usr.bin/size:__pkg__", "//usr.bin/strings:__pkg__", "//usr.bin/cxxfilt:__pkg__"])
+cc_library(name = "utility_headers", hdrs = glob(["common/*.h"]), includes = ["common"], visibility = ["//usr.bin/elfctl:__pkg__", "//usr.bin/addr2line:__pkg__", "//usr.bin/nm:__pkg__", "//usr.bin/readelf:__pkg__", "//usr.bin/size:__pkg__", "//usr.bin/strings:__pkg__", "//usr.bin/cxxfilt:__pkg__"])
+
+exports_files(["size/size.1"], visibility = ["//usr.bin/size:__pkg__"])
+
+exports_files(["strings/strings.1"], visibility = ["//usr.bin/strings:__pkg__"])
+
+exports_files(["cxxfilt/cxxfilt.c", "cxxfilt/c++filt.1"], visibility = ["//usr.bin/cxxfilt:__pkg__"])
+
+load("//lib/libpe:sources.bzl", "PE_SOURCES")
+exports_files([s.split(":", 1)[1] for s in PE_SOURCES], visibility = ["//lib/libpe:__pkg__"])
+cc_library(name = "pe_headers", hdrs = ["libpe/libpe.h", "libpe/pe.h"], strip_include_prefix = "libpe", visibility = ["//visibility:public"])
+cc_library(name = "pe_internal_headers", hdrs = glob(["libpe/*.h", "common/*.h"], exclude = ["libpe/libpe.h", "libpe/pe.h"]), includes = ["libpe", "common"], visibility = ["//lib/libpe:__pkg__"])
+
+load("//usr.bin/elfcopy:sources.bzl", "ELFCOPY_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ELFCOPY_SOURCES] + ["elfcopy/elfcopy.1"], visibility = ["//usr.bin/elfcopy:__pkg__"])
+cc_library(name = "elfcopy_headers", hdrs = ["elfcopy/elfcopy.h", "common/_elftc.h"], includes = ["elfcopy", "libelftc", "common"], deps = [":elftc_headers", ":pe_headers"], visibility = ["//usr.bin/elfcopy:__pkg__"])
+
+load("//lib/libdwarf:sources.bzl", "DWARF_SOURCES", "DWARF_GENERATED")
+exports_files([s.split(":", 1)[1] for s in DWARF_SOURCES] + ["libdwarf/" + n + ".m4" for n in DWARF_GENERATED + ["dwarf_nametbl", "dwarf_pro_nametbl"]], visibility = ["//lib/libdwarf:__pkg__"])
+cc_library(name = "dwarf_headers", hdrs = ["libdwarf/dwarf.h", "libdwarf/libdwarf.h"], strip_include_prefix = "libdwarf", deps = [":elf_headers"], visibility = ["//visibility:public"])
+cc_library(name = "dwarf_internal_headers", hdrs = glob(["libdwarf/*.h", "common/*.h"], exclude = ["libdwarf/dwarf.h", "libdwarf/libdwarf.h"]), includes = ["libdwarf", "common"], visibility = ["//lib/libdwarf:__pkg__"])
+exports_files(["addr2line/addr2line.c", "addr2line/addr2line.1"], visibility = ["//usr.bin/addr2line:__pkg__"])
+exports_files(["nm/nm.c", "nm/nm.1"], visibility = ["//usr.bin/nm:__pkg__"])
+exports_files(["readelf/readelf.c", "readelf/readelf.1"], visibility = ["//usr.bin/readelf:__pkg__"])
+
+load("//lib/libdwarf:installation_data.bzl", DWARF_MANUALS = "MANUALS")
+exports_files(["libdwarf/" + name for name in DWARF_MANUALS + ["dwarf.h", "libdwarf.h"]], visibility = ["//lib/libdwarf:__pkg__"])

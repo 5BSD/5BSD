@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":crypto_sources_amd64.bzl", "AMD64_CRYPTO_SOURCES", "AMD64_ASM_SOURCES")
+exports_files([label.split(":", 1)[1] for label in AMD64_CRYPTO_SOURCES + AMD64_ASM_SOURCES if label.startswith("//crypto/openssl:")],
+    visibility = ["//secure/lib/libcrypto:__subpackages__", "//secure/lib/libssl:__pkg__", "//secure/usr.bin/openssl:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["include/openssl/*.h"]),
+    includes = ["include"], visibility = ["//visibility:public"])
+cc_library(name = "internal_headers",
+    hdrs = glob(["crypto/**/*.h", "providers/**/*.h", "include/internal/**/*.h", "include/crypto/**/*.h"]),
+    textual_hdrs = glob(["providers/**/*.inc", "crypto/LPdir_*.c"]) + [
+        "crypto/des/ncbc_enc.c", "providers/implementations/macs/blake2_mac_impl.c"],
+    includes = [".", "providers/common/include", "providers/fips/include",
+        "providers/implementations/include", "crypto", "crypto/ec/curve448",
+        "crypto/ec/curve448/arch_32", "crypto/modes"],
+    visibility = ["//secure/lib/libcrypto:__subpackages__", "//secure/lib/libssl:__pkg__", "//secure/usr.bin/openssl:__pkg__"])
+
+load(":module_sources_amd64.bzl", "MODULE_SOURCES")
+exports_files(depset([label.split(":", 1)[1] for group in MODULE_SOURCES.values() for label in group
+    if label.startswith("//crypto/openssl:") and label not in AMD64_CRYPTO_SOURCES + AMD64_ASM_SOURCES]).to_list(),
+    visibility = ["//secure/lib/libcrypto:__subpackages__", "//secure/lib/libssl:__pkg__", "//secure/usr.bin/openssl:__pkg__"])
+cc_library(name = "engine_headers", hdrs = glob(["engines/*.h"]),
+    textual_hdrs = glob(["engines/*_err.c"]) + ["crypto/aes/aes_core.c"], includes = ["engines"],
+    visibility = ["//secure/lib/libcrypto/engines:__pkg__"])
+
+load(":ssl_cli_sources.bzl", "SSL_SOURCES", "CLI_SOURCES")
+_PREVIOUS_SOURCES = AMD64_CRYPTO_SOURCES + AMD64_ASM_SOURCES + [label for group in MODULE_SOURCES.values() for label in group]
+exports_files(depset([label.split(":", 1)[1] for label in SSL_SOURCES + CLI_SOURCES
+    if label not in _PREVIOUS_SOURCES]).to_list(),
+    visibility = ["//secure/lib/libssl:__pkg__", "//secure/usr.bin/openssl:__pkg__"])
+cc_library(name = "ssl_headers", hdrs = glob(["ssl/**/*.h"]), includes = ["ssl"],
+    visibility = ["//secure/lib/libssl:__pkg__"])
+cc_library(name = "app_headers", hdrs = glob(["apps/**/*.h"]), includes = ["apps/include"],
+    visibility = ["//secure/usr.bin/openssl:__pkg__"])
+
+load(":install_headers.bzl", "INSTALL_HEADERS")
+exports_files([label.split(":", 1)[1] for _, label in INSTALL_HEADERS] +
+    ["exporters/libcrypto.pc", "exporters/libssl.pc", "exporters/openssl.pc"],
+    visibility = ["//secure/lib/libcrypto:__pkg__", "//secure/lib/libssl:__pkg__"])
+
+exports_files(["apps/openssl.cnf"], visibility = ["//secure/usr.bin/openssl:__pkg__"])

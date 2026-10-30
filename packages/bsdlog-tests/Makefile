@@ -1,5 +1,5 @@
 WORLDPACKAGE=	bsdlog-tests
-SUBPACKAGES=
+SUBPACKAGES=	dbg
 PKG_SETS=	tests
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/bsdlog-tests-all.ucl

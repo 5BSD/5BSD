@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+
+# Preserve the maintained NO_SHARED test and benchmark linkage.
+cc_binary(name = "shmring_test", srcs = ["shmring_test.c"],
+    deps = ["//lib/libshmring:shmring", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+cc_binary(name = "shmringbench", srcs = ["shmringbench.c"],
+    deps = ["//lib/libshmring:shmring", "//lib/libthr:thr"],
+    linkopts = ["-static"], linkstatic = True)
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "libshmring-tests", bindir = "/usr/tests/lib/libshmring")
+ for name in ["shmring_test", "shmringbench"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["shmring_test"],
+    interfaces = {"shmring_test": "atf"})
+[bsd_install_file(name = name, src = src, destination = "/usr/tests/lib/libshmring/" + dest,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libshmring-tests"])
+ for name, src, dest in [("install_kyuafile", ":kyuafile", "Kyuafile"),
+                         ("install_readme", "README.benchmark", "README.benchmark")]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_readme"],
+    visibility = ["//lib/libshmring:__pkg__"])
+bsd_kyua_test(name = "native_tests", program = ":shmring_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])

@@ -81,6 +81,9 @@ The calls speak the FIDL library
 to the provider.
 The process-wide session is opened by name on first use and negotiated
 once; a forked child abandons the parent's session and opens its own.
+Resolution uses the managed service's bootstrap context.
+Installing an ambient user-session lookup route does not change the identity
+of this connection or turn these calls into user-session requests.
 Each call is bounded by ten seconds, shortened by an active
 .Xr service_budget_begin 3 .
 A timeout, a transport failure or a malformed reply drops the session, and
@@ -93,16 +96,14 @@ provider
 .Pq Xr BSDFilesystem 8
 for the owned, type-checked storage claim named
 .Fa name ,
-mounts the delivered rights-limited handle, and returns its directory root in
+and returns the directory mounted by the provider in
 .Fa dirfdp .
-The returned descriptor anchors the store's anonymous mount: the store stays
-mounted while the caller holds it
-.Pq or while the provider holds the claim ,
-and is unmounted when the last holder lets go, so a caller keeps it open for
-as long as it uses the store and closes it before
+The provider retains the claim's mount anchor and, under BIP, its data grant.
+Releasing the claim or losing its authorization can deny access through
+already-open descriptors; retaining a descriptor does not preserve authority.
+The caller closes its descriptors before
 .Fn service_storage_destroy
 .Pq a mounted store cannot be destroyed .
-Descriptors opened beneath it do not keep the mount alive on their own.
 The caller hardens the returned directory's rights itself.
 .Pp
 .Fn service_storage_open_cache

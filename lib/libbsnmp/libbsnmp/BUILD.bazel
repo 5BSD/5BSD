@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":snmptc.bzl", "snmp_conventions")
+snmp_conventions(name = "snmptc", source = "//contrib/bsnmp/lib:tc.def",
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"])
+cc_library(name = "generated_headers", hdrs = [":snmptc"], strip_include_prefix = ".")
+_CRYPTO = "//tools/build/bazel/config:openssl_enabled"
+cc_library(name = "bsnmp", srcs = ["//contrib/bsnmp/lib:" + source for source in [
+    "asn1.c", "snmp.c", "snmpagent.c", "snmpclient.c", "snmpcrypto.c", "support.c"]],
+    deps = ["//contrib/bsnmp/lib:headers", ":generated_headers"] + select({_CRYPTO: ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}),
+    local_defines = ["HAVE_ERR_H", "HAVE_GETADDRINFO", "HAVE_STRLCPY", "HAVE_STDINT_H", "HAVE_INTTYPES_H", "QUADFMT=\"llu\"", "QUADXFMT=\"llx\"", "BOGUS_CVE_2019_5610_FIX"] + select({_CRYPTO: ["HAVE_LIBCRYPTO"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":bsnmp"], visibility = ["//visibility:public"])
+cc_shared_library(name = "bsnmp_shared", deps = [":bsnmp"],
+    dynamic_deps = select({_CRYPTO: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}),
+    shared_lib_name = "libbsnmp.so.7", user_link_flags = ["-Wl,-soname,libbsnmp.so.7", "-Wl,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")

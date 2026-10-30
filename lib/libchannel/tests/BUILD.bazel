@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Preserve NO_SHARED and allocation fault injection from the maintained test.
+cc_binary(name = "channel_test", srcs = ["channel_test.c"],
+    deps = ["//lib/libchannel:channel", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c",
+            "//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:channel_headers", "//sys/sys:cap_process_header"],
+    linkopts = ["-static", "-Wl,--wrap=malloc,--wrap=calloc"], linkstatic = True,
+    visibility = ["//packages/libchannel-tests:__pkg__"])
+[cc_binary(name = name, srcs = [name + ".c"],
+    deps = ["//lib/libchannel:channel"] + (["//sys/dev/mac_capability:ioctl_headers"] if name == "ipc_soak" else []),
+    linkopts = ["-static"], linkstatic = True) for name in ["call_bench", "ipc_soak"]]
+# Tags describe requirements, not enforcement. Run through a matching-kernel
+# qualification orchestrator; never treat host skips as passing evidence.
+_CASES = ['channel_wait_interrupted_deadline', 'invalid_arguments', 'sender_identity_stamp', 'message_null_accessors', 'poll_is_unsupported', 'channel_wait_readiness', 'request_reply_event_and_cancellation', 'reordered_replies_and_retained_requests', 'peer_death_fails_outstanding_requests', 'client_death_notifies_provider', 'fork_rejects_inherited_channels', 'stale_reply_closes_descriptors', 'queued_attachments_close_on_destroy', 'destroy_from_callback', 'receive_blocks_resize', 'wait_then_dispatch_once', 'descriptor_specs_move_and_lock', 'queued_move_delivers_once', 'outgoing_v1_layout', 'direct_send_statistics', 'direct_send_with_fds_and_specs', 'backpressure_queues_in_order', 'move_semantics_on_both_paths', 'reserve_commit_abort_lifecycle', 'reserve_commit_under_backpressure', 'allocation_failures_leave_state_intact', 'ioctl_allowlist_falls_back', 'call_round_trip', 'call_with_descriptors', 'call_timeout_discards_late_reply', 'call_peer_close_and_revocation', 'call_with_full_receive_queue', 'call_interleaves_with_async_requests', 'call_concurrent_channels', 'call_survives_signal_and_large_reply', 'call_falls_back_without_kernel_support', 'call_request_api']
+_CLEANUP_CASES = ['request_reply_event_and_cancellation', 'reordered_replies_and_retained_requests', 'peer_death_fails_outstanding_requests', 'client_death_notifies_provider', 'fork_rejects_inherited_channels', 'stale_reply_closes_descriptors', 'queued_attachments_close_on_destroy', 'destroy_from_callback', 'poll_is_unsupported', 'channel_wait_readiness', 'sender_identity_stamp', 'descriptor_specs_move_and_lock', 'queued_move_delivers_once', 'outgoing_v1_layout', 'ioctl_allowlist_falls_back', 'direct_send_statistics', 'direct_send_with_fds_and_specs', 'backpressure_queues_in_order', 'move_semantics_on_both_paths', 'reserve_commit_abort_lifecycle', 'reserve_commit_under_backpressure', 'allocation_failures_leave_state_intact', 'call_round_trip', 'call_with_descriptors', 'call_timeout_discards_late_reply', 'call_peer_close_and_revocation', 'call_with_full_receive_queue', 'call_interleaves_with_async_requests', 'call_concurrent_channels', 'call_survives_signal_and_large_reply', 'call_falls_back_without_kernel_support', 'call_request_api']
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":channel_test",
+    cleanup = case in _CLEANUP_CASES, runner = "//tools/build/bazel:atf_runner", tags = ["manual", "requires-root", "requires-matching-kernel"], size = "medium") for case in _CASES]
+test_suite(name = "live_tests", tests = [":" + case for case in _CASES] + [":short_soak"], tags = ["manual"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+bsd_script_wrapper(name = "ipc_soak_test", body = "ipc_soak_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "", package = "libchannel-tests",
+    bindir = "/usr/tests/lib/libchannel") for name in ["channel_test", "call_bench", "ipc_soak"]]
+bsd_install_file(name = "install_shell", src = ":ipc_soak_test", destination = "/usr/tests/lib/libchannel/ipc_soak_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=libchannel-tests"])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["channel_test", "ipc_soak_test"],
+    interfaces = {"channel_test": "atf", "ipc_soak_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libchannel/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libchannel-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_shell", ":install_kyuafile"], visibility = ["//lib/libchannel:__pkg__", "//packages/libchannel-tests:__pkg__"])
+
+# Use the maintained shell body and its native ATF/tool dependencies unchanged.
+bsd_atf_test(name = "short_soak", case_name = "short_soak", body = "ipc_soak_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", data = [":ipc_soak"],
+    runtime_bin = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check",
+                   "//usr.bin/dirname:dirname", "//usr.bin/tr:tr"],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared",
+                   "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+                   "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared",
+                   "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    runner = "//tools/build/bazel:atf_runner", tags = ["manual", "requires-root", "requires-matching-kernel"],
+    size = "medium", timeout = "moderate")

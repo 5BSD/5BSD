@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h"]) + ["mach-o/compact_unwind_encoding.h"], includes = ["."], visibility = ["//lib/libgcc_eh:__pkg__", "//lib/libgcc_s:__pkg__", "//lib/libcompiler_rt:__pkg__", "//lib/libexecinfo:__pkg__"])
+
+exports_files(["__libunwind_config.h", "libunwind.h", "unwind.h", "unwind_arm_ehabi.h", "unwind_itanium.h"], visibility = ["//lib/libgcc_eh:__pkg__", "//lib/libgcc_s:__pkg__"])

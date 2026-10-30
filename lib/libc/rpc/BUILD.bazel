@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "rpc_com_headers",
+    hdrs = ["rpc_com.h"],
+    strip_include_prefix = ".",
+    visibility = ["//lib/libc/xdr:__pkg__"],
+)
+
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+[bsd_rpcgen(name = output + "_generate", source = "//include/rpcsvc:crypt.x",
+    output = output, mode = mode, flags = ["-C"], cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+ for output, mode in [("crypt.h", "-h"), ("crypt_clnt.c", "-l"), ("crypt_xdr.c", "-c")]]
+cc_library(features = LIBC_VARIANT_FEATURES, name = "private_headers", hdrs = ["mt_misc.h", ":crypt.h"], strip_include_prefix = ".")
+
+# Complete RPC object inventory from the maintained libc component.
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "rpc_objects",
+    srcs = [
+        "auth_none.c",
+        "auth_unix.c",
+        "authunix_prot.c",
+        "bindresvport.c",
+        "clnt_bcast.c",
+        "clnt_dg.c",
+        "clnt_generic.c",
+        "clnt_perror.c",
+        "clnt_raw.c",
+        "clnt_simple.c",
+        "clnt_vc.c",
+        "rpc_dtablesize.c",
+        "getnetconfig.c",
+        "getnetpath.c",
+        "getrpcent.c",
+        "getrpcport.c",
+        "mt_misc.c",
+        "pmap_clnt.c",
+        "pmap_getmaps.c",
+        "pmap_getport.c",
+        "pmap_prot.c",
+        "pmap_prot2.c",
+        "pmap_rmt.c",
+        "rpc_prot.c",
+        "rpc_commondata.c",
+        "rpc_callmsg.c",
+        "rpc_generic.c",
+        "rpc_soc.c",
+        "rpcb_clnt.c",
+        "rpcb_prot.c",
+        "rpcb_st_xdr.c",
+        "rpcsec_gss_stub.c",
+        "svc.c",
+        "svc_auth.c",
+        "svc_dg.c",
+        "svc_auth_unix.c",
+        "svc_generic.c",
+        "svc_raw.c",
+        "svc_run.c",
+        "svc_simple.c",
+        "svc_vc.c",
+        "svc_nl.c",
+        "auth_time.c",
+        "auth_des.c",
+        "authdes_prot.c",
+        "des_crypt.c",
+        "des_soft.c",
+        "crypt_client.c",
+        "key_call.c",
+        "key_prot_xdr.c",
+        "getpublickey.c",
+        "svc_auth_des.c",
+        "netname.c",
+        "netnamer.c",
+        "rpcdname.c",
+        "rtime.c",
+        ":crypt_clnt.c", ":crypt_xdr.c",
+    ],
+    implementation_deps = [":rpc_com_headers", ":private_headers", "//lib/libc/include:rpc_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID", "BROKEN_DES", "PORTMAP", "DES_BUILTIN"] +
+        select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:ns_caching_enabled": ["NS_CACHING"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:hesiod_enabled": ["HESIOD"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+# Qualification artifacts, not separately installed libraries.
+bsd_component_archive(name = "objects_archive", groups = [":rpc_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":rpc_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+[bsd_install_file(name = "config_" + name, src = name, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+ for name in ["netconfig", "rpc"]]
+bsd_install_manifest(name = "config_manifest", entries = [":config_netconfig", ":config_rpc"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_bindresvport.3', 'bindresvport.3'),
+    ('libc_manual_des_crypt.3', 'des_crypt.3'),
+    ('libc_manual_getnetconfig.3', 'getnetconfig.3'),
+    ('libc_manual_getnetpath.3', 'getnetpath.3'),
+    ('libc_manual_getrpcent.3', 'getrpcent.3'),
+    ('libc_manual_getrpcport.3', 'getrpcport.3'),
+    ('libc_manual_rpc.3', 'rpc.3'),
+    ('libc_manual_rpc_soc.3', 'rpc_soc.3'),
+    ('libc_manual_rpc_clnt_auth.3', 'rpc_clnt_auth.3'),
+    ('libc_manual_rpc_clnt_calls.3', 'rpc_clnt_calls.3'),
+    ('libc_manual_rpc_clnt_create.3', 'rpc_clnt_create.3'),
+    ('libc_manual_rpc_svc_calls.3', 'rpc_svc_calls.3'),
+    ('libc_manual_rpc_svc_create.3', 'rpc_svc_create.3'),
+    ('libc_manual_rpc_svc_err.3', 'rpc_svc_err.3'),
+    ('libc_manual_rpc_svc_reg.3', 'rpc_svc_reg.3'),
+    ('libc_manual_rpc_xdr.3', 'rpc_xdr.3'),
+    ('libc_manual_rpcbind.3', 'rpcbind.3'),
+    ('libc_manual_publickey.3', 'publickey.3'),
+    ('libc_manual_rpc_secure.3', 'rpc_secure.3'),
+    ('libc_manual_rtime.3', 'rtime.3'),
+    ('libc_manual_rpc.5', 'rpc.5'),
+    ('libc_manual_netconfig.5', 'netconfig.5'),
+]]

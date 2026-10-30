@@ -355,7 +355,7 @@ efi_copy_init(void)
 }
 
 static bool
-efi_check_space(vm_offset_t end)
+efi_check_space_exact(vm_offset_t end, bool quiet)
 {
 	EFI_PHYSICAL_ADDRESS addr, new_base, new_staging;
 	EFI_STATUS status;
@@ -463,8 +463,37 @@ expand:
 		return (true);
 	}
 
-	printf("efi_check_space: Unable to expand staging area\n");
+	if (!quiet)
+		printf("efi_check_space: Unable to expand staging area\n");
 	return (false);
+}
+
+
+/*
+ * Raw files arrive in small reads. Growing only by the next read can move
+ * all prior contents once per alignment boundary when space is available
+ * below staging. Try geometric growth first, but do not require spare memory
+ * to satisfy a load that fits with an exact allocation.
+ */
+static bool
+efi_check_space(vm_offset_t end)
+{
+	vm_offset_t capacity, limit, rounded;
+
+	limit = (vm_offset_t)-1;
+	if (end > limit - (EFI_PAGE_SIZE - 1))
+		return (false);
+	rounded = roundup2(end, EFI_PAGE_SIZE);
+	if (staging_slop > limit - rounded)
+		return (false);
+	if (rounded + staging_slop <= staging_end || !boot_services_active)
+		return (efi_check_space_exact(end, false));
+
+	capacity = staging_end - staging;
+	if (capacity != 0 && capacity <= limit - rounded - staging_slop &&
+	    efi_check_space_exact(rounded + capacity, true))
+		return (true);
+	return (efi_check_space_exact(end, false));
 }
 
 void *
@@ -515,6 +544,14 @@ efi_readin(readin_handle_t fd, vm_offset_t dest, const size_t len)
 	}
 
 	if (!efi_check_space(dest + stage_offset + len)) {
+		printf("efi_readin: staging allocation failed: "
+		    "dest=%#jx len=%zu staging=%#jx end=%#jx offset=%#jx\n",
+		    (uintmax_t)dest, len, (uintmax_t)staging,
+		    (uintmax_t)staging_end, (uintmax_t)stage_offset);
+#if defined(__amd64__) || defined(__i386__)
+		printf("efi_readin: copy_staging=%d max=%#jx\n",
+		    copy_staging, (uintmax_t)get_staging_max());
+#endif
 		errno = ENOMEM;
 		return (-1);
 	}

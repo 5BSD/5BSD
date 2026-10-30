@@ -1,0 +1,2 @@
+ipcs: illegal option -- Z
+usage: ipcs [-abcmopqstyMQST] [-C corefile] [-N namelist] [-u user]

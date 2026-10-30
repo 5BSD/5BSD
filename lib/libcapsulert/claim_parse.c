@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 
 #include <limits.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,7 @@
 #include <sys/zfshandle.h>
 
 #include "claim_parse.h"
+
 #include "diagnostics.h"
 #include "capsulert.h"
 
@@ -43,6 +45,8 @@ parse_port_range_string(const char *s, uint16_t *minp, uint16_t *maxp)
 		return (0);
 	}
 	if (s[0] == '.' || s[0] == '<') {
+		if (s[1] < '0' || s[1] > '9')
+			return (-1);
 		first = strtoul(s + 1, &end, 10);
 		if (*end != '\0' || first == 0 || first > UINT16_MAX + 1UL)
 			return (-1);
@@ -51,6 +55,8 @@ parse_port_range_string(const char *s, uint16_t *minp, uint16_t *maxp)
 		return (0);
 	}
 
+	if (s[0] < '0' || s[0] > '9')
+		return (-1);
 	first = strtoul(s, &end, 10);
 	if (end == s || first > UINT16_MAX)
 		return (-1);
@@ -59,7 +65,7 @@ parse_port_range_string(const char *s, uint16_t *minp, uint16_t *maxp)
 		*maxp = (uint16_t)first;
 		return (0);
 	}
-	if (*end != '-')
+	if (*end != '-' || end[1] < '0' || end[1] > '9')
 		return (-1);
 	last = strtoul(end + 1, &end, 10);
 	if (*end != '\0' || last > UINT16_MAX || first > last)
@@ -89,7 +95,8 @@ parse_port_range_obj(const ucl_object_t *v, uint16_t *minp, uint16_t *maxp)
 		}
 		return (0);
 	}
-	if (ucl_object_type(v) == UCL_STRING)
+	if (ucl_object_type(v) == UCL_STRING &&
+	    v->len == strlen(ucl_object_tostring(v)))
 		return (parse_port_range_string(ucl_object_tostring(v),
 		    minp, maxp));
 	return (-1);
@@ -122,6 +129,8 @@ parse_address_string(const char *s, uint8_t addr[16],
 			return (-1);
 		memcpy(buf, s, len);
 		buf[len] = '\0';
+		if (slash[1] < '0' || slash[1] > '9')
+			return (-1);
 		pfx = strtoul(slash + 1, &end, 10);
 		if (*end != '\0' || pfx > 128)
 			return (-1);

@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":sources.bzl", "ELFCOPY_SOURCES")
+# Default LLVM_BINUTILS profile; alternate objcopy/strip installation is pending.
+cc_binary(name = "elfcopy", srcs = ELFCOPY_SOURCES,
+    deps = ["//contrib/elftoolchain:elfcopy_headers", "//lib/libelftc:elftc_pie",
+        "//lib/libpe:pe_pie", "//lib/libelf:elf", "//lib/libarchive:archive"],
+    dynamic_deps = ["//lib/libelf:elf_shared", "//lib/libarchive:archive_shared"],
+    local_defines = ["WITH_PE=1"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", package = "toolchain", program = "elfcopy", manual = "//contrib/elftoolchain:elfcopy/elfcopy.1")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+_TEST_BASE_LIBRARIES = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared",
+    "//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared",
+    "//lib/libexpat:bsdxml_shared", "//lib/libzstd:zstd_shared", "//lib/libmd:md_shared"]
+_TEST_LIBRARIES = _TEST_BASE_LIBRARIES + select({
+        "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": [],
+    })
+cc_test(name = "functional_test", srcs = ["functional_test.c"],
+    deps = ["//lib/libelf:elf"], linkstatic = True,
+    data = [":elfcopy", ":fixture"] + _TEST_LIBRARIES,
+    args = ["$(rootpath :elfcopy)", "$(rootpath :fixture)"] + ["$(rootpath " + lib + ")" for lib in _TEST_BASE_LIBRARIES] + select({
+        "//tools/build/bazel/config:openssl_enabled": ["$(rootpath //secure/lib/libcrypto:crypto_shared)"], "//conditions:default": [],
+    }),
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+
+cc_binary(name = "fixture", srcs = ["fixture.c"], copts = ["-g"], linkstatic = True, testonly = True)

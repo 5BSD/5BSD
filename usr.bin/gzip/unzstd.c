@@ -35,7 +35,7 @@ unzstd(int in, int out, char *pre, size_t prelen, off_t *bytes_in)
 	ZSTD_outBuffer zob;
 	ZSTD_DCtx *zds;
 	ssize_t res;
-	size_t zres;
+	size_t zres = 1;
 	size_t bytes_out = 0;
 	int eof = 0;
 
@@ -58,13 +58,16 @@ unzstd(int in, int out, char *pre, size_t prelen, off_t *bytes_in)
 	zob.size = BUFLEN;
 	zob.pos = 0;
 
-	while (!eof) {
-		if (zib.pos >= zib.size) {
+	for (;;) {
+		if (!eof && zib.pos >= zib.size) {
 			res = read(in, ibuf, BUFLEN);
 			if (res < 0)
 				maybe_err("read");
-			if (res == 0)
+			if (res == 0) {
+				if (zres == 0)
+					break;
 				eof = 1;
+			}
 			infile_newdata(res);
 			zib.src = ibuf;
 			zib.size = res;
@@ -76,6 +79,9 @@ unzstd(int in, int out, char *pre, size_t prelen, off_t *bytes_in)
 		if (ZSTD_isError(zres)) {
 			maybe_errx("%s", ZSTD_getErrorName(zres));
 		}
+		/* A full output buffer can require further draining at EOF. */
+		if (eof && zres != 0 && zob.pos < zob.size)
+			maybe_errx("unexpected end of zstd input");
 		if (zob.pos > 0) {
 			res = write(out, obuf, zob.pos);
 			if (res < 0)
@@ -83,6 +89,8 @@ unzstd(int in, int out, char *pre, size_t prelen, off_t *bytes_in)
 			zob.pos = 0;
 			bytes_out += res;
 		}
+		if (eof && zres == 0)
+			break;
 	}
 	ZSTD_freeDStream(zds);
 	return (bytes_out);

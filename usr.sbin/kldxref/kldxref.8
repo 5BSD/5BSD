@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 27, 2026
+.Dd October 18, 2026
 .Dt KLDXREF 8
 .Os
 .Sh NAME
@@ -37,6 +37,9 @@
 .Ar path ...
 .Nm
 .Fl m Ar module
+.Nm
+.Fl o Ar output
+.Ar file ...
 .Sh DESCRIPTION
 The
 .Nm
@@ -72,6 +75,24 @@ Specify a different name for the hints files than
 .It Fl m Ar module
 Print information about the modules in the file
 .Ar module .
+.It Fl o Ar output
+Generate one hints file from only the explicitly named regular files.
+Do not discover additional files or traverse directories.
+All input and output paths must be canonical absolute paths in the same
+existing directory, since the hints record each input's basename.
+Symbolic links, non-regular inputs, duplicate inputs and using the output as
+an input are rejected.
+At least one input is required.
+An existing output must be a regular file.
+.Pp
+Inputs are processed in argument order and must have compatible ELF
+architectures even when some contain no metadata records.
+If none of the selected objects has records, write a version-only index in
+the selected objects' byte order.
+The output is written to a temporary file and closed before replacement;
+a failed invocation preserves the existing output.
+This mode cannot be combined with directory or display options.
+It selects inputs but does not authenticate or approve them.
 .It Fl v
 Operate in verbose mode.
 .El
@@ -83,6 +104,32 @@ To build hint files for both standard and add-on modules:
 To build hint files for all installed kernels:
 .Pp
 .Dl "kldxref -R /boot"
+.Pp
+To index only module files selected by a verified construction inventory:
+.Pp
+.Dl "kldxref -o /candidate/boot/modules/linker.hints /candidate/boot/modules/driver.ko"
+.Sh DIAGNOSTICS
+Failure to read selected module metadata, traverse an input directory, write or
+close a hints file, install it by rename, or remove obsolete hints returns a
+nonzero status.
+An explicitly selected malformed module also returns failure.
+Errors returned through the scan and output paths remove the current
+directory's temporary hints file and preserve its previous hints file.
+Fatal parser exits also discard the unfinished temporary hints file.
+A successfully scanned directory with no records still removes obsolete hints.
+A valid relocatable ELF object without a module-metadata section contributes no
+records and is not an error.
+Malformed PNP descriptions, invalid table dimensions, fields extending beyond
+an entry, and failed PNP string reads cause failure.
+.Pp
+Directories are installed separately.
+An error in a later directory does not undo hints already installed for earlier
+directories; this is not a transaction over the entire invocation.
+Callers constructing a protected system generation must reject the candidate
+on any failure.
+Concurrent modification of inputs or destination directories is unsupported.
+The directory filename selection rules are not an authenticated module
+inventory.
 .Sh SEE ALSO
 .Xr kld 4 ,
 .Xr kldconfig 8 ,

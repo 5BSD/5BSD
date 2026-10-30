@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["gensnmptree.c", "gensnmptree.1"], visibility = ["//usr.sbin/bsnmpd/gensnmptree:__pkg__"])

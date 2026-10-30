@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# iprop_xdr.c and include/iprop.h are maintained vendor source inputs, as in Make.
+exports_files(['decrypt_key.c', 'encrypt_key.c', 'iprop_xdr.c', 'kdb5.c', 'kdb_convert.c', 'kdb_cpw.c', 'kdb_default.c', 'kdb_log.c', 'keytab.c', 'adb_err.et', 't_stringattr.c'])
+cc_library(name = "headers", hdrs = ["kdb5.h", "kdb5int.h"], includes = ["."],
+    deps = ["//crypto/krb5/src/include:database_headers"], visibility = ["//krb5:__subpackages__"])

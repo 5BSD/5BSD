@@ -11,7 +11,9 @@
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/envfd.h>
+#include <sys/cryptodesc.h>
 #include <sys/param.h>
+#include <sys/procdesc.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/uio.h>		/* struct iovec for service_system_jail_set */
@@ -44,8 +46,10 @@
 #include <sys/zfshandle.h>
 
 #include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
+#include <storage_namespace.h>
 
 #include "libservice.h"
+#include "lookup_identity.h"
 #include "service_private.h"
 #include "service_runtime.h"
 #include "service_bootstrap.h"
@@ -281,6 +285,33 @@ service_socket_descriptor_valid(int fd)
 	return (type == SOCK_DGRAM);
 }
 
+/* Type validation is separate from the authenticated grant's provenance. */
+static bool
+service_crypto_control_descriptor_valid(int fd)
+{
+	struct cryptoctl_info info;
+	cap_rights_t expected, actual;
+	cap_ioctl_t commands[2];
+
+	/* Bootstrap controls expose exactly introspection and derivation. */
+	cap_rights_init(&expected, CAP_IOCTL);
+	if (cap_rights_get(fd, &actual) == -1 ||
+	    !cap_rights_contains(&actual, &expected) ||
+	    !cap_rights_contains(&expected, &actual) ||
+	    cap_ioctls_get(fd, commands, nitems(commands)) != nitems(commands) ||
+	    !((commands[0] == CIOCGCRYPTOCONTROLINFO &&
+	    commands[1] == CIOCGCRYPTOCONTROL) ||
+	    (commands[1] == CIOCGCRYPTOCONTROLINFO &&
+	    commands[0] == CIOCGCRYPTOCONTROL)))
+		return (false);
+	memset(&info, 0, sizeof(info));
+	return (ioctl(fd, CIOCGCRYPTOCONTROLINFO, &info) == 0 &&
+	    info.version == CRYPTOCTL_INFO_VERSION &&
+	    info.scope == CRYPTOCTL_SCOPE_SUPERVISOR &&
+	    (info.rights & CRYPTOCTL_DERIVE) != 0 &&
+	    info.reserved == 0 && info.owner[0] == '\0');
+}
+
 static bool
 service_directory_descriptor_valid(int fd)
 {
@@ -465,6 +496,11 @@ parse_service_bootstrap(void)
 		} else if (strcmp(bootstrap->capabilities[i].type,
 		    "socket") == 0) {
 			if (!service_socket_descriptor_valid(
+			    bootstrap->capabilities[i].fd))
+				goto invalid_descriptor;
+		} else if (strcmp(bootstrap->capabilities[i].type,
+		    "cryptoctl") == 0) {
+			if (!service_crypto_control_descriptor_valid(
 			    bootstrap->capabilities[i].fd))
 				goto invalid_descriptor;
 		} else if (strcmp(bootstrap->capabilities[i].type,
@@ -1120,7 +1156,7 @@ service_start_dispatch(void) __no_lock_analysis
 
 static int
 rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
-    void *data, size_t datalen)
+    void *data, size_t datalen, const int *send_fds, size_t send_nfds)
     __no_lock_analysis
 {
 	struct channel_request *request;
@@ -1195,8 +1231,8 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 		return (-1);
 	}
 	if (channel_send_request(service_control_channel,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(req, reqlen),
+	    &(struct channel_outgoing){.size = sizeof(struct channel_outgoing),
+	    .data = req, .length = reqlen, .fds = send_fds, .nfds = send_nfds},
 	    service_control_reply, &waiter, &request) == -1) {
 		error = errno;
 		(void)pthread_mutex_unlock(&service_channel_lock);
@@ -1260,7 +1296,7 @@ rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
 static int
 rpc_fds(const void *req, uint32_t reqlen, int *fds, size_t nfds)
 {
-	return (rpc_data(req, reqlen, fds, nfds, NULL, 0));
+	return (rpc_data(req, reqlen, fds, nfds, NULL, 0, NULL, 0));
 }
 
 
@@ -2619,6 +2655,8 @@ service_worker_drop_inherited_authority(void)
 	 * dispatcher had queued, then release the capprotect descriptor.  The
 	 * shared after-fork path intentionally leaves capprotect_fd open so the
 	 * worker could shield itself first; now that it has, drop it too.
+	 * Attached kernel software authority and application-owned descriptors
+	 * are outside this cleanup contract and remain the caller's responsibility.
 	 */
 	service_after_fork_child();
 	if (capprotect_fd >= 0)
@@ -2627,7 +2665,7 @@ service_worker_drop_inherited_authority(void)
 }
 
 static int
-service_claim_name(const char *name, bool sendable)
+service_claim_name(const char *name, uint32_t flags)
 {
 	struct svc_name_claim_req req;
 
@@ -2637,7 +2675,7 @@ service_claim_name(const char *name, bool sendable)
 	}
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_NAME_CLAIM;
-	req.flags = sendable ? SVC_NAME_CLAIM_SENDABLE : 0;
+	req.flags = flags;
 	strlcpy(req.name, name, sizeof(req.name));
 	return (rpc(&req, sizeof(req), NULL));
 }
@@ -2667,7 +2705,8 @@ service_connect(struct service_context *context, const char *name,
     int *session_fdp)
 {
 	struct svc_lookup_req req;
-	int fd;
+	int fd = -1, pd = -1, error;
+	struct service_lookup_owned owned = {.process = &pd, .reply = &fd};
 
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid() || name == NULL ||
@@ -2685,8 +2724,16 @@ service_connect(struct service_context *context, const char *name,
 	req.op = SVC_OP_LOOKUP;
 	strlcpy(req.name, name, sizeof(req.name));
 
-	if (rpc(&req, sizeof(req), &fd) == -1)
+	if (service_lookup_identity(&pd) == -1)
 		return (-1);
+	pthread_cleanup_push(service_lookup_cleanup, &owned);
+	error = rpc_data(&req, sizeof(req), &fd, 1, NULL, 0,
+	    pd >= 0 ? &pd : NULL, pd >= 0 ? 1 : 0) == -1 ? errno : 0;
+	if (pd >= 0) close(pd);
+	pd = -1;
+	pthread_cleanup_pop(error != 0);
+	if (error != 0)
+		return (errno = error, -1);
 	if (fd < 0) {
 		errno = EIO;
 		return (-1);
@@ -2735,7 +2782,7 @@ service_helper_open(struct service_context *context, const char *name,
 
 static int
 service_expose_internal(struct service_provider *provider, const char *name,
-    service_activation_handler activate, void *context, bool sendable,
+    service_activation_handler activate, void *context, uint32_t flags,
     struct service_listener **listenerp)
     __no_lock_analysis
 {
@@ -2783,7 +2830,7 @@ service_expose_internal(struct service_provider *provider, const char *name,
 	listener->next = service_listeners;
 	service_listeners = listener;
 	(void)pthread_mutex_unlock(&service_state_lock);
-	if (service_claim_name(name, sendable) == -1)
+	if (service_claim_name(name, flags) == -1)
 		goto fail_registered;
 	listener->claimed = true;
 	*listenerp = listener;
@@ -2839,7 +2886,7 @@ service_provider_expose_lazy(struct service_provider *provider,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (service_expose_internal(provider, name, activate, context, false,
+	if (service_expose_internal(provider, name, activate, context, 0,
 	    &listener) == -1)
 		return (-1);
 	*listenerp = listener;
@@ -2865,7 +2912,7 @@ service_provider_expose_sendable(struct service_provider *provider,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (service_expose_internal(provider, name, NULL, NULL, true,
+	if (service_expose_internal(provider, name, NULL, NULL, SVC_NAME_CLAIM_SENDABLE,
 	    &listener) == -1)
 		return (-1);
 	*listenerp = listener;
@@ -3038,6 +3085,7 @@ service_listener_accept_fd(struct service_listener *listener,
 		 * Identity: the label above is the persistent identity,
 		 * the nonce the running instance, the ABI informational.
 		 */
+		identity->storage_client_id = connection.msg.storage_client_id;
 		identity->client_nonce = connection.msg.client_nonce;
 		identity->client_abi = connection.msg.client_abi;
 		/*

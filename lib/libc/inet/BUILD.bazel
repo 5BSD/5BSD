@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# libc object group; qualification archives are not independently installed.
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "inet_objects",
+    srcs = ['inet_addr.c', 'inet_cidr_ntop.c', 'inet_cidr_pton.c', 'inet_lnaof.c', 'inet_makeaddr.c', 'inet_net_ntop.c', 'inet_net_pton.c', 'inet_neta.c', 'inet_netof.c', 'inet_network.c', 'inet_ntoa.c', 'inet_ntop.c', 'inet_pton.c', 'nsap_addr.c'],
+    implementation_deps = ["//lib/libc/include:inet_private_headers"],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":inet_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":inet_objects"], pic = True, visibility = ["//lib/libc/tests/inet:__pkg__"])
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])

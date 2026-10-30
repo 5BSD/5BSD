@@ -1,5 +1,5 @@
 WORLDPACKAGE=	bsdaudit-tests
-SUBPACKAGES=
+SUBPACKAGES=	dbg
 PKG_SETS=	tests
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/bsdaudit-tests-all.ucl

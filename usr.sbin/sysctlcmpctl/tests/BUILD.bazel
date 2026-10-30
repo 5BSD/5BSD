@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = 'sysctlcmpctl_success_bin', srcs = ['sysctlcmpctl_success_impl.c', 'fake_sysctlcmp.c'], deps = ['//lib/libsysctlcmp:headers', '//usr.sbin/sysctlcmpctl:test_source'], copts = [], linkopts = ['-static'], linkstatic = True)
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['interfaces', 'arguments', 'commands', 'list_start', 'failures']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "sysctlcmpctl_test.sh",
+    data = [":sysctlcmpctl_success_bin"],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//usr.bin/env:env', '//bin/mkdir:mkdir', '//bin/mv:mv', '//usr.bin/touch:touch', '//usr.bin/awk:awk', '//usr.bin/tr:tr', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "medium",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "shell_test", body = "sysctlcmpctl_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+utility_installation(name = "install_helper", program = "sysctlcmpctl_success_bin", manual = "", package = "libsysctlcmp-tests", bindir = "/usr/tests/usr.sbin/sysctlcmpctl")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["sysctlcmpctl_test"], interfaces = {"sysctlcmpctl_test": "atf"})
+[bsd_install_file(name = target, src = source, destination = "/usr/tests/usr.sbin/sysctlcmpctl/" + filename,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=libsysctlcmp-tests"])
+ for target, source, filename, mode in [("install_shell", ":shell_test", "sysctlcmpctl_test", "0555"), ("install_kyuafile", ":kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_extra", entries = [":install_shell", ":install_kyuafile"], visibility = ["//usr.sbin/sysctlcmpctl:__pkg__"])

@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "bsdsysctl_provider.d", output = "bsdsysctl_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = False,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+cc_library(name = "objects", srcs = ["bsdsysctl.c", "config.c", "interfaces.c", "config.h", "interfaces.h", "bsdsysctl_test.h", "bsdsysctl_probes.h", "trace_pressure.h"],
+    deps = ['//lib/libsysctlcmp:sysctlcmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libfidl:fidl', '//lib/libsysctlcmp:generated_headers'] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE"], target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "bsdsysctl_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ['//lib/libsysctlcmp:sysctlcmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libfidl:fidl'])
+load("//tools/build/bazel:bsd_capimage.bzl", "bsd_capimage_policy")
+bsd_capimage_policy(name = "policy_assembly", src = "//usr.sbin/BSDSysctl/capbundle:bsdsysctl.ucl")
+cc_binary(name = "BSDSysctl", srcs = [":policy_assembly"], deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    dynamic_deps = ['//lib/libsysctlcmp:sysctlcmp_shared', '//lib/libservice:service_shared', '//lib/libchannel:channel_shared', '//lib/libucl:ucl_shared', '//lib/libfidl:fidl_shared'],
+    linkopts = ["-pie", "-Wl,-z,now"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+
+
+exports_files(["config.c", "interfaces.c", "bsdsysctl.c"], visibility = ["//usr.sbin/BSDSysctl/tests:__pkg__"])
+cc_library(name = "test_headers", hdrs = ["config.h", "interfaces.h", "bsdsysctl_test.h", "bsdsysctl_probes.h", "trace_pressure.h"],
+    textual_hdrs = ["bsdsysctl.c"], strip_include_prefix = ".",
+    visibility = ["//usr.sbin/BSDSysctl/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_BUNDLE = "/Capabilities/System/Sysctl.cap"
+_UNIT = _BUNDLE + "/Units/bsdsysctl.unit"
+utility_installation(name = "program_install", keep_sections = [".5bsd.policy"], program = "BSDSysctl", manual = "BSDSysctl.8",
+    package = "runtime", bindir = _UNIT + "/bin", man_section = "8")
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = mode, install_tags = tags)
+ for name, src, dest, mode, tags in [
+    ("bundle_install", "//usr.sbin/BSDSysctl/capbundle:Bundle.ucl", _BUNDLE + "/Bundle.ucl", "0444", ["package=runtime"]),
+    ("unit_install", "//usr.sbin/BSDSysctl/capbundle:bsdsysctl.ucl", _UNIT + "/Unit.ucl", "0444", ["package=runtime"]),
+    ("config_install", "//usr.sbin/BSDSysctl/capbundle:sysctl.conf", _UNIT + "/Config/sysctl.conf", "0644", ["package=runtime", "config"]),
+ ]]
+bsd_install_manifest(name = "bundle_install_manifest", entries = [":bundle_install", ":unit_install", ":config_install"])
+load("//usr.sbin/BSDSysctl/tests:installation.bzl", TEST_DIRECTORIES = "DIRECTORIES", TEST_MANIFESTS = "MANIFESTS")
+[bsd_install_archive(name = name,
+    manifests = [":program_install", ":bundle_install_manifest"] + (select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}) if include_tests else []),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'
+        for d in [_BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin", _UNIT + "/Config"]} |
+        {"/usr/lib/debug" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+         for d in ["/Capabilities", "/Capabilities/System", _BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin"]} | (select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}) if include_tests else {}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"]) for name, include_tests in [("daemon_install_archive", False), ("install_archive", True)]]
+
+
+exports_files(["bsdsysctl_provider.d"], visibility = ["//usr.sbin/BSDSysctl/tests:__pkg__"])

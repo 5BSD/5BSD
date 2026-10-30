@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libalias/modules:module.bzl", "alias_module")
+alias_module(name = "ftp")

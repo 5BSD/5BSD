@@ -1260,19 +1260,39 @@ dt_link_error(dtrace_hdl_t *dtp, Elf *elf, int fd, dt_link_pair_t *bufs,
 }
 
 /*
- * Provide a unique identifier used when adding global symbols to an object.
- * This is the FNV-1a hash of an absolute path for the file.
+ * Disambiguate local symbols using the object's path.  The default retains the
+ * historical absolute identity.  Reproducible build callers may opt into a
+ * normalized relative identity: they must use distinct paths for objects that
+ * can meet in the same link, including objects from different libraries.
  */
 static unsigned int
-hash_obj(const char *obj, int fd)
+hash_obj(dtrace_hdl_t *dtp, const char *obj)
 {
 	char path[PATH_MAX];
+	const char *part, *end;
+	size_t len;
 	unsigned int h;
 
-	if (realpath(obj, path) == NULL)
-		return (-1);
+	if (dtp->dt_linkpath == 0) {
+		if (realpath(obj, path) == NULL)
+			return (-1);
+		obj = path;
+	} else {
+		/* Reject aliases rather than silently assigning inconsistent keys. */
+		for (part = obj; ; part = end + 1) {
+			end = strchr(part, '/');
+			len = end != NULL ? (size_t)(end - part) : strlen(part);
+			if (len == 0 || (len == 1 && part[0] == '.') ||
+			    (len == 2 && part[0] == '.' && part[1] == '.')) {
+				errno = EINVAL;
+				return (-1);
+			}
+			if (end == NULL)
+				break;
+		}
+	}
 
-	for (h = 2166136261u, obj = &path[0]; *obj != '\0'; obj++)
+	for (h = 2166136261u; *obj != '\0'; obj++)
 		h = (h ^ *obj) * 16777619;
 	h &= 0x7fffffff;
 	return (h);
@@ -1378,6 +1398,20 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 		    "incorrect ELF machine type for object file: %s", obj));
 	}
 
+	if (dtp->dt_linksection != 0) {
+		Elf_Scn *selected;
+		GElf_Shdr header;
+
+		selected = elf_getscn(elf, dtp->dt_linksection);
+		if (ehdr.e_type != ET_REL || selected == NULL ||
+		    gelf_getshdr(selected, &header) == NULL ||
+		    !(header.sh_flags & SHF_EXECINSTR)) {
+			return (dt_link_error(dtp, elf, fd, bufs,
+			    "linksection requires an executable section in a "
+			    "relocatable object: %s", obj));
+		}
+	}
+
 	if (dtp->dt_link_machine == EM_NONE) {
 		dtp->dt_link_machine = ehdr.e_machine;
 		dtp->dt_link_flags = ehdr.e_flags;
@@ -1398,7 +1432,7 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	 * system in order to disambiguate potential conflicts between files of
 	 * the same name which contain identially named local symbols.
 	 */
-	if ((objkey = hash_obj(obj, fd)) == (unsigned int)-1)
+	if ((objkey = hash_obj(dtp, obj)) == (unsigned int)-1)
 		return (dt_link_error(dtp, elf, fd, bufs,
 		    "failed to generate unique key for object file: %s", obj));
 
@@ -1411,6 +1445,11 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 		 * Skip any non-relocation sections.
 		 */
 		if (shdr_rel.sh_type != SHT_RELA && shdr_rel.sh_type != SHT_REL)
+			continue;
+
+		/* Section-scoped links leave all other probe sites untouched. */
+		if (dtp->dt_linksection != 0 &&
+		    shdr_rel.sh_info != dtp->dt_linksection)
 			continue;
 
 		if ((data_rel = elf_getdata(scn_rel, NULL)) == NULL)
@@ -1889,6 +1928,11 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 
 		return (0);
 	}
+
+	/* Section indices are meaningful only within one input object. */
+	if (dtp->dt_linksection != 0 && objc != 1)
+		return (dt_link_error(dtp, NULL, -1, NULL,
+		    "linksection requires exactly one input object"));
 
 	dtp->dt_link_machine = EM_NONE;
 	dtp->dt_link_flags = 0;

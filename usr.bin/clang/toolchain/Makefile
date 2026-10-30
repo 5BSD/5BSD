@@ -8,7 +8,7 @@ SYMLINKS+=	llvm-ranlib ${BINDIR}/ranlib
 MLINKS+=	llvm-ar.1 ar.1 llvm-ar.1 ranlib.1
 
 SYMLINKS+=	llvm-cov ${BINDIR}/gcov
-MLINKS=		llvm-cov.1 gcov.1
+MLINKS+=		llvm-cov.1 gcov.1
 
 SYMLINKS+=	llvm-cxxfilt ${BINDIR}/c++filt
 MLINKS+=	llvm-cxxfilt.1 c++filt.1
@@ -22,7 +22,7 @@ MLINKS+=	llvm-objcopy.1 objcopy.1
 MLINKS+=	llvm-objcopy.1 strip.1
 
 SYMLINKS+=	llvm-objdump ${BINDIR}/objdump
-MLINKS=		llvm-objdump.1 objdump.1
+MLINKS+=		llvm-objdump.1 objdump.1
 
 SYMLINKS+=	llvm-readelf ${BINDIR}/readelf
 MLINKS+=	llvm-readelf.1 readelf.1

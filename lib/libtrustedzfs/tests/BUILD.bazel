@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_CASES = {'trustedzfs_capsicum_test': ['kernel_limit_failure', 'dataset_exact', 'dataset_rights_profile', 'dataset_non_subtree_profile', 'pool_rights_profile', 'all_dataset_rights_profile', 'kind_and_mask_validation', 'monotonic_narrowing', 'empty_profile', 'scm_rights_preserves_profile'], 'trustedzfs_limit_test': ['socket_rejected', 'file_rejected', 'invalid_fd_rejected']}
+[cc_binary(name = program, srcs = [program + ".c"], deps = ["//lib/libtrustedzfs:trustedzfs", "//lib/atf/libatf-c:atf_c"], linkstatic = True, linkopts = ["-static"] + (["-Wl,--wrap=ioctl"] if program == "trustedzfs_capsicum_test" else []), visibility = ["//visibility:public"]) for program in _CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program, runner = "//tools/build/bazel:atf_runner", size = "small") for program, cases in _CASES.items() for case in cases]
+test_suite(name = "host_tests", tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + program, program = program, manual = "", package = "libtrustedzfs-tests", bindir = "/usr/tests/lib/libtrustedzfs") for program in _CASES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_CASES.keys()), interfaces = {program: "atf" for program in _CASES})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libtrustedzfs/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libtrustedzfs-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libtrustedzfs:__pkg__"])

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(
+    name = "krb5support",
+    srcs = ['//crypto/krb5/src/util/support:base64.c', '//crypto/krb5/src/util/support:bcmp.c', '//crypto/krb5/src/util/support:dir_filenames.c', '//crypto/krb5/src/util/support:errors.c', '//crypto/krb5/src/util/support:fake-addrinfo.c', '//crypto/krb5/src/util/support:gmt_mktime.c', '//crypto/krb5/src/util/support:hashtab.c', '//crypto/krb5/src/util/support:hex.c', '//crypto/krb5/src/util/support:init-addrinfo.c', '//crypto/krb5/src/util/support:json.c', '//crypto/krb5/src/util/support:k5buf.c', '//crypto/krb5/src/util/support:path.c', '//crypto/krb5/src/util/support:plugins.c', '//crypto/krb5/src/util/support:strerror_r.c', '//crypto/krb5/src/util/support:threads.c', '//crypto/krb5/src/util/support:utf8.c', '//crypto/krb5/src/util/support:utf8_conv.c', '//crypto/krb5/src/util/support:zap.c'],
+    deps = ["//crypto/krb5/src/util/support:headers"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":krb5support"], visibility = ["//visibility:public"])
+cc_shared_library(
+    name = "krb5support_shared",
+    deps = [":krb5support"],
+    shared_lib_name = "libkrb5support.so.122",
+    additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,libkrb5support.so.122"],
+    visibility = ["//visibility:public"],
+)
+cc_import(name = "archive_link", static_library = ":static_archive")
+[
+    cc_test(
+        name = "test_" + case,
+        srcs = ["//crypto/krb5/src/util/support:t_" + case + ".c"],
+        deps = [":archive_link", "//crypto/krb5/src/include:support_headers"],
+        size = "small",
+    )
+    for case in ['base64', 'hex', 'json', 'k5buf', 'path', 'unal', 'utf8', 'utf16']
+]
+test_suite(name = "support_tests", tests = [":test_" + case for case in ['base64', 'hex', 'json', 'k5buf', 'path', 'unal', 'utf8', 'utf16']], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

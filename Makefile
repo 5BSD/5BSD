@@ -173,7 +173,7 @@ TGTS=	all all-man buildenv buildenvvars buildetc buildkernel buildworld \
 	xdev-links native-xtools native-xtools-install stageworld stagekernel \
 	capimage-stage \
 	stage-packages stage-packages-kernel stage-packages-world stage-packages-source \
-	create-packages-world create-packages-kernel \
+	create-packages-world create-packages-kernel create-packages-sets \
 	create-packages-kernel-repo create-packages-world-repo \
 	create-packages-source create-packages \
 	installconfig real-packages real-update-packages \

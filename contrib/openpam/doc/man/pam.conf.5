@@ -97,11 +97,12 @@ The
 .Ar facility
 field may optionally be preceded by a dash
 .Pq Ql - ,
-which indicates that failure to load the specified module (or policy
+which indicates that absence of the specified module (or policy
 if the
 .Ar control-flag is
 .Cm include )
 should not be considered a fatal error.
+An existing but malformed, unreadable or unsafe module or policy remains fatal.
 This is intended for situations where it is desirable to share a
 single policy across multiple systems, but certain additional modules
 or policies may only be present on some of them.
@@ -161,7 +162,19 @@ the following locations:
 .Pa /usr/lib
 .It
 .Pa /usr/local/lib
+.It
+.Pa /usr/local/lib/security
 .El
+.Pp
+A name with an explicit numeric version suffix selects that filename.
+Otherwise the library first tries the name with its module ABI version,
+then the unversioned name.
+Only an absent candidate permits another search attempt.
+An ownership or permission failure, an invalid module, or an overlong path
+terminates the search; a later directory or statically linked module does
+not replace a rejected candidate.
+These ownership and mode checks do not authenticate module provenance against
+an administrator who can modify their storage or resolution paths.
 .Pp
 The remaining fields, if any, are passed unmodified to the module if
 and when it is invoked.
@@ -176,11 +189,23 @@ into service-specific policies.
 The system-wide policy can then be modified without having to also
 modify each and every service-specific policy.
 .Pp
-.Bf -symbolic
-Take care not to introduce loops when using
-.Cm include
-rules, as there is currently no loop detection in place.
-.Ef
+Include cycles are rejected.
+Detection uses the identities of opened files, including hard-link and
+symbolic-link aliases, and the selected service and facility.
+An included file may be used again after its previous expansion completes;
+distinct services within one
+.Pa pam.conf
+are not themselves a cycle.
+.Pp
+A single
+.Xr pam_start 3
+transaction permits at most 64 simultaneously active policy-file parses
+and 1024 total policy-file parses, including includes and fallback searches.
+Repeated expansion counts each time, even for an empty file.
+These bounds prevent excessive recursion and acyclic include amplification.
+Cycles and nesting-limit violations report ELOOP; expansion-limit violations
+report E2BIG, and configuration fails with PAM_SYSTEM_ERR.
+A leading dash does not suppress these errors.
 .Sh MODULE OPTIONS
 Some PAM library functions may alter their behavior when called by a
 service module if certain module options were specified, regardless of
@@ -206,6 +231,15 @@ These options control
 .Xr pam_get_authtok 3 Ns 's
 use of cached authentication tokens.
 .El
+.Sh SECURITY CONSIDERATIONS
+Ordinary PAM policy and module loading use the configured OpenPAM ownership
+and permission checks.
+An administrator who can change ordinary PAM policy or modules can change
+UNIX authentication behavior.
+PAM authentication establishes the result of the selected authentication policy;
+callers must separately authorize the requested operation.
+Consumers requiring authenticated policy or account inputs must select and
+validate those inputs explicitly.
 .Sh SEE ALSO
 .Xr pam 3
 .Sh STANDARDS

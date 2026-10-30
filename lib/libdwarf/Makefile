@@ -72,8 +72,13 @@ SRCS=	\
 	libdwarf_reloc.c	\
 	libdwarf_rw.c		\
 	libdwarf_sections.c	\
-	libdwarf_str.c		\
-	zlib_stub.c
+	libdwarf_str.c
+
+# Legacy host bootstrap may lack zlib in its link dependencies.  Normal target
+# libraries must use real zlib: the weak stub otherwise wins static linking.
+.if defined(BOOTSTRAPPING)
+SRCS+=	zlib_stub.c
+.endif
 
 INCS=		dwarf.h libdwarf.h
 

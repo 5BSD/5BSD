@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "sftp", srcs = ['//crypto/openssh:sftp.c', '//crypto/openssh:sftp-usergroup.c', '//crypto/openssh:progressmeter.c', '//crypto/openssh:sftp-common.c', '//crypto/openssh:sftp-client.c', '//crypto/openssh:sftp-glob.c', '//crypto/openssh:ssherr-nolibcrypto.c'], deps = ["//lib/libedit:edit"], dynamic_deps = ["//lib/libedit:edit_shared"])

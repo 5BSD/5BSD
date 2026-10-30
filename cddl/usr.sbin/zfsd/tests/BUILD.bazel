@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//cddl/usr.sbin/zfsd:build_inputs.bzl", "ZFSD_DEPS", "ZFSD_DYNAMIC_DEPS", "ZFSD_DEFINES", "ZFSD_COPTS")
+# Include native transitive DSOs in this runnable test's loader search paths.
+_RUNTIME_DEPS = ["//secure/lib/libcrypto:crypto", "//lib/libmd:md_link", "//lib/librt:rt", "//cddl/lib/libumem:umem", "//lib/libz:z", "//cddl/lib/libzfs_core:zfs_core"]
+_RUNTIME_SHARED = ["//secure/lib/libcrypto:crypto_shared", "//lib/libmd:md_shared", "//lib/librt:rt_shared", "//cddl/lib/libumem:umem_shared", "//lib/libz:z_shared", "//cddl/lib/libzfs_core:zfs_core_shared"]
+cc_test(name = "unit",
+    srcs = ["zfsd_unittest.cc", "libmocks.c", "libmocks.h", "//cddl/usr.sbin/zfsd:test_sources"],
+    deps = ZFSD_DEPS + _RUNTIME_DEPS + ["//cddl/usr.sbin/zfsd:headers", "//lib/googletest/gmock_main:gmock_main"],
+    dynamic_deps = ZFSD_DYNAMIC_DEPS + _RUNTIME_SHARED, local_defines = ZFSD_DEFINES,
+    copts = ZFSD_COPTS, linkopts = ["-pie", "-pthread"],
+    features = ["bsd_test_runtime_paths"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

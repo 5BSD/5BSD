@@ -722,6 +722,7 @@ int abac_rule_pattern_parse(const char *str, size_t len,
  */
 bool abac_rule_pattern_match(const struct abac_label *label,
     const struct abac_rule_pattern *pattern);
+/* A non-NULL target proc is supplied with PROC_LOCK held by the MAC caller. */
 bool abac_context_matches(const struct abac_context *ctx,
     struct ucred *cred, struct proc *proc);
 bool abac_rule_matches(const struct abac_rule *rule,

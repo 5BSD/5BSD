@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+cc_library(name = "configuration", hdrs = ["defines.h"], strip_include_prefix = ".", visibility = ["//usr.bin/lessecho:__pkg__"])
+cc_binary(name = "less", srcs = ['//contrib/less:main.c', '//contrib/less:screen.c', '//contrib/less:brac.c', '//contrib/less:ch.c', '//contrib/less:charset.c', '//contrib/less:cmdbuf.c', '//contrib/less:command.c', '//contrib/less:cvt.c', '//contrib/less:decode.c', '//contrib/less:evar.c', '//contrib/less:edit.c', '//contrib/less:filename.c', '//contrib/less:forwback.c', '//contrib/less:help.c', '//contrib/less:ifile.c', '//contrib/less:input.c', '//contrib/less:jump.c', '//contrib/less:lesskey_parse.c', '//contrib/less:line.c', '//contrib/less:linenum.c', '//contrib/less:lmsg.c', '//contrib/less:lsystem.c', '//contrib/less:mark.c', '//contrib/less:optfunc.c', '//contrib/less:option.c', '//contrib/less:opttbl.c', '//contrib/less:os.c', '//contrib/less:output.c', '//contrib/less:pattern.c', '//contrib/less:position.c', '//contrib/less:prompt.c', '//contrib/less:search.c', '//contrib/less:signal.c', '//contrib/less:tags.c', '//contrib/less:ttyin.c', '//contrib/less:version.c', '//contrib/less:xbuf.c'],
+    deps = [":configuration", "//contrib/less:headers", "//lib/ncurses/tinfo:tinfo"],
+    dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_SCRIPTS = {"lesspipe.sh": "lesspipe.sh", "zless": "zless.sh", "less-osc8-open": "//contrib/less:less-osc8-open.sh"}
+[bsd_install_file(name = "script_" + name, src = source, destination = "/usr/bin/" + name,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"]) for name, source in _SCRIPTS.items()]
+_ALIASES = ["bzless", "xzless", "lzless", "zstdless"]
+[bsd_install_link(name = "alias_" + name, destination = "/usr/bin/" + name, target = "/usr/bin/zless",
+    kind = "hardlink", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"]) for name in _ALIASES]
+bsd_compress(name = "lesskey_manual", src = "//contrib/less:lesskey.nro", output = "lesskey.5.gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "lesskey_manual_file", src = ":lesskey_manual", destination = "/usr/share/man/man5/lesskey.5.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+utility_installation(name = "install_manifest", program = "less", manual = "//contrib/less:less.nro", package = "runtime",
+    aliases = ["more"], extra_entries = [":script_" + n for n in _SCRIPTS] + [":alias_" + n for n in _ALIASES] + [":lesskey_manual_file"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for directory in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

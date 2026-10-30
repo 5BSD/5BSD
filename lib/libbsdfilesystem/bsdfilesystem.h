@@ -54,6 +54,10 @@ __BEGIN_DECLS
  * client handle the caller owns and must bsdfilesystem_close(), or NULL with errno set.
  * A caller handed a pre-scoped storage channel at bootstrap uses
  * bsdfilesystem_adopt() instead.
+ * service_open() prefers an available managed-service bootstrap context.
+ * To request user-session authority explicitly, obtain the channel with
+ * service_connect_ambient() and adopt it; installing an ambient route alone
+ * does not override the managed-service context.
  */
 struct bsdfilesystem_client	*bsdfilesystem_connect(void);
 

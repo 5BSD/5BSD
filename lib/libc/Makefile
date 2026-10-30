@@ -196,6 +196,13 @@ DTRACE_STATIC_ANCHOR= yes
 CFLAGS+= -DWITH_COVERAGE_DTRACE
 .endif
 
+# Share textual translation-unit dependencies with native build graph exporters.
+.for _src in ${SRCS}
+.if defined(TEXTUAL_SRCS.${_src})
+${_src:R}.o ${_src:R}.pico ${_src:R}.pieo ${_src:R}.nossppico: ${TEXTUAL_SRCS.${_src}}
+.endif
+.endfor
+
 .include <bsd.lib.mk>
 
 .if !defined(_SKIP_BUILD)

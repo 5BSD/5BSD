@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["lib/divsufsort.c", "lib/sssort.c", "lib/trsort.c", "lib/utils.c"], visibility = ["//usr.bin/bsdiff/bsdiff:__pkg__"])
+cc_library(name = "headers", hdrs = ["include/divsufsort_private.h"], strip_include_prefix = "include", visibility = ["//usr.bin/bsdiff/bsdiff:__pkg__"])

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "headers", hdrs = ["g_gate.h"], includes = ["../.."], deps = ["//sys/geom:kernel_headers"])
+amd64_generic_module_objects(srcs = ["g_gate.c"], deps = [":headers"])

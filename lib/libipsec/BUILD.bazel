@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+bsd_yacc(name = "parser", src = "policy_parse.y", output = "policy_parse.c", header = "y.tab.h",
+    flags = ["-p", "__libipsecyy"], yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "lexer", src = "policy_token.l", output = "policy_token.c", flags = ["-P__libipsecyy"],
+    lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "private_headers", hdrs = ["ipsec_strerror.h", ":parser_header"], strip_include_prefix = ".")
+cc_library(name = "ipsec", srcs = ["ipsec_strerror.c", "ipsec_dump_policy.c", "ipsec_get_policylen.c", ":parser_source", ":lexer"],
+    deps = [":private_headers"], local_defines = ["IPSEC_DEBUG", "IPSEC"] + select({
+        "//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ipsec"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "ipsec_shared", deps = [":ipsec"], shared_lib_name = "libipsec.so.4",
+    user_link_flags = ["-Wl,-soname,libipsec.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+[cc_test(name = "policy_" + variant, srcs = ["policy_roundtrip_test.c"],
+    deps = [":archive_link"] if variant == "static" else [":ipsec"],
+    dynamic_deps = [] if variant == "static" else [":ipsec_shared"],
+    features = [] if variant == "static" else ["bsd_test_runtime_paths"],
+    linkstatic = variant == "static", size = "small", target_compatible_with = _PLATFORM)
+ for variant in ["static", "shared"]]
+
+cc_library(name = "pfkey_headers", hdrs = ["libpfkey.h", "ipsec_strerror.h"], strip_include_prefix = ".", visibility = ["//sbin/setkey:__pkg__"])
+exports_files(["pfkey.c", "pfkey_dump.c", "ipsec_strerror.c"], visibility = ["//sbin/setkey:__pkg__"])

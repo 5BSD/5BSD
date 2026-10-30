@@ -72,22 +72,35 @@ lseek(int fd, off_t offset, int where)
 		return (-1);
 	}
 
+	if (where == SEEK_SET && offset < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+
 	if (f->f_flags & F_RAW) {
 		/*
 		 * On RAW devices, update internal offset.
 		 */
 		switch (where) {
 		case SEEK_SET:
-			f->f_offset = offset;
+			target = offset;
 			break;
 		case SEEK_CUR:
-			f->f_offset += offset;
+			if (__builtin_add_overflow(f->f_offset, offset, &target)) {
+				errno = EOVERFLOW;
+				return (-1);
+			}
 			break;
 		default:
 			errno = EOFFSET;
 			return (-1);
 		}
-		return (f->f_offset);
+		if (target < 0) {
+			errno = EINVAL;
+			return (-1);
+		}
+		f->f_offset = target;
+		return (target);
 	}
 
 	/*
@@ -102,15 +115,26 @@ lseek(int fd, off_t offset, int where)
 		filepos = (f->f_ops->fo_seek)(f, 0, SEEK_CUR);
 		if (filepos == -1)
 			return (-1);
-		bufpos = filepos - f->f_ralen;
+		if (__builtin_sub_overflow(filepos, f->f_ralen, &bufpos) ||
+		    bufpos < 0) {
+			errno = EIO;
+			return (-1);
+		}
 		switch (where) {
 		case SEEK_SET:
 			target = offset;
 			break;
 		case SEEK_CUR:
-			target = bufpos + offset;
+			if (__builtin_add_overflow(bufpos, offset, &target)) {
+				errno = EOVERFLOW;
+				return (-1);
+			}
 			break;
 		default:
+			errno = EINVAL;
+			return (-1);
+		}
+		if (target < 0) {
 			errno = EINVAL;
 			return (-1);
 		}
@@ -126,8 +150,11 @@ lseek(int fd, off_t offset, int where)
 	 * bytes that we have already read but the caller doesn't know
 	 * about.
 	 */
-	if (where == SEEK_CUR)
-		offset -= f->f_ralen;
+	if (where == SEEK_CUR &&
+	    __builtin_sub_overflow(offset, f->f_ralen, &offset)) {
+		errno = EOVERFLOW;
+		return (-1);
+	}
 
 	/*
 	 * Invalidate the readahead buffer.

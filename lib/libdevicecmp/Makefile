@@ -19,6 +19,11 @@ DEVICECMP_SCHEMAPACKAGE= libdevicecmp-dev
 FILESGROUPS+= DEVICECMP_NOTICE
 DEVICECMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 DEVICECMP_NOTICEDIR= /usr/share/licenses/libdevicecmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= DEVICECMP_NOTICEPARENT
+DEVICECMP_NOTICEPARENT= ${DEVICECMP_NOTICEDIR:H}
+DEVICECMP_NOTICEPARENTTAGS= ${DEVICECMP_NOTICEDIRTAGS}
+
 INCS=	devicecmp.h devicecmp_protocol.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

@@ -44,6 +44,8 @@ SRCS=	\
 	pt_tnt_cache.c			\
 	pt_version.c
 
+CFLAGS+=	-I${.OBJDIR}
+
 CFLAGS+=	\
 	-I${PTSRC}/libipt/internal/include/posix	\
 	-I${PTSRC}/libipt/internal/include		\
@@ -51,12 +53,16 @@ CFLAGS+=	\
 	-I${PTSRC}/include				\
 	-I${.CURDIR}
 
+PT_VERSION_MAJOR=1
+PT_VERSION_MINOR=6
+PT_VERSION_PATCH=0
+
 CFLAGS+=	\
 	-DPT_VERSION_BUILD=0	\
 	-DPT_VERSION_EXT=\"\"	\
-	-DPT_VERSION_MAJOR=1	\
-	-DPT_VERSION_MINOR=6	\
-	-DPT_VERSION_PATCH=0
+	-DPT_VERSION_MAJOR=${PT_VERSION_MAJOR}	\
+	-DPT_VERSION_MINOR=${PT_VERSION_MINOR}	\
+	-DPT_VERSION_PATCH=${PT_VERSION_PATCH}
 
 INCS=	\
 	intel-pt.h	\
@@ -72,5 +78,13 @@ LIBADD=
 WARNS?= 1
 
 HAS_TESTS=
+
+CLEANFILES+= intel-pt.h
+SRCS+= intel-pt.h
+
+intel-pt.h: ${PTSRC}/libipt/include/intel-pt.h.in
+	sed -e 's/$${PT_VERSION_MAJOR}/${PT_VERSION_MAJOR}/g' \
+	    -e 's/$${PT_VERSION_MINOR}/${PT_VERSION_MINOR}/g' \
+	    -e 's/$${PT_VERSION_PATCH}/${PT_VERSION_PATCH}/g' ${.ALLSRC} > ${.TARGET}
 
 .include <bsd.lib.mk>

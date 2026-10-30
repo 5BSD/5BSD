@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "program": "/sbin/ldconfig",
+  "directories": [
+    "/lib",
+    "/usr/lib"
+  ],
+  "output": "/boot/ld-elf.so.hints"
+}

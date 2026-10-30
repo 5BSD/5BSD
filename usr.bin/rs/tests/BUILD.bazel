@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+# Fixtures preserve all 23 rs_test.sh cases; invalid_usage requires the
+# implementation's exit 1 (the maintained shell test accepts any nonzero exit).
+[bsd_compare_test(
+    name = name,
+    program = "//usr.bin/rs:rs",
+    arguments = arguments,
+    input = name + ".in",
+    expected = name + ".out",
+    expected_stderr = stderr,
+    expected_exit = status,
+    runtime_lib = [
+        "//lib/libcxxrt:cxxrt_shared",
+        "//lib/msun:m_shared",
+        "//lib/libc++:cxx_shared",
+        # Unwind remains a declared SDK bootstrap dependency.
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1",
+    ],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+) for name, arguments, status, stderr in [
+    ('input_delimiter', ['-c,', '2'], 0, 'empty.err'),
+    ('input_separator', ['-s%', '2'], 0, 'empty.err'),
+    ('output_delimiter', ['-C,', '2'], 0, 'empty.err'),
+    ('output_separator', ['-S,', '2'], 0, 'empty.err'),
+    ('transpose', ['-t', '3'], 0, 'empty.err'),
+    ('transpose_lines', ['-T'], 0, 'empty.err'),
+    ('k_flag', ['-k', '1', '2'], 0, 'empty.err'),
+    ('K_flag', ['-K', '1'], 0, 'empty.err'),
+    ('g_flag', ['-g', '1', '2'], 0, 'empty.err'),
+    ('G_flag', ['-G', '50', '2'], 0, 'empty.err'),
+    ('e_flag', ['-e'], 0, 'empty.err'),
+    ('n_flag', ['-n', '0', '3'], 0, 'empty.err'),
+    ('y_flag', ['-y', '3'], 0, 'empty.err'),
+    ('h_flag', ['-h'], 0, 'empty.err'),
+    ('H_flag', ['-H'], 0, 'empty.err'),
+    ('j_flag', ['-j', '2'], 0, 'empty.err'),
+    ('m_flag', ['-m', '2'], 0, 'empty.err'),
+    ('z_flag', ['-z', '2'], 0, 'empty.err'),
+    ('invalid_usage', ['-w'], 1, 'invalid_usage.err'),
+    ('no_arguments', [], 0, 'empty.err'),
+    ('rows_2', ['2'], 0, 'empty.err'),
+    ('rows_3', ['3'], 0, 'empty.err'),
+    ('rows_4', ['4'], 0, 'empty.err'),
+]]

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "candidate", srcs = ["candidate.c"], linkstatic = True, linkopts = ["-static"])
+bsd_script_wrapper(name = "lookup", body = "lookup.sh", interpreter = "/bin/sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyua_test(name = "declared_lookup", program = ":lookup",
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    path_programs = {":candidate": "uname"}, test_metadata = '{"required_programs":"uname"}',
+    runtime = ["@bsd_sdk//toolchain:extra_kyua_runtime"], size = "small", visibility = ["//visibility:public"])

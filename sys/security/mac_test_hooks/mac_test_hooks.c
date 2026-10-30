@@ -96,7 +96,7 @@ HOOK_CHECK_IMPL(mount_check_unmount, struct ucred *cred __unused,
     uint64_t flags __unused)
 HOOK_CHECK_IMPL(mount_check_update, struct ucred *cred __unused,
     struct mount *mp __unused, struct label *mplabel __unused,
-    struct vfsoptlist **optlist __unused, uint64_t fsflags __unused)
+    struct vfsoptlist **optlist __unused, uint64_t fsflags __unused, bool only_export __unused)
 HOOK_CHECK_IMPL(mount_check_snapshot_create, struct ucred *cred __unused,
     const char *snapname __unused)
 HOOK_CHECK_IMPL(mount_check_snapshot_delete, struct ucred *cred __unused,

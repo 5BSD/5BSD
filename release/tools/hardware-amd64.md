@@ -62,3 +62,21 @@ with the packages and use ports' redistribution rules when publishing media.
   installed independently when the kernel changes.
 - Publish the qualified-device list, package inventory, image checksums and
   signed repositories with the ISO and USB image.
+
+## Raw Bluetooth firmware placement
+
+The custom `comms/iwmbt-firmware` and `comms/rtlbt-firmware` ports install raw
+firmware under `/usr/share/firmware/intel` and `/usr/share/firmware/rtlbt`.
+These match the base loaders' existing defaults. Shipped devd rules use those
+defaults rather than overriding them with paths under writable `/usr/local`.
+The ports retain an explicit `DATADIR` override for custom profiles; such a
+profile must configure and qualify its consumers consistently.
+
+Rebuild base devd configuration and the firmware packages together through
+`build-bsd packages` / the maintained system and hardware packaging targets.
+A package revision increase prevents reusing the old location under the same
+package identity. Existing administrator-modified devd configuration requires
+review during upgrade; pkg configuration preservation must not be mistaken for
+migration to the new default. Changing the directory does not authenticate a
+mutable devd rule or authorize device access. Hardened generation validation
+must still keep the resulting firmware payloads in immutable storage.

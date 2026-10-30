@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "kadmin", srcs = ["//crypto/krb5/src/kadmin/cli:keytab.c"],
+    deps = ["//crypto/krb5/src/kadmin/cli:headers"] + ['//krb5/lib/kadmin_common:kadmin_common_pie', '//krb5/lib/kadm5clnt:kadm5clnt_mit', '//krb5/lib/rpc:gssrpc', '//krb5/lib/gssapi:gssapi_krb5', '//krb5/lib/krb5:krb5', '//krb5/lib/crypto:k5crypto', '//krb5/util/et:com_err', '//krb5/util/profile:krb5profile', '//krb5/util/support:krb5support', '//krb5/util/ss:krb5ss_pie', '//lib/libsys:sys'],
+    dynamic_deps = ['//krb5/lib/kadm5clnt:kadm5clnt_mit_shared', '//krb5/lib/rpc:gssrpc_shared', '//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/lib/krb5:krb5_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/util/et:com_err_shared', '//krb5/util/support:krb5support_shared', '//lib/libsys:sys_shared', '//lib/libedit:edit_shared'], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=kerberos-man"], "//conditions:default": ["package=kerberos"]})
+bsd_install_file(name = "helper", src = "//crypto/krb5/src/kadmin/cli:k5srvutil.sh", destination = "/usr/bin/k5srvutil",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=kerberos"])
+bsd_compress(name = "helper_manual", src = "//crypto/krb5/src/man:k5srvutil.man", output = "k5srvutil.1.gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "helper_manual_file", src = ":helper_manual", destination = "/usr/share/man/man1/k5srvutil.1.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(name = "local_manual_alias", destination = "/usr/share/man/man8/kadmin.local.8.gz",
+    target = "/usr/share/man/man1/kadmin.1.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+utility_installation(name = "install_manifest", program = "kadmin", manual = "//crypto/krb5/src/man:kadmin.man", package = "kerberos",
+    extra_entries = [":helper", ":helper_manual_file", ":local_manual_alias"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {
+        "/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos"]}',
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}',
+        "/usr/lib/debug/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

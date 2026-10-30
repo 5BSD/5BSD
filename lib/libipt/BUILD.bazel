@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_VERSION = {"MAJOR": "1", "MINOR": "6", "PATCH": "0"}
+bsd_template(name = "public_header", template = "//contrib/processor-trace:libipt/include/intel-pt.h.in", output = "intel-pt.h", substitutions = {"${PT_VERSION_" + key + "}": value for key, value in _VERSION.items()})
+cc_library(name = "headers", hdrs = [":public_header"], includes = ["."], visibility = ["//visibility:public"])
+cc_library(name = "ipt", srcs = ['//contrib/processor-trace:libipt/src/pt_asid.c', '//contrib/processor-trace:libipt/src/pt_block_cache.c', '//contrib/processor-trace:libipt/src/pt_block_decoder.c', '//contrib/processor-trace:libipt/src/pt_config.c', '//contrib/processor-trace:libipt/src/pt_cpu.c', '//contrib/processor-trace:libipt/src/posix/pt_cpuid.c', '//contrib/processor-trace:libipt/src/pt_decoder_function.c', '//contrib/processor-trace:libipt/src/pt_encoder.c', '//contrib/processor-trace:libipt/src/pt_error.c', '//contrib/processor-trace:libipt/src/pt_event_queue.c', '//contrib/processor-trace:libipt/src/pt_ild.c', '//contrib/processor-trace:libipt/src/pt_image_section_cache.c', '//contrib/processor-trace:libipt/src/pt_image.c', '//contrib/processor-trace:libipt/src/pt_insn_decoder.c', '//contrib/processor-trace:libipt/src/pt_insn.c', '//contrib/processor-trace:libipt/src/pt_last_ip.c', '//contrib/processor-trace:libipt/src/pt_msec_cache.c', '//contrib/processor-trace:libipt/src/pt_packet_decoder.c', '//contrib/processor-trace:libipt/src/pt_packet.c', '//contrib/processor-trace:libipt/src/pt_query_decoder.c', '//contrib/processor-trace:libipt/src/pt_retstack.c', '//contrib/processor-trace:libipt/src/pt_section_file.c', '//contrib/processor-trace:libipt/src/posix/pt_section_posix.c', '//contrib/processor-trace:libipt/src/pt_section.c', '//contrib/processor-trace:libipt/src/pt_sync.c', '//contrib/processor-trace:libipt/src/pt_time.c', '//contrib/processor-trace:libipt/src/pt_tnt_cache.c', '//contrib/processor-trace:libipt/src/pt_version.c'], deps = [":headers", "//contrib/processor-trace:headers"], local_defines = ["PT_VERSION_" + key + "=" + value for key, value in _VERSION.items()] + ["PT_VERSION_BUILD=0", 'PT_VERSION_EXT=""'], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ipt"], visibility = ["//visibility:public"])
+cc_shared_library(name = "ipt_shared", deps = [":ipt"], shared_lib_name = "libipt.so.0", user_link_flags = ["-Wl,-soname,libipt.so.0", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libipt","dbg"]}' for d in ["/usr/lib/debug/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Public version macros must compile and agree with the linked implementation.
+cc_test(name = "version_test", srcs = ["version_test.c"], deps = [":ipt"],
+    copts = ["-UNDEBUG"], linkstatic = True,
+    target_compatible_with = _PLATFORM, size = "small")

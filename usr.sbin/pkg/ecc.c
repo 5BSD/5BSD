@@ -477,8 +477,6 @@ ecc_verify_internal(struct ecc_verify_cbdata *cbdata, const uint8_t *hash,
 	int ret;
 	uint8_t ecsiglen;
 
-	keysz = MIN(sizeof(keybuf), cbdata->keylen / 2);
-
 	keysz = sizeof(keybuf);
 	if (ecc_extract_pubkey(cbdata->keyfp, cbdata->key, cbdata->keylen,
 	    keybuf, &keysz, &derparams) != 0) {
@@ -524,7 +522,7 @@ ecc_verify_data(const struct pkgsign_ctx *sctx,
     unsigned char *sig, int siglen)
 {
 	int ret;
-	struct ecc_verify_cbdata cbdata;
+	struct ecc_verify_cbdata cbdata = {0};
 
 	ret = 1;
 

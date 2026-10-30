@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["t_barrier.c", "t_equal.c", "t_once.c", "t_mutex.c", "t_rwlock.c", "t_join.c", "t_detach.c", "t_cond.c", "t_condwait.c", "t_fork.c", "t_sigmask.c", "t_sleep.c", "t_preempt.c", "t_kill.c", "t_sigsuspend.c", "t_siglongjmp.c", "t_swapcontext.c", "t_timedmutex.c", "t_fpu.c", "t_sem.c"], visibility = ["//lib/libthr/tests:__pkg__"])
+cc_library(name = "common", hdrs = ["h_common.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libthr/tests:__pkg__"])
+
+cc_library(name = "mutex_source", textual_hdrs = ["t_mutex.c"], visibility = ["//lib/libthr/tests:__pkg__"])
+
+exports_files(["h_atexit.c", "h_cancel.c", "h_exit.c", "h_resolv.c",
+    "t_atexit.sh", "t_cancel.sh", "t_exit.sh", "t_resolv.sh", "d_mach"],
+    visibility = ["//lib/libthr/tests:__pkg__"])

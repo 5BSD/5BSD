@@ -58,7 +58,7 @@ EOF
 
 atf_init_test_cases()
 {
-	SAFE_EVAL=${SAFE_EVAL:-/libexec/safe_eval.sh}
+	SAFE_EVAL=$(atf_config_get safe_eval "${SAFE_EVAL:-/libexec/safe_eval.sh}")
 	. $SAFE_EVAL
 	atf_add_test_case safe_set_reject
 	atf_add_test_case safe_set_xtras

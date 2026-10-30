@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# These unmodified programs read /etc/libalias.conf through LibAliasInit.
+# Build them here; runtime qualification requires an isolated installed root.
+# Do not register host-running tests that could silently load host modules.
+[cc_binary(
+    name = name,
+    srcs = [name + ".c", "util.c", "util.h"],
+    deps = (["//lib/atf/libatf-c:atf_c"] if name != "perf" else []) + ["//lib/libalias/libalias:alias"],
+    dynamic_deps = (["//lib/atf/libatf-c:atf_c_shared"] if name != "perf" else []) + ["//lib/libalias/libalias:alias_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name in ["1_instance", "2_natout", "3_natin", "perf"]]
+
+cc_binary(
+    name = "smedia",
+    srcs = ["smedia.c"],
+    deps = ["//lib/libalias/libalias:alias", "//lib/libsbuf:sbuf"],
+    dynamic_deps = ["//lib/libalias/libalias:alias_shared", "//lib/libsbuf:sbuf_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+_PROGRAMS = ["1_instance", "2_natout", "3_natin", "smedia", "perf"]
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "tests", bindir = "/usr/tests/sys/netinet/libalias")
+ for name in _PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD",
+    names = ["1_instance", "2_natout", "3_natin", "smedia"],
+    interfaces = {"1_instance": "atf", "2_natout": "atf", "3_natin": "atf", "smedia": "plain"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/sys/netinet/libalias/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"])
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_" + name for name in _PROGRAMS] + [":install_metadata"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in [
+        "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/sys",
+        "/usr/lib/debug/usr/tests/sys/netinet", "/usr/lib/debug/usr/tests/sys/netinet/libalias",
+    ]},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)

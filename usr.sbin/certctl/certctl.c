@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #define info(fmt, ...)							\
 	do {								\
@@ -61,6 +62,7 @@ static bool longnames;
 static bool nobundle;
 static bool unprivileged;
 static bool verbose;
+static bool explicit_files;
 
 static const char *localbase;
 static const char *destdir;
@@ -77,6 +79,7 @@ static const char *const default_trusted_paths[] = {
 	NULL
 };
 static char **trusted_paths;
+static bool trusted_paths_explicit;
 
 static const char *const default_untrusted_paths[] = {
 	"/usr/share/certs/untrusted",
@@ -84,10 +87,14 @@ static const char *const default_untrusted_paths[] = {
 	NULL
 };
 static char **untrusted_paths;
+static bool untrusted_paths_explicit;
 
 static char *trusted_dest;
 static char *untrusted_dest;
 static char *bundle_dest;
+static const char *trusted_output;
+static const char *untrusted_output;
+static const char *bundle_output;
 
 #define SSL_PATH		"/etc/ssl"
 #define TRUSTED_DIR		"certs"
@@ -111,8 +118,15 @@ mkdirp(const char *dir)
 	const char *sep;
 	char *parent;
 
-	if (stat(dir, &sb) == 0)
+	if (dryrun)
 		return;
+	if (stat(dir, &sb) == 0) {
+		if (!S_ISDIR(sb.st_mode))
+			errx(1, "%s: not a directory", dir);
+		return;
+	}
+	if (errno != ENOENT)
+		err(1, "%s", dir);
 	if ((sep = strrchr(dir, '/')) != NULL) {
 		parent = xasprintf("%.*s", (int)(sep - dir), dir);
 		mkdirp(parent);
@@ -161,12 +175,35 @@ split_paths(const char *str)
 	}
 	if ((paths = calloc(n + 1, sizeof(*paths))) == NULL)
 		err(1, NULL);
+	if (*str == '\0')
+		return (paths);
 	for (p = q = str, i = 0; i < n; i++, p = q + 1) {
 		q = strchrnul(p, ':');
+		if (q == p)
+			errx(1, "empty component in certificate search path");
 		if ((paths[i] = strndup(p, q - p)) == NULL)
 			err(1, NULL);
 	}
 	return (paths);
+}
+
+/* Append an explicitly selected certificate file, preserving argument order. */
+static void
+append_path(char ***paths, const char *path)
+{
+	char **newpaths;
+	size_t n;
+
+	if (*path == '\0')
+		errx(1, "empty certificate input path");
+	for (n = 0; *paths != NULL && (*paths)[n] != NULL; n++)
+		continue;
+	newpaths = reallocarray(*paths, n + 2, sizeof(*newpaths));
+	if (newpaths == NULL)
+		err(1, NULL);
+	newpaths[n] = xstrdup(path);
+	newpaths[n + 1] = NULL;
+	*paths = newpaths;
 }
 
 /*
@@ -312,21 +349,57 @@ lexisort(const struct dirent **d1, const struct dirent **d2)
 static int
 read_cert(const char *path, struct cert_tree *tree, struct cert_tree *exclude)
 {
+	struct stat sb;
 	FILE *f;
 	X509 *x509;
 	X509_NAME *name;
 	struct cert *cert;
-	unsigned long hash;
-	int len, ni, no;
+	unsigned long hash, error;
+	int fd, len, ni, no, ok, ret = 0;
 
-	if ((f = fopen(path, "r")) == NULL) {
+	/* Do not block on an explicitly supplied FIFO or read a device. */
+	if ((fd = open(path, O_RDONLY | O_NONBLOCK)) < 0) {
 		warn("%s", path);
 		return (-1);
 	}
-	for (ni = no = 0;
-	     (x509 = PEM_read_X509(f, NULL, NULL, NULL)) != NULL;
-	     ni++) {
-		hash = X509_subject_name_hash(x509);
+	if (fstat(fd, &sb) != 0) {
+		warn("%s", path);
+		close(fd);
+		return (-1);
+	}
+	if (!S_ISREG(sb.st_mode)) {
+		warnx("%s: not a regular certificate file", path);
+		close(fd);
+		return (-1);
+	}
+	if ((f = fdopen(fd, "r")) == NULL) {
+		warn("%s", path);
+		close(fd);
+		return (-1);
+	}
+	for (ni = no = 0;; ni++) {
+		ERR_clear_error();
+		x509 = PEM_read_X509(f, NULL, NULL, NULL);
+		if (x509 == NULL) {
+			error = ERR_peek_last_error();
+			if (ferror(f) || !feof(f) || (error != 0 &&
+			    (ERR_GET_LIB(error) != ERR_LIB_PEM ||
+			    ERR_GET_REASON(error) != PEM_R_NO_START_LINE))) {
+				warnx("%s: certificate read failed: %s", path,
+				    error ? ERR_error_string(error, NULL) :
+				    "input error");
+				ret = -1;
+			}
+			break;
+		}
+		name = X509_get_subject_name(x509);
+		hash = X509_NAME_hash_ex(name, NULL, NULL, &ok);
+		if (!ok) {
+			warnx("%s: cannot hash certificate subject", path);
+			X509_free(x509);
+			ret = -1;
+			break;
+		}
 		if (exclude && find_cert(exclude, x509)) {
 			info("%08lx: excluded", hash);
 			X509_free(x509);
@@ -340,8 +413,7 @@ read_cert(const char *path, struct cert_tree *tree, struct cert_tree *exclude)
 		if ((cert = calloc(1, sizeof(*cert))) == NULL)
 			err(1, NULL);
 		cert->x509 = x509;
-		name = X509_get_subject_name(x509);
-		cert->hash = X509_NAME_hash_ex(name, NULL, NULL, NULL);
+		cert->hash = hash;
 		len = X509_NAME_get_text_by_NID(name, NID_commonName,
 		    NULL, 0);
 		if (len > 0) {
@@ -364,10 +436,15 @@ read_cert(const char *path, struct cert_tree *tree, struct cert_tree *exclude)
 	 * no is the number of certificates that weren't already in our
 	 * tree or on the exclusion list.
 	 */
-	if (ni == 0)
+	if (ni == 0) {
 		warnx("%s: no valid certificates found", path);
-	fclose(f);
-	return (no);
+		ret = -1;
+	}
+	if (fclose(f) != 0) {
+		warn("%s", path);
+		ret = -1;
+	}
+	return (ret == 0 ? no : -1);
 }
 
 /*
@@ -377,36 +454,131 @@ read_cert(const char *path, struct cert_tree *tree, struct cert_tree *exclude)
  * Returns the number of certificates added to the tree, or -1 on failure.
  */
 static int
-read_certs(const char *path, struct cert_tree *tree, struct cert_tree *exclude)
+read_certs(const char *path, struct cert_tree *tree, struct cert_tree *exclude,
+    bool optional)
 {
 	struct stat sb;
 	char *paths[] = { __DECONST(char *, path), NULL };
 	FTS *fts;
 	FTSENT *ent;
-	int fts_options = FTS_LOGICAL | FTS_NOCHDIR;
 	int ret, total = 0;
+	bool failed = false;
 
 	if (stat(path, &sb) != 0) {
-		return (-1);
-	} else if (!S_ISDIR(sb.st_mode)) {
-		errno = ENOTDIR;
+		/* A dangling symlink is not an absent optional directory. */
+		if (optional && errno == ENOENT && lstat(path, &sb) != 0 &&
+		    errno == ENOENT)
+			return (0);
+		warn("%s", path);
 		return (-1);
 	}
-	if ((fts = fts_open(paths, fts_options, NULL)) == NULL)
-		err(1, "fts_open()");
-	while ((ent = fts_read(fts)) != NULL) {
-		if (ent->fts_info != FTS_F) {
-			if (ent->fts_info == FTS_ERR)
-				warnc(ent->fts_errno, "fts_read()");
-			continue;
+	if (!S_ISDIR(sb.st_mode)) {
+		warnx("%s: not a directory", path);
+		return (-1);
+	}
+	if ((fts = fts_open(paths, FTS_LOGICAL | FTS_NOCHDIR, NULL)) == NULL) {
+		warn("%s", path);
+		return (-1);
+	}
+	for (;;) {
+		errno = 0;
+		if ((ent = fts_read(fts)) == NULL) {
+			if (errno != 0) {
+				warn("fts_read %s", path);
+				failed = true;
+			}
+			break;
 		}
-		info("found %s", ent->fts_path);
-		ret = read_cert(ent->fts_path, tree, exclude);
-		if (ret > 0)
-			total += ret;
+		switch (ent->fts_info) {
+		case FTS_D:
+		case FTS_DP:
+			break;
+		case FTS_F:
+			info("found %s", ent->fts_path);
+			ret = read_cert(ent->fts_path, tree, exclude);
+			if (ret < 0)
+				failed = true;
+			else
+				total += ret;
+			break;
+		default:
+			if (ent->fts_errno != 0)
+				warnc(ent->fts_errno, "%s", ent->fts_path);
+			else
+				warnx("%s: invalid certificate input", ent->fts_path);
+			failed = true;
+			break;
+		}
 	}
-	fts_close(fts);
-	return (total);
+	if (fts_close(fts) != 0) {
+		warn("fts_close %s", path);
+		failed = true;
+	}
+	return (failed ? -1 : total);
+}
+
+/* Open a new temporary output without following an existing link. */
+static FILE *
+open_output(int d, const char *tmp, mode_t mode, char **buffer, size_t *size)
+{
+	FILE *f;
+	int fd, saved;
+
+	*buffer = NULL;
+	*size = 0;
+	/* Encode dry-run output in memory, retaining its real byte count. */
+	if (dryrun)
+		return (open_memstream(buffer, size));
+	fd = openat(d, tmp, O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY, mode);
+	if (fd < 0)
+		return (NULL);
+	if (!dryrun && !unprivileged && fchmod(fd, mode) != 0)
+		goto fail;
+	if ((f = fdopen(fd, "w")) != NULL)
+		return (f);
+fail:
+	saved = errno;
+	close(fd);
+	if (!dryrun)
+		(void)unlinkat(d, tmp, 0);
+	errno = saved;
+	return (NULL);
+}
+
+/* Detect buffered write and close errors before replacing a usable file. */
+static int
+finish_output(FILE *f, int d, const char *dir, const char *tmp,
+    const char *path, mode_t mode, int ret)
+{
+	long size = 0;
+
+	if (fflush(f) != 0 || ferror(f)) {
+		warn("flush %s/%s", dir, tmp);
+		ret = -1;
+	}
+	if (ret == 0 && (size = ftell(f)) < 0) {
+		warn("ftell %s/%s", dir, tmp);
+		ret = -1;
+	}
+	if (fclose(f) != 0) {
+		warn("close %s/%s", dir, tmp);
+		ret = -1;
+	}
+	if (!dryrun) {
+		if (ret == 0 && renameat(d, tmp, d, path) != 0) {
+			warn("rename %s/%s", dir, path);
+			ret = -1;
+		}
+		if (ret != 0 && unlinkat(d, tmp, 0) != 0)
+			warn("unlink %s/%s", dir, tmp);
+	}
+	if (ret == 0 && mlf != NULL && fprintf(mlf,
+	    ".%s/%s type=file uname=%s gname=%s mode=%#o size=%ld\n",
+	    unexpand_path(dir), path, uname, gname, mode, size) < 0) {
+		warn("%s", metalog);
+		ret = -1;
+	}
+	return (ret);
 }
 
 /*
@@ -421,10 +593,11 @@ write_certs(const char *dir, struct cert_tree *tree)
 	struct cert *cert;
 	struct file *file, *tmp;
 	struct dirent **dents, **ent;
-	char *path, *tmppath = NULL;
+	char *path, *tmppath = NULL, *buffer;
+	size_t size;
 	FILE *f;
 	mode_t mode = 0444;
-	int cmp, d, fd, ndents, ret = 0;
+	int cmp, d, ndents, ret = 0;
 
 	/*
 	 * Start by generating unambiguous file names for each certificate
@@ -445,14 +618,22 @@ write_certs(const char *dir, struct cert_tree *tree)
 	/*
 	 * Open and scan the directory.
 	 */
-	if ((d = open(dir, O_DIRECTORY | O_RDONLY)) < 0 ||
+	d = open(dir, O_DIRECTORY | O_RDONLY);
+	if (d < 0 && dryrun && errno == ENOENT) {
+		ndents = 0;
+		if ((dents = calloc(1, sizeof(*dents))) == NULL)
+			err(1, NULL);
+	} else {
+		if (d < 0)
+			err(1, "%s", dir);
 #ifdef BOOTSTRAPPING
-	    (ndents = scandir(dir, &dents, NULL, lexisort))
+		ndents = scandir(dir, &dents, NULL, lexisort);
 #else
-	    (ndents = fdscandir(d, &dents, NULL, lexisort))
+		ndents = fdscandir(d, &dents, NULL, lexisort);
 #endif
-	    < 0)
-		err(1, "%s", dir);
+		if (ndents < 0)
+			err(1, "%s", dir);
+	}
 	/*
 	 * Iterate over the directory listing and the certificate listing
 	 * in parallel.  If the directory listing gets ahead of the
@@ -496,76 +677,49 @@ write_certs(const char *dir, struct cert_tree *tree)
 		if (cmp < 0) {
 			/* a file on disk with no matching certificate */
 			info("removing %s/%s", dir, (*ent)->d_name);
-			if (!dryrun)
-				(void)unlinkat(d, (*ent)->d_name, 0);
+			if (!dryrun && unlinkat(d, (*ent)->d_name, 0) != 0) {
+				warn("unlink %s/%s", dir, (*ent)->d_name);
+				ret = -1;
+				break;
+			}
 			free(*ent++);
 			continue;
 		}
-		if (cmp == 0) {
-			/* a file on disk with a matching certificate */
-			info("replacing %s/%s", dir, (*ent)->d_name);
-			if (dryrun) {
-				fd = open(_PATH_DEVNULL, O_WRONLY);
-			} else {
-				tmppath = xasprintf(".%s", path);
-				fd = openat(d, tmppath,
-				    O_CREAT | O_WRONLY | O_TRUNC, mode);
-				if (!unprivileged && fd >= 0)
-					(void)fchmod(fd, mode);
-			}
+		if (cmp == 0)
 			free(*ent++);
+		info("writing %s/%s", dir, path);
+		tmppath = xasprintf(".%s", path);
+		f = open_output(d, tmppath, mode, &buffer, &size);
+		if (f == NULL) {
+			warn("%s/%s", dir, tmppath);
+			ret = -1;
 		} else {
-			/* a certificate with no matching file */
-			info("writing %s/%s", dir, path);
-			if (dryrun) {
-				fd = open(_PATH_DEVNULL, O_WRONLY);
-			} else {
-				tmppath = xasprintf(".%s", path);
-				fd = openat(d, tmppath,
-				    O_CREAT | O_WRONLY | O_EXCL, mode);
-				if (!unprivileged && fd >= 0)
-					(void)fchmod(fd, mode);
-			}
-		}
-		/* write the certificate */
-		if (fd < 0 ||
-		    (f = fdopen(fd, "w")) == NULL ||
-		    !PEM_write_X509(f, file->cert->x509)) {
-			if (tmppath != NULL && fd >= 0) {
-				int serrno = errno;
-				(void)unlinkat(d, tmppath, 0);
-				errno = serrno;
-			}
-			err(1, "%s/%s", dir, tmppath ? tmppath : path);
-		}
-		/* rename temp file if applicable */
-		if (tmppath != NULL) {
-			if (ret == 0 && renameat(d, tmppath, d, path) != 0) {
-				warn("%s/%s", dir, path);
+			if (!PEM_write_X509(f, file->cert->x509)) {
+				warnx("%s/%s: certificate write failed", dir, tmppath);
 				ret = -1;
 			}
-			if (ret != 0)
-				(void)unlinkat(d, tmppath, 0);
-			free(tmppath);
-			tmppath = NULL;
+			ret = finish_output(f, d, dir, tmppath, path, mode, ret);
 		}
-		fflush(f);
-		/* emit metalog */
-		if (mlf != NULL) {
-			fprintf(mlf, ".%s/%s type=file "
-			    "uname=%s gname=%s mode=%#o size=%ld\n",
-			    unexpand_path(dir), path,
-			    uname, gname, mode, ftell(f));
-		}
-		fclose(f);
+		free(buffer);
+		free(tmppath);
+		tmppath = NULL;
+		if (ret != 0)
+			break;
 		/* advance certificate listing */
 		tmp = RB_NEXT(file_tree, &files, file);
 		RB_REMOVE(file_tree, &files, file);
 		free(file);
 		file = tmp;
 	}
+	while (ent < dents + ndents)
+		free(*ent++);
 	free(dents);
-	close(d);
+	RB_FOREACH_SAFE(file, file_tree, &files, tmp) {
+		RB_REMOVE(file_tree, &files, file);
+		free(file);
+	}
+	if (d >= 0)
+		close(d);
 	return (ret);
 }
 
@@ -578,58 +732,38 @@ static int
 write_bundle(const char *dir, const char *file, struct cert_tree *tree)
 {
 	struct cert *cert;
-	char *tmpfile = NULL;
+	char *tmpfile, *buffer;
+	size_t size;
 	FILE *f;
-	int d, fd, ret = 0;
+	int d, ret = 0;
 	mode_t mode = 0444;
 
 	if (dir != NULL) {
-		if ((d = open(dir, O_DIRECTORY | O_RDONLY)) < 0)
+		d = open(dir, O_DIRECTORY | O_RDONLY);
+		if (d < 0 && !(dryrun && errno == ENOENT))
 			err(1, "%s", dir);
 	} else {
 		dir = ".";
 		d = AT_FDCWD;
 	}
 	info("writing %s/%s", dir, file);
-	if (dryrun) {
-		fd = open(_PATH_DEVNULL, O_WRONLY);
+	tmpfile = xasprintf(".%s", file);
+	if ((f = open_output(d, tmpfile, mode, &buffer, &size)) == NULL) {
+		warn("%s/%s", dir, tmpfile);
+		ret = -1;
 	} else {
-		tmpfile = xasprintf(".%s", file);
-		fd = openat(d, tmpfile, O_WRONLY | O_CREAT | O_EXCL, mode);
-		if (!unprivileged && fd >= 0)
-			(void)fchmod(fd, mode);
-	}
-	if (fd < 0 || (f = fdopen(fd, "w")) == NULL) {
-		if (tmpfile != NULL && fd >= 0) {
-			int serrno = errno;
-			(void)unlinkat(d, tmpfile, 0);
-			errno = serrno;
+		RB_FOREACH(cert, cert_tree, tree) {
+			if (!PEM_write_X509(f, cert->x509)) {
+				warnx("%s/%s: certificate write failed", dir, tmpfile);
+				ret = -1;
+				break;
+			}
 		}
-		err(1, "%s/%s", dir, tmpfile ? tmpfile : file);
+		ret = finish_output(f, d, dir, tmpfile, file, mode, ret);
 	}
-	RB_FOREACH(cert, cert_tree, tree) {
-		if (!PEM_write_X509(f, cert->x509)) {
-			warn("%s/%s", dir, tmpfile ? tmpfile : file);
-			ret = -1;
-			break;
-		}
-	}
-	if (tmpfile != NULL) {
-		if (ret == 0 && renameat(d, tmpfile, d, file) != 0) {
-			warn("%s/%s", dir, file);
-			ret = -1;
-		}
-		if (ret != 0)
-			(void)unlinkat(d, tmpfile, 0);
-		free(tmpfile);
-	}
-	if (ret == 0 && mlf != NULL) {
-		fprintf(mlf,
-		    ".%s/%s type=file uname=%s gname=%s mode=%#o size=%ld\n",
-		    unexpand_path(dir), file, uname, gname, mode, ftell(f));
-	}
-	fclose(f);
-	if (d != AT_FDCWD)
+	free(buffer);
+	free(tmpfile);
+	if (d >= 0)
 		close(d);
 	return (ret);
 }
@@ -639,7 +773,7 @@ write_bundle(const char *dir, const char *file, struct cert_tree *tree)
  *
  * Returns the number of certificates loaded.
  */
-static unsigned int
+static int
 load_trusted(void)
 {
 	unsigned int i, n;
@@ -647,7 +781,12 @@ load_trusted(void)
 
 	/* load external trusted certs */
 	for (i = n = 0; trusted_paths[i] != NULL; i++) {
-		ret = read_certs(trusted_paths[i], &trusted, &untrusted);
+		ret = explicit_files ?
+		    read_cert(trusted_paths[i], &trusted, &untrusted) :
+		    read_certs(trusted_paths[i], &trusted, &untrusted,
+		    !trusted_paths_explicit);
+		if (ret < 0)
+			return (-1);
 		if (ret > 0)
 			n += ret;
 	}
@@ -661,7 +800,7 @@ load_trusted(void)
  *
  * Returns the number of certificates loaded.
  */
-static unsigned int
+static int
 load_untrusted(void)
 {
 	char *path;
@@ -670,23 +809,30 @@ load_untrusted(void)
 
 	/* load external untrusted certs */
 	for (i = n = 0; untrusted_paths[i] != NULL; i++) {
-		ret = read_certs(untrusted_paths[i], &untrusted, NULL);
+		ret = explicit_files ?
+		    read_cert(untrusted_paths[i], &untrusted, NULL) :
+		    read_certs(untrusted_paths[i], &untrusted, NULL,
+		    !untrusted_paths_explicit);
+		if (ret < 0)
+			return (-1);
 		if (ret > 0)
 			n += ret;
 	}
 
+	/* Explicit selection has no legacy or directory-discovery inputs. */
+	if (explicit_files)
+		return (n);
 	/* load legacy untrusted certs */
 	path = expand_path(LEGACY_PATH);
-	ret = read_certs(path, &untrusted, NULL);
+	ret = read_certs(path, &untrusted, NULL, true);
 	if (ret > 0) {
 		warnx("certificates found in legacy directory %s",
 		    path);
 		n += ret;
-	} else if (ret == 0) {
-		warnx("legacy directory %s can safely be deleted",
-		    path);
 	}
 	free(path);
+	if (ret < 0)
+		return (-1);
 
 	info("%d untrusted certificates found", n);
 	return (n);
@@ -737,7 +883,8 @@ save_bundle(void)
 		dir = NULL;
 		file = bundle_dest;
 	} else {
-		dir = xasprintf("%.*s", (int)(sep - bundle_dest), bundle_dest);
+		dir = sep == bundle_dest ? xstrdup("/") :
+		    xasprintf("%.*s", (int)(sep - bundle_dest), bundle_dest);
 		file = sep + 1;
 		mkdirp(dir);
 	}
@@ -756,8 +903,8 @@ save_all(void)
 {
 	int ret = 0;
 
-	ret |= save_untrusted();
-	ret |= save_trusted();
+	if ((ret = save_untrusted()) != 0 || (ret = save_trusted()) != 0)
+		return (ret);
 	if (!nobundle)
 		ret |= save_bundle();
 	return (ret);
@@ -791,7 +938,10 @@ certctl_list(int argc, char **argv __unused)
 	if (argc > 1)
 		usage();
 	/* load installed trusted certificates */
-	read_certs(trusted_dest, &trusted, NULL);
+	if (read_certs(trusted_dest, &trusted, NULL, false) < 0) {
+		free_certs(&trusted);
+		return (-1);
+	}
 	/* list them */
 	list_certs(&trusted);
 	free_certs(&trusted);
@@ -809,7 +959,10 @@ certctl_untrusted(int argc, char **argv __unused)
 	if (argc > 1)
 		usage();
 	/* load installed untrusted certificates */
-	read_certs(untrusted_dest, &untrusted, NULL);
+	if (read_certs(untrusted_dest, &untrusted, NULL, false) < 0) {
+		free_certs(&untrusted);
+		return (-1);
+	}
 	/* list them */
 	list_certs(&untrusted);
 	free_certs(&untrusted);
@@ -830,16 +983,21 @@ certctl_rehash(int argc, char **argv __unused)
 	if (argc > 1)
 		usage();
 
-	if (unprivileged && (mlf = fopen(metalog, "a")) == NULL) {
-		warn("%s", metalog);
+	/* All inputs must be accepted before touching installed outputs. */
+	if (load_untrusted() < 0 || load_trusted() < 0) {
+		free_certs(&untrusted);
+		free_certs(&trusted);
 		return (-1);
 	}
 
-	/* load untrusted certs first */
-	load_untrusted();
-
-	/* load trusted certs, excluding any that are already untrusted */
-	load_trusted();
+	if (unprivileged)
+		mlf = strcmp(metalog, "-") == 0 ? stdout : fopen(metalog, "a");
+	if (unprivileged && mlf == NULL) {
+		warn("%s", metalog);
+		free_certs(&untrusted);
+		free_certs(&trusted);
+		return (-1);
+	}
 
 	/* save everything */
 	ret = save_all();
@@ -847,8 +1005,13 @@ certctl_rehash(int argc, char **argv __unused)
 	/* clean up */
 	free_certs(&untrusted);
 	free_certs(&trusted);
-	if (mlf != NULL)
-		fclose(mlf);
+	if (mlf != NULL) {
+		if (fclose(mlf) != 0) {
+			warn("%s", metalog);
+			ret = -1;
+		}
+		mlf = NULL;
+	}
 	return (ret);
 }
 
@@ -869,16 +1032,23 @@ certctl_trust(int argc, char **argv)
 	if (argc < 2)
 		usage();
 
-	/* load untrusted certs first */
-	load_untrusted();
-
-	/* load trusted certs, excluding any that are already untrusted */
-	load_trusted();
+	/* All inputs must be accepted before touching installed outputs. */
+	if (load_untrusted() < 0 || load_trusted() < 0) {
+		free_certs(&untrusted);
+		free_certs(&trusted);
+		return (-1);
+	}
 
 	/* now load the additional trusted certificates */
 	n = 0;
 	for (i = 1; i < argc; i++) {
 		ret = read_cert(argv[i], &extra, &trusted);
+		if (ret < 0) {
+			free_certs(&extra);
+			free_certs(&untrusted);
+			free_certs(&trusted);
+			return (-1);
+		}
 		if (ret > 0)
 			n += ret;
 	}
@@ -938,16 +1108,23 @@ certctl_untrust(int argc, char **argv)
 	if (argc < 2)
 		usage();
 
-	/* load untrusted certs first */
-	load_untrusted();
-
-	/* load trusted certs, excluding any that are already untrusted */
-	load_trusted();
+	/* All inputs must be accepted before touching installed outputs. */
+	if (load_untrusted() < 0 || load_trusted() < 0) {
+		free_certs(&untrusted);
+		free_certs(&trusted);
+		return (-1);
+	}
 
 	/* now load the additional untrusted certificates */
 	n = 0;
 	for (i = 1; i < argc; i++) {
 		ret = read_cert(argv[i], &extra, NULL);
+		if (ret < 0) {
+			free_certs(&extra);
+			free_certs(&untrusted);
+			free_certs(&trusted);
+			return (-1);
+		}
 		if (ret > 0)
 			n += ret;
 	}
@@ -997,6 +1174,9 @@ set_defaults(void)
 	char *str;
 	size_t len;
 
+	/* LOCALBASE is used only by directory discovery. */
+	if (explicit_files && localbase == NULL)
+		localbase = "";
 	if (localbase == NULL &&
 	    (localbase = getenv("LOCALBASE")) == NULL) {
 		if ((str = malloc((len = PATH_MAX) + 1)) == NULL)
@@ -1035,28 +1215,44 @@ set_defaults(void)
 		}
 	}
 
-	if ((value = getenv("TRUSTPATH")) != NULL)
+	if (explicit_files) {
+		if (trusted_paths == NULL &&
+		    (trusted_paths = calloc(1, sizeof(*trusted_paths))) == NULL)
+			err(1, NULL);
+	} else if ((value = getenv("TRUSTPATH")) != NULL) {
+		trusted_paths_explicit = true;
 		trusted_paths = split_paths(value);
-	else
+	} else
 		trusted_paths = expand_paths(default_trusted_paths);
 
-	if ((value = getenv("UNTRUSTPATH")) != NULL)
+	if (explicit_files) {
+		if (untrusted_paths == NULL &&
+		    (untrusted_paths = calloc(1, sizeof(*untrusted_paths))) == NULL)
+			err(1, NULL);
+	} else if ((value = getenv("UNTRUSTPATH")) != NULL) {
+		untrusted_paths_explicit = true;
 		untrusted_paths = split_paths(value);
-	else
+	} else
 		untrusted_paths = expand_paths(default_untrusted_paths);
 
-	if ((value = getenv("TRUSTDESTDIR")) != NULL ||
+	if (trusted_output != NULL)
+		trusted_dest = normalize_path(trusted_output);
+	else if ((value = getenv("TRUSTDESTDIR")) != NULL ||
 	    (value = getenv("CERTDESTDIR")) != NULL)
 		trusted_dest = normalize_path(value);
 	else
 		trusted_dest = expand_path(TRUSTED_PATH);
 
-	if ((value = getenv("UNTRUSTDESTDIR")) != NULL)
+	if (untrusted_output != NULL)
+		untrusted_dest = normalize_path(untrusted_output);
+	else if ((value = getenv("UNTRUSTDESTDIR")) != NULL)
 		untrusted_dest = normalize_path(value);
 	else
 		untrusted_dest = expand_path(UNTRUSTED_PATH);
 
-	if ((value = getenv("BUNDLE")) != NULL)
+	if (bundle_output != NULL)
+		bundle_dest = normalize_path(bundle_output);
+	else if ((value = getenv("BUNDLE")) != NULL)
 		bundle_dest = normalize_path(value);
 	else
 		bundle_dest = expand_path(BUNDLE_PATH);
@@ -1088,6 +1284,8 @@ usage(void)
 	fprintf(stderr, "usage: certctl [-lv] [-D destdir] [-d distbase] list\n"
 	    "       certctl [-lv] [-D destdir] [-d distbase] untrusted\n"
 	    "       certctl [-BnUv] [-D destdir] [-d distbase] [-M metalog] rehash\n"
+	    "       certctl -E [-BnUv] [-T file] [-X file] [-C trusted-dir]\n"
+	    "               [-R untrusted-dir] [-b bundle] [-D destdir] [-M metalog] rehash\n"
 	    "       certctl [-nv] [-D destdir] [-d distbase] untrust <file>\n"
 	    "       certctl [-nv] [-D destdir] [-d distbase] trust <file>\n");
 	exit(1);
@@ -1100,10 +1298,19 @@ main(int argc, char *argv[])
 	unsigned int i;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "BcD:d:g:lL:M:no:Uv")) != -1)
+	while ((opt = getopt(argc, argv, "Bb:C:cD:d:Eg:lL:M:no:R:T:UvX:")) != -1)
 		switch (opt) {
 		case 'B':
 			nobundle = true;
+			break;
+		case 'b':
+			bundle_output = optarg;
+			break;
+		case 'C':
+			trusted_output = optarg;
+			break;
+		case 'R':
+			untrusted_output = optarg;
 			break;
 		case 'c':
 			/* ignored for compatibility */
@@ -1113,6 +1320,9 @@ main(int argc, char *argv[])
 			break;
 		case 'd':
 			distbase = optarg;
+			break;
+		case 'E':
+			explicit_files = true;
 			break;
 		case 'g':
 			gname = optarg;
@@ -1135,6 +1345,12 @@ main(int argc, char *argv[])
 		case 'U':
 			unprivileged = true;
 			break;
+		case 'T':
+			append_path(&trusted_paths, optarg);
+			break;
+		case 'X':
+			append_path(&untrusted_paths, optarg);
+			break;
 		case 'v':
 			verbose = true;
 			break;
@@ -1150,7 +1366,16 @@ main(int argc, char *argv[])
 
 	command = *argv;
 
-	if ((nobundle || unprivileged || metalog != NULL) &&
+	if (!explicit_files && (trusted_paths != NULL || untrusted_paths != NULL ||
+	    trusted_output != NULL || untrusted_output != NULL || bundle_output != NULL)) {
+		warnx("-T, -X, -C, -R and -b require -E");
+		usage();
+	}
+	if ((trusted_output != NULL && *trusted_output == '\0') ||
+	    (untrusted_output != NULL && *untrusted_output == '\0') ||
+	    (bundle_output != NULL && *bundle_output == '\0'))
+		errx(1, "empty certificate output path");
+	if ((explicit_files || nobundle || unprivileged || metalog != NULL) &&
 	    strcmp(command, "rehash") != 0)
 		usage();
 	if (!unprivileged && metalog != NULL) {

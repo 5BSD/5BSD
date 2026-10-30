@@ -1,0 +1,441 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["subr_prf.c", "subr_sbuf.c"], visibility = ["//lib/libsbuf:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "sysdecode_syscalls", textual_hdrs = ["syscalls.c"],
+    strip_include_prefix = ".", include_prefix = "kern",
+    visibility = ["//lib/libsysdecode:__pkg__"])
+
+exports_files(["subr_stats.c"], visibility = ["//lib/libstats:__pkg__"])
+
+exports_files(["syscalls.master"], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_vnode.bzl", "bsd_vnode_interface")
+bsd_vnode_interface(
+    name = "vnode_if",
+    src = "vnode_if.src",
+    shell = "@bsd_sdk//toolchain:sh",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"],
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"],
+)
+filegroup(name = "vnode_source", srcs = [":vnode_if"], output_group = "source", visibility = ["//visibility:public"])
+cc_library(name = "vnode_headers", hdrs = [":vnode_header_files"],
+    strip_include_prefix = "vnode_if.generated", visibility = ["//visibility:public"])
+filegroup(name = "vnode_header_files", srcs = [":vnode_if"], output_group = "headers")
+
+exports_files(["genassym.sh", "genoffset.sh"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+# Initial amd64 GENERIC layout-only compilation. Full kernel policy is separate.
+load("//tools/build/bazel:kernel_amd64.bzl", _AMD64_LAYOUT_FLAGS = "AMD64_KERNEL_FLAGS", _AMD64_LAYOUT_DEPS = "AMD64_KERNEL_HEADER_DEPS")
+cc_library(name = "generic_genoffset", srcs = ["genoffset.c"],
+    deps = _AMD64_LAYOUT_DEPS, copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genoffset_object", group = ":generic_genoffset", out = "generic_layout/genoffset.o")
+kernel_constants(name = "generic_offset", object = ":generic_genoffset_object", kind = "offset", output = "generic_layout/offset.inc")
+cc_library(name = "generic_offset_header", hdrs = [":generic_offset"], strip_include_prefix = "generic_layout", visibility = ["//visibility:public"])
+cc_library(name = "generic_genoffset_check", srcs = ["genoffset.c"],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"], copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "OFFSET_TEST"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o")
+
+cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers", "//sys/amd64/conf:generic_assym_headers",
+        "//sys/vm:kernel_headers", "//sys/isa:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/dev/hwpmc:kernel_headers"],
+    copts = _AMD64_LAYOUT_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "generic_genassym_object", group = ":generic_genassym", out = "generic_layout/genassym.o")
+kernel_constants(name = "generic_assym", object = ":generic_genassym_object", kind = "assym", output = "generic_layout/assym.inc",
+    prerequisites = [":generic_genoffset_check_object"])
+
+load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
+# Generated GENERIC objects use normal kernel common-symbol policy.
+[cc_library(name = "generic_" + name + "_objects", srcs = [source],
+    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"] + extra_deps,
+    copts = [flag for flag in _AMD64_LAYOUT_FLAGS if flag != "-fcommon"] + ["-fno-common",
+        "-fmacro-prefix-map=$(execpath " + source + ")=" + name + ".c"],
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name, source, extra_deps in [
+    ("config", "//sys/amd64/conf:generic_config_source", ["//sys/amd64/conf:generic_config_header"]),
+    ("env", "//sys/amd64/conf:generic_env_source", []),
+    ("hints", "//sys/amd64/conf:generic_hints_source", []),
+    ("vnode_if", ":vnode_source", [":vnode_headers"]),
+    ("vers", ":generic_version_source", []),
+]]
+[bsd_ctf_library(name = "generic_" + name + "_ctf", library = ":generic_" + name + "_objects",
+    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
+ for name in ["config", "env", "hints", "vnode_if", "vers"]]
+[filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+ for name in ["config", "env", "hints", "vnode_if", "vers"]]
+
+load("//tools/build/bazel:bsd_kernel_version.bzl", "bsd_kernel_version")
+bsd_kernel_version(name = "generic_version_source", identity = "//sys/amd64/conf:generic_identity",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    shell = "@bsd_sdk//toolchain:sh", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:sh_runtime"],
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    visibility = ["//visibility:public"])
+
+filegroup(name = "bus_if_header_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "bus_if_headers", hdrs = [":bus_if_header_file"], strip_include_prefix = "bus_if.generated", visibility = ["//visibility:public"])
+
+filegroup(name = "device_if_header_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "device_if_headers", hdrs = [":device_if_header_file"], strip_include_prefix = "device_if.generated", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+amd64_generic_kernel_objects(name = "generic_sysvipc", srcs = ["sysv_ipc.c", "sysv_msg.c", "sysv_sem.c", "sysv_shm.c"],
+    deps = ["//sys/amd64/conf:generic_opt_sysvipc_header", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_posix_shm", srcs = ["uipc_shm.c"],
+    deps = ["//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])
+amd64_generic_kernel_objects(name = "generic_sync", srcs = ["kern_condvar.c", "kern_lock.c", "kern_mutex.c", "kern_rmlock.c", "kern_rwlock.c", "kern_sema.c", "kern_sx.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/fs/devfs:internal_headers", ":bus_if_headers", ":device_if_headers", "//sys/dev/hwpmc:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_sched_header",
+        "//sys/amd64/conf:generic_opt_adaptive_mutexes_header", "//sys/amd64/conf:generic_opt_no_adaptive_rwlocks_header", "//sys/amd64/conf:generic_opt_no_adaptive_sx_header"])
+
+amd64_generic_kernel_objects(name = "generic_waitqueues", srcs = ["subr_sleepqueue.c", "subr_turnstile.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_sched_header",
+        "//sys/amd64/conf:generic_opt_sleepqueue_profiling_header", "//sys/amd64/conf:generic_opt_turnstile_profiling_header", "//sys/amd64/conf:generic_opt_stack_header"])
+
+amd64_generic_kernel_objects(name = "generic_deferred_work", srcs = ["subr_taskqueue.c", "subr_gtaskqueue.c", "subr_epoch.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+amd64_generic_kernel_objects(name = "generic_timers", srcs = ["kern_timeout.c", "kern_tc.c", "kern_time.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers", "//sys/ddb:symbol_headers",
+        ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/amd64/conf:generic_opt_callout_profiling_header", "//sys/amd64/conf:generic_opt_ffclock_header", "//sys/amd64/conf:generic_opt_ntp_header", "//sys/amd64/conf:generic_opt_rss_header"])
+
+amd64_generic_kernel_objects(name = "generic_events", srcs = ["kern_event.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_kqueue_header"])
+
+amd64_generic_kernel_objects(name = "generic_pipe", srcs = ["sys_pipe.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers"])
+amd64_generic_kernel_objects(name = "generic_socket", srcs = ["uipc_socket.c", "uipc_sockbuf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:internal_headers",
+        "//sys/netinet:pcb_headers", "//sys/netinet:tcp_wire_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header",
+        "//sys/amd64/conf:generic_opt_sctp_header", "//sys/amd64/conf:generic_opt_param_header"])
+
+amd64_generic_kernel_objects(name = "generic_unix_socket", srcs = ["uipc_usrreq.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/net:network_headers", "//sys/crypto/siphash:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ddb_header"])
+amd64_generic_kernel_objects(name = "generic_socket_syscalls", srcs = ["uipc_syscalls.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/net:network_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_descriptor_io", srcs = ["kern_descrip.c", "sys_generic.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/net:network_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_capsicum_procdesc", srcs = ["sys_capability.c", "sys_procdesc.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_process_lifecycle", srcs = ["kern_fork.c", "kern_exit.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/amd64/conf:generic_opt_kstack_pages_header"])
+
+amd64_generic_kernel_objects(name = "generic_signal_credentials", srcs = ["kern_sig.c", "kern_prot.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:internal_headers",
+        "//sys/security/audit:kernel_headers", "//sys/amd64/conf:generic_opt_capsicum_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header"])
+
+amd64_generic_kernel_objects(name = "generic_exec", srcs = ["kern_exec.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
+        "//sys/amd64/conf:generic_opt_vm_header"])
+
+amd64_generic_kernel_objects(name = "generic_threads", srcs = ["kern_thr.c", "kern_thread.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
+        "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_posix_header",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
+        "//sys/amd64/conf:generic_opt_witness_header"])
+
+amd64_generic_kernel_objects(name = "generic_umtx", srcs = ["kern_umtx.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_umtx_profiling_header"])
+
+amd64_generic_kernel_objects(name = "generic_resource_accounting", srcs = ["kern_resource.c", "kern_acct.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers"])
+
+amd64_generic_kernel_objects(name = "generic_identity_privilege", srcs = ["kern_priv.c", "kern_loginclass.c", "kern_mib.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_posix_header", "//sys/amd64/conf:generic_config_header"])
+
+amd64_generic_kernel_objects(name = "generic_resource_control", srcs = ["kern_racct.c", "kern_rctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/amd64/conf:generic_opt_sched_header", ":bus_if_headers", ":device_if_headers"])
+
+amd64_generic_kernel_objects(name = "generic_affinity_scheduling", srcs = ["kern_cpuset.c", "kern_switch.c", "ksched.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_posix_header",
+        "//sys/amd64/conf:generic_opt_sched_header"])
+
+amd64_generic_kernel_objects(name = "generic_ule", srcs = ["sched_ule.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header",
+        "//sys/amd64/conf:generic_opt_sched_header"])
+
+amd64_generic_kernel_objects(name = "generic_synch_smp", srcs = ["kern_synch.c", "subr_smp.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_sched_header"])
+
+amd64_generic_kernel_objects(name = "generic_sysctl", srcs = ["kern_sysctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/net:network_headers", "//sys/ddb:kernel_headers", "//sys/ddb:lexer_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header", "//sys/amd64/conf:generic_opt_sysctl_header"])
+
+amd64_generic_kernel_objects(name = "generic_environment_events", srcs = ["kern_environment.c", "subr_eventhandler.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers"])
+
+filegroup(name = "linker_if_header_file", srcs = [":linker_if"], output_group = "header")
+cc_library(name = "linker_if_headers", hdrs = [":linker_if_header_file"], strip_include_prefix = "linker_if.generated", visibility = ["//visibility:public"])
+amd64_generic_kernel_objects(name = "generic_module_linker", srcs = ["kern_module.c", "kern_linker.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/net:network_headers", "//sys/ddb:kernel_headers", "//sys/dev/hwpmc:kernel_headers", ":linker_if_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_kld_header",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header"])
+
+cc_library(name = "ctf_implementation", textual_hdrs = ["kern_ctf.c"], includes = [".."],
+    deps = ["//sys/ddb:ctf_headers", "//sys/contrib/zlib:kernel_headers"])
+amd64_generic_kernel_objects(name = "generic_elf_loaders", srcs = ["link_elf.c", "link_elf_obj.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/net:network_headers", ":linker_if_headers", ":ctf_implementation",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_gdb_header"])
+
+amd64_generic_kernel_objects(name = "generic_kobj_preload", srcs = ["subr_kobj.c", "subr_module.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_init", srcs = ["init_main.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/ddb:kernel_headers", "//sys/ddb:symbol_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_kdb_header",
+        "//sys/amd64/conf:generic_opt_init_path_header", "//sys/amd64/conf:generic_opt_verbose_sysinit_header"])
+
+amd64_generic_kernel_objects(name = "generic_clocks", srcs = ["kern_clock.c", "kern_clocksource.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/dev/hwpmc:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_kdb_header",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_ntp_header",
+        "//sys/amd64/conf:generic_opt_device_polling_header", "//sys/amd64/conf:generic_opt_watchdog_header"])
+
+amd64_generic_kernel_objects(name = "generic_event_timers", srcs = ["kern_et.c", "sys_timerfd.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_notifications", srcs = ["sys_eventfd.c", "vfs_inotify.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/audit:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_kthread_posix", srcs = ["kern_kthread.c", "p1003_1b.c", "posix4_mib.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_posix_header"])
+
+amd64_generic_kernel_objects(name = "generic_random_uuid", srcs = ["sys_getrandom.c", "kern_uuid.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/net:network_headers",
+        "//sys/net:interface_type_headers", "//sys/net:link_address_headers"])
+
+amd64_generic_kernel_objects(name = "generic_logging", srcs = ["subr_log.c", "subr_msgbuf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_formatted_output", srcs = ["subr_prf.c", "subr_sbuf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_printf_header"])
+
+amd64_generic_kernel_objects(name = "generic_uio_rangelock", srcs = ["subr_uio.c", "kern_rangelock.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_smr_pctrie", srcs = ["subr_smr.c", "subr_pctrie.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_counter_blist", srcs = ["subr_counter.c", "subr_blist.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_hash_unit", srcs = ["subr_hash.c", "subr_unit.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_acl", srcs = ["subr_acl_nfs4.c", "vfs_acl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_extattr", srcs = ["vfs_extattr.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/amd64/conf:generic_opt_capsicum_header"])
+
+amd64_generic_kernel_objects(name = "generic_lookup", srcs = ["vfs_lookup.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/amd64/conf:generic_opt_capsicum_header",
+        "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_namecache", srcs = ["vfs_cache.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_vnops", srcs = ["vfs_vnops.c"],
+    deps = ["//sys/contrib/pcg-c:kernel_headers", "//sys/netinet:address_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/dev/hwpmc:kernel_headers", "//sys/dev/hwt:hook_headers",
+        "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_hwt_hooks_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_defaults", srcs = ["vfs_default.c", "vfs_hash.c", "vfs_init.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_mount", srcs = ["vfs_mount.c", "vfs_mountroot.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/geom:kernel_headers", "//sys/netinet:address_headers",
+        "//sys/net:radix_headers", "//sys/amd64/conf:generic_opt_rootdevname_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_syscalls", srcs = ["vfs_syscalls.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers", "//sys/fs/devfs:kernel_headers",
+        "//sys/amd64/conf:generic_opt_capsicum_header", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_lifecycle", srcs = ["vfs_subr.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_watchdog_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_buffer_io", srcs = ["vfs_bio.c", "vfs_cluster.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:kernel_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_aio", srcs = ["vfs_aio.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_vfs_export", srcs = ["vfs_export.c"],
+    deps = ["//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/netinet:address_headers", "//sys/net:radix_headers",
+        "//sys/rpc:kernel_auth_headers", "//sys/amd64/conf:generic_opt_inet_header",
+        "//sys/amd64/conf:generic_opt_inet6_header"])
+
+amd64_generic_kernel_objects(name = "generic_file_locks", srcs = ["kern_lockf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/amd64/conf:generic_opt_debug_lockf_header"])
+
+amd64_generic_kernel_objects(name = "generic_memory_descriptors", srcs = ["subr_memdesc.c", "subr_sglist.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+cc_library(name = "busdma_bounce_implementation", textual_hdrs = ["subr_busdma_bounce.c"], visibility = ["//sys/x86/x86:__pkg__"])
+
+amd64_generic_kernel_objects(name = "generic_device_resources", srcs = ["subr_devstat.c", "subr_rman.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/netinet:address_headers",
+        ":bus_if_headers", ":device_if_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_disk_ranges", srcs = ["subr_disk.c", "subr_rangeset.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:disk_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_geom_header"])
+
+amd64_generic_kernel_objects(name = "generic_buffer_mutex_pools", srcs = ["subr_bufring.c", "kern_mtxpool.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_helper_hooks", srcs = ["kern_hhook.c", "kern_khelp.c", "kern_osd.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/net:network_headers"])
+
+amd64_generic_kernel_objects(name = "generic_hints_firmware", srcs = ["subr_hints.c", "subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+amd64_generic_kernel_objects(name = "generic_devctl", srcs = ["kern_devctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_bus_header"])
+
+amd64_generic_kernel_objects(name = "generic_bus", srcs = ["subr_bus.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/net:network_headers", "//sys/dev/iommu:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_bus_header",
+        "//sys/amd64/conf:generic_opt_iommu_header"])
+
+amd64_generic_kernel_objects(name = "generic_device_init_dma", srcs = ["subr_autoconf.c", "subr_bus_dma.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/opencrypto:cryptodev_headers", "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header",
+        "//sys/amd64/conf:generic_opt_bus_header", "//sys/amd64/conf:generic_opt_iommu_header"])
+
+amd64_generic_kernel_objects(name = "generic_physio", srcs = ["kern_physio.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/geom:kernel_headers"])
+
+amd64_generic_kernel_objects(name = "generic_character_devices", srcs = ["kern_conf.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/fs/devfs:internal_headers",
+        "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_clock_conversion", srcs = ["subr_clock.c", "subr_fattime.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+# The amd64 calibration recipe enables floating-point instructions and -O3.
+# Its headers are declared here, so retain the native kernel's -nostdinc.
+amd64_generic_kernel_objects(name = "generic_clock_calibration", srcs = ["subr_clockcalib.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"],
+    copts = ["-O3", "-mmmx", "-msse", "-msse2"])
+
+filegroup(name = "clock_if_header_file", srcs = [":clock_if"], output_group = "header")
+cc_library(name = "clock_if_headers", hdrs = [":clock_if_header_file"], strip_include_prefix = "clock_if.generated", visibility = ["//visibility:public"])
+amd64_generic_kernel_objects(name = "generic_rtc", srcs = ["subr_rtc.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        ":clock_if_headers", "//sys/amd64/conf:generic_opt_ffclock_header"])
+
+amd64_generic_kernel_objects(name = "generic_clock_discipline", srcs = ["kern_ntptime.c", "kern_ffclock.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        "//sys/amd64/conf:generic_opt_ntp_header", "//sys/amd64/conf:generic_opt_ffclock_header"])
+
+amd64_generic_kernel_objects(name = "generic_idle_membarrier", srcs = ["kern_idle.c", "kern_membarrier.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+filegroup(name = "cpufreq_if_header_file", srcs = [":cpufreq_if"], output_group = "header")
+cc_library(name = "cpufreq_if_headers", hdrs = [":cpufreq_if_header_file"], strip_include_prefix = "cpufreq_if.generated", visibility = ["//visibility:public"])
+amd64_generic_kernel_objects(name = "generic_cpu_frequency_storage", srcs = ["kern_cpu.c", "subr_pcpu.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
+        ":cpufreq_if_headers", "//sys/ddb:kernel_headers", "//sys/amd64/conf:generic_opt_ddb_header"])
+
+amd64_generic_kernel_objects(name = "generic_context_sharedpage", srcs = ["kern_context.c", "kern_sharedpage.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_vm_header"])
+
+amd64_generic_kernel_objects(name = "generic_process_control", srcs = ["kern_procctl.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_ktrace_header"])
+
+amd64_generic_kernel_objects(name = "generic_process_metadata", srcs = ["kern_proc.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers",
+        "//sys/dev/mac_capability:label_headers", "//sys/fs/devfs:kernel_headers", "//sys/ddb:kernel_headers",
+        "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header",
+        "//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_stack_header"])
+
+exports_files(["subr_acl_nfs4.c"], visibility = ["//lib/libc/posix1e:__pkg__"])
+
+exports_files(["subr_capability.c"], visibility = ["//lib/libc/capability:__pkg__"])
+
+exports_files(["subr_vmem.c"], visibility = ["//lib/libuvmem:__pkg__"])

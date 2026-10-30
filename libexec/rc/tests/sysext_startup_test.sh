@@ -4,12 +4,13 @@ setup()
 {
 	# Use the current startup functions with harmless command seams. Never
 	# invoke the host's rc configuration, module loader, or device controls.
+	# Select rc.subr from the same tree as the scripts, unless explicitly set.
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
 	    "${RC_TEST_SRCDIR:-/etc/rc.d}/kld" > kld.sh
 	sed '/^\. \/etc\/rc.subr$/d; /^load_rc_config /d; /^run_rc_command /d' \
 	    "${RC_TEST_SRCDIR:-/etc/rc.d}/devmatch" > devmatch.sh
 	cat > seams.sh <<-'EOF'
-	. /etc/rc.subr
+	. "${RC_TEST_SUBR:-${RC_TEST_SRCDIR:-/etc/rc.d}/../rc.subr}"
 	kenv() {
 		case "$2" in
 		capability_plane) echo "${PLANE-YES}" ;;
@@ -98,11 +99,12 @@ linux_broker_body()
 		case "$*" in
 		'-n hw.machine_arch') echo amd64 ;;
 		'-n compat.linux.emul_path') echo /nonexistent ;;
-		'-ni kern.elf64.fallback_brand') echo 3 ;;
+		'-ni kern.elf64.fallback_brand') echo "${TEST_BRAND:-3}" ;;
+		'kern.elf64.fallback_brand=3') return "${FAIL_BRAND:-0}" ;;
 		esac
 	}
 	checkyesno() { [ "${TEST_MOUNTS:-NO}" = YES ]; }
-	linux_mount() { echo "mount $*"; }
+	linux_mount() { echo "mount $*"; [ "$1" != "${FAIL_MOUNT:-}" ]; }
 	sysextctl() {
 		echo "broker $*"
 		[ "$2" != "${FAIL_MODULE:-}" ] && return "${BROKER_STATUS:-0}"
@@ -119,6 +121,17 @@ linux_broker_body()
 		atf_check -s exit:0 -e empty -o file:expected env PLANE="$plane" \
 		    sh -c '. ./linux-seams.sh; linux_start'
 	done
+	printf '%s\n' 'broker load linux64' 'broker load fdescfs' \
+	    'broker load linprocfs' 'broker load linsysfs' > expected
+	# A denied ABI write must not be hidden by later successful commands.
+	atf_check -s exit:1 -e empty -o file:expected \
+	    env TEST_BRAND=-1 FAIL_BRAND=1 TEST_MOUNTS=YES \
+	    sh -c '. ./linux-seams.sh; linux_start'
+	# Stop at the first failed mount; later success must not mask it.
+	printf '%s\n' 'mount linprocfs /nonexistent/proc -o nocover' >> expected
+	atf_check -s exit:1 -e empty -o file:expected \
+	    env TEST_MOUNTS=YES FAIL_MOUNT=linprocfs \
+	    sh -c '. ./linux-seams.sh; linux_start'
 	# A broker refusal must not fall back to kldload or attempt mounts.
 	atf_check -s exit:1 -e match:'Unable to load' \
 	    -o inline:'broker load linux64\n' env BROKER_STATUS=1 TEST_MOUNTS=YES \

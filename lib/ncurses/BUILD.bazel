@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = ["//lib/ncurses/tinfo:library_manual_manifest", "//lib/ncurses/tinfo:pkgconfig_manifest"] + ["//lib/ncurses/" + lib + ":install_manifest" for lib in ["ncurses", "form", "menu", "panel"]],
+    directories = {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}' for directory in ["/usr/lib/debug/lib", "/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

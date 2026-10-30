@@ -442,7 +442,7 @@ _DP_fetch=	ssl crypto
 _DP_fetch=	md
 .endif
 .if ${MK_OPENSSH} != "no"
-_DP_fido2+=	crypto z
+_DP_fido2+=	cbor crypto z
 .endif
 _DP_fifolog=	z
 _DP_formw=	ncursesw
@@ -487,6 +487,7 @@ _DP_pam+=	ssh
 _DP_pam+=	ypclnt
 .endif
 _DP_pjdlog=	util
+_DP_secureboot=	bearssl
 _DP_proc=	cxxrt
 .if ${MK_CTF} != "no"
 _DP_proc+=	ctf
@@ -620,6 +621,16 @@ LDADD_cplusplus=	-lc++
     (defined(BOOTSTRAPPING) && ${.MAKE.OS} != "FreeBSD")
 LDADD_cplusplus=	${LDADD_cplusplus_L} -lc++
 .endif
+# Static PAM modules use TACACS+, whose configuration reader uses OpenPAM.
+# Resolve that archive cycle as a linker group. Keep _DP_* intact for library
+# dependency validation; suppress only the recursive expansion of the grouped
+# pam -> tacplus edge below. Both archives remain build prerequisites.
+.if (defined(NO_SHARED) && ${NO_SHARED:tl} != "no") || \
+    (defined(BOOTSTRAPPING) && ${.MAKE.OS} != "FreeBSD")
+_PAM_STATIC_GROUP= yes
+LDADD_pam= ${LDADD_pam_L} ${LDADD_tacplus_L} -Wl,--start-group -lpam -ltacplus -Wl,--end-group
+DPADD_pam= ${LIBPAM} ${LIBTACPLUS}
+.endif
 LIBATF_C=	${LIBDESTDIR}${LIBDIR_BASE}/libprivateatf-c.a
 LIBATF_CXX=	${LIBDESTDIR}${LIBDIR_BASE}/libprivateatf-c++.a
 LDADD_atf_c=	-lprivateatf-c
@@ -662,8 +673,10 @@ LDADD_${_l}?=	${LDADD_${_l}_L} -l${_l}
     (defined(NO_SHARED) && ${NO_SHARED:tl} != "no") || \
     (defined(BOOTSTRAPPING) && ${.MAKE.OS} != "FreeBSD"))
 .for _d in ${_DP_${_l}}
+.if !defined(_PAM_STATIC_GROUP) || ${_l} != "pam" || ${_d} != "tacplus"
 DPADD_${_l}+=	${DPADD_${_d}}
 LDADD_${_l}+=	${LDADD_${_d}}
+.endif
 .endfor
 .endif
 .endfor

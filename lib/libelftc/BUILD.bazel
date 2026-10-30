@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":sources.bzl", "ELFTC_SOURCES")
+# INTERNAL library: no installed DSO or public installation is introduced.
+cc_library(name = "elftc", srcs = ELFTC_SOURCES,
+    deps = ["//contrib/elftoolchain:elftc_headers", "//lib/libelf:elf"],
+    implementation_deps = ["//contrib/elftoolchain:elftc_internal_headers"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":elftc"], visibility = ["//visibility:public"])
+
+# Match bsd.lib.mk internal-library PIE archive selection.
+cc_library(name = "elftc_pie", srcs = ELFTC_SOURCES,
+    deps = ["//contrib/elftoolchain:elftc_headers", "//lib/libelf:elf"],
+    implementation_deps = ["//contrib/elftoolchain:elftc_internal_headers"],
+    copts = ["-fPIE", "-DPIC"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":elftc_pie"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "api_test", srcs = ["api_test.c"],
+    deps = [":archive_link", "//contrib/elftoolchain:elftc_headers", "//lib/libelf:elf"],
+    linkstatic = True, size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

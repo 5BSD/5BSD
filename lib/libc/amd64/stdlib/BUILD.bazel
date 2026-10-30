@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["div.S", "ldiv.S", "lldiv.S"], visibility = ["//lib/libc/stdlib:__pkg__"])

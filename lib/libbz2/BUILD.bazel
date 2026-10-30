@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load(":pkgconfig.bzl", "bzip2_pkgconfig")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+
+cc_library(
+    name = "bz2",
+    srcs = [
+        "//contrib/bzip2:blocksort.c",
+        "//contrib/bzip2:bzlib.c",
+        "//contrib/bzip2:bzlib_private.h",
+        "//contrib/bzip2:compress.c",
+        "//contrib/bzip2:crctable.c",
+        "//contrib/bzip2:decompress.c",
+        "//contrib/bzip2:huffman.c",
+        "//contrib/bzip2:randtable.c",
+    ],
+    hdrs = ["//contrib/bzip2:bzlib.h"],
+    strip_include_prefix = "/contrib/bzip2",
+    visibility = ["//visibility:public"],
+)
+
+# The installed BSD ABI has a versioned SONAME. Keep the standard C++ provider
+# graph so consumers select this shared implementation through dynamic_deps.
+cc_shared_library(
+    name = "bz2_shared",
+    deps = [":bz2"],
+    shared_lib_name = "libbz2.so.4",
+    user_link_flags = ["-Wl,-soname,libbz2.so.4"],
+    visibility = ["//visibility:public"],
+)
+
+bsd_debug_split(
+    name = "bz2_debug",
+    src = ":bz2_shared",
+    binary_name = "install/libbz2.so.4",
+    debug_name = "install/libbz2.so.4.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bsd_strip_binary(
+    name = "bz2_install",
+    src = ":bz2_debug",
+    output = "stripped/libbz2.so.4",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip",
+    strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bzip2_pkgconfig(
+    name = "pkgconfig",
+    template = "bzip2.pc.in",
+    header = "//contrib/bzip2:bzlib.h",
+    output = "bzip2.pc",
+    prefix = "/usr",
+    exec_prefix = "${prefix}",
+    libdir = "/usr/lib",
+    sharedlibdir = "/usr/lib",
+    includedir = "/usr/include",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+
+filegroup(name = "static_archive", srcs = [":bz2"], output_group = "archive")
+filegroup(name = "debug_artifact", srcs = [":bz2_debug"], output_group = "debug_files")
+
+bsd_install_file(
+    name = "install_archive",
+    src = ":static_archive",
+    destination = "/usr/lib/libbz2.a",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = ["dev", "package=bzip2"],
+)
+
+bsd_install_file(
+    name = "install_shared",
+    src = ":bz2_install",
+    destination = "/usr/lib/libbz2.so.4",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = ["lib", "package=bzip2"],
+)
+
+bsd_install_file(
+    name = "install_debug",
+    src = ":debug_artifact",
+    destination = "/usr/lib/debug/usr/lib/libbz2.so.4.debug",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = ["dbg", "package=bzip2"],
+)
+
+bsd_install_file(
+    name = "install_header",
+    src = "//contrib/bzip2:bzlib.h",
+    destination = "/usr/include/bzlib.h",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = ["dev", "package=bzip2"],
+)
+
+bsd_install_file(
+    name = "install_pkgconfig",
+    src = ":pkgconfig",
+    destination = "/usr/libdata/pkgconfig/bzip2.pc",
+    owner = "root",
+    group = "wheel",
+    mode = "0444",
+    install_tags = ["dev", "package=bzip2"],
+)
+
+bsd_install_link(
+    name = "install_link",
+    destination = "/usr/lib/libbz2.so",
+    target = "libbz2.so.4",
+    kind = "symlink",
+    owner = "root",
+    group = "wheel",
+    mode = "0755",
+    install_tags = ["dev", "package=bzip2"],
+)
+
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":install_archive", ":install_shared", ":install_debug", ":install_header", ":install_pkgconfig", ":install_link"],
+    visibility = ["//visibility:public"],
+)

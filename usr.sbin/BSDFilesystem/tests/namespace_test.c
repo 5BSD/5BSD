@@ -294,16 +294,16 @@ ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
 	ATF_CHECK_EQ(300u, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 1h;\n"));
 	ATF_CHECK_EQ(3600u, cfg.reclaim_interval);
-	/* out of range keeps the default rather than failing the load */
-	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 9;\n"));
+	/* Invalid supplied values fail and leave the prior configuration intact. */
+	ATF_REQUIRE_EQ(-1, load_text(&cfg, "reclaim_interval = 9;\n"));
 	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
-	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 0;\n"));
+	ATF_REQUIRE_EQ(-1, load_text(&cfg, "reclaim_interval = 0;\n"));
 	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
-	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = -20;\n"));
+	ATF_REQUIRE_EQ(-1, load_text(&cfg, "reclaim_interval = -20;\n"));
 	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
-	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 86401;\n"));
+	ATF_REQUIRE_EQ(-1, load_text(&cfg, "reclaim_interval = 86401;\n"));
 	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
-	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 2d;\n"));
+	ATF_REQUIRE_EQ(-1, load_text(&cfg, "reclaim_interval = 2d;\n"));
 	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	/* the wrong type is still a config error */
 	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = \"20\";\n"));
@@ -1679,8 +1679,116 @@ ATF_TC_BODY(reclaim_requires_complete_owner_view, tc)
 	ATF_REQUIRE_EQ(0, close(root));
 }
 
+
+/* Release is a durable claim reference, including SHARED and GROUP scopes. */
+ATF_TC_WITHOUT_HEAD(unmount_request_shape);
+ATF_TC_BODY(unmount_request_shape, tc)
+{
+	struct bsdfilesystem_request rq, bad;
+	unsigned scope, lifetime;
+
+	for (scope = BSDFILESYSTEM_SCOPE_UNIT;
+	    scope <= BSDFILESYSTEM_SCOPE_GROUP; scope++) {
+		for (lifetime = BSDFILESYSTEM_PERSISTENT;
+		    lifetime <= BSDFILESYSTEM_CACHE; lifetime++) {
+			memset(&rq, 0, sizeof(rq));
+			rq.op = BSDFILESYSTEM_OP_UNMOUNT;
+			rq.scope = scope;
+			rq.lifetime = lifetime;
+			strlcpy(rq.dataset, "state", sizeof(rq.dataset));
+			if (scope == BSDFILESYSTEM_SCOPE_GROUP)
+				strlcpy(rq.group, "team", sizeof(rq.group));
+			ATF_REQUIRE(bsdfilesystem_test_valid_request(&rq));
+#define REJECT(field, value) do { \
+	bad = rq; bad.field = (value); \
+	ATF_CHECK_MSG(!bsdfilesystem_test_valid_request(&bad), #field); \
+} while (0)
+			REJECT(lifetime, BSDFILESYSTEM_CACHE + 1);
+			REJECT(scope, BSDFILESYSTEM_SCOPE_GROUP + 1);
+			REJECT(rights, ZH_MOUNT);
+			REJECT(flags, ZHF_SUBTREE);
+			REJECT(quota, 4096);
+			REJECT(deliver, BSDFILESYSTEM_DELIVER_MOUNTED);
+			REJECT(owner_uid, 1);
+			REJECT(owner_gid, 1);
+			REJECT(session[0], 's');
+			REJECT(_reserved[0], 1);
+			REJECT(group[0], scope == BSDFILESYSTEM_SCOPE_GROUP ? '\0' : 'g');
+#undef REJECT
+			bad = rq;
+			memset(bad.dataset, 'x', sizeof(bad.dataset));
+			ATF_CHECK(!bsdfilesystem_test_valid_request(&bad));
+			if (scope == BSDFILESYSTEM_SCOPE_GROUP) {
+				strlcpy(bad.group, "../team", sizeof(bad.group));
+				strlcpy(bad.dataset, "state", sizeof(bad.dataset));
+				ATF_CHECK(!bsdfilesystem_test_valid_request(&bad));
+			}
+		}
+	}
+}
+
+/* Failed acquisition must not discard a live session's retained capability.
+ * A real pipe is deliberately not a ZFS handle: ioctl must fail, with no pool
+ * or privileged setup required. The old descriptor and name must survive. */
+ATF_TC_WITHOUT_HEAD(session_failure_preserves_state);
+ATF_TC_BODY(session_failure_preserves_state, tc)
+{
+	struct bsdfilesystem_state st = {0};
+	char session[BSDFILESYSTEM_SESSION_MAX];
+	int old[2], unavailable[2], saved;
+
+	(void)tc;
+	ATF_REQUIRE(pipe(old) == 0 && pipe(unavailable) == 0);
+	st.lease_fd = old[0];
+	st.ephemeral_fd = unavailable[0];
+	strlcpy(st.lease_name, "previous-session", sizeof(st.lease_name));
+	memset(session, 'a', sizeof(session) - 1);
+	session[sizeof(session) - 1] = '\0';
+	ATF_REQUIRE(bsdfilesystem_session_begin(&st, session) == -1);
+	saved = errno;
+	ATF_CHECK_EQ(ENOTTY, saved);
+	ATF_CHECK_EQ(old[0], st.lease_fd);
+	ATF_CHECK(fcntl(old[0], F_GETFD) >= 0);
+	ATF_CHECK_STREQ("previous-session", st.lease_name);
+	/* Selected workers cannot replace their session through broad roots. */
+	{
+		ATF_CHECK_ERRNO(EOPNOTSUPP,
+		    bsdfilesystem_test_selected_session(&st, session) == -1);
+		ATF_CHECK_EQ(old[0], st.lease_fd);
+		ATF_CHECK(fcntl(old[0], F_GETFD) >= 0);
+		ATF_CHECK_STREQ("previous-session", st.lease_name);
+		ATF_CHECK(st.worker_namespaces == NULL);
+	}
+	/* Malformed replacement must also leave the old session untouched. */
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_session_begin(&st, "invalid") == -1);
+	ATF_CHECK_EQ(old[0], st.lease_fd);
+	ATF_CHECK(fcntl(old[0], F_GETFD) >= 0);
+	ATF_CHECK_STREQ("previous-session", st.lease_name);
+	close(old[0]); close(old[1]); close(unavailable[0]); close(unavailable[1]);
+}
+
+ATF_TC_WITHOUT_HEAD(selected_namespace_is_confined);
+ATF_TC_BODY(selected_namespace_is_confined, tc)
+{
+	struct bsdfilesystem_state st = {0};
+	int parent[2];
+
+	(void)tc;
+	ATF_REQUIRE(pipe(parent) == 0);
+	st.persistent_fd = parent[0];
+	{
+		ATF_CHECK_ERRNO(EPERM, bsdfilesystem_test_empty_selection(&st) == -1);
+		ATF_CHECK(st.worker_namespaces == NULL);
+		ATF_CHECK(fcntl(parent[0], F_GETFD) >= 0);
+	}
+	close(parent[0]); close(parent[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, selected_namespace_is_confined);
+	ATF_TP_ADD_TC(tp, session_failure_preserves_state);
+	ATF_TP_ADD_TC(tp, unmount_request_shape);
 	ATF_TP_ADD_TC(tp, reclaim_requires_complete_owner_view);
 	ATF_TP_ADD_TC(tp, oes_device_alias);
 	ATF_TP_ADD_TC(tp, oes_endpoint_isolation);

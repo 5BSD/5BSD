@@ -1,0 +1,19 @@
+# pkg-config metadata for ncurses
+# vile:makemode
+
+prefix=@PREFIX@
+exec_prefix=${prefix}
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+abi_version=@ABI@
+major_version=@MAJOR@
+version=@VERSION@
+
+Name: @NAME@
+Description: ncurses @RELEASE@ @DESCRIPTION@
+Version: ${version}
+URL: https://invisible-island.net/ncurses
+Requires.private: @REQUIRES@
+Libs: @LINK_FLAGS@ @LIBRARIES@
+Libs.private:  
+Cflags: 

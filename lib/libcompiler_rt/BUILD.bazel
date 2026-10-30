@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# Native amd64 Clang builtins. Explicit architecture implementations preserve
+# Makefile.inc's x86_64-before-generic source selection; no build-time Make query.
+load(":sources.bzl", "AMD64_BUILTIN_SOURCES")
+
+cc_library(name = "objects",
+    srcs = ["//contrib/llvm-project/compiler-rt/lib/builtins:" + n for n in AMD64_BUILTIN_SOURCES],
+    implementation_deps = ["//contrib/llvm-project/compiler-rt/lib/builtins:headers",
+        "//contrib/llvm-project/libunwind/include:headers"],
+    # compiler-rt is installed as a single static archive of position-independent
+    # objects, including when linked into libsys/libc shared libraries.
+    copts = ["-fpic", "-fvisibility=hidden", "-fno-stack-protector"],
+    local_defines = ["VISIBILITY_HIDDEN", "COMPILER_RT_HAS_FLOAT16", "COMPILER_RT_HAS_BFLOAT16"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_component_archive(name = "static_archive", groups = [":objects"], visibility = ["//visibility:public"])
+# Preserve ordinary -fpic archive selection for all consumers, including DSOs.
+# BSD links private hidden runtime builtins into each DSO that needs them.
+# They are not exported from libsys for libc (or other DSOs) to reuse.
+cc_import(name = "compiler_rt", static_library = ":static_archive",
+    tags = ["LINKABLE_MORE_THAN_ONCE"], visibility = ["//visibility:public"])
+cc_test(name = "builtins_test", srcs = ["//tools/build/bazel:tests/compiler_rt_runtime.c"],
+    deps = [":compiler_rt"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], size = "small")
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+bsd_install_file(name = "archive_install", src = ":static_archive", destination = "/usr/lib/libcompiler_rt.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcompiler_rt", "dev"])
+bsd_install_link(name = "gcc_compat_link", destination = "/usr/lib/libgcc.a", target = "libcompiler_rt.a",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=libcompiler_rt", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [":archive_install", ":gcc_compat_link"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

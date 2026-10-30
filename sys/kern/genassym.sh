@@ -9,7 +9,11 @@ usage()
 
 work()
 {
-	${NM:='nm'} ${NMFLAGS} "$1" | ${AWK:='awk'} '
+	local symbols
+
+	# Do not hide a failed symbol reader behind a successful awk process.
+	symbols=$(${NM:='nm'} ${NMFLAGS} "$1") || return
+	printf '%s\n' "$symbols" | ${AWK:='awk'} '
 	/ C .*sign$/ {
 		sign = substr($1, length($1) - 3, 4)
 		sub("^0*", "", sign)

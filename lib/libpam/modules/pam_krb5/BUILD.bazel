@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//lib/libpam/modules:module.bzl", "pam_module")
+cc_library(name = "config_headers", hdrs = ["config.h"], includes = ["."], visibility = ["//contrib/pam-krb5:__pkg__"])
+copy_file(name = "copy_pam-util_options", src = "//contrib/pam-krb5:pam-util/options.c", out = "pam-util_options.c")
+copy_file(name = "copy_module_options", src = "//contrib/pam-krb5:module/options.c", out = "module_options.c")
+pam_module(name = "pam_krb5", srcs = ['//contrib/pam-krb5:module/account.c',
+        '//contrib/pam-krb5:module/alt-auth.c',
+        '//contrib/pam-krb5:pam-util/args.c',
+        '//contrib/pam-krb5:module/auth.c',
+        '//contrib/pam-krb5:module/cache.c',
+        '//contrib/pam-krb5:module/context.c',
+        '//contrib/pam-krb5:portable/dummy.c',
+        '//contrib/pam-krb5:module/fast.c',
+        '//contrib/pam-krb5:portable/krb5-extra.c',
+        '//contrib/pam-krb5:pam-util/logging.c',
+        ':copy_pam-util_options',
+        ':copy_module_options',
+        '//contrib/pam-krb5:portable/pam_syslog.c',
+        '//contrib/pam-krb5:portable/pam_vsyslog.c',
+        '//contrib/pam-krb5:module/password.c',
+        '//contrib/pam-krb5:module/prompting.c',
+        '//contrib/pam-krb5:module/public.c',
+        '//contrib/pam-krb5:module/setcred.c',
+        '//contrib/pam-krb5:module/support.c',
+        '//contrib/pam-krb5:pam-util/vector.c'],
+    deps = ["//contrib/pam-krb5:headers", "//krb5/lib/krb5:krb5", "//krb5/util/et:com_err", "//lib/libpam/libpam:module_headers"],
+    dynamic_deps = ["//krb5/lib/krb5:krb5_shared", "//krb5/util/et:com_err_shared"],
+    # The maintained Makefile replaces CFLAGS and has no optimization option.
+    copts = ["-O0", "-fno-strict-aliasing"], local_defines = ["HAVE_CONFIG_H"],
+    manual_sources = {"pam_krb5.8": "pam-krb5.8"}, package = "kerberos")

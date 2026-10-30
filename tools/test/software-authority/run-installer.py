@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import time
 from qmp_shutdown import ShutdownEvidence
+from installed_disk_evidence import disk_digest
 
 
 def sha(path):
@@ -70,8 +71,8 @@ def main():
     started = time.monotonic()
     with (work / 'qemu.log').open('w') as stderr:
         process = subprocess.Popen(command, stdout=stderr, stderr=stderr)
-        shutdown.start(process)
         try:
+            shutdown.start(process)
             while process.poll() is None and time.monotonic() - started < args.timeout:
                 text = log.read_text(errors='replace') if log.exists() else ''
                 if any(marker in text for marker in fatal):
@@ -99,6 +100,7 @@ def main():
         'shutdown_evidence': shutdown_evidence,
         'scope': 'scripted BSDInstall to a fresh virtual disk only; installed boot and service tests still required',
         'iso': str(iso), 'iso_sha256': iso_hash, 'disk': str(disk),
+        'disk_sha256': disk_digest(disk),
         'media_manifest': str(manifest_path), 'media_manifest_sha256': manifest_hash,
         'serial_sha256': sha(log) if log.exists() else None,
         'serial_log': str(log), 'missing_markers': missing,

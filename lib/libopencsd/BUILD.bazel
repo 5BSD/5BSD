@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "opencsd", srcs = ['//contrib/opencsd:decoder/source/ete/trc_cmp_cfg_ete.cpp', '//contrib/opencsd:decoder/source/etmv3/trc_cmp_cfg_etmv3.cpp', '//contrib/opencsd:decoder/source/etmv3/trc_pkt_decode_etmv3.cpp', '//contrib/opencsd:decoder/source/etmv3/trc_pkt_elem_etmv3.cpp', '//contrib/opencsd:decoder/source/etmv3/trc_pkt_proc_etmv3.cpp', '//contrib/opencsd:decoder/source/etmv3/trc_pkt_proc_etmv3_impl.cpp', '//contrib/opencsd:decoder/source/etmv4/trc_cmp_cfg_etmv4.cpp', '//contrib/opencsd:decoder/source/etmv4/trc_etmv4_stack_elem.cpp', '//contrib/opencsd:decoder/source/etmv4/trc_pkt_decode_etmv4i.cpp', '//contrib/opencsd:decoder/source/etmv4/trc_pkt_elem_etmv4i.cpp', '//contrib/opencsd:decoder/source/etmv4/trc_pkt_proc_etmv4i.cpp', '//contrib/opencsd:decoder/source/pkt_printers/raw_frame_printer.cpp', '//contrib/opencsd:decoder/source/pkt_printers/trc_print_fact.cpp', '//contrib/opencsd:decoder/source/ptm/trc_cmp_cfg_ptm.cpp', '//contrib/opencsd:decoder/source/ptm/trc_pkt_decode_ptm.cpp', '//contrib/opencsd:decoder/source/ptm/trc_pkt_elem_ptm.cpp', '//contrib/opencsd:decoder/source/ptm/trc_pkt_proc_ptm.cpp', '//contrib/opencsd:decoder/source/stm/trc_pkt_decode_stm.cpp', '//contrib/opencsd:decoder/source/stm/trc_pkt_elem_stm.cpp', '//contrib/opencsd:decoder/source/stm/trc_pkt_proc_stm.cpp', '//contrib/opencsd:decoder/source/c_api/ocsd_c_api_custom_obj.cpp', '//contrib/opencsd:decoder/source/c_api/ocsd_c_api.cpp', '//contrib/opencsd:decoder/source/ocsd_code_follower.cpp', '//contrib/opencsd:decoder/source/ocsd_dcd_tree.cpp', '//contrib/opencsd:decoder/source/ocsd_error.cpp', '//contrib/opencsd:decoder/source/ocsd_error_logger.cpp', '//contrib/opencsd:decoder/source/ocsd_gen_elem_list.cpp', '//contrib/opencsd:decoder/source/ocsd_gen_elem_stack.cpp', '//contrib/opencsd:decoder/source/ocsd_lib_dcd_register.cpp', '//contrib/opencsd:decoder/source/ocsd_msg_logger.cpp', '//contrib/opencsd:decoder/source/ocsd_version.cpp', '//contrib/opencsd:decoder/source/trc_component.cpp', '//contrib/opencsd:decoder/source/trc_core_arch_map.cpp', '//contrib/opencsd:decoder/source/trc_frame_deformatter.cpp', '//contrib/opencsd:decoder/source/trc_gen_elem.cpp', '//contrib/opencsd:decoder/source/trc_printable_elem.cpp', '//contrib/opencsd:decoder/source/trc_ret_stack.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_base.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_cache.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_cb.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_mapper.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_bufptr.cpp', '//contrib/opencsd:decoder/source/mem_acc/trc_mem_acc_file.cpp', '//contrib/opencsd:decoder/source/i_dec/trc_i_decode.cpp', '//contrib/opencsd:decoder/source/i_dec/trc_idec_arminst.cpp'], deps = ["//contrib/opencsd:headers", "//lib/libcxxrt:cxxrt"], copts = ["-std=gnu++17"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":opencsd"], visibility = ["//visibility:public"])
+cc_shared_library(name = "opencsd_shared", deps = [":opencsd"], dynamic_deps = ["//lib/libcxxrt:cxxrt_shared"], shared_lib_name = "libprivateopencsd.so.0", user_link_flags = ["-Wl,-soname,libprivateopencsd.so.0", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

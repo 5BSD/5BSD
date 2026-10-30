@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_SECTION_TRACE = "//tools/build/bazel/config:experimental_dtrace_section_archives_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = glob(["include/fidl/bsd/*.h"]), strip_include_prefix = "include",
+    deps = ["@fuchsia_runtime_src//:headers", "//lib/libchannel:headers"], visibility = ["//visibility:public"])
+bsd_dtrace_header(name = "provider", source = "fidl_provider.d", output = "fidl_provider.h",
+    flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+cc_library(name = "objects", srcs = ["runtime.cc", "runtime_c.cc", "fidl_probes.h", "@fuchsia_runtime_src//:runtime_cxx_sources"],
+    deps = [":headers", "//lib/libchannel:channel", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr", "//lib/msun:m"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    implementation_deps = ["//sys/dev/mac_capability:ioctl_headers"],
+    copts = ["-std=gnu++20", "-nostdinc++"], local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "internal_objects", srcs = ["@fuchsia_runtime_src//:sdk/lib/fidl_base/internal.c"],
+    deps = ["@fuchsia_runtime_src//:headers"], linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", libraries = [":objects", ":internal_objects"], provider = ":provider",
+    provider_object = "fidl_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    archive_members = True, archive_runner = "//tools/build/bazel:dtrace_archive_member")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider", "regular_archive_objects", "pic_archive_objects"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"])
+cc_import(name = "section_traced", objects = [":regular_archive_objects"], pic_objects = [":pic_archive_objects"])
+cc_library(name = "fidl", deps = [":headers", "//lib/libchannel:channel", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/libthr:thr", "//lib/msun:m"] + select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects", ":internal_objects"]}),
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects", ":internal_objects"]}),
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "fidl_shared", deps = [":fidl"],
+    dynamic_deps = ["//lib/libchannel:channel_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libthr:thr_shared", "//lib/msun:m_shared"],
+    shared_lib_name = "libfidl_bsd.so.1", user_link_flags = ["-Wl,-soname,libfidl_bsd.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation_headers.bzl", "FIDL_INCLUDE_DIRECTORIES")
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Library payload only; the maintained test installation is not yet migrated.
+bsd_install_archive(
+    name = "library_install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} |
+        {"/usr/include/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dev"]}' for d in FIDL_INCLUDE_DIRECTORIES} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-dev"]}' for d in ["/usr/libdata/pkgconfig", "/usr/share/fidl"]} |
+        {"/usr/share/licenses/libfidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+# Complete test installation follows both maintained feature settings.
+config_setting(name = "gtest_install_enabled", flag_values = {"//tools/build/bazel/config:tests": "true", "//tools/build/bazel/config:googletest": "true"})
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libfidl/tests:install_" + name for name in ["c_binding_test", "c_wire_test", "sync_call_bench", "ipc_bench", "extra"]], "//conditions:default": []}) + select({":gtest_install_enabled": ["//lib/libfidl/tests:install_runtime_test"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} |
+        {"/usr/include/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl","dev"]}' for d in FIDL_INCLUDE_DIRECTORIES} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-dev"]}' for d in ["/usr/libdata/pkgconfig", "/usr/share/fidl"]} |
+        {"/usr/share/licenses/libfidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl"]}'} | select({"//tools/build/bazel/config:tests_enabled":
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests"]}' for d in ["/usr/tests/lib/libfidl", "/usr/share/licenses/libfidl-tests", "/usr/share/licenses/libfidl-tests/fuchsia"]} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libfidl"]}, "//conditions:default": {}}) |
+        select({":gtest_install_enabled": {"/usr/share/licenses/libfidl-tests/googletest": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libfidl-tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

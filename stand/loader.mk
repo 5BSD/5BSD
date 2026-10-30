@@ -5,7 +5,7 @@ CFLAGS+=-I${LDRSRC}
 SRCS+=	boot.c commands.c console.c devopen.c interp.c 
 SRCS+=	interp_backslash.c interp_parse.c ls.c misc.c 
 SRCS+=	modinfo.c
-SRCS+=	module.c nvstore.c pnglite.c tslog.c
+SRCS+=	module.c nvstore.c pnglite.c tslog.c verified_root.c
 
 CFLAGS.module.c += -I$(SRCTOP)/sys/teken -I${SRCTOP}/contrib/pnglite
 
@@ -161,18 +161,18 @@ CFLAGS+=	-I${SYSDIR}/cddl/contrib/opensolaris/uts/common
 SRCS+=		zfs_cmd.c
 .endif
 
-LIBFICL=	${BOOTOBJ}/ficl/libficl.a
+LIBFICL=	${BOOTOBJ}/${defined(EFI_TARGET):?efi/ficlefi:ficl}/libficl.a
 .if ${MACHINE} == "i386"
 LIBFICL32=	${LIBFICL}
 .else
-LIBFICL32=	${BOOTOBJ}/${"${LOADER}" == "loader_ia32":?efi/ficl32efi:ficl32}/libficl.a
+LIBFICL32=	${BOOTOBJ}/${defined(EFI_TARGET):?efi/ficl32efi:ficl32}/libficl.a
 .endif
 
-LIBLUA=		${BOOTOBJ}/liblua/liblua.a
+LIBLUA=		${BOOTOBJ}/${defined(EFI_TARGET):?efi/libluaefi:liblua}/liblua.a
 .if ${MACHINE} == "i386"
 LIBLUA32=	${LIBLUA}
 .else
-LIBLUA32=	${BOOTOBJ}/${"${LOADER}" == "loader_ia32":?efi/liblua32efi:liblua32}/liblua.a
+LIBLUA32=	${BOOTOBJ}/${defined(EFI_TARGET):?efi/liblua32efi:liblua32}/liblua.a
 .endif
 
 CLEANFILES+=	vers.c

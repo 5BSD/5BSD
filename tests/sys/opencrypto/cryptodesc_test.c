@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <libutil.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -1470,9 +1471,225 @@ ATF_TC_BODY(aead_rights_and_integrity, tc)
 	close(control);
 }
 
+static int
+scoped_control(int control, uint32_t scope, uint32_t rights, const char *owner)
+{
+	struct cryptoctl_derive request = { .scope = scope, .rights = rights };
+
+	strlcpy(request.owner, owner, sizeof(request.owner));
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTOCONTROL, &request) == 0,
+	    "derive control: %s", strerror(errno));
+	ATF_REQUIRE(request.fd >= 0);
+	ATF_REQUIRE((fcntl(request.fd, F_GETFD) & FD_CLOEXEC) != 0);
+	return (request.fd);
+}
+
+ATF_TC(control_authority_info);
+ATF_TC_HEAD(control_authority_info, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(control_authority_info, tc)
+{
+	struct cryptoctl_info info;
+	int supervisor, owner, reclaim, pipefd[2], status;
+	pid_t pid;
+
+	supervisor = open_control();
+	memset(&info, 0xff, sizeof(info));
+	ATF_REQUIRE_EQ(0, ioctl(supervisor, CIOCGCRYPTOCONTROLINFO, &info));
+	ATF_CHECK_EQ(CRYPTOCTL_INFO_VERSION, info.version);
+	ATF_CHECK_EQ(CRYPTOCTL_SCOPE_SUPERVISOR, info.scope);
+	ATF_CHECK_EQ(CRYPTOCTL_WORKER_RIGHTS | CRYPTOCTL_OWNERS | CRYPTOCTL_DERIVE,
+	    info.rights);
+	ATF_CHECK_EQ(0, info.reserved);
+	for (size_t i = 0; i < sizeof(info.owner); i++)
+		ATF_CHECK_EQ(0, info.owner[i]);
+	owner = scoped_control(supervisor, CRYPTOCTL_SCOPE_OWNER, CRYPTOCTL_STAT,
+	    "info.owner");
+	ATF_REQUIRE_EQ(0, ioctl(owner, CIOCGCRYPTOCONTROLINFO, &info));
+	ATF_CHECK_EQ(CRYPTOCTL_SCOPE_OWNER, info.scope);
+	ATF_CHECK_EQ(CRYPTOCTL_STAT, info.rights);
+	ATF_CHECK_STREQ("info.owner", info.owner);
+	reclaim = scoped_control(supervisor, CRYPTOCTL_SCOPE_RECLAIM,
+	    CRYPTOCTL_DELETE, "");
+	ATF_REQUIRE_EQ(0, ioctl(reclaim, CIOCGCRYPTOCONTROLINFO, &info));
+	ATF_CHECK_EQ(CRYPTOCTL_SCOPE_RECLAIM, info.scope);
+	ATF_CHECK_EQ(CRYPTOCTL_DELETE, info.rights);
+	ATF_CHECK_EQ(0, info.owner[0]);
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	ATF_CHECK_ERRNO(ENOTTY, ioctl(pipefd[0], CIOCGCRYPTOCONTROLINFO, &info) == -1);
+	close(pipefd[0]);
+	close(pipefd[1]);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int unprivileged;
+
+		if (setgid(65534) == -1 || setuid(65534) == -1)
+			_exit(1);
+		unprivileged = open("/dev/crypto", O_RDWR);
+		if (unprivileged == -1 ||
+		    ioctl(unprivileged, CIOCGCRYPTOCONTROLINFO, &info) == -1)
+			_exit(2);
+		_exit(info.version == CRYPTOCTL_INFO_VERSION &&
+		    info.scope == CRYPTOCTL_SCOPE_NONE &&
+		    info.rights == (CRYPTOCTL_GENERATE | CRYPTOCTL_KEY) &&
+		    info.reserved == 0 && info.owner[0] == '\0' ? 0 : 3);
+	}
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	close(reclaim);
+	close(owner);
+	close(supervisor);
+}
+
+ATF_TC_WITH_CLEANUP(control_authority_scopes);
+ATF_TC_HEAD(control_authority_scopes, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(control_authority_scopes, tc)
+{
+	struct cryptoctl_derive derive = { .scope = CRYPTOCTL_SCOPE_OWNER,
+	    .rights = CRYPTOCTL_WORKER_RIGHTS };
+	struct cryptodesc_named_control change = {0};
+	struct cryptodesc_named_stat stat = {0};
+	struct cryptodesc_named_list list = {0};
+	struct cryptodesc_owner_list owners = {0};
+	struct cryptodesc_named_lease lease = {0};
+	struct cryptodesc_named_create create = {0};
+	int control, a, b, duplicate, reclaim, readonly, empty, status, soft, enabled = 1;
+	size_t size = sizeof(soft);
+	FILE *saved;
+	pid_t pid;
+
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.crypto.allow_soft", &soft, &size, NULL, 0));
+	saved = fopen("allow-soft.saved", "w");
+	ATF_REQUIRE(saved != NULL);
+	ATF_REQUIRE(fprintf(saved, "%d\n", soft) > 0);
+	ATF_REQUIRE_EQ(0, fclose(saved));
+	ATF_REQUIRE_EQ(0, sysctlbyname("kern.crypto.allow_soft", NULL, NULL,
+	    &enabled, sizeof(enabled)));
+	control = open_control();
+	a = scoped_control(control, CRYPTOCTL_SCOPE_OWNER,
+	    CRYPTOCTL_WORKER_RIGHTS, "scope.a");
+	b = scoped_control(control, CRYPTOCTL_SCOPE_OWNER,
+	    CRYPTOCTL_WORKER_RIGHTS, "scope.b");
+	reclaim = scoped_control(control, CRYPTOCTL_SCOPE_RECLAIM,
+	    CRYPTOCTL_RECLAIM_RIGHTS, "");
+	readonly = scoped_control(control, CRYPTOCTL_SCOPE_OWNER,
+	    CRYPTOCTL_STAT, "scope.a");
+	empty = scoped_control(control, CRYPTOCTL_SCOPE_OWNER,
+	    CRYPTOCTL_WORKER_RIGHTS, "");
+	create_named_cbc(a, "scoped-key", "scope.a", CRYPTODESC_RIGHT_ENCRYPT);
+	create_named_cbc(b, "scoped-key", "scope.b", CRYPTODESC_RIGHT_ENCRYPT);
+
+	strlcpy(stat.cd_name, "scoped-key", sizeof(stat.cd_name));
+	strlcpy(stat.cd_owner, "scope.a", sizeof(stat.cd_owner));
+	ATF_REQUIRE_EQ(0, ioctl(readonly, CIOCGCRYPTONAMEDSTAT, &stat));
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCGCRYPTONAMEDSTAT, &stat) == -1);
+	ATF_CHECK_ERRNO(EPERM, ioctl(empty, CIOCGCRYPTONAMEDSTAT, &stat) == -1);
+	strlcpy(change.cd_name, stat.cd_name, sizeof(change.cd_name));
+	strlcpy(change.cd_owner, stat.cd_owner, sizeof(change.cd_owner));
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCCRYPTONAMEDDELETE, &change) == -1);
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCCRYPTONAMEDROTATE, &change) == -1);
+	ATF_CHECK_ERRNO(EPERM, ioctl(readonly, CIOCCRYPTONAMEDDELETE, &change) == -1);
+	strlcpy(lease.cd_name, stat.cd_name, sizeof(lease.cd_name));
+	strlcpy(lease.cd_owner, stat.cd_owner, sizeof(lease.cd_owner));
+	lease.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	ATF_CHECK_ERRNO(EPERM, ioctl(reclaim, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	ATF_REQUIRE_EQ(0, ioctl(a, CIOCGCRYPTONAMEDLEASE, &lease));
+	close(lease.cd_fd);
+	strlcpy(create.cd_owner, stat.cd_owner, sizeof(create.cd_owner));
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCGCRYPTONAMEDKEY, &create) == -1);
+	strlcpy(list.cd_owner, stat.cd_owner, sizeof(list.cd_owner));
+	ATF_CHECK_ERRNO(EPERM, ioctl(b, CIOCGCRYPTONAMEDLIST, &list) == -1);
+	ATF_CHECK_ERRNO(EPERM, ioctl(a, CIOCGCRYPTOOWNERLIST, &owners) == -1);
+	ATF_REQUIRE_EQ(0, ioctl(reclaim, CIOCGCRYPTOOWNERLIST, &owners));
+	ATF_REQUIRE_EQ(0, ioctl(reclaim, CIOCGCRYPTONAMEDLIST, &list));
+	ATF_CHECK(list.cd_count > 0);
+	ATF_CHECK_ERRNO(ENOTTY, ioctl(a, CIOCGCRYPTOCONTROL, &derive) == -1);
+	ATF_CHECK_ERRNO(ENOTTY, ioctl(reclaim, CIOCGCRYPTOCONTROL, &derive) == -1);
+	memset(stat.cd_owner, 'x', sizeof(stat.cd_owner));
+	ATF_CHECK_ERRNO(EPERM, ioctl(a, CIOCGCRYPTONAMEDSTAT, &stat) == -1);
+	strlcpy(stat.cd_owner, "scope.a", sizeof(stat.cd_owner));
+
+	/* dup/fork retain the exact scope; UID zero cannot widen it. */
+	duplicate = dup(b);
+	ATF_REQUIRE(duplicate >= 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(ioctl(duplicate, CIOCGCRYPTONAMEDSTAT, &stat) == -1 &&
+		    errno == EPERM ? 0 : 1);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));
+	close(duplicate);
+
+	/* Opening a new control as an ordinary user cannot mint authority. */
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int unprivileged;
+
+		if (setgid(65534) == -1 || setuid(65534) == -1)
+			_exit(2);
+		unprivileged = open("/dev/crypto", O_RDWR);
+		if (unprivileged == -1)
+			_exit(3);
+		_exit(ioctl(unprivileged, CIOCGCRYPTOCONTROL, &derive) == -1 &&
+		    errno == EPERM ? 0 : 4);
+	}
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));
+
+	/* Derivation and rejected requests leave the supervisor and siblings intact. */
+	ATF_REQUIRE_EQ(0, ioctl(control, CIOCGCRYPTONAMEDSTAT, &stat));
+	ATF_REQUIRE_EQ(0, ioctl(a, CIOCGCRYPTONAMEDSTAT, &stat));
+	ATF_REQUIRE_EQ(0, ioctl(reclaim, CIOCCRYPTONAMEDDELETE, &change));
+	strlcpy(change.cd_owner, "scope.b", sizeof(change.cd_owner));
+	ATF_REQUIRE_EQ(0, ioctl(b, CIOCCRYPTONAMEDDELETE, &change));
+	derive.fd = -1;
+	derive.reserved = 1;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(control, CIOCGCRYPTOCONTROL, &derive) == -1);
+	ATF_CHECK_EQ(-1, derive.fd);
+	derive.reserved = 0;
+	derive.rights |= CRYPTOCTL_OWNERS;
+	ATF_CHECK_ERRNO(EINVAL, ioctl(control, CIOCGCRYPTOCONTROL, &derive) == -1);
+	close(empty);
+	close(readonly);
+	close(reclaim);
+	close(b);
+	close(a);
+	close(control);
+}
+
+ATF_TC_CLEANUP(control_authority_scopes, tc)
+{
+	FILE *saved;
+	int soft;
+
+	saved = fopen("allow-soft.saved", "r");
+	if (saved != NULL) {
+		if (fscanf(saved, "%d", &soft) == 1)
+			ATF_CHECK_EQ(0, sysctlbyname("kern.crypto.allow_soft", NULL,
+			    NULL, &soft, sizeof(soft)));
+		fclose(saved);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, control_authority_info);
+	ATF_TP_ADD_TC(tp, control_authority_scopes);
 	ATF_TP_ADD_TC(tp, mint_validation);
 	ATF_TP_ADD_TC(tp, descriptor_kinfo);
 	ATF_TP_ADD_TC(tp, cbc_rights_and_metadata);

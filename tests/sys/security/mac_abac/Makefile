@@ -5,6 +5,7 @@ ATF_TESTS_SH+=	smoke_test
 ATF_TESTS_C+=	parser_test
 ATF_TESTS_C+=	kernel_test
 ATF_TESTS_C+=	mprotect_test
+ATF_TESTS_C+=	signal_context_test
 
 SRCS.parser_test=	parser_test.c parse_line.c
 .PATH: ${SRCTOP}/usr.sbin/mac_abacd
@@ -24,5 +25,9 @@ TEST_METADATA.kernel_test+=	is_exclusive="true"
 TEST_METADATA.mprotect_test+=	required_user="root"
 TEST_METADATA.mprotect_test+=	required_kmods="mac_abac"
 TEST_METADATA.mprotect_test+=	is_exclusive="true"
+
+TEST_METADATA.signal_context_test+=	required_user="root"
+TEST_METADATA.signal_context_test+=	required_kmods="mac_abac"
+TEST_METADATA.signal_context_test+=	is_exclusive="true"
 
 .include <bsd.test.mk>

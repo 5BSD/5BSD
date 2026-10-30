@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+MANUAL_ALIASES = ['mixer_open', 'mixer_close', 'mixer_get_dev', 'mixer_get_dev_byname', 'mixer_add_ctl', 'mixer_add_ctl_s', 'mixer_remove_ctl', 'mixer_get_ctl', 'mixer_get_ctl_byname', 'mixer_set_vol', 'mixer_set_mute', 'mixer_mod_recsrc', 'mixer_get_dunit', 'mixer_set_dunit', 'mixer_get_mode', 'mixer_get_nmixers', 'mixer_get_path', 'MIX_ISDEV', 'MIX_ISMUTE', 'MIX_ISREC', 'MIX_ISRECSRC', 'MIX_VOLNORM', 'MIX_VOLDENORM']

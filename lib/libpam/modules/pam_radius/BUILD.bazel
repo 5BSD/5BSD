@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libpam/modules:module.bzl", "pam_module")
+pam_module(name = "pam_radius", srcs = ["pam_radius.c", "pam_radius_probes.h"], provider = "pam_radius_provider.d",
+    deps = ["//lib/libradius:radius", "//lib/libpam/libpam:module_headers"],
+    dynamic_deps = ["//lib/libradius:radius_shared"])

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_yacc(name = "parser", src = "parse.y", output = "parse.c", header = "y.tab.h", report = "parse.output", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "lexer", src = "token.l", output = "token.c", flags = ["-i"], lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "headers", hdrs = ["iscsictl.h", ":parser_header"], strip_include_prefix = ".")
+cc_binary(name = "iscsictl", srcs = ["iscsictl.c", "periphs.c", ":parser_source", ":lexer"],
+    deps = [":headers", "//sys/dev/iscsi:user_headers", "//lib/libiscsiutil:iscsiutil_pie", "//lib/libutil:util", "//lib/libxo/libxo:xo"],
+    dynamic_deps = ["//lib/libmd:md_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+bsd_compress(name = "configuration_manual", src = "iscsi.conf.5", output = "iscsi.conf.5.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "configuration_manual_file", src = ":configuration_manual", destination = "/usr/share/man/man5/iscsi.conf.5.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=iscsi-man"], "//conditions:default": ["package=iscsi"]}))
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'iscsictl', manual = 'iscsictl.8', package = 'iscsi', bindir = "/usr/bin", man_section = '8', extra_entries = [":configuration_manual_file"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=iscsi","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

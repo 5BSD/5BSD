@@ -47,13 +47,13 @@ ATF_TC_HEAD(dlopen, tc)
 	    "Test if dlopen can load -lpthread DSO");
 }
 
-#define DSO TESTDIR "/h_pthread_dlopen.so"
+#include "h_dlopen.h"
 
 ATF_TC_BODY(dlopen, tc)
 {
 	void *handle;
 	int (*testf_dso_null)(void);
-	handle = dlopen(DSO, RTLD_NOW | RTLD_LOCAL);
+	handle = open_test_dso(tc);
 	ATF_REQUIRE_MSG(handle != NULL, "dlopen fails: %s", dlerror());
 
 	testf_dso_null = dlsym(handle, "testf_dso_null");
@@ -81,7 +81,7 @@ ATF_TC_BODY(dlopen_mutex, tc)
 	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_mutex_lock(&mtx) == 0);
 
-	handle = dlopen(DSO, RTLD_NOW | RTLD_LOCAL);
+	handle = open_test_dso(tc);
 	ATF_REQUIRE_MSG(handle != NULL, "dlopen fails: %s", dlerror());
 
 	testf_dso_null = dlsym(handle, "testf_dso_null");
@@ -113,7 +113,7 @@ ATF_TC_BODY(dlopen_mutex_libc, tc)
 	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
 	ATF_REQUIRE(pthread_mutex_lock(&mtx) == 0);
 
-	handle = dlopen(DSO, RTLD_NOW | RTLD_LOCAL);
+	handle = open_test_dso(tc);
 	ATF_REQUIRE_MSG(handle != NULL, "dlopen fails: %s", dlerror());
 
 	testf_dso_mutex_unlock = dlsym(handle, "testf_dso_mutex_unlock");
@@ -144,7 +144,7 @@ ATF_TC_BODY(dlopen_mutex_libpthread, tc)
 
 	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
 
-	handle = dlopen(DSO, RTLD_NOW | RTLD_LOCAL);
+	handle = open_test_dso(tc);
 	ATF_REQUIRE_MSG(handle != NULL, "dlopen fails: %s", dlerror());
 
 	testf_dso_mutex_lock = dlsym(handle, "testf_dso_mutex_lock");

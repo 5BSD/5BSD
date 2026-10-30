@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["cc1_main.cpp", "cc1as_main.cpp", "cc1gen_reproducer_main.cpp", "driver.cpp"], visibility = ["//usr.bin/clang/clang:__pkg__"])

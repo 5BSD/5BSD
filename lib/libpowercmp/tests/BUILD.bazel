@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Make directly compiles the retained legacy validator for this test.
+cc_binary(name = "protocol_test", srcs = ["protocol_test.c", "//lib/libpowercmp:powercmp_legacy.c"],
+    deps = ["//lib/libpowercmp:headers", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+[cc_binary(name = name, srcs = [name + ".c"],
+    deps = ["//lib/libpowercmp:powercmp", "//lib/libpowercmp:generated_headers", "//lib/libfidl:fidl",
+        "//lib/libchannel:channel", "//lib/libservice:service", "//lib/atf/libatf-c:atf_c"] +
+        (["//lib/libpowercmp:client_source_headers"] if name == "constructor_test" else []),
+    linkopts = ["-static"], linkstatic = True)
+ for name in ["client_test", "constructor_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    case_timeout = 120 if name == "client_test" else 60,
+    test_metadata = '{"required_user":"root"}' if name == "client_test" else '{}',
+    tags = ["manual", "requires-matching-kernel"] if name != "protocol_test" else [],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["protocol_test", "client_test", "constructor_test"]]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "libpowercmp-tests", bindir = "/usr/tests/lib/libpowercmp")
+ for name in ["client_test", "constructor_test", "protocol_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["client_test", "constructor_test", "protocol_test"],
+    interfaces = {n: "atf" for n in ["client_test", "constructor_test", "protocol_test"]},
+    metadata = {"client_test": '{"required_user":"root","timeout":"120"}'})
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=libpowercmp-tests"])
+ for name, src, dest in [
+    ("install_kyuafile", ":kyuafile", "/usr/tests/lib/libpowercmp/Kyuafile"),
+    ("install_license", "//contrib/fuchsia:LICENSE", "/usr/share/licenses/libpowercmp-tests/fuchsia/LICENSE"),
+    ("install_patents", "//contrib/fuchsia:PATENTS", "/usr/share/licenses/libpowercmp-tests/fuchsia/PATENTS"),
+ ]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_license", ":install_patents"],
+    visibility = ["//lib/libpowercmp:__pkg__"])

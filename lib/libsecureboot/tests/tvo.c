@@ -59,7 +59,7 @@ main(int argc, char *argv[])
 	Vflag = 0;
 	vflag = 0;
 
-	while ((c = getopt(argc, argv, "D:dp:s:T:u:Vv")) != -1) {
+	while ((c = getopt(argc, argv, "D:dp:s:T:u:RVv")) != -1) {
 		switch (c) {
 		case 'D':
 			Destdir = optarg;
@@ -77,6 +77,10 @@ main(int argc, char *argv[])
 		case 'T':
 			n = ve_trust_add(optarg);
 			printf("Local trust %s: %d\n", optarg, n);
+			break;
+		case 'R':
+			/* Exercise the firmware-required policy in native tests. */
+			verify_require();
 			break;
 		case 'V':
 			Vflag = 1;
@@ -125,9 +129,9 @@ main(int argc, char *argv[])
 			if (cp) {
 				printf("Verified: %s: %.28s...\n",
 				    argv[optind], cp);
-				if (!vflag)
-				    fingerprint_info_add(argv[optind],
-					prefix, Skip, cp, NULL);
+				if (!vflag && fingerprint_info_add(argv[optind],
+				    prefix, Skip, cp, NULL) != 0)
+					errx(1, "%s: cannot register manifest", argv[optind]);
 			} else {
 				fprintf(stderr, "%s: %s\n",
 				    argv[optind], ve_error_get());
@@ -139,9 +143,9 @@ main(int argc, char *argv[])
 			if (cp) {
 				printf("Verified: %s: %.28s...\n",
 				    argv[optind], cp);
-				if (!vflag)
-					fingerprint_info_add(argv[optind],
-					    prefix, Skip, cp, NULL);
+				if (!vflag && fingerprint_info_add(argv[optind],
+				    prefix, Skip, cp, NULL) != 0)
+					errx(1, "%s: cannot register manifest", argv[optind]);
 			} else {
 				fprintf(stderr, "%s: %s\n",
 				    argv[optind], ve_error_get());
@@ -149,8 +153,9 @@ main(int argc, char *argv[])
 		} else if (strstr(argv[optind], "manifest")) {
 			cp = (char *)read_file(argv[optind], NULL);
 			if (cp) {
-				fingerprint_info_add(argv[optind],
-				    prefix, Skip, cp, NULL);
+				if (fingerprint_info_add(argv[optind],
+				    prefix, Skip, cp, NULL) != 0)
+					errx(1, "%s: cannot register manifest", argv[optind]);
 			}
 		} else {
 			fd = verify_open(argv[optind], O_RDONLY);

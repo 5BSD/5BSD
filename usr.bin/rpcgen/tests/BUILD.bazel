@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//tools/build/bazel:bsd_rpcgen.bzl", "bsd_rpcgen")
+# This schema contains no preprocessor includes. Disable implicit include
+# search rather than reading headers from an undeclared host installation.
+[bsd_rpcgen(name = name, source = "//include/rpcsvc:crypt.x", output = output,
+    mode = mode, flags = ["-C"], cpp_flags = ["-E", "-x", "c", "-nostdinc"],
+    rpcgen = "//usr.bin/rpcgen:rpcgen", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs", runtime = ["@bsd_sdk//toolchain:cpp_runtime"])
+ for name, output, mode in [("header", "crypt.h", "-h"), ("xdr", "crypt_xdr.c", "-c"), ("client", "crypt_clnt.c", "-l")]]
+cc_library(name = "headers", hdrs = [":header"], strip_include_prefix = ".")
+cc_library(name = "generated", srcs = [":xdr", ":client"], deps = [":headers"], linkstatic = True)
+cc_test(name = "roundtrip", srcs = ["//tools/build/bazel:tests/crypt_rpc_roundtrip.c"],
+    deps = [":generated"], linkstatic = True, size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

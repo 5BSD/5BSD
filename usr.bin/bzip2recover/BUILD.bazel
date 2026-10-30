@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_base_install.bzl", "bsd_program_install")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "bzip2recover",
+    srcs = ["//contrib/bzip2:bzip2recover.c"],
+    visibility = ["//visibility:public"],
+)
+
+bsd_debug_split(
+    name = "bzip2recover_debug",
+    src = ":bzip2recover",
+    binary_name = "install/bzip2recover",
+    debug_name = "install/bzip2recover.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bsd_strip_binary(
+    name = "bzip2recover_install",
+    src = ":bzip2recover_debug",
+    output = "stripped/bzip2recover",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip",
+    strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+    visibility = ["//visibility:public"],
+)
+
+bsd_program_install(
+    name = "install_manifest",
+    binary = ":bzip2recover_install",
+    debug = ":bzip2recover_debug",
+    destination = "/usr/bin/bzip2recover",
+    package = "bzip2",
+    visibility = ["//visibility:public"],
+)

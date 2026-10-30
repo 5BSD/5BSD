@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['biz22.c', 'courier.c', 'df.c', 'dn11.c', 'hayes.c', 't3000.c', 'v3451.c', 'v831.c', 'ventel.c'], visibility = ["//usr.bin/tip/tip:__pkg__"])

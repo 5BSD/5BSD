@@ -40,81 +40,59 @@ int32_t
 hid_get_data(const void *p, const hid_item_t *h)
 {
 	const uint8_t *buf;
-	uint32_t hpos;
-	uint32_t hsize;
-	uint32_t data;
-	int i, end, offs;
+	uint64_t data;
+	uint32_t hsize, shift, bytes, i, mask, value;
 
 	buf = p;
-
-	/* Skip report ID byte. */
 	if (h->report_ID > 0)
 		buf++;
-
-	hpos = h->pos;			/* bit position of data */
-	hsize = h->report_size;		/* bit length of data */
-
-	/* Range check and limit */
+	hsize = h->report_size;
 	if (hsize == 0)
 		return (0);
 	if (hsize > 32)
 		hsize = 32;
 
-	offs = hpos / 8;
-	end = (hpos + hsize) / 8 - offs;
+	buf += h->pos / 8;
+	shift = h->pos % 8;
+	bytes = (shift + hsize + 7) / 8;
+	/* An unaligned 32-bit field can occupy five bytes. */
 	data = 0;
-	for (i = 0; i <= end; i++)
-		data |= buf[offs + i] << (i*8);
-
-	/* Correctly shift down data */
-	data >>= hpos % 8;
-	hsize = 32 - hsize;
-
-	/* Mask and sign extend in one */
-	if ((h->logical_minimum < 0) || (h->logical_maximum < 0))
-		data = (int32_t)((int32_t)data << hsize) >> hsize;
-	else
-		data = (uint32_t)((uint32_t)data << hsize) >> hsize;
-
-	return (data);
+	for (i = 0; i < bytes; i++)
+		data |= (uint64_t)buf[i] << (i * 8);
+	mask = UINT32_MAX >> (32 - hsize);
+	value = (data >> shift) & mask;
+	if ((h->logical_minimum < 0 || h->logical_maximum < 0) &&
+	    (value & (UINT32_C(1) << (hsize - 1))) != 0)
+		value |= ~mask;
+	return ((int32_t)value);
 }
 
 void
 hid_set_data(void *p, const hid_item_t *h, int32_t data)
 {
 	uint8_t *buf;
-	uint32_t hpos;
-	uint32_t hsize;
-	uint32_t mask;
-	int i;
-	int end;
-	int offs;
+	uint64_t mask, value;
+	uint32_t hsize, shift, bytes, i;
 
 	buf = p;
-
-	/* Set report ID byte. */
 	if (h->report_ID > 0)
 		*buf++ = h->report_ID & 0xff;
+	hsize = h->report_size;
+	if (hsize == 0)
+		return;
+	/* Match the getter's limit and the width of the value argument. */
+	if (hsize > 32)
+		hsize = 32;
 
-	hpos = h->pos;			/* bit position of data */
-	hsize = h->report_size;		/* bit length of data */
-
-	if (hsize != 32) {
-		mask = (1 << hsize) - 1;
-		data &= mask;
-	} else
-		mask = ~0;
-
-	data <<= (hpos % 8);
-	mask <<= (hpos % 8);
-	mask = ~mask;
-
-	offs = hpos / 8;
-	end = (hpos + hsize) / 8 - offs;
-
-	for (i = 0; i <= end; i++)
-		buf[offs + i] = (buf[offs + i] & (mask >> (i*8))) |
-		    ((data >> (i*8)) & 0xff);
+	buf += h->pos / 8;
+	shift = h->pos % 8;
+	bytes = (shift + hsize + 7) / 8;
+	mask = (UINT64_C(1) << hsize) - 1;
+	value = ((uint32_t)data & mask) << shift;
+	mask <<= shift;
+	for (i = 0; i < bytes; i++)
+		buf[i] = (buf[i] & ~(mask >> (i * 8))) |
+		    ((value >> (i * 8)) & 0xff);
 }
 
 int

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["cfi.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])
+exports_files(["cfi_ignorelist.txt"], visibility = ["//lib/libclang_rt:__subpackages__"])

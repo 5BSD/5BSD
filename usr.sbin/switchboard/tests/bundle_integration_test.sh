@@ -12,16 +12,10 @@
 
 DTRACE_PID=
 
-# Installed tests exercise the installed control utility.  Raw object-tree
-# runs (including developer `kyua test` before install) use the matching build
-# instead of failing because /usr/sbin/switchboardctl is not installed yet.
-if [ -x /usr/sbin/switchboardctl ]; then
-	SWITCHBOARDCTL=/usr/sbin/switchboardctl
-else
-	SWITCHBOARDCTL="@OBJTOP@/usr.sbin/switchboardctl/switchboardctl"
-fi
-PATH="${SWITCHBOARDCTL%/*}:${PATH}"
-export PATH
+# Installed tests use the installed utility. Build-tree runs select their
+# executable explicitly through ATF configuration; never embed build paths.
+# An invalid explicit selection must not fall back to another executable.
+SWITCHBOARDCTL="$(atf_config_get switchboardctl /usr/sbin/switchboardctl)"
 
 # ---------------------------------------------------------------
 # Test: System bundle boot-start
@@ -47,11 +41,11 @@ system_bundle_startup_body() {
 	# A manifest without provides is an eager boot task.  Runtime identity is
 	# bundle_id/program and remains independent from public endpoint names.
 	atf_check -s exit:0 -o match:"org.test.boot/bootd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# Attribution should show "system"
 	atf_check -s exit:0 -o match:"by=system" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 system_bundle_startup_cleanup() {
 	cleanup_common
@@ -77,7 +71,7 @@ on_demand_launch_body() {
 
 	# The endpoint is reserved, but its bundle_id/program runtime is absent.
 	atf_check -s exit:0 -o not-match:"org.test.lazy/lazyd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# Trigger lookup from a client
 	run_lookup_client "org.test.lazy.svc"
@@ -85,7 +79,7 @@ on_demand_launch_body() {
 	# Now it should be running
 	wait_for_file "${WORK}/lazyd.ready" 10
 	atf_check -s exit:0 -o match:"org.test.lazy/lazyd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 on_demand_launch_cleanup() {
 	cleanup_common
@@ -143,14 +137,14 @@ stop_service_body() {
 
 	# Stop it
 	atf_check -s exit:0 -o match:"stopping" \
-	    switchboardctl stop "org.test.stop/stopd"
+	    "$SWITCHBOARDCTL" stop "org.test.stop/stopd"
 
 	# The compat-ready fixture blocks and does not answer QUIESCE, so it
 	# exits only when the stop_timeout SIGKILL fires (1s here).  Poll for the
 	# terminal stopped state rather than assuming a fixed settle time.
 	i=0
 	while [ "$i" -lt 60 ]; do
-		if switchboardctl status |
+		if "$SWITCHBOARDCTL" status |
 		    grep -q "org.test.stop/stopd.*stopped"; then
 			break
 		fi
@@ -158,17 +152,17 @@ stop_service_body() {
 		sleep 0.2
 	done
 	atf_check -s exit:0 -o match:"org.test.stop/stopd.*stopped" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# A stopped unit can be explicitly started again; a second start is
 	# rejected while it is active.
 	rm -f "${WORK}/stopd.ready"
 	atf_check -s exit:0 -o match:"starting" \
-	    switchboardctl start "org.test.stop/stopd"
+	    "$SWITCHBOARDCTL" start "org.test.stop/stopd"
 	wait_for_file "${WORK}/stopd.ready" 5 ||
 	    atf_fail "explicitly started service did not become ready"
 	atf_check -s exit:1 -e match:"not stopped" \
-	    switchboardctl start "org.test.stop/stopd"
+	    "$SWITCHBOARDCTL" start "org.test.stop/stopd"
 }
 stop_service_cleanup() {
 	cleanup_common
@@ -189,7 +183,7 @@ stop_nonexistent_body() {
 	start_stack
 
 	atf_check -s exit:1 -e match:"not found" \
-	    switchboardctl stop "org.fake.service"
+	    "$SWITCHBOARDCTL" stop "org.fake.service"
 }
 stop_nonexistent_cleanup() {
 	cleanup_common
@@ -213,7 +207,7 @@ reload_new_service_body() {
 
 	# Initially no user services
 	atf_check -s exit:0 -o not-match:"newbie" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# Add a new bundle
 	bundle=$(create_user_bundle "NewApp" "org.test.new" "newbie" \
@@ -223,11 +217,11 @@ reload_new_service_body() {
 	# Reload.  The reply summary is "reload: N bundles, M new, ..."
 	# (supervisor_reload); one new service means "1 new".
 	atf_check -s exit:0 -o match:"1 new" \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 
 	wait_for_file "${WORK}/newbie.ready" 5
 	atf_check -s exit:0 -o match:"org.test.new/newbie.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 reload_new_service_cleanup() {
 	cleanup_common
@@ -260,12 +254,12 @@ reload_remove_service_body() {
 	# Reload.  switchboardctl prints a summary to stdout, so -o ignore is
 	# required (atf_check defaults to -o empty).
 	atf_check -s exit:0 -o ignore \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 
 	# The runtime is no longer running.
 	sleep 1
 	atf_check -s exit:0 -o not-match:"org.test.rm/rmd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 reload_remove_service_cleanup() {
 	cleanup_common
@@ -288,7 +282,7 @@ missing_system_bundle_optional_body() {
 
 	start_stack
 	atf_check -s exit:0 -o match:"switchboard: running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 missing_system_bundle_optional_cleanup() {
 	cleanup_common
@@ -309,7 +303,7 @@ bundles_list_body() {
 	mkdir -p "${TMPDIR}"
 
 	atf_check -s exit:0 -o match:"System bundles" \
-	    switchboardctl bundles
+	    "$SWITCHBOARDCTL" bundles
 }
 bundles_list_cleanup() {
 	rm -rf "${PWD}"/work.*
@@ -384,7 +378,7 @@ dtrace_probes_body() {
 	    "capabilities { system = [\"kldload\"]; }")
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/traced.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 	if ! wait_for_file "${WORK}/traced.ready" 5; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "traced service did not become ready"
@@ -474,7 +468,7 @@ restart = "always";
 UCL
 
 	atf_check -s exit:0 -o ignore \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 
 	sleep 1
 
@@ -524,7 +518,7 @@ arguments = ["compat-ready"];
 UCL
 
 	atf_check -s exit:0 -o match:"0 changed" \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 	atf_check -s exit:0 -o ignore grep -F \
 	    "management class core: org.test.core-morph/coremorphd cannot be changed at runtime" \
 	    "$logfile"
@@ -535,7 +529,7 @@ UCL
 	fi
 	atf_check -s exit:0 \
 	    -o match:"org.test.core-morph/coremorphd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 reload_changed_core_refused_cleanup() {
 	cleanup_common
@@ -564,13 +558,13 @@ stop_already_stopped_body() {
 
 	# Stop it once (switchboardctl prints "stop: ... stopping" -> -o ignore).
 	atf_check -s exit:0 -o ignore \
-	    switchboardctl stop "org.test.brief/briefd"
+	    "$SWITCHBOARDCTL" stop "org.test.brief/briefd"
 
 	sleep 1
 
 	# Stop it again — should fail
 	atf_check -s not-exit:0 -o ignore -e ignore \
-	    switchboardctl stop "org.test.brief/briefd"
+	    "$SWITCHBOARDCTL" stop "org.test.brief/briefd"
 }
 stop_already_stopped_cleanup() {
 	cleanup_common
@@ -600,7 +594,7 @@ coalition_kill_on_timeout_body() {
 	    atf_fail "SIGTERM-ignoring service did not start"
 
 	# Stop the service — it will ignore SIGTERM
-	switchboardctl stop "org.test.stubbornd/stubbornd"
+	"$SWITCHBOARDCTL" stop "org.test.stubbornd/stubbornd"
 
 	# Wait for stop_timeout + SIGKILL + coalition terminate
 	sleep 4
@@ -664,7 +658,7 @@ restart = "on-failure";' 'activation { boot = true; }'
 
 	# Service should not have a running bundle_id/program runtime yet.
 	atf_check -s exit:0 -o not-match:"org.test.crash/crashd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# First lookup triggers launch -> service crashes -> restart.
 	run_lookup_client "org.test.crash.svc" 15 || true
@@ -681,7 +675,7 @@ restart = "on-failure";' 'activation { boot = true; }'
 
 	# The relaunched runtime is now running.
 	atf_check -s exit:0 -o match:"org.test.crash/crashd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	# State file should show at least 2 invocations.
 	atf_check -s exit:0 -o not-match:"^1$" \
@@ -746,16 +740,16 @@ UCL
 	test ! -e "${WORK}/lazyd.ready" ||
 	    atf_fail "named binary started before lookup"
 	atf_check -s exit:0 -o match:'org.test.multibin/eagerd.*running' \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	atf_check -s exit:0 -o not-match:'org.test.multibin/lazyd.*running' \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 
 	run_lookup_client "${endpoint}" 15 ||
 	    atf_fail "lookup did not activate named binary"
 	wait_for_file "${WORK}/lazyd.ready" 10 ||
 	    atf_fail "named binary did not report ready"
 	atf_check -s exit:0 -o match:'org.test.multibin/lazyd.*running' \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 multi_binary_bundle_activation_cleanup() {
 	cleanup_common
@@ -931,7 +925,7 @@ restart = \"on-failure\";" "${capd_service_fixture}")
 	    grep publication_ack_before_accept "${WORK}/multi-routed.out"
 	atf_check -s exit:0 \
 	    -o match:'org.test.multi-provider.*conns=2' \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 	count=$(grep -c "on_demand: launching 'org.test.multi-provider/multi-provider'" \
 	    "${logfile}" 2>/dev/null || true)
 	[ "${count}" -eq 1 ] ||
@@ -1090,11 +1084,11 @@ reload_noop_body() {
 	# Nothing changed on disk — reload's summary should report all zeros
 	# (supervisor_reload: "reload: N bundles, 0 new, 0 changed, 0 removed").
 	atf_check -s exit:0 -o match:"0 new, 0 changed, 0 removed" \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 
 	# The already-running service is untouched by the no-op reload.
 	atf_check -s exit:0 -o match:"org.test.steady/steadyd.*running" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 reload_noop_cleanup() {
 	cleanup_common
@@ -1583,13 +1577,13 @@ reload_attribution_body() {
 	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/lated.unit/Unit.ucl"
 
 	atf_check -s exit:0 -o match:"1 new" \
-	    switchboardctl reload
+	    "$SWITCHBOARDCTL" reload
 
 	wait_for_file "${WORK}/lated.ready" 5
 
 	# reload.c stamps launched_by="reload"; status shows it as by=reload.
 	atf_check -s exit:0 -o match:"org.test.late/lated.*by=reload" \
-	    switchboardctl status
+	    "$SWITCHBOARDCTL" status
 }
 reload_attribution_cleanup() {
 	cleanup_common

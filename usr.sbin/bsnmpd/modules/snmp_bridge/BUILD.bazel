@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "bridge_tree.def", prefix = "bridge_", local_includes = False, symbols = ["dot1dBridge", "newRoot", "topologyChange", "begemotBridgeNewRoot", "begemotBridgeTopologyChange", "begemotBridgeBaseName"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["bridge_snmp.c", "bridge_if.c", "bridge_port.c", "bridge_addrs.c", "bridge_pf.c", "bridge_sys.c", "bridge_snmp.h"] + [":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:public_headers"] + ["//contrib/bsnmp/snmp_mibII:public_headers"],
+    local_defines = ["HAVE_STRLCPY"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_bridge.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_bridge.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "bridge", binary = ":module", manual = "snmp_bridge.3",
+    definitions = {"bridge_tree.def": "bridge_tree.def"},
+    mibs = {"BRIDGE-MIB.txt": "BRIDGE-MIB.txt", "BEGEMOT-BRIDGE-MIB.txt": "BEGEMOT-BRIDGE-MIB.txt", "RSTP-MIB.txt": "RSTP-MIB.txt"}, headers = {"bridge_snmp.h": "bridge_snmp.h"})

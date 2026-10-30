@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "test_headers", hdrs = ["zfshandle_test_helpers.h"], strip_include_prefix = ".",
+    deps = ["//sys/sys:zfshandle_header", "//lib/atf/libatf-c:atf_c"],
+    visibility = ["//usr.sbin/BSDFilesystem/tests:__pkg__", "//usr.sbin/capsule/tests:__pkg__"])

@@ -5053,7 +5053,8 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 
 out:
 	if (error != 0 && capture->active) {
-		int rel;
+		/* The return value is only consumed by the optional phase probe. */
+		int rel __unused;
 
 		BHYVE_PHASE_START(__func__, "vm_snapshot_session_release_exact");
 		rel = vm_snapshot_session_release_exact(ctx, &capture->session,

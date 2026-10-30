@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["master.passwd", "group", "shells"])
+
+load("//tools/build/bazel:bsd_accounts.bzl", "bsd_account_databases")
+bsd_account_databases(
+    name = "account_databases",
+    src = "master.passwd",
+    shells = "shells",
+    pwd_mkdb = "//usr.sbin/pwd_mkdb:pwd_mkdb",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load(":account_installation.bzl", "account_installation")
+account_installation()

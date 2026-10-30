@@ -29,6 +29,7 @@
 #define NEED_BRSSL_H
 #include "../libsecureboot-priv.h"
 #include <brssl.h>
+#include <verify_file.h>
 
 void
 ve_efi_init(void)
@@ -45,17 +46,29 @@ ve_efi_init(void)
 	once = 1;
 
 	result = efi_secure_boot_enabled();
-	if (result <= 0)
+	if (result < 0)
+		panic("Secure Boot: cannot read firmware policy");
+	if (result == 0)
 		return;
+	verify_require();
 
+#ifdef VE_EFI_COMPILED_TRUST_ONLY
+	/* The signed loader fixes generation trust independently of firmware's
+	 * executable database. Keep firmware revocations below in both modes. */
+	if (ve_trust_init() <= 0)
+		panic("Secure Boot: no compiled manifest trust anchors");
+#else
 	xcs = efi_get_trusted_certs(&num);
 	if (num > 0 && xcs != NULL) {
-		num = ve_trust_anchors_add(xcs, num);
+		if (ve_trust_anchors_add(xcs, num) != num)
+			panic("Secure Boot: invalid trust certificate");
 		free_certificates(xcs, num);
 	}
+#endif
 	xcs = efi_get_forbidden_certs(&num);
 	if (num > 0 && xcs != NULL) {
-		num = ve_forbidden_anchors_add(xcs, num);
+		if (ve_forbidden_anchors_add(xcs, num) != num)
+			panic("Secure Boot: invalid revocation certificate");
 		free_certificates(xcs, num);
 	}
 	digests = efi_get_forbidden_digests(&num);

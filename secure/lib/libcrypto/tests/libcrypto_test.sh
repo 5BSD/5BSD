@@ -4,9 +4,10 @@
 
 atf_test_case legacy_provider
 legacy_provider_head() {
-	atf_set "descr" "daemon should drop privileges"
+	atf_set "descr" "legacy provider supports RC4 encryption"
 }
 legacy_provider_body() {
+	local openssl=$(atf_config_get openssl openssl)
 	local passphrase="test"
 	local plaintext="test"
 
@@ -32,7 +33,7 @@ activate = 1
 EOF
 
 	echo "$plaintext" | atf_check -s exit:0 -e empty -o not-empty \
-	    openssl rc4 -e -k "$passphrase" -a -pbkdf2
+	    "$openssl" rc4 -e -k "$passphrase" -a -pbkdf2
 }
 
 atf_init_test_cases() {

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['skein.c', 'skein_block.c', 'amd64/skein_block_asm.S'], visibility = ["//lib/libmd:__pkg__"])
+cc_library(
+    name = "headers",
+    hdrs = ['skein.h', 'skein_port.h', 'skein_freebsd.h', 'skein_iv.h', 'skein_debug.h'],
+    strip_include_prefix = "/sys/crypto/skein",
+    visibility = ["//lib/libmd:__pkg__"],
+)
+
+exports_files(['skein.h', 'skein_port.h', 'skein_freebsd.h', 'skein_iv.h'], visibility = ["//lib/libmd:__pkg__"])

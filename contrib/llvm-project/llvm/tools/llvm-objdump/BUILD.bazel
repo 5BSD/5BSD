@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['COFFDump.cpp', 'ELFDump.cpp', 'MachODump.cpp', 'OffloadDump.cpp', 'SourcePrinter.cpp', 'WasmDump.cpp', 'XCOFFDump.cpp', 'llvm-objdump.cpp', 'ObjdumpOpts.td', 'OtoolOpts.td'], visibility = ["//usr.bin/clang/llvm-objdump:__pkg__"])
+cc_library(name = "headers", hdrs = ['COFFDump.h', 'ELFDump.h', 'MachODump.h', 'ObjdumpOptID.h', 'OffloadDump.h', 'SourcePrinter.h', 'WasmDump.h', 'XCOFFDump.h', 'llvm-objdump.h'], deps = ["//contrib/llvm-project/llvm/include:headers"], visibility = ["//usr.bin/clang/llvm-objdump:__pkg__"])

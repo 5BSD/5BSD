@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "gtest_main", srcs = ["//contrib/googletest:googletest/src/gtest_main.cc"],
+    deps = ["//lib/googletest/gtest:gtest"], copts = ["-fPIC", "-nostdinc++", "-pthread"],
+    linkstatic = True, visibility = ["//visibility:public"])

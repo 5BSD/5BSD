@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = 'wg', srcs = ['//contrib/wireguard-tools:wg.c', '//contrib/wireguard-tools:config.c', '//contrib/wireguard-tools:encoding.c', '//contrib/wireguard-tools:ipc.c', '//contrib/wireguard-tools:terminal.c', '//contrib/wireguard-tools:curve25519.c', '//contrib/wireguard-tools:show.c', '//contrib/wireguard-tools:showconf.c', '//contrib/wireguard-tools:set.c', '//contrib/wireguard-tools:setconf.c', '//contrib/wireguard-tools:genkey.c', '//contrib/wireguard-tools:pubkey.c', '//contrib/wireguard-tools:config.h', '//contrib/wireguard-tools:containers.h', '//contrib/wireguard-tools:ctype.h', '//contrib/wireguard-tools:curve25519-fiat32.h', '//contrib/wireguard-tools:curve25519-hacl64.h', '//contrib/wireguard-tools:curve25519.h', '//contrib/wireguard-tools:encoding.h', '//contrib/wireguard-tools:ipc-freebsd.h', '//contrib/wireguard-tools:ipc-uapi-unix.h', '//contrib/wireguard-tools:ipc-uapi.h', '//contrib/wireguard-tools:ipc.h', '//contrib/wireguard-tools:subcommands.h', '//contrib/wireguard-tools:terminal.h', '//contrib/wireguard-tools:version.h'], deps = ["//lib/libnv:nv"], dynamic_deps = ["//lib/libnv:nv_shared"], local_defines = ["RUNSTATEDIR=_PATH_VARRUN"], copts = ["-fPIE", "-include", "paths.h"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'wg', manual = '//contrib/wireguard-tools:man/wg.8', package = 'utilities', bindir = "/usr/bin", man_section = '8')
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

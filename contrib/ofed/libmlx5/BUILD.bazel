@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['buf.c', 'cq.c', 'dbrec.c', 'mlx5.c', 'qp.c', 'srq.c', 'verbs.c', 'libmlx5.map'], visibility = ["//lib/ofed/libmlx5:__pkg__"])
+cc_library(name = "private_headers", hdrs = ['bitmap.h', 'config.h', 'doorbell.h', 'mlx5-abi.h', 'mlx5.h', 'mlx5dv.h', 'wqe.h'], strip_include_prefix = ".",
+    deps = ["//contrib/ofed/libibverbs:headers"], visibility = ["//lib/ofed/libmlx5:__pkg__"])

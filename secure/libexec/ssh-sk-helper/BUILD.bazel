@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "ssh-sk-helper",
+    srcs = ["//crypto/openssh:ssh-sk-helper.c", "//crypto/openssh:ssh-sk.c", "//crypto/openssh:sk-usbhid.c", "//crypto/openssh:ssherr-nolibcrypto.c"],
+    deps = ["//secure/lib/libcrypto:crypto", "//lib/libz:z", "//lib/libfido2:fido2", "//lib/libcbor:cbor"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//lib/libz:z_shared", "//lib/libfido2:fido2_shared", "//lib/libcbor:cbor_shared"],
+    bindir = "/usr/libexec", man_section = "8", sk_client = False)

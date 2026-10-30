@@ -18,4 +18,16 @@ ATF_TESTS_C+=	stdc_bit_ceil_test \
 		stdc_trailing_ones_test \
 		stdc_trailing_zeros_test
 
+# Each test includes the framework, which includes the kernel for each type.
+.for _test in ${ATF_TESTS_C}
+TEXTUAL_SRCS.${_test}.c= ${.CURDIR}/stdbit-test-framework.c \
+    ${.CURDIR}/stdbit-test-kernel.c
+.endfor
+
 .include <bsd.test.mk>
+
+.for _src in ${SRCS}
+.if defined(TEXTUAL_SRCS.${_src})
+${_src:R}.o ${_src:R}.pieo: ${TEXTUAL_SRCS.${_src}}
+.endif
+.endfor

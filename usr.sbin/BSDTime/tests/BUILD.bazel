@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Keep the installed executable's linkage identical to Make. The runtime-only
+# variant resolves declared candidate libraries, including transitive libc deps.
+[cc_binary(name = "config_test" + suffix, srcs = ["config_test.c", "//usr.sbin/BSDTime:config.c"],
+    deps = ["//usr.sbin/BSDTime:test_headers", "//lib/libucl:ucl", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libucl:ucl_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + (["-Wl,--disable-new-dtags,-rpath,$ORIGIN"] if suffix else []))
+ for suffix in ["", "_runtime"]]
+bsd_kyua_test(name = "config_test_run", program = ":config_test_runtime", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime_checker = "//tools/build/bazel:elf-runtime-check.py",
+    runtime_libraries = {"//lib/libucl:ucl_shared": "libprivateucl.so.1", "//lib/msun:m_shared": "libm.so.5",
+        "//lib/atf/libatf-c:atf_c_shared": "libprivateatf-c.so.1",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7": "libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7": "libsys.so.7"},
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+
+# The maintained provider/soak tests wrap clock writes; gate_test does not.
+[cc_binary(name = name, srcs = [name + ".c", "//usr.sbin/BSDTime:BSDTime.c", "//usr.sbin/BSDTime:config.c"],
+    deps = ["//usr.sbin/BSDTime:test_headers", "//lib/libtimecmp:timecmp", "//lib/libtimecmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libservice:service", "//lib/libucl:ucl"] +
+        (["//lib/libthr:thr"] if name == "resource_soak" else ["//lib/atf/libatf-c:atf_c"]) +
+        (["//sys/dev/mac_capability:ioctl_headers", "//sys/dev/mac_capability:system_headers"] if name == "gate_test" else []),
+    local_defines = ["BSDTIME_TESTING"], linkstatic = True,
+    linkopts = ["-static"] + (["-Wl,--wrap=service_system_settime,--wrap=service_system_adjtime"] if name != "gate_test" else []) +
+        (["-Wl,--wrap=syslog"] if name == "resource_soak" else []))
+ for name in ["provider_test", "gate_test", "resource_soak"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", case_timeout = 120, kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    tags = ["manual", "requires-matching-kernel"] + (["requires-disposable-vm"] if name == "gate_test" else []),
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["provider_test", "gate_test"]]
+
+load(":installation.bzl", "PROGRAMS")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "bsdtime-tests", bindir = "/usr/tests/usr.sbin/BSDTime") for name in PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["config_test", "gate_test", "provider_test"],
+    interfaces = {n: "atf" for n in ["config_test", "gate_test", "provider_test"]},
+    metadata = {n: '{"timeout":"120"}' for n in ["gate_test", "provider_test"]})
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=bsdtime-tests"])
+ for name, src, dest in [
+    ("install_kyuafile", ":kyuafile", "/usr/tests/usr.sbin/BSDTime/Kyuafile"),
+    ("install_license", "//contrib/fuchsia:LICENSE", "/usr/share/licenses/bsdtime-tests/fuchsia/LICENSE"),
+    ("install_patents", "//contrib/fuchsia:PATENTS", "/usr/share/licenses/bsdtime-tests/fuchsia/PATENTS"),
+    ("install_ucl_notice", "//contrib/libucl:COPYING", "/usr/share/licenses/bsdtime-tests/libucl/COPYING"),
+ ]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_license", ":install_patents", ":install_ucl_notice"],
+    visibility = ["//usr.sbin/BSDTime:__pkg__"])

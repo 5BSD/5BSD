@@ -9,6 +9,7 @@
 #include <libgen.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 static inline int
 open_progdir(const char *prog)
@@ -26,4 +27,19 @@ open_progdir(const char *prog)
 	assert(dfd != -1);
 
 	return (dfd);
+}
+
+/* Optional explicit fixture path supports out-of-tree test runners. */
+static inline int
+open_test_fixture(int argc, char *argv[], const char *name)
+{
+	int dfd, fd;
+
+	assert(argc == 1 || argc == 2);
+	if (argc == 2)
+		return (open(argv[1], O_RDONLY));
+	dfd = open_progdir(argv[0]);
+	fd = openat(dfd, name, O_RDONLY);
+	close(dfd);
+	return (fd);
 }

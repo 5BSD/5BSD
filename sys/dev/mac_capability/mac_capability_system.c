@@ -27,7 +27,10 @@
  * carrying it is rejected as unknown.
  */
 
+
+
 #include <sys/param.h>
+#include <bsm/audit.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -104,6 +107,9 @@ struct sys_auth {
 	uint64_t		sa_accessor;
 	uint64_t		sa_owner;
 	uint32_t		sa_gates;
+	/* Weak pointer, protected by sys_lock: sys_revoke removes this entry
+	 * before instance destruction. Checks nest ci_mtx inside sys_lock;
+	 * the core drops ci_mtx before invoking the service revoke callback. */
 	struct mac_capability_instance	*sa_inst;
 };
 
@@ -215,6 +221,14 @@ sys_no_claims(void)
 {
 
 	return (atomic_load_int(&sys_active_claims) == 0);
+}
+
+/* A forked bootstrap child shares its nonce, but not PID 1's authority. */
+static bool
+sys_owns_claim(uint64_t nonce, uint64_t owner)
+{
+
+	return (nonce != 0 && nonce == owner);
 }
 
 /* Exact MIB equality of two isolated-OID descriptors. */
@@ -358,6 +372,7 @@ sys_oidset_subtract(struct sys_claim *sc, const struct sys_sysctl_oid *rm,
 static int
 sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 {
+	struct mac_capability_authorization context;
 	struct sys_claim *sc;
 	struct sys_auth *sa;
 	uint64_t caller_nonce;
@@ -374,6 +389,7 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 		return (EPERM);
 	}
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	mtx_lock(&sys_lock);
 
 	/*
@@ -392,7 +408,7 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 			continue;
 		gate_claimed = true;
 		/* Same nonce — the caller owns a covering claim. */
-		if (caller_nonce != 0 && caller_nonce == sc->sc_nonce) {
+		if (sys_owns_claim(caller_nonce, sc->sc_nonce)) {
 			mtx_unlock(&sys_lock);
 			SDT_PROBE3(mac_capability_system, , , allow, name,
 			    sc->sc_nonce, caller_nonce);
@@ -409,6 +425,8 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 		if (caller_nonce != 0) {
 			LIST_FOREACH(sa, &sys_auths, sa_link) {
 				if (sa->sa_accessor == caller_nonce &&
+				    mac_capability_instance_authorization_allows(
+				    sa->sa_inst, &context, caller_nonce) &&
 				    sa->sa_owner == sc->sc_nonce &&
 				    (sa->sa_gates & gate)) {
 					mtx_unlock(&sys_lock);
@@ -446,7 +464,7 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
  * Strict "does the caller actively hold this gate" predicate for the PERFORM
  * ops (SYS_OP_SETTIME / SYS_OP_ADJTIME).
  *
- * sys_check_gate() above implements MACF-HOOK semantics: it ALLOWS an ambient
+ * sys_check_gate() implements MACF-HOOK semantics: it ALLOWS an ambient
  * (non-capmode) caller when the gate is unclaimed, because the ambient syscall
  * it guards (settimeofday(2), kldload(2), ...) still runs its own priv_check(9)
  * — the hook only ADDS nonce isolation on top.  A perform op is different: it
@@ -466,6 +484,7 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 static int
 sys_holds_gate(struct ucred *cred, uint32_t gate, const char *name)
 {
+	struct mac_capability_authorization context;
 	struct sys_claim *sc;
 	struct sys_auth *sa;
 	uint64_t caller_nonce;
@@ -477,12 +496,13 @@ sys_holds_gate(struct ucred *cred, uint32_t gate, const char *name)
 		return (EPERM);
 	}
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	mtx_lock(&sys_lock);
 	LIST_FOREACH(sc, &sys_claims, sc_link) {
 		if (!(sc->sc_gates & gate))
 			continue;
 		/* Same nonce — the caller owns a covering claim. */
-		if (caller_nonce == sc->sc_nonce) {
+		if (sys_owns_claim(caller_nonce, sc->sc_nonce)) {
 			mtx_unlock(&sys_lock);
 			SDT_PROBE3(mac_capability_system, , , allow, name,
 			    sc->sc_nonce, caller_nonce);
@@ -491,6 +511,8 @@ sys_holds_gate(struct ucred *cred, uint32_t gate, const char *name)
 		/* Foreign nonce — an authorization from THIS owner suffices. */
 		LIST_FOREACH(sa, &sys_auths, sa_link) {
 			if (sa->sa_accessor == caller_nonce &&
+			    mac_capability_instance_authorization_allows(
+			    sa->sa_inst, &context, caller_nonce) &&
 			    sa->sa_owner == sc->sc_nonce &&
 			    (sa->sa_gates & gate)) {
 				mtx_unlock(&sys_lock);
@@ -552,6 +574,7 @@ static int
 sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
     const char *name)
 {
+	struct mac_capability_authorization context;
 	struct sys_claim *sc;
 	struct sys_auth *sa;
 	uint64_t caller_nonce;
@@ -568,6 +591,7 @@ sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
 		return (EPERM);
 	}
 
+	mac_capability_authorization_snapshot(curthread, &context);
 	mtx_lock(&sys_lock);
 
 	/*
@@ -582,7 +606,7 @@ sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
 			continue;
 		gate_claimed = true;
 		/* Same nonce — the caller owns a covering claim. */
-		if (caller_nonce != 0 && caller_nonce == sc->sc_nonce) {
+		if (sys_owns_claim(caller_nonce, sc->sc_nonce)) {
 			mtx_unlock(&sys_lock);
 			SDT_PROBE3(mac_capability_system, , , allow, name,
 			    sc->sc_nonce, caller_nonce);
@@ -592,6 +616,8 @@ sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
 		if (caller_nonce != 0) {
 			LIST_FOREACH(sa, &sys_auths, sa_link) {
 				if (sa->sa_accessor == caller_nonce &&
+				    mac_capability_instance_authorization_allows(
+				    sa->sa_inst, &context, caller_nonce) &&
 				    sa->sa_owner == sc->sc_nonce &&
 				    (sa->sa_gates & SYS_GATE_SYSCTL)) {
 					mtx_unlock(&sys_lock);
@@ -938,9 +964,15 @@ sys_mac_system_check_acct(struct ucred *cred, struct vnode *vp __unused,
 }
 
 static int
-sys_mac_system_check_auditon(struct ucred *cred, int cmd __unused)
+sys_mac_system_check_auditon(struct ucred *cred, int cmd)
 {
 
+	/* Record producers may inspect whether the trail is enabled without
+	 * acquiring authority to configure or disable it. These two commands
+	 * return only the condition; auditon retains its ordinary privilege
+	 * and buffer validation checks. All other commands remain gated. */
+	if (cmd == A_GETCOND || cmd == A_OLDGETCOND)
+		return (0);
 	return (sys_check_gate(cred, SYS_GATE_AUDIT, "auditon"));
 }
 
@@ -1341,9 +1373,18 @@ sys_call(struct mac_capability_instance *s,
 			return (EINVAL);
 		}
 		if (priv->sp_active) {
+			/* Activation is idempotent only for its original nonce. */
+			LIST_FOREACH(existing, &sys_auths, sa_link) {
+				if (existing->sa_inst == s &&
+				    existing->sa_accessor == caller_nonce) {
+					mtx_unlock(&sys_lock);
+					free(sa, M_MAC_CAPABILITY_SYS);
+					return (0);
+				}
+			}
 			mtx_unlock(&sys_lock);
 			free(sa, M_MAC_CAPABILITY_SYS);
-			return (0); /* already authorized */
+			return (EALREADY);
 		}
 
 		/* Dedup: check for existing entry with same key. */
@@ -1757,7 +1798,25 @@ sys_mac_priv_grant(struct ucred *cred, int priv)
 	return (sys_holds_gate(cred, SYS_GATE_KLDLOAD, "firmware-load"));
 }
 
+/* Raw clock syscalls retain normal privilege checks and explicit claim isolation.
+ * Gated perform operations independently require a held System token. */
+static int
+sys_mac_priv_check(struct ucred *cred, int priv)
+{
+
+	switch (priv) {
+	case PRIV_ADJTIME:
+	case PRIV_NTP_ADJTIME:
+	case PRIV_CLOCK_SETTIME:
+	case PRIV_SETTIMEOFDAY:
+		return (sys_check_gate(cred, SYS_GATE_SETTIME, "clock"));
+	default:
+		return (0);
+	}
+}
+
 static struct mac_policy_ops sys_mac_ops = {
+	.mpo_priv_check			= sys_mac_priv_check,
 	.mpo_priv_grant			= sys_mac_priv_grant,
 	.mpo_kld_check_load		= sys_mac_kld_check_load,
 	.mpo_kld_check_unload		= sys_mac_kld_check_unload,

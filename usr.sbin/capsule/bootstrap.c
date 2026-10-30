@@ -32,6 +32,7 @@
 #include "capsule_daemon.h"
 #include "capsule_svc_proto.h"
 #include "probes.h"
+#include "bootstrap_exec.h"
 
 /* Restart policy constants. */
 #define	BOOTSTRAP_MIN_UPTIME	5	/* seconds before reset */
@@ -164,6 +165,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		dst_fds[nfds++] = SWITCHBOARD_AUTHORITY_FD;
 	}
 
+
 	safe_base = SWITCHBOARD_LAST_FD + 1;
 	for (i = 0; i < nfds; i++) {
 		if (src_fds[i] < safe_base) {
@@ -204,9 +206,9 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	/* Close everything above the reserved range. */
 	closefrom(SWITCHBOARD_LAST_FD + 1);
 
-	/* Clear CLOEXEC on inherited fds. */
+	/* Permit this exec only; prevent propagation before manager startup. */
 	for (i = 0; i < nfds; i++) {
-		if (fcntl(dst_fds[i], F_SETFD, 0) == -1)
+		if (bootstrap_confine_manager_fd(dst_fds[i]) == -1)
 			_exit(126);
 	}
 
@@ -246,6 +248,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		    "SWITCHBOARD_AUTHORITY_FD=%d", SWITCHBOARD_AUTHORITY_FD);
 		env[envc++] = authority_env;
 	}
+
 
 	/* Forward bundle-directory overrides when present (see struct comment). */
 	if (d->bundle_dir_system != NULL) {
@@ -397,10 +400,10 @@ bootstrap_start(int kq)
 
 	/*
 	 * These descriptors cross exactly one fork edge into switchboard.  They
-	 * must never be transferable by either side.  CLOFORK/CLOEXEC cannot be
-	 * locked yet because the descriptors intentionally cross this fork and
-	 * the subsequent exec; switchboard locks both dimensions immediately after
-	 * exec.
+	 * must never be transferable by either side. After this fork the trusted
+	 * child locks CLOFORK and sets CLOEXEC_ONCE on its final descriptor slots.
+	 * The manager exec consumes ONCE, locking further exec propagation before
+	 * constructors run. SwitchBoard repeats the locked-state checks at startup.
 	 */
 	if (cap_xfer_limit(child_end, CAP_XFER_NONE) == -1 ||
 	    cap_xfer_limit(dfds.channel_svc_fd, CAP_XFER_NONE) == -1 ||

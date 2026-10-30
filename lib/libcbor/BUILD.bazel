@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "config_headers", hdrs = ["cbor/cbor_export.h", "cbor/configuration.h"], strip_include_prefix = ".", visibility = ["//contrib/libcbor:__pkg__"])
+cc_library(name = "cbor", srcs = ['//contrib/libcbor:src/allocators.c', '//contrib/libcbor:src/cbor.c', '//contrib/libcbor:src/cbor/arrays.c', '//contrib/libcbor:src/cbor/bytestrings.c', '//contrib/libcbor:src/cbor/callbacks.c', '//contrib/libcbor:src/cbor/common.c', '//contrib/libcbor:src/cbor/encoding.c', '//contrib/libcbor:src/cbor/floats_ctrls.c', '//contrib/libcbor:src/cbor/ints.c', '//contrib/libcbor:src/cbor/maps.c', '//contrib/libcbor:src/cbor/serialization.c', '//contrib/libcbor:src/cbor/streaming.c', '//contrib/libcbor:src/cbor/strings.c', '//contrib/libcbor:src/cbor/tags.c', '//contrib/libcbor:src/cbor/internal/builder_callbacks.c', '//contrib/libcbor:src/cbor/internal/encoders.c', '//contrib/libcbor:src/cbor/internal/loaders.c', '//contrib/libcbor:src/cbor/internal/memory_utils.c', '//contrib/libcbor:src/cbor/internal/stack.c', '//contrib/libcbor:src/cbor/internal/unicode.c'], deps = ["//contrib/libcbor:headers"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":cbor"], visibility = ["//visibility:public"])
+# ABI version inherited from lib/Makefile.inc.
+cc_shared_library(name = "cbor_shared", deps = [":cbor"], shared_lib_name = "libprivatecbor.so.5",
+    user_link_flags = ["-Wl,-z,defs", "-Wl,-soname,libprivatecbor.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ssh","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "decode_static", srcs = ["native_decode_test.c"],
+    deps = [":archive_link", "//contrib/libcbor:headers"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_test(name = "decode_shared", srcs = ["native_decode_test.c"],
+    deps = [":cbor"], dynamic_deps = [":cbor_shared"], features = ["bsd_test_runtime_paths"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+test_suite(name = "decode_tests", tests = [":decode_static", ":decode_shared"], visibility = ["//visibility:public"])

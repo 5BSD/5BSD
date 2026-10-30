@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# INTERNALLIB in Make: consumers link this library; there is no installed DSO.
+[cc_library(
+    name = name,
+    copts = flags + ["-nostdinc++"],
+    srcs = ['//contrib/lutok:c_gate.cpp', '//contrib/lutok:debug.cpp', '//contrib/lutok:exceptions.cpp', '//contrib/lutok:operations.cpp', '//contrib/lutok:stack_cleaner.cpp', '//contrib/lutok:state.cpp'],
+    deps = ["//contrib/llvm-project/libcxx/include:headers", "//contrib/lutok:headers", lua],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+) for name, flags, lua in [("lutok", [], "//lib/liblua:lua"),
+                            ("lutok_pie", ["-fPIE"], "//lib/liblua:lua_pie")]]
+bsd_component_archive(
+    name = "static_archive",
+    groups = [":lutok"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(
+    name = "pie_archive",
+    groups = [":lutok_pie"],
+    visibility = ["//visibility:public"],
+)

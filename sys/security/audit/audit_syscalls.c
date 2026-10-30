@@ -816,6 +816,8 @@ sys_auditctl(struct thread *td, struct auditctl_args *uap)
 	if (error)
 		return (error);
 	vp = nd.ni_vp;
+	/* vn_open succeeded; release the pathname even if MAC rejects it. */
+	NDFREE_PNBUF(&nd);
 #ifdef MAC
 	error = mac_system_check_auditctl(td->td_ucred, vp);
 	VOP_UNLOCK(vp);
@@ -826,7 +828,6 @@ sys_auditctl(struct thread *td, struct auditctl_args *uap)
 #else
 	VOP_UNLOCK(vp);
 #endif
-	NDFREE_PNBUF(&nd);
 	if (vp->v_type != VREG) {
 		vn_close(vp, AUDIT_CLOSE_FLAGS, td->td_ucred, td);
 		return (EINVAL);

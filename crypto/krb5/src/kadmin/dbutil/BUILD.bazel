@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['dump.c', 'kadm5_create.c', 'kdb5_create.c', 'kdb5_destroy.c', 'kdb5_mkey.c', 'kdb5_stash.c', 'kdb5_util.c', 'strtok.c', 'tabdump.c', 'tdumputil.c', 'kdb5_util.h', 'nstrtok.h', 'tdumputil.h', 'import_err.et'])

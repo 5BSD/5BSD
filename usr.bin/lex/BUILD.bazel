@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+load(":skeleton.bzl", "flex_skeleton")
+bsd_yacc(name = "parser", src = "//contrib/flex/src:parse.y", output = "parse.c", header = "parse.h", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "scanner", src = "//contrib/flex/src:scan.l", output = "scan.c", flags = ["-is"],
+    lex = "@bsd_sdk//toolchain:extra_lex", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:extra_lex_runtime", "@bsd_sdk//toolchain:extra_m4_runtime"])
+flex_skeleton(name = "skeleton", config = "config.h", version_script = "version.awk",
+    script = "//contrib/flex/src:mkskel.sh", skeleton = "//contrib/flex/src:flex.skl",
+    includes = ["//contrib/flex/src:flexint.h", "//contrib/flex/src:tables_shared.h", "//contrib/flex/src:tables_shared.c"],
+    shell = "@bsd_sdk//toolchain:sh", awk = "@bsd_sdk//toolchain:awk", sed = "@bsd_sdk//toolchain:sed", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:extra_m4_runtime"])
+cc_library(name = "local_headers", hdrs = ["config.h", ":parser_header"], strip_include_prefix = ".")
+cc_binary(name = "lex", srcs = ['//contrib/flex/src:buf.c', '//contrib/flex/src:ccl.c', '//contrib/flex/src:dfa.c', '//contrib/flex/src:ecs.c', '//contrib/flex/src:filter.c', '//contrib/flex/src:gen.c', '//contrib/flex/src:main.c', '//contrib/flex/src:misc.c', '//contrib/flex/src:nfa.c', '//contrib/flex/src:options.c', '//contrib/flex/src:regex.c', '//contrib/flex/src:scanflags.c', '//contrib/flex/src:scanopt.c', '//contrib/flex/src:sym.c', '//contrib/flex/src:tables.c', '//contrib/flex/src:tables_shared.c', '//contrib/flex/src:tblcmp.c', '//contrib/flex/src:yylex.c'] + [":parser_source", ":scanner", ":skeleton"],
+    deps = [":local_headers", "//contrib/flex/src:headers"], local_defines = ["HAVE_CONFIG_H"],
+    copts = ["-fPIE", "-Wno-misleading-indentation"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "lex", manual = "lex.1", package = "toolchain", aliases = ["lex++", "flex", "flex++"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "header_install", src = "//contrib/flex/src:FlexLexer.h", destination = "/usr/include/FlexLexer.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=toolchain", "dev"])
+bsd_install_manifest(name = "header_manifest", entries = [":header_install"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest", ":header_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

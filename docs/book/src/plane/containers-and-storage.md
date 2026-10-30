@@ -1,13 +1,17 @@
 # Containers and Storage
 
-Every capability on 5BSD keeps its runtime data in a container: a per-bundle
-subtree of ZFS datasets under `/Capabilities/Data` that the bundle's units
-claim at runtime, reach only through delivered directory descriptors, and
-lose when the bundle is removed. There is no installation registry and no
-per-unit cleanup protocol. The filesystem is the record, and decommissioning
-a capability means revoking its namespace. 5BSD has this so that a unit born
-in capability mode can hold durable state without ever naming a path, and so
-that removing a package removes everything the package accumulated.
+Capability storage uses per-bundle ZFS dataset subtrees under
+`/Capabilities/Data`. Units claim storage through the filesystem provider and
+receive directory descriptors. Package removal does not currently delete the
+bundle's persistent container: automatic absence-based deletion is suspended
+because retained generations and recovery records may still need that data.
+Authenticated retention and explicit deletion authority remain unfinished.
+
+This describes the provider interface, not completed protection against
+compromised root. Anonymous mounts and descriptor rights do not establish the
+mandatory persistent storage boundary required by BIP. See the
+[security roadmap](../capability/system-security.md) for implementation and VM
+qualification limits.
 
 This chapter is the consumer's and operator's view. The kernel handle model
 that makes it possible (TrustedZFS) and the broker's operation set belong to
@@ -19,9 +23,9 @@ that makes it possible (TrustedZFS) and the broker's operation set belong to
 /Capabilities/
   System/   installed base bundles        pkg, read-only, verified
   Apps/     installed non-system bundles  pkg, read-only
-  Data/     runtime data                  reclaimable, never pkg-owned
+  Data/     runtime data                  retained, never pkg-owned
     <bundle>/<unit>/persistent/<name>     the unit's durable stores
-    <bundle>/<unit>/cache/<name>          regenerable, reaped with the unit
+    <bundle>/<unit>/cache/<name>          regenerable, explicit lifecycle needed
     <bundle>/shared/persistent/<name>     shared by the bundle's units
     Shared/<group>/persistent/<name>      a cross-bundle group container
   Config/   static operator configuration (bsdfilesystem.ucl, switchboard/boot-authority.ucl)
@@ -38,8 +42,8 @@ the base dataset is `zroot/Capabilities`, and `Data/<bundle>/<unit>/persistent/<
 is the dataset `zroot/Capabilities/Data/<bundle>/<unit>/persistent/<name>`
 (`tzfs.conf(5)`, keys `pool`, `roots.base`, `roots.persistent`).
 
-A bundle is the unit of install and of cleanup. Its units share the bundle
-container and are reaped together. A package must own its bundle directories
+A bundle is the unit of installation. Its units share the bundle container;
+removing the installation does not authorize deleting that container. A package must own its bundle directories
 (`@dir` entries) so that removing it removes the directory, not only the
 files; pkgbase's bundle packages do.
 
@@ -90,7 +94,8 @@ else {
 }
 ```
 
-The delivered descriptor is the only way in. The store is a dataset that
+For a confined consumer, access is through the delivered descriptor. This does
+not prove exclusion of privileged backing-storage operations. The store is a dataset that
 BSDFilesystem mounts on an anonymous anchor: it has no path in the global
 namespace, `mount(8)` lists it as mounted on `[anon]`, and the consumer, born
 in capability mode, reaches it only by `openat(2)` under the descriptor. A
@@ -111,7 +116,7 @@ ownership.
 ## Shared and group containers
 
 `Data/<bundle>/shared` is a scope of the bundle's own container: any unit of
-the bundle reaches it, and it goes with the bundle. `Data/Shared/<group>` is
+the bundle reaches it, and it is retained when the bundle is removed. `Data/Shared/<group>` is
 a container shared across bundles. Membership is declared in `Bundle.ucl`:
 
 ```ucl
@@ -121,13 +126,13 @@ groups = ["org.example.shared"];
 Switchboard stamps that membership on the connection next to the container
 identity, and BSDFilesystem refuses a group claim from a non-member with
 `EPERM` (a group list from a non-member is an empty page). A group name is a
-single safe path component everywhere it appears. The group container is
-reaped only when no installed bundle still declares the group.
+single safe path component everywhere it appears. Group membership absence is recorded by reconciliation, but automatic group
+container deletion is suspended pending authenticated deletion authority.
 
 ## Quotas
 
-Every persistent claim is a dataset with a `refquota`, so no single claim can
-fill the pool. The default is `default_refquota` in
+Persistent claims support `refquota`. These quotas are configurable and can be
+disabled; they are not an immutable capacity boundary. The default is `default_refquota` in
 `/Capabilities/Config/bsdfilesystem.ucl` (1 GiB, UCL size suffixes accepted,
 0 disables). A unit may pass its own ceiling to `service_storage_open_quota`;
 a value below the daemon's floor is `EINVAL`, and `service_storage_set_quota`
@@ -156,61 +161,53 @@ storage.
 | `service_storage_open_version(ctx, name, ver, &fd)` | mount the version read-only and hand back its dirfd; non-destructive |
 | `service_storage_rollback(ctx, name, ver)` | rewind the live claim; newer versions are discarded |
 | `service_storage_txn_begin(ctx, name, txn, sz, &fd)` | hand back a writable staging clone of the claim plus a transaction id |
-| `service_storage_txn_commit(ctx, name, txn)` | atomically swap the clone in over the claim |
+| `service_storage_txn_commit(ctx, name, txn)` | promote and rename the clone over the claim; crash-safe atomicity is unqualified |
 | `service_storage_txn_abort(ctx, name, txn)` | discard the clone |
 
-A transaction is the way to change several files at once with no window in
-which a reader sees a half-written set: edit the staging clone, then commit.
-The commit promotes the clone and renames it over the claim, and the staging
-clone is bound to the claim it was begun from, so a transaction id cannot be
-replayed against another dataset. Both `txn_commit` and `rollback` replace
+A transaction lets a caller prepare changes in a staging clone. Commit uses
+promotion and multiple renames; it does not yet provide a durable journal or
+proved atomic replacement and recovery. The staging clone records its base
+claim, and abort checks that binding before deletion. That check is not a
+complete authenticated GUID binding or protection against concurrent changes.
+Both `txn_commit` and `rollback` replace
 the live claim, and a mounted dataset cannot be renamed or rolled back, so
 the caller must first close any delivered directory descriptor for the claim
 and call `service_storage_release` on it; otherwise the operation fails
 `EBUSY`. `open_version` needs an active session and its read-only clone is
 reaped with the session.
 
-Two reapers keep abandoned staging clones from accumulating. A boot sweep
-destroys every staging clone left by a crash, and the reconcile timer reaps
-any clone older than `staging_idle_grace` (default 300 s) that no live
-transaction holds mounted.
+Startup and idle staging sweeps currently preserve unresolved clones and
+report `EBUSY`. Age or absence of a mount is insufficient deletion authority;
+a clone can contain data needed after an interrupted commit. Authenticated
+transaction ownership, durable recovery and bounded reclamation remain open.
 
-## The reconcile: decommission is revoking the namespace
+## Reconciliation and retention
 
-Removing a capability is a bundle directory disappearing from `System/` or
-`Apps/`. Switchboard watches the install folders, settles a burst of changes
-into one rescan, unloads the removed bundle's units, and clears their
-`Run/live` marker. Only then is the data an orphan, and only a reconcile
-pass destroys it.
+Switchboard observes installed bundle directories and running-unit markers.
+`libcapreclaim` compares those observations with provider-owned resources.
+BOOT can report absence immediately; TIMER confirms absence across consecutive
+observations. Neither observation proves that retained generations or recovery
+records have released persistent data. A grace interval cannot establish
+upgrade safety.
 
-Every provider that holds per-bundle state runs the same reconcile from
-`libcapreclaim`: read the live set (`System/` union `Apps/` union
-`Run/live`, that is installed or running) through delivered directory
-descriptors, enumerate what it owns, and destroy the orphans. The schedule
-is what makes upgrades safe:
+BSDFilesystem's persistent bundle and group callbacks now refuse automatic
+absence-based deletion with `EBUSY`. Six real-ZFS VM regressions cover startup
+and repeated timer absence, including an empty group catalogue, and verify
+retained dataset GUIDs and payload. These tests do not cover an actual provider
+process restart or an authenticated system upgrade. The v9 candidate packages
+predate this change. Evidence and packaging status are recorded in the
+[security roadmap](../capability/system-security.md).
 
-- At boot, one settled pass destroys orphans immediately.
-- On the timer, an orphan is destroyed only when it was seen gone on two
-  consecutive passes. The interval is the grace window, so a bundle briefly
-  absent mid-upgrade is never confirmed. For BSDFilesystem the cadence is
-  `reclaim_interval` (default 300 s, range 10 to 86400).
-- An empty live set destroys nothing, a failed destroy is retried next pass,
-  and a container whose snapshot is pinned by a clone outside it is left
-  intact with the reason logged (ZFS reports the branch point as `EEXIST`)
-  until the clone is gone.
+Retained state consumes space. Explicit deletion, references from retained
+boot environments, recovery and capacity policy still need implementation and
+qualification. Existing claim-level destroy APIs must also be evaluated against
+those retention requirements; their existence does not qualify safe deletion.
 
-In practice, revoking the namespace means this, in order: the units stop;
-the `Run/live/<bundle>` marker vanishes; on the next confirmed pass
-BSDFilesystem destroys `Data/<bundle>` recursively, snapshots and versions
-included, so every store the bundle ever claimed and every version it ever
-took is gone; BSDCrypto drops the bundle's kernel keys; BSDLog seals the
-bundle's log records through its owner-to-bundle map; BSDNamespace removes
-the bundle's persistent jails; BSDExtension unloads the modules it loaded for
-the bundle (never one it merely found loaded, never one the kernel reports
-busy); BSDBluetooth removes the GATT services the bundle registered over the
-plane. A group container goes when its last member goes. Reinstalling the
-same bundle before the removal is confirmed inherits its container, as an
-upgrade should; reinstalling after the reap starts fresh.
+Other providers have distinct cleanup operations. Source review found key
+removal in BSDCrypto, jail removal in BSDNamespace, module attribution cleanup
+and possible unload in BSDExtension, and log-owner retirement in BSDLog. The
+filesystem regression does not qualify these operations. Their lifecycle and
+upgrade/recovery behavior require separate positive and adversarial tests.
 
 Reconcile lines go through the Log capability (`reclaim: boot pass reaped N
 orphans (...)`), each provider fires a `reclaim-pass` USDT probe
@@ -248,14 +245,15 @@ unit families). This replaced manifest file delivery; the policy format is in
 
 ## Operator recipes
 
-Containers are ordinary datasets, so the operator's tools are ZFS's own.
+The following inspection commands describe the current dataset layout. Direct
+mutation is not an owner-authorized BIP recovery or deletion protocol; that
+protocol remains unfinished.
 
 | Task | Command |
 |---|---|
 | What does bundle `X` hold, and how much? | `zfs list -r -o name,used,refquota zroot/Capabilities/Data/X` |
 | Which stores are held right now? | `mount \| grep '\[anon\]'` |
-| Drop a unit's cache without touching its state | stop the unit, then `zfs destroy -r zroot/Capabilities/Data/X/<unit>/cache` |
-| Back up a container | `zfs snapshot -r zroot/Capabilities/Data/X@backup`, then `zfs send`; delete the snapshot afterwards or the reaper sweeps it with the container |
+| Back up a container | `zfs snapshot -r zroot/Capabilities/Data/X@backup`, then `zfs send`; snapshot retention needs explicit lifecycle policy |
 | What is each provider managing, and when did it last reconcile? | `reclaimstat` |
 | Did the reaper run, and what did it do? | `grep 'reclaim:' /var/log/messages`; live: `dtrace -n 'BSDFilesystem:::reclaim-pass'` |
 | Why is a bundle not loading? | `grep 'bundle_registry' /var/log/messages` |

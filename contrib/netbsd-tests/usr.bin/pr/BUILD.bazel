@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_basic.sh", "d_basic.in", "d_basic.out"], visibility = ["//usr.bin/pr/tests:__pkg__"])

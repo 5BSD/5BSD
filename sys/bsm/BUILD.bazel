@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['audit_kevents.h'], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
+    strip_include_prefix = ".", include_prefix = "bsm", visibility = ["//visibility:public"])
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['audit.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+# Userland PMC source ABI header closure.
+cc_library(name = "pmc_user_headers", hdrs = ['audit.h'], visibility = ["//lib/libpmc:__pkg__"])

@@ -5,7 +5,7 @@ SHLIBDIR?=	/lib
 .include "${.CURDIR:H}/config.mk"
 
 LIB=		ncursesw
-SHLIB_MAJOR=	9
+SHLIB_MAJOR=	${NCURSES_SHLIB_MAJOR.${LIB}}
 
 GENSRCS=	\
 	expanded.c \

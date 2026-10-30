@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["t_crypt.c"], visibility = ["//lib/libcrypt/tests:__pkg__"])

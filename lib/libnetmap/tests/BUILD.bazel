@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "libnetmap_cap_test", srcs = ["libnetmap_cap_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libnetmap:netmap"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libnetmap:netmap_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"])
+[bsd_atf_test(name = case, case_name = case, body = ":libnetmap_cap_test", interface = "program",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libnetmap:netmap_shared",
+        "//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+    tags = ["manual"] if case == "capability_openat" else [])
+ for case in ["borrowed_fd", "invalid_fd", "capability_openat"]]
+test_suite(name = "host_tests", tests = [":borrowed_fd", ":invalid_fd"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "libnetmap_cap_test", manual = "",
+    package = "netmap-tests", bindir = "/usr/tests/lib/libnetmap")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["libnetmap_cap_test"], interfaces = {"libnetmap_cap_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libnetmap/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=netmap-tests"])
+bsd_install_manifest(name = "install_manifest", manifests = [":install_test"], entries = [":install_kyuafile"],
+    visibility = ["//lib/libnetmap:__pkg__"])

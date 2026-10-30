@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['CodeCoverage.cpp', 'CoverageExporterJson.cpp', 'CoverageExporterLcov.cpp', 'CoverageFilters.cpp', 'CoverageReport.cpp', 'CoverageSummaryInfo.cpp', 'SourceCoverageView.cpp', 'SourceCoverageViewHTML.cpp', 'SourceCoverageViewText.cpp', 'TestingSupport.cpp', 'gcov.cpp', 'llvm-cov.cpp'], visibility = ["//usr.bin/clang/llvm-cov:__pkg__"])
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ['CoverageExporter.h', 'CoverageExporterJson.h', 'CoverageExporterLcov.h', 'CoverageFilters.h', 'CoverageReport.h', 'CoverageSummaryInfo.h', 'CoverageViewOptions.h', 'RenderingSupport.h', 'SourceCoverageView.h', 'SourceCoverageViewHTML.h', 'SourceCoverageViewText.h'], deps = ["//contrib/llvm-project/llvm/include:headers"], visibility = ["//usr.bin/clang/llvm-cov:__pkg__"])

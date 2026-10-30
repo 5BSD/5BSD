@@ -33,8 +33,8 @@ def budget_document(value):
     for key in BUDGET_KEYS - {'max_elapsed_seconds', 'sample_interval_seconds'}:
         if type(value[key]) is not int:
             raise ValueError('byte budgets must be integers: ' + key)
-    if not 1 <= value['max_physical_memory_bytes'] <= 2048 * 1024**2:
-        raise ValueError('qualification RAM budget must not exceed 2 GiB')
+    if not 1 <= value['max_physical_memory_bytes'] <= 24 * 1024**3:
+        raise ValueError('qualification RAM budget must not exceed 24 GiB')
     if not 1 <= value['max_elapsed_seconds'] <= 86400:
         raise ValueError('elapsed budget must be between 1 and 86400 seconds')
     if not 0.1 <= value['sample_interval_seconds'] <= 30:

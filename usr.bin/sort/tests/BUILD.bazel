@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Preserve the maintained NetBSD d_any_char fixture arguments and references.
+[bsd_compare_test(name = "any_char_" + flag, program = "//usr.bin/sort:sort",
+    arguments = ["-" + flag, "-k", "2"],
+    file_arguments = ["//contrib/netbsd-tests/usr.bin/sort:d_any_char_in.txt"],
+    expected = "//contrib/netbsd-tests/usr.bin/sort:d_any_char_" + flag + "flag_out.txt",
+    runtime_lib = ["//lib/libmd:md_shared"], runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for flag in ["d", "f", "i"]]

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "rdma_common_headers", hdrs = ["common/t4_msg.h"], strip_include_prefix = "common", visibility = ["//contrib/ofed/libcxgb4:__pkg__"])
+cc_library(name = "rdma_firmware_headers", hdrs = ["firmware/t4fw_interface.h"], strip_include_prefix = "firmware", visibility = ["//contrib/ofed/libcxgb4:__pkg__"])

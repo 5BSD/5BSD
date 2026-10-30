@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ubsan_minimal_handlers.cpp"], visibility = ["//lib/libclang_rt/ubsan_minimal:__pkg__"])

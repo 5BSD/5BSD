@@ -79,6 +79,7 @@
 #include <vm/vm_object.h>
 #include <vm/vm_extern.h>
 
+
 #include <machine/elf.h>
 #include <machine/md_var.h>
 
@@ -384,8 +385,11 @@ __elfN(get_brandinfo)(struct image_params *imgp, const Elf_Phdr *phdr,
 {
 	const Elf_Ehdr *hdr = (const Elf_Ehdr *)imgp->image_header;
 	const Elf_Brandinfo *bi, *bi_m;
+	int32_t saved_osrel = 0;
+	uint32_t saved_fctl0 = 0;
 	bool ret, has_fctl0;
-	int i, interp_name_len;
+	size_t interp_name_len;
+	int i;
 
 	interp_name_len = interp != NULL ? strlen(interp) + 1 : 0;
 
@@ -432,14 +436,23 @@ __elfN(get_brandinfo)(struct image_params *imgp, const Elf_Phdr *phdr,
 			    strncmp(interp, bi->interp_path, interp_name_len)
 			    != 0))) {
 				bi_m = bi;
+				saved_osrel = *osrel;
+				saved_fctl0 = *fctl0;
 				ret = 0;
 			}
 			if (ret)
 				return (bi);
 		}
 	}
-	if (bi_m != NULL)
+	if (bi_m != NULL) {
+		/* Later rejected candidates may have overwritten the note outputs. */
+		*osrel = saved_osrel;
+		*fctl0 = saved_fctl0;
 		return (bi_m);
+	}
+	/* No note-selected brand: do not inherit a vetoed candidate's state. */
+	*osrel = 0;
+	*fctl0 = 0;
 
 	/* If the executable has a brand, search for it in the brand list. */
 	for (i = 0; i < MAX_BRANDS; i++) {
@@ -2900,7 +2913,6 @@ __elfN(note_procstat_kqueues)(void *arg, struct sbuf *sb, size_t *sizep)
 	}
 }
 
-#define	MAX_NOTES_LOOP	4096
 bool
 __elfN(parse_notes)(const struct image_params *imgp, const Elf_Note *checknote,
     const char *note_vendor, const Elf_Phdr *pnote,
@@ -2940,7 +2952,7 @@ __elfN(parse_notes)(const struct image_params *imgp, const Elf_Note *checknote,
 		    pnote->p_offset + pnote->p_filesz);
 		buf = NULL;
 	}
-	for (i = 0; i < MAX_NOTES_LOOP && note >= note0 && note < note_end;
+	for (i = 0; i < ELF_NOTE_MAX_COUNT && note >= note0 && note < note_end;
 	    i++) {
 		if (!aligned(note, Elf32_Addr)) {
 			uprintf("Unaligned ELF note\n");
@@ -2968,7 +2980,7 @@ nextnote:
 		    roundup2(note->n_namesz, ELF_NOTE_ROUNDSIZE) +
 		    roundup2(note->n_descsz, ELF_NOTE_ROUNDSIZE));
 	}
-	if (i >= MAX_NOTES_LOOP)
+	if (i >= ELF_NOTE_MAX_COUNT)
 		uprintf("ELF note parser reached %d notes\n", i);
 retf:
 	res = false;

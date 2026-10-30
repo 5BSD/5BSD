@@ -1,0 +1,4 @@
+# Disposable observer lookup grant; no management or storage-root authority.
+endpoints = ["test.StorageClient"];
+attributes = [];
+admin_rights = false;

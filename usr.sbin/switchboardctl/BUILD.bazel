@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Shared native command sources. Attributed production installation is pending.
+cc_library(name = "command_objects", srcs = ["switchboardctl.c", "deps.c", "install.c", "personal.c", "verify.c", "graph.c", "switchboardctl.h"],
+    deps = ["//lib/libcapbundle:capbundle", "//lib/libcapsulert:capsulert", "//lib/libservice:service", "//lib/libucl:ucl", "//lib/libelf:elf", "//lib/libmd:md_link"],
+    implementation_deps = ["//lib/libcapbundle:internal_headers"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//usr.sbin/switchboardctl/tests:__pkg__"])
+
+cc_library(name = "scope_cli_test_includes", textual_hdrs = ["switchboardctl.c"], hdrs = ["switchboardctl.h"], strip_include_prefix = ".",
+    deps = ["//lib/libcapsulert:headers", "//lib/libchannel:headers", "//lib/libcapability:headers", "//lib/libservice:headers"],
+    visibility = ["//usr.sbin/switchboard/tests:__pkg__"])
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['capbundle/Unit.ucl'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])

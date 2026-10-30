@@ -50,11 +50,17 @@ zshall.1: ${MAN:Nzshall.1:@m@${ZSHSRC}/Doc/${m}@} ${ZSHSRC}/Doc/zshall.1
 CLEANFILES+= zshall.1 man1
 
 .include "functions.mk"
+# Declare the common data parent as well as the function directory so
+# rootless staging records the complete runtime-owned hierarchy.
+DIRS+= ZSHDATADIR
+ZSHDATADIR= ${SHAREDIR}/zsh
+ZSHDATADIRTAGS= package=${PACKAGE}
 FILESGROUPS= FILES ZSHLICENSE
 ZSHLICENSE= ${ZSHSRC}/LICENCE
 ZSHLICENSEDIR= ${SHAREDIR}/doc/zsh
-# run-help falls back to the installed manuals when no split help is present.
-FILES:= ${FILES:N*/run-help} run-help _mdo
+# Use the local mdo completion instead of installing two different payloads
+# at the same path. run-help uses installed manuals when split help is absent.
+FILES:= ${FILES:N*/run-help:N*/_mdo} run-help _mdo
 run-help: ${ZSHSRC}/Functions/Misc/run-help
 	sed 's|@runhelpdir@|${SHAREDIR}/zsh/help|g' ${.ALLSRC} > ${.TARGET}
 CLEANFILES+= run-help

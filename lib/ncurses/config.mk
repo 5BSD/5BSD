@@ -2,9 +2,16 @@
 # This Makefile is shared by libncurses, libform, libmenu, libpanel.
 
 NCURSES_DIR=	${SRCTOP}/contrib/ncurses
-NCURSES_MAJOR=	6
-NCURSES_MINOR=	5
-NCURSES_PATCH=	20240407
+NCURSES_MAJOR!=	egrep 'NCURSES_MAJOR[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
+NCURSES_MINOR!=	egrep 'NCURSES_MINOR[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
+NCURSES_PATCH!=	egrep 'NCURSES_PATCH[ 	]*=' ${NCURSES_DIR}/dist.mk | sed -e 's%^[^0-9]*%%'
+
+# Shared ABI declarations also drive pkg-config metadata.
+NCURSES_SHLIB_MAJOR.ncursesw= 9
+NCURSES_SHLIB_MAJOR.tinfow= 9
+NCURSES_SHLIB_MAJOR.formw= 6
+NCURSES_SHLIB_MAJOR.menuw= 6
+NCURSES_SHLIB_MAJOR.panelw= 6
 
 TINFO_OBJDIR?=	${.OBJDIR:H}/tinfo
 

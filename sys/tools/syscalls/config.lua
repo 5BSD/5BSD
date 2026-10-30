@@ -26,6 +26,7 @@ local config = {
 	syshdr = "../sys/syscall.h",
 	syshdr_extra = nil;
 	sysmk = "/dev/null",
+	sysbzl = "/dev/null",
 	syssw = "init_sysent.c",
 	systrace = "systrace_args.c",
 	sysproto = "../sys/sysproto.h",

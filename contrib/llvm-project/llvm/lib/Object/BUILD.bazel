@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libllvm; not an additional installed library.
+cc_library(name = "object", srcs = ["Archive.cpp", "ArchiveWriter.cpp", "Binary.cpp", "BuildID.cpp", "COFFImportFile.cpp", "COFFModuleDefinition.cpp", "COFFObjectFile.cpp", "Decompressor.cpp", "ELF.cpp", "ELFObjectFile.cpp", "Error.cpp", "IRObjectFile.cpp", "IRSymtab.cpp", "MachOObjectFile.cpp", "MachOUniversal.cpp", "MachOUniversalWriter.cpp", "Minidump.cpp", "ModuleSymbolTable.cpp", "ObjectFile.cpp", "OffloadBinary.cpp", "RecordStreamer.cpp", "RelocationResolver.cpp", "SymbolSize.cpp", "SymbolicFile.cpp", "TapiFile.cpp", "TapiUniversal.cpp", "WasmObjectFile.cpp", "WindowsMachineFlag.cpp", "WindowsResource.cpp", "XCOFFObjectFile.cpp", "FaultMapParser.cpp", "OffloadBundle.cpp"] + select({"//tools/build/bazel/config:clang_extras_enabled": ["Object.cpp"], "//conditions:default": []}), hdrs = glob(["**/*.h"]), includes = ["."],
+    deps = ["//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC", "LLVM_BUILD_LLVM_DYLIB"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":object"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":object", pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_component_sources(name = "source_inventory", groups = [":object"], visibility = ["//visibility:public"])

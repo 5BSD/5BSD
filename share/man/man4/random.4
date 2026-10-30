@@ -120,6 +120,10 @@ as an entropy source.
 Set the bit to 1 (one)
 if you wish to use
 that source.
+Userspace writes cannot change the hardware entropy-source bits.
+With BSD Integrity Protection enabled, privileged writes to this harvesting
+mask remain permitted under the usual privilege and isolation checks.
+This does not permit runtime changes to the initial-seeding bypass tunable.
 The
 .Va kern.random.harvest.mask_bin
 and

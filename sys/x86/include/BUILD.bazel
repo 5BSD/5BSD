@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
+    strip_include_prefix = ".", include_prefix = "x86", visibility = ["//visibility:public"])
+
+cc_library(name = "busdma_internal_headers", hdrs = ["busdma_impl.h"], includes = ["../.."], visibility = ["//sys/x86/x86:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['apicreg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

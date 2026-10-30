@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["amd64_archlevel.c"], visibility = ["//lib/msun:__pkg__", "//lib/libc/string:__pkg__"])
+
+exports_files(['bcmp.S', 'memchr.S', 'memcmp.S', 'memccpy.S', 'memcpy.S', 'memmove.S', 'memrchr.S', 'memset.S', 'stpcpy.S', 'stpncpy.S', 'strcat.S', 'strchrnul.S', 'strcmp.S', 'strcpy.c', 'strcspn.S', 'strlcat.c', 'strlcpy.S', 'strlen.S', 'strncat.c', 'strncmp.S', 'strncpy.c', 'strnlen.c', 'strpbrk.c', 'strrchr.S', 'strsep.c', 'strspn.S', 'timingsafe_bcmp.S', 'timingsafe_memcmp.S'], visibility = ["//lib/libc/string:__pkg__"])
+
+exports_files(["bcopy.c", "bzero.c"], visibility = ["//lib/libc/string:__pkg__"])

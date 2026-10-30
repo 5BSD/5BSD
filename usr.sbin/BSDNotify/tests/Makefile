@@ -89,6 +89,9 @@ PROGS+= latency_bench
 BINDIR_latency_bench= ${TESTSDIR}
 MAN.latency_bench=
 SRCS.latency_bench= latency_bench.c latency_bench_server.c broker.c policy.c transport.c
+# Embedded notify.c calls the hidden validator; link its implementation locally.
+SRCS.latency_bench+= notify_legacy.c
+.PATH: ${SRCTOP}/lib/libnotify
 CFLAGS.latency_bench+= ${CFLAGS.session_test} -I${SRCTOP}/tools/build/fuchsia
 LIBADD.latency_bench= auditcmp channel fidl_bsd logcmp notify pthread service ucl
 NO_SHARED.latency_bench= no
@@ -97,6 +100,11 @@ NO_SHARED.latency_bench= no
 FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdnotify-tests/fuchsia
+
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
 
 # Bindings generated at build time (fidl-bindings.mk).
 FIDL_BINDINGS+=	notify

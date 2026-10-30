@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "address_headers", hdrs = ["in6.h"], includes = [".."],
+    deps = [], visibility = ["//visibility:public"])
+
+cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps = ["//sys/netinet:ip6_wire_headers", "//sys/netinet:ip_headers"], visibility = ["//sys/security/mac:__pkg__"])
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

@@ -1,0 +1,227 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+[bsd_tablegen(name = name,
+    src = "//contrib/llvm-project/llvm/include:llvm/Frontend/" + source,
+    includes = ["//contrib/llvm-project/llvm/include:llvm/Frontend/Directive/DirectiveBase.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = [flag],
+    output = "llvm/Frontend/" + output, tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for name, source, flag, output in [
+    ("openacc_impl", "OpenACC/ACC.td", "--gen-directive-impl", "OpenACC/ACC.inc"),
+    ("openmp_decl", "OpenMP/OMP.td", "--gen-directive-decl", "OpenMP/OMP.h.inc"),
+    ("openmp_impl", "OpenMP/OMP.td", "--gen-directive-impl", "OpenMP/OMP.inc"),
+]]
+cc_library(name = "directive_headers", hdrs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "directive_outputs", srcs = [":openacc_impl", ":openmp_decl", ":openmp_impl"], visibility = ["//visibility:public"])
+
+_TARGET_DEFINITIONS = [
+    [
+        "AArch64",
+        "AArch64",
+        "-gen-arm-target-def",
+        "AArch64TargetParserDef.inc"
+    ],
+    [
+        "ARM",
+        "ARM",
+        "-gen-arm-target-def",
+        "ARMTargetParserDef.inc"
+    ],
+    [
+        "RISCV",
+        "RISCV",
+        "-gen-riscv-target-def",
+        "RISCVTargetParserDef.inc"
+    ],
+    [
+        "PowerPC",
+        "PPC",
+        "-gen-target-features",
+        "PPCGenTargetFeatures.inc"
+    ]
+]
+[bsd_tablegen(name = arch.lower() + "_target_definitions",
+    src = "//contrib/llvm-project/llvm/lib/Target/" + arch + ":" + stem + ".td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/" + arch + ":definitions", "//contrib/llvm-project/llvm/include:" + arch.lower() + "_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/" + arch],
+    flags = [flag], output = "llvm/TargetParser/" + output, tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for arch, stem, flag, output in _TARGET_DEFINITIONS]
+cc_library(name = "target_definition_headers", hdrs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "target_definition_outputs", srcs = [":" + arch.lower() + "_target_definitions" for arch, _, _, _ in _TARGET_DEFINITIONS], visibility = ["//visibility:public"])
+
+bsd_tablegen(name = "attributes", src = "//contrib/llvm-project/llvm/include:llvm/IR/Attributes.td", flags = ["-gen-attrs"], output = "llvm/IR/Attributes.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap", visibility = ["//visibility:public"])
+bsd_tablegen(name = "intrinsic_enums", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td", includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-intrinsic-enums"], output = "llvm/IR/IntrinsicEnums.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap", visibility = ["//visibility:public"])
+
+cc_library(name = "ir_generated_headers", hdrs = [":attributes", ":intrinsic_enums"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+
+_INTRINSIC_ARCHITECTURES = {
+    "AArch64": "aarch64",
+    "AMDGPU": "amdgcn",
+    "ARM": "arm",
+    "BPF": "bpf",
+    "DirectX": "dx",
+    "Hexagon": "hexagon",
+    "LoongArch": "loongarch",
+    "Mips": "mips",
+    "NVPTX": "nvvm",
+    "PowerPC": "ppc",
+    "R600": "r600",
+    "RISCV": "riscv",
+    "S390": "s390",
+    "SPIRV": "spv",
+    "VE": "ve",
+    "WebAssembly": "wasm",
+    "X86": "x86",
+    "XCore": "xcore"
+}
+[bsd_tablegen(name = "intrinsics_" + arch,
+    src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td",
+    includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"],
+    include_dirs = ["contrib/llvm-project/llvm/include"],
+    flags = ["-gen-intrinsic-enums", "-intrinsic-prefix=" + prefix],
+    output = "llvm/IR/Intrinsics" + arch + ".h", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for arch, prefix in _INTRINSIC_ARCHITECTURES.items()]
+bsd_tablegen(name = "intrinsic_implementation", src = "//contrib/llvm-project/llvm/include:llvm/IR/Intrinsics.td",
+    includes = ["//contrib/llvm-project/llvm/include:intrinsic_definitions"], include_dirs = ["contrib/llvm-project/llvm/include"],
+    flags = ["-gen-intrinsic-impl"], output = "llvm/IR/IntrinsicImpl.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+bsd_tablegen(name = "runtime_libcalls", src = "//contrib/llvm-project/llvm/include:llvm/IR/RuntimeLibcalls.td",
+    includes = ["//contrib/llvm-project/llvm/include:llvm/IR/RuntimeLibcallsImpl.td", "//contrib/llvm-project/llvm/include:llvm/TableGen/SetTheory.td"],
+    include_dirs = ["contrib/llvm-project/llvm/include"], flags = ["-gen-runtime-libcalls"],
+    output = "llvm/IR/RuntimeLibcalls.inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap")
+_INTRINSIC_OUTPUTS = [":intrinsics_" + arch for arch in _INTRINSIC_ARCHITECTURES] + [":intrinsic_implementation", ":runtime_libcalls"]
+cc_library(name = "intrinsic_headers", hdrs = _INTRINSIC_OUTPUTS, deps = [":ir_generated_headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "intrinsic_outputs", srcs = _INTRINSIC_OUTPUTS, visibility = ["//visibility:public"])
+
+_X86_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('AsmWriter1', ['-gen-asm-writer', '-asmwriternum=1']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('FoldTables', ['-gen-x86-fold-tables', '-asmwriternum=1']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info', '-instr-info-expand-mi-operand-info=0']), ('InstrMapping', ['-gen-x86-instr-mapping']), ('MnemonicTables', ['-gen-x86-mnemonic-tables', '-asmwriternum=1']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "x86_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/X86:X86.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/X86:definitions", "//contrib/llvm-project/llvm/include:x86_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/X86"],
+    flags = flags, output = "X86Gen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _X86_TABLES]
+cc_library(name = "x86_generated_headers", hdrs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "x86_generated_outputs", srcs = [":x86_" + stem.lower() for stem, _ in _X86_TABLES], visibility = ["//visibility:public"])
+
+_ARM_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget']), ('SystemRegister', ['-gen-searchable-tables'])]
+[bsd_tablegen(name = "arm_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/ARM:ARM.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/ARM:definitions", "//contrib/llvm-project/llvm/include:arm_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/ARM"],
+    flags = flags, output = "ARMGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _ARM_TABLES]
+cc_library(name = "arm_generated_headers", hdrs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "arm_generated_outputs", srcs = [":arm_" + stem.lower() for stem, _ in _ARM_TABLES], visibility = ["//visibility:public"])
+
+_POWERPC_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "powerpc_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/PowerPC:PPC.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/PowerPC:definitions", "//contrib/llvm-project/llvm/include:powerpc_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/PowerPC"],
+    flags = flags, output = "PPCGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _POWERPC_TABLES]
+cc_library(name = "powerpc_generated_headers", hdrs = [":powerpc_" + stem.lower() for stem, _ in _POWERPC_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "powerpc_generated_outputs", srcs = [":powerpc_" + stem.lower() for stem, _ in _POWERPC_TABLES], visibility = ["//visibility:public"])
+
+_AARCH64_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('AsmWriter1', ['-gen-asm-writer', '-asmwriternum=1']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('FastISel', ['-gen-fast-isel']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('O0PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=AArch64O0PreLegalizerCombiner']), ('PostLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=AArch64PostLegalizerCombiner']), ('PostLegalizeGILowering', ['-gen-global-isel-combiner', '-combiners=AArch64PostLegalizerLowering']), ('PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=AArch64PreLegalizerCombiner']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SDNodeInfo', ['-gen-sd-node-info']), ('SubtargetInfo', ['-gen-subtarget']), ('SystemOperands', ['-gen-searchable-tables'])]
+[bsd_tablegen(name = "aarch64_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/AArch64:AArch64.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/AArch64:definitions", "//contrib/llvm-project/llvm/include:aarch64_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/AArch64"],
+    flags = flags, output = "AArch64Gen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _AARCH64_TABLES]
+cc_library(name = "aarch64_generated_headers", hdrs = [":aarch64_" + stem.lower() for stem, _ in _AARCH64_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "aarch64_generated_outputs", srcs = [":aarch64_" + stem.lower() for stem, _ in _AARCH64_TABLES], visibility = ["//visibility:public"])
+
+_RISCV_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('CompressInstEmitter', ['-gen-compress-inst-emitter']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('MacroFusion', ['-gen-macro-fusion-pred']), ('O0PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVO0PreLegalizerCombiner']), ('PostLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVPostLegalizerCombiner']), ('PreLegalizeGICombiner', ['-gen-global-isel-combiner', '-combiners=RISCVPreLegalizerCombiner']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SearchableTables', ['-gen-searchable-tables']), ('SDNodeInfo', ['-gen-sd-node-info']), ('SubtargetInfo', ['-gen-subtarget']), ('SystemOperands', ['-gen-searchable-tables'])]
+[bsd_tablegen(name = "riscv_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/RISCV:" + ("RISCVGISel.td" if flags[0].startswith("-gen-global-isel") else "RISCV.td"),
+    includes = ["//contrib/llvm-project/llvm/lib/Target/RISCV:definitions", "//contrib/llvm-project/llvm/include:riscv_target_inputs"] + (["//contrib/llvm-project/llvm/lib/Target/RISCV:gisel_definitions", "//contrib/llvm-project/llvm/include:riscv_gisel_inputs"] if flags[0].startswith("-gen-global-isel") else []),
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/RISCV"],
+    flags = flags, output = "RISCVGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _RISCV_TABLES]
+cc_library(name = "riscv_generated_headers", hdrs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "riscv_generated_outputs", srcs = [":riscv_" + stem.lower() for stem, _ in _RISCV_TABLES], visibility = ["//visibility:public"])
+
+_BPF_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('CallingConv', ['-gen-callingconv']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('GlobalISel', ['-gen-global-isel']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('RegisterBank', ['-gen-register-bank']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "bpf_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/BPF:BPF.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/BPF:definitions", "//contrib/llvm-project/llvm/include:bpf_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/BPF"],
+    flags = flags, output = "BPFGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _BPF_TABLES]
+cc_library(name = "bpf_generated_headers", hdrs = [":bpf_" + stem.lower() for stem, _ in _BPF_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "bpf_generated_outputs", srcs = [":bpf_" + stem.lower() for stem, _ in _BPF_TABLES], visibility = ["//visibility:public"])
+
+
+_LOONGARCH_TABLES = [('AsmMatcher', ['-gen-asm-matcher']), ('AsmWriter', ['-gen-asm-writer']), ('DAGISel', ['-gen-dag-isel']), ('DisassemblerTables', ['-gen-disassembler']), ('InstrInfo', ['-gen-instr-info']), ('MCCodeEmitter', ['-gen-emitter']), ('MCPseudoLowering', ['-gen-pseudo-lowering']), ('RegisterInfo', ['-gen-register-info']), ('SubtargetInfo', ['-gen-subtarget'])]
+[bsd_tablegen(name = "loongarch_" + stem.lower(),
+    src = "//contrib/llvm-project/llvm/lib/Target/LoongArch:LoongArch.td",
+    includes = ["//contrib/llvm-project/llvm/lib/Target/LoongArch:definitions", "//contrib/llvm-project/llvm/include:loongarch_target_inputs"],
+    include_dirs = ["contrib/llvm-project/llvm/include", "contrib/llvm-project/llvm/lib/Target/LoongArch"],
+    flags = flags, output = "LoongArchGen" + stem + ".inc", tool = "//usr.bin/clang/llvm-tblgen:bootstrap",
+) for stem, flags in _LOONGARCH_TABLES]
+cc_library(name = "loongarch_generated_headers", hdrs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], strip_include_prefix = ".", visibility = ["//visibility:public"])
+filegroup(name = "loongarch_generated_outputs", srcs = [":loongarch_" + stem.lower() for stem, _ in _LOONGARCH_TABLES], visibility = ["//visibility:public"])
+
+# Installed LLVM source/object aggregate; linkage and installation remain separate.
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_sources")
+_COMPONENTS = [
+    "//contrib/llvm-project/llvm/lib/Analysis:analysis",
+    "//contrib/llvm-project/llvm/lib/AsmParser:asmparser",
+    "//contrib/llvm-project/llvm/lib:support",
+    "//contrib/llvm-project/llvm/lib/BinaryFormat:binaryformat",
+    "//contrib/llvm-project/llvm/lib/Bitcode:bitcode",
+    "//contrib/llvm-project/llvm/lib/Bitstream:bitstream",
+    "//contrib/llvm-project/llvm/lib/CGData:cgdata",
+    "//contrib/llvm-project/llvm/lib/CodeGen:codegen",
+    "//contrib/llvm-project/llvm/lib/CodeGenTypes:codegentypes",
+    "//contrib/llvm-project/llvm/lib/DebugInfo:debuginfo",
+    "//contrib/llvm-project/llvm/lib/Debuginfod:debuginfod",
+    "//contrib/llvm-project/llvm/lib/Demangle:demangle",
+    "//contrib/llvm-project/llvm/lib/ExecutionEngine:execution_engine",
+    "//contrib/llvm-project/llvm/lib/Frontend:frontend",
+    "//contrib/llvm-project/llvm/lib/IR:ir",
+    "//contrib/llvm-project/llvm/lib/IRPrinter:irprinter",
+    "//contrib/llvm-project/llvm/lib/IRReader:irreader",
+    "//contrib/llvm-project/llvm/lib/LTO:lto",
+    "//contrib/llvm-project/llvm/lib/Linker:linker",
+    "//contrib/llvm-project/llvm/lib/MC:mc",
+    "//contrib/llvm-project/llvm/lib/ObjCopy:objcopy",
+    "//contrib/llvm-project/llvm/lib/Object:object",
+    "//contrib/llvm-project/llvm/lib/ObjectYAML:objectyaml",
+    "//contrib/llvm-project/llvm/lib/Option:option",
+    "//contrib/llvm-project/llvm/lib/Passes:passes",
+    "//contrib/llvm-project/llvm/lib/ProfileData:profiledata",
+    "//contrib/llvm-project/llvm/lib/Remarks:remarks",
+    "//contrib/llvm-project/llvm/lib/SandboxIR:sandboxir",
+    "//contrib/llvm-project/llvm/lib/Target:target",
+    "//contrib/llvm-project/llvm/lib/TargetParser:targetparser",
+    "//contrib/llvm-project/llvm/lib/TextAPI:textapi",
+    "//contrib/llvm-project/llvm/lib/ToolDrivers/llvm-dlltool:llvm_dlltool",
+    "//contrib/llvm-project/llvm/lib/ToolDrivers/llvm-lib:llvm_lib",
+    "//contrib/llvm-project/llvm/lib/Transforms:transforms",
+    "//contrib/llvm-project/llvm/lib/WindowsDriver:windowsdriver"
+] + select({"//tools/build/bazel/config:clang_extras_enabled": [
+    "//contrib/llvm-project/llvm/lib/DWARFCFIChecker:dwarfcfichecker",
+    "//contrib/llvm-project/llvm/lib/DWARFLinker:dwarflinker",
+    "//contrib/llvm-project/llvm/lib/DWP:dwp",
+    "//contrib/llvm-project/llvm/lib/MCA:mca",
+    "//contrib/llvm-project/llvm/lib/XRay:xray"
+], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_aarch64_enabled": ["//contrib/llvm-project/llvm/lib/Target/AArch64:aarch64"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_arm_enabled": ["//contrib/llvm-project/llvm/lib/Target/ARM:arm"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_bpf_enabled": ["//contrib/llvm-project/llvm/lib/Target/BPF:bpf"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_loongarch_enabled": ["//contrib/llvm-project/llvm/lib/Target/LoongArch:loongarch"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_powerpc_enabled": ["//contrib/llvm-project/llvm/lib/Target/PowerPC:powerpc"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_riscv_enabled": ["//contrib/llvm-project/llvm/lib/Target/RISCV:riscv"], "//conditions:default": []}) + select({"//tools/build/bazel/config:llvm_target_x86_enabled": ["//contrib/llvm-project/llvm/lib/Target/X86:x86"], "//conditions:default": []})
+_COMPONENTS += select({"//tools/build/bazel/config:clang_extras_or_lldb_enabled": ["//contrib/llvm-project/llvm/lib/Telemetry:telemetry"], "//conditions:default": []})
+bsd_component_sources(name = "source_inventory", groups = _COMPONENTS, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = _COMPONENTS, pic = True, visibility = ["//visibility:public"])
+
+# Imported native aggregate preserves exactly the selected installed LLVM objects.
+# Compression/terminal libraries remain executable dependencies, as in llvm.prog.mk.
+cc_import(name = "llvm", pic_static_library = ":pic_archive",
+    deps = ["//lib/libc++:cxx", "//lib/msun:m"], visibility = ["//visibility:public"])
+cc_shared_library(name = "llvm_shared", deps = [":llvm"],
+    dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    shared_lib_name = "libprivatellvm.so.21",
+    user_link_flags = ["-Wl,-soname,libprivatellvm.so.21", "-Wl,--gc-sections", "-Wl,-znow", "-Wl,-zrelro", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
+compiler_shared_installation(name = "install_manifest", library = "llvm", major = 21, binary = ":llvm_shared")

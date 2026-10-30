@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "entries": {
+    "/": {
+      "type": "directory",
+      "uid": 0,
+      "gid": 0,
+      "mode": 493,
+      "flags_set": 0,
+      "source": "explicit generation root layout policy",
+      "replaces": []
+    }
+  }
+}

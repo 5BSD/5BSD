@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 INCS=	capsicum_helpers.h
 
 MAN+=	capsicum_helpers.3
@@ -15,5 +17,8 @@ MLINKS+=capsicum_helpers.3 caph_limit_stdout.3
 MLINKS+=capsicum_helpers.3 caph_limit_stdio.3
 MLINKS+=capsicum_helpers.3 caph_cache_tzdata.3
 MLINKS+=capsicum_helpers.3 caph_cache_catpages.3
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.lib.mk>

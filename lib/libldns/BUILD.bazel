@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "ldns", srcs = ['//contrib/ldns:buffer.c', '//contrib/ldns:dane.c', '//contrib/ldns:dname.c', '//contrib/ldns:dnssec.c', '//contrib/ldns:dnssec_sign.c', '//contrib/ldns:dnssec_verify.c', '//contrib/ldns:dnssec_zone.c', '//contrib/ldns:duration.c', '//contrib/ldns:edns.c', '//contrib/ldns:error.c', '//contrib/ldns:higher.c', '//contrib/ldns:host2str.c', '//contrib/ldns:host2wire.c', '//contrib/ldns:keys.c', '//contrib/ldns:net.c', '//contrib/ldns:packet.c', '//contrib/ldns:parse.c', '//contrib/ldns:radix.c', '//contrib/ldns:rbtree.c', '//contrib/ldns:rdata.c', '//contrib/ldns:resolver.c', '//contrib/ldns:rr.c', '//contrib/ldns:rr_functions.c', '//contrib/ldns:sha1.c', '//contrib/ldns:sha2.c', '//contrib/ldns:str2host.c', '//contrib/ldns:tsig.c', '//contrib/ldns:update.c', '//contrib/ldns:util.c', '//contrib/ldns:wire2host.c', '//contrib/ldns:zone.c', '//contrib/ldns:compat/b64_ntop.c', '//contrib/ldns:compat/b64_pton.c'],
+    deps = ["//contrib/ldns:headers", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"],
+    local_defines = ["OPENSSL_API_COMPAT=0x10100000L"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ldns"], visibility = ["//visibility:public"])
+# ABI version declared by libldns.
+cc_shared_library(name = "ldns_shared", deps = [":ldns"], dynamic_deps = ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"], shared_lib_name = "libprivateldns.so.5",
+    user_link_flags = ["-Wl,-z,defs", "-Wl,-soname,libprivateldns.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libldns","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "wire_test", srcs = ["native_wire_test.c"], deps = [":ldns"],
+    dynamic_deps = [":ldns_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"],
+    features = ["bsd_test_runtime_paths"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

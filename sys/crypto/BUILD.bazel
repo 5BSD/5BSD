@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["md4c.c", "md5c.c"], visibility = ["//lib/libmd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "intake_headers", hdrs = ["intake.h"], includes = [".."], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "sha1_headers", hdrs = ["sha1.h"], includes = [".."], visibility = ["//sys/security/mac_veriexec:__pkg__"])
+amd64_generic_module_objects(name = "sha1_module", srcs = ["sha1.c"], deps = [":sha1_headers"])

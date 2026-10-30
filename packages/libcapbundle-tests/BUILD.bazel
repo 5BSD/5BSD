@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_pkg_dependency.bzl", "bsd_pkg_dependency")
+bsd_pkg_dependency(name = "libcapbundle-tests_dependency", package = "libcapbundle-tests", origin = "base/5BSD-libcapbundle-tests",
+    version = "//tools/build/bazel/config:package_version", visibility = ["//visibility:public"])

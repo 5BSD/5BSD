@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//lib/ncurses/tinfo:abi.bzl", "LIBRARY_ABIS")
+cc_library(
+    name = "form",
+    srcs = ['//contrib/ncurses:form/fld_arg.c', '//contrib/ncurses:form/fld_attr.c', '//contrib/ncurses:form/fld_current.c', '//contrib/ncurses:form/fld_def.c', '//contrib/ncurses:form/fld_dup.c', '//contrib/ncurses:form/fld_ftchoice.c', '//contrib/ncurses:form/fld_ftlink.c', '//contrib/ncurses:form/fld_info.c', '//contrib/ncurses:form/fld_just.c', '//contrib/ncurses:form/fld_link.c', '//contrib/ncurses:form/fld_max.c', '//contrib/ncurses:form/fld_move.c', '//contrib/ncurses:form/fld_newftyp.c', '//contrib/ncurses:form/fld_opts.c', '//contrib/ncurses:form/fld_pad.c', '//contrib/ncurses:form/fld_page.c', '//contrib/ncurses:form/fld_stat.c', '//contrib/ncurses:form/fld_type.c', '//contrib/ncurses:form/fld_user.c', '//contrib/ncurses:form/frm_cursor.c', '//contrib/ncurses:form/frm_data.c', '//contrib/ncurses:form/frm_def.c', '//contrib/ncurses:form/frm_driver.c', '//contrib/ncurses:form/frm_hook.c', '//contrib/ncurses:form/frm_opts.c', '//contrib/ncurses:form/frm_page.c', '//contrib/ncurses:form/frm_post.c', '//contrib/ncurses:form/frm_req_name.c', '//contrib/ncurses:form/frm_scale.c', '//contrib/ncurses:form/frm_sub.c', '//contrib/ncurses:form/frm_user.c', '//contrib/ncurses:form/frm_win.c', '//contrib/ncurses:form/fty_alnum.c', '//contrib/ncurses:form/fty_alpha.c', '//contrib/ncurses:form/fty_enum.c', '//contrib/ncurses:form/fty_int.c', '//contrib/ncurses:form/fty_ipv4.c', '//contrib/ncurses:form/fty_num.c', '//contrib/ncurses:form/fty_regex.c'],
+    deps = ["//lib/ncurses/ncurses:ncurses", "//contrib/ncurses:form_headers"],
+    implementation_deps = ["//lib/ncurses/tinfo:library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"] + ["//contrib/ncurses:menu_headers"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H"],
+    linkstatic = True, visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":form"], visibility = ["//visibility:public"])
+cc_shared_library(name = "form_shared", deps = [":form"],
+    shared_lib_name = "libformw.so." + str(LIBRARY_ABIS["formw"]),
+    dynamic_deps = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared"],
+    user_link_flags = ["-Wl,-soname,libformw.so." + str(LIBRARY_ABIS["formw"]), "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "install_library")
+install_library(name = "install_manifest")

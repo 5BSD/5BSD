@@ -1,0 +1,492 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":generators.bzl", "libmd_highlevel", "libmd_manual")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_shared_library")
+load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
+
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
+
+load(":installation.bzl", "libmd_installation")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
+
+# Source-owned generator metadata; no Make queries during Bazel builds.
+
+libmd_highlevel(
+    name = "md4_highlevel",
+    output = "md4hl.c",
+    digest_bytes = 16,
+    header = "md4",
+    symbol = "MD4",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "md5_highlevel",
+    output = "md5hl.c",
+    digest_bytes = 16,
+    header = "md5",
+    symbol = "MD5",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha0_highlevel",
+    output = "sha0hl.c",
+    digest_bytes = 20,
+    header = "sha",
+    symbol = "SHA_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha1_highlevel",
+    output = "sha1hl.c",
+    digest_bytes = 20,
+    header = "sha",
+    symbol = "SHA1_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha224_highlevel",
+    output = "sha224hl.c",
+    digest_bytes = 28,
+    header = "sha224",
+    symbol = "SHA224_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha256_highlevel",
+    output = "sha256hl.c",
+    digest_bytes = 32,
+    header = "sha256",
+    symbol = "SHA256_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha384_highlevel",
+    output = "sha384hl.c",
+    digest_bytes = 48,
+    header = "sha384",
+    symbol = "SHA384_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha512_highlevel",
+    output = "sha512hl.c",
+    digest_bytes = 64,
+    header = "sha512",
+    symbol = "SHA512_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha512t224_highlevel",
+    output = "sha512t224hl.c",
+    digest_bytes = 28,
+    header = "sha512t",
+    symbol = "SHA512_224_",
+    context = "SHA512_CTX",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "sha512t256_highlevel",
+    output = "sha512t256hl.c",
+    digest_bytes = 32,
+    header = "sha512t",
+    symbol = "SHA512_256_",
+    context = "SHA512_CTX",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "rmd160_highlevel",
+    output = "rmd160hl.c",
+    digest_bytes = 20,
+    header = "ripemd",
+    symbol = "RIPEMD160_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "skein256_highlevel",
+    output = "skein256hl.c",
+    digest_bytes = 32,
+    header = "skein",
+    symbol = "SKEIN256_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "skein512_highlevel",
+    output = "skein512hl.c",
+    digest_bytes = 64,
+    header = "skein",
+    symbol = "SKEIN512_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_highlevel(
+    name = "skein1024_highlevel",
+    output = "skein1024hl.c",
+    digest_bytes = 128,
+    header = "skein",
+    symbol = "SKEIN1024_",
+    context = "-",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+filegroup(
+    name = "highlevel_sources",
+    srcs = [
+        ":md4_highlevel",
+        ":md5_highlevel",
+        ":sha0_highlevel",
+        ":sha1_highlevel",
+        ":sha224_highlevel",
+        ":sha256_highlevel",
+        ":sha384_highlevel",
+        ":sha512_highlevel",
+        ":sha512t224_highlevel",
+        ":sha512t256_highlevel",
+        ":rmd160_highlevel",
+        ":skein256_highlevel",
+        ":skein512_highlevel",
+        ":skein1024_highlevel",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# These compilation groups currently model the maintained amd64 optimized build.
+# Other architectures must receive their own source/flag selections explicitly.
+_AMD64 = ["@platforms//cpu:x86_64", "@platforms//os:freebsd"]
+_C_DEFINES = ["WEAK_REFS", "MD5_ASM", "SHA1_ASM", "SKEIN_ASM", "SKEIN_USE_ASM=1792"]
+_HEADERS = [":headers", "//sys/sys:md_headers", "//sys/crypto/sha2:headers", "//sys/crypto/skein:headers"]
+
+cc_library(
+    name = "headers",
+    hdrs = ["md4.h", "md5.h", "ripemd.h", "sha.h"],
+    strip_include_prefix = "/lib/libmd",
+    deps = ["//sys/sys:md_headers"],
+)
+
+cc_library(
+    name = "common_objects",
+    srcs = [
+        ":highlevel_sources",
+        "//sys/crypto:md4c.c", "//sys/crypto:md5c.c",
+        "rmd160c.c", "rmd_locl.h", "rmdconst.h", "sha0c.c", "sha1c.c", "sha_locl.h",
+        "//sys/crypto/sha2:sha256c.c", "//sys/crypto/sha2:sha512c.c",
+        "//sys/crypto/skein:skein.c",
+        "amd64/md5dispatch.c", "amd64/sha1dispatch.c",
+    ],
+    local_defines = _C_DEFINES,
+    deps = _HEADERS,
+    target_compatible_with = _AMD64,
+)
+
+cc_library(
+    name = "skein_block_objects",
+    srcs = ["//sys/crypto/skein:skein_block.c"],
+    local_defines = _C_DEFINES + ["SKEIN_LOOP=995"],
+    deps = _HEADERS,
+    target_compatible_with = _AMD64,
+)
+
+cc_library(
+    name = "assembly_objects",
+    srcs = ["amd64/md5block.S", "amd64/sha1block.S", "//sys/crypto/skein:amd64/skein_block_asm.S"],
+    local_defines = ["SKEIN_LOOP=0", "ELF"],
+    copts = ["-Wa,--noexecstack"],
+    deps = _HEADERS,
+    target_compatible_with = _AMD64,
+)
+
+filegroup(
+    name = "compilation",
+    srcs = [":common_objects", ":skein_block_objects", ":assembly_objects"],
+    target_compatible_with = _AMD64,
+    visibility = ["//visibility:public"],
+)
+
+# Aggregate the object groups through rules_cc rather than installing only one
+# cc_library's archive and silently losing its transitive compilation groups.
+cc_static_library(
+    name = "md",
+    deps = [":common_objects", ":skein_block_objects", ":assembly_objects"],
+    target_compatible_with = _AMD64,
+    visibility = ["//visibility:public"],
+)
+
+# Consume the actual aggregate archive in runtime qualification, not a separate
+# reconstruction of its object dependencies.
+cc_import(
+    name = "md_archive",
+    static_library = ":md",
+    deps = _HEADERS,
+    target_compatible_with = _AMD64,
+    visibility = ["//lib/libmd/tests:__pkg__", "//sbin/md5:__pkg__", "//lib/liblzma:__pkg__", "//lib/libarchive:__pkg__"],
+)
+
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_library(
+    name = "md_link",
+    deps = [":common_objects", ":skein_block_objects", ":assembly_objects"],
+    target_compatible_with = _AMD64,
+    # Public CcInfo interface for the installed base library.
+    visibility = ["//visibility:public"],
+)
+
+cc_shared_library(
+    name = "md_shared",
+    deps = [":md_link"],
+    shared_lib_name = "libmd.so.7",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = [
+        "-Wl,-soname,libmd.so.7",
+        "-Wl,--version-script=$(location :version_map),--no-undefined-version",
+        "-Wl,--fatal-warnings,--warn-shared-textrel",
+    ],
+    target_compatible_with = _AMD64,
+    visibility = ["//visibility:public"],
+)
+
+bsd_debug_split(
+    name = "md_debug",
+    src = ":md_shared",
+    binary_name = "install/libmd.so.7",
+    debug_name = "install/libmd.so.7.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+)
+bsd_strip_binary(
+    name = "md_install",
+    src = ":md_debug",
+    output = "stripped/libmd.so.7",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip",
+    strip_inputs = "@bsd_sdk//toolchain:strip_inputs",
+    visibility = ["//visibility:public"],
+)
+
+
+libmd_manual(
+    name = "md4_manual",
+    output = "md4.3",
+    lower = "md4",
+    upper = "MD4",
+    template = "mdX.3",
+    copyright = "md4.copyright",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    cat = "@bsd_sdk//toolchain:cat",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+libmd_manual(
+    name = "md5_manual",
+    output = "md5.3",
+    lower = "md5",
+    upper = "MD5",
+    template = "mdX.3",
+    copyright = "md5.copyright",
+    shell = "@bsd_sdk//toolchain:sh",
+    sed = "@bsd_sdk//toolchain:sed",
+    cat = "@bsd_sdk//toolchain:cat",
+    mv = "@bsd_sdk//toolchain:mv",
+    rm = "@bsd_sdk//toolchain:rm",
+)
+
+bsd_compress(
+    name = "md4_manual_gzip",
+    src = ":md4_manual",
+    output = "md4.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "md5_manual_gzip",
+    src = ":md5_manual",
+    output = "md5.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "ripemd_manual_gzip",
+    src = "ripemd.3",
+    output = "ripemd.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "sha_manual_gzip",
+    src = "sha.3",
+    output = "sha.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "sha256_manual_gzip",
+    src = "sha256.3",
+    output = "sha256.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "sha512_manual_gzip",
+    src = "sha512.3",
+    output = "sha512.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+bsd_compress(
+    name = "skein_manual_gzip",
+    src = "skein.3",
+    output = "skein.3.gz",
+    arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"],
+)
+
+filegroup(name = "manuals", srcs = [':md4_manual_gzip', ':md5_manual_gzip', ':ripemd_manual_gzip', ':sha_manual_gzip', ':sha256_manual_gzip', ':sha512_manual_gzip', ':skein_manual_gzip'], visibility = ["//visibility:public"])
+
+libmd_installation(name = "install_manifest")
+
+# Component qualification artifact, not a complete runtime/tests package family.
+bsd_install_archive(
+    name = "component_archive",
+    testonly = True,
+    # bsd.test.mk creates these debug ancestors during installation.
+    directories = {
+        "/usr/lib/debug/usr/tests/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}',
+        "/usr/lib/debug/usr/tests/lib/libmd": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}',
+    },
+    manifests = [":install_manifest", "//lib/libmd/tests:install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)
+
+# Audits this component's partition only. Runtime/tests contain many additional
+# components and their complete package manifests must be aggregated elsewhere.
+bsd_pkg_layout(
+    name = "component_package_layout",
+    scope = "component",
+    testonly = True,
+    manifests = [":install_manifest", "//lib/libmd/tests:install_manifest"],
+    packages = ["runtime", "runtime-dbg", "runtime-dev", "tests", "tests-dbg"] + select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["runtime-man"],
+        "//conditions:default": [],
+    }),
+    suffix_tags = ["dbg", "dev"],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":classes.bzl", "geom_class_labels")
+exports_files(["plugin_installation.bzl", "classes.bzl", "empty.mtree"])
+
+filegroup(
+    name = "plugins",
+    srcs = geom_class_labels("//lib/geom/{cls}:geom_{cls}"),
+    visibility = ["//visibility:public"],
+)
+
+# Individual installation archives, not a merged filesystem or pkgbase package.
+filegroup(
+    name = "installation_archives",
+    srcs = geom_class_labels("//lib/geom/{cls}:install_archive"),
+    visibility = ["//visibility:public"],
+)

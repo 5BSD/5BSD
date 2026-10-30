@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":sfp_tables.bzl", "sfp_tables")
+sfp_tables(
+    name = "sfp_tables",
+    templates = ["libifconfig_sfp_tables.tpl.h", "libifconfig_sfp_tables.tpl.c", "libifconfig_sfp_tables_internal.tpl.h"],
+    generator = "sfp.lua",
+    template_module = "//tools/lua:template.lua",
+    lua = "@bsd_sdk//toolchain:extra_flua",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_flua_runtime"],
+    visibility = ["//visibility:public"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+filegroup(name = "generated_headers", srcs = [":sfp_tables"], output_group = "headers")
+filegroup(name = "generated_sources", srcs = [":sfp_tables"], output_group = "sources")
+cc_library(
+    name = "headers",
+    hdrs = ["libifconfig.h", "libifconfig_sfp.h", ":generated_headers"],
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+)
+cc_library(name = "internal_headers", hdrs = ["libifconfig_internal.h"], strip_include_prefix = ".")
+# INTERNALLIB: linked into consumers; no installed shared library or API headers.
+[cc_library(
+    name = "ifconfig" + suffix,
+    srcs = ["libifconfig.c", "libifconfig_bridge.c", "libifconfig_carp.c",
+            "libifconfig_inet.c", "libifconfig_inet6.c", "libifconfig_internal.c",
+            "libifconfig_lagg.c", "libifconfig_media.c", "libifconfig_nl.c",
+            "libifconfig_sfp.c", ":generated_sources"],
+    deps = [":headers", "//lib/msun:m"],
+    implementation_deps = [":internal_headers"],
+    copts = ["-fPIE"] if suffix == "_pie" else [],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+) for suffix in ["", "_pie"]]
+
+bsd_component_archive(name = "static_archive", groups = [":ifconfig"], visibility = ["//visibility:public"])
+
+bsd_component_archive(name = "pie_archive", groups = [":ifconfig_pie"], visibility = ["//visibility:public"])

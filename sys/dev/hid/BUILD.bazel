@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "vhid_header", hdrs = ["vhid.h"], strip_include_prefix = "/sys",
+    visibility = ["//usr.sbin/BSDFilesystem:__pkg__", "//usr.sbin/BSDFilesystem/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))

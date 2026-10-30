@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# _STANDALONE is not enabled for the userland efivar consumer.
+cc_library(name = "efichar_header", hdrs = ["efichar.h"], strip_include_prefix = ".",
+    visibility = ["//lib/libefivar:__pkg__"])

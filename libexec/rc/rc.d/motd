@@ -21,6 +21,8 @@ PERMS="644"
 
 motd_start()
 {
+	local _template _temporary _version _status
+
 	#	Update kernel info in /var/run/motd
 	#	Must be done *before* interactive logins are possible
 	#	to prevent possible race conditions.
@@ -30,27 +32,64 @@ motd_start()
 		# Create missing template from existing regular motd file, if
 		# one exists.
 		if [ -f "${COMPAT_MOTD}" ]; then
-			sed -E '1{/^(FreeBSD|5BSD).*/{d;};};' "${COMPAT_MOTD}" > "${TEMPLATE}"
-			chmod $PERMS "${TEMPLATE}"
-			rm -f "${COMPAT_MOTD}"
+			# Publish a completed template before removing the legacy file.
+			# A failed write must not leave a partial template for next boot.
+			if ! _template=$(mktemp "${TEMPLATE}.XXXXXX"); then
+				warn "Unable to stage the motd template"
+				return 1
+			fi
+			if ! sed -E '1{/^(FreeBSD|5BSD).*/{d;};};' "${COMPAT_MOTD}" > "$_template" ||
+			    ! chmod "$PERMS" "$_template" ||
+			    ! mv -f "$_template" "${TEMPLATE}"; then
+				rm -f "$_template"
+				warn "Unable to migrate the motd template"
+				return 1
+			fi
+			if ! rm -f "${COMPAT_MOTD}"; then
+				warn "Unable to retire the legacy motd file"
+				return 1
+			fi
 		else
 			# Otherwise, create an empty template file.
-			install -c -o root -g wheel -m ${PERMS} /dev/null "${TEMPLATE}"
+			if ! install -c -o root -g wheel -m "${PERMS}" /dev/null "${TEMPLATE}"; then
+				warn "Unable to create the motd template"
+				return 1
+			fi
 		fi
 	fi
 	# Provide compatibility symlink:
 	if [ ! -h "${COMPAT_MOTD}" ]; then
-		ln -sF "${TARGET}" "${COMPAT_MOTD}"
+		if ! ln -sF "${TARGET}" "${COMPAT_MOTD}"; then
+			warn "Unable to create the motd compatibility link"
+			return 1
+		fi
 	fi
 
-	T=`mktemp -t motd`
-	uname -v | sed -e 's,^\([^#]*\) #\(.* [1-2][0-9][0-9][0-9]\).*/\([^\]*\)$,\1 (\3) #\2,' \
+	if ! _version=$(uname -v); then
+		warn "Unable to obtain the kernel version for motd"
+		return 1
+	fi
+	if ! _temporary=$(mktemp -t motd); then
+		warn "Unable to stage the generated motd"
+		return 1
+	fi
+	_status=0
+	if ! printf '%s\n' "$_version" | sed -e 's,^\([^#]*\) #\(.* [1-2][0-9][0-9][0-9]\).*/\([^\]*\)$,\1 (\3) #\2,' \
 	    -e 's,^\([^ ]*\) \([^ ]*\) \([^ ]*\) \([^ ]*\)$,\1 \2 (\4) \3,' \
-	    -e 's,^FreeBSD,5BSD,' > ${T}
-	cat "${TEMPLATE}" >> ${T}
-
-	install -C -o root -g wheel -m "${PERMS}" "$T" "${TARGET}"
-	rm -f "$T"
+	    -e 's,^FreeBSD,5BSD,' > "$_temporary" ||
+	    ! cat "${TEMPLATE}" >> "$_temporary"; then
+		_status=1
+	elif ! install -C -o root -g wheel -m "${PERMS}" "$_temporary" "${TARGET}"; then
+		_status=1
+	fi
+	if ! rm -f "$_temporary"; then
+		warn "Unable to remove temporary motd data"
+		_status=1
+	fi
+	if [ "$_status" -ne 0 ]; then
+		warn "Unable to update ${TARGET}"
+		return "$_status"
+	fi
 
 	startmsg '.'
 }

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+amd64_generic_module(module = "geom_uzip", objects = [
+    "//sys/geom/uzip:g_uzip_object_files",
+    "//sys/geom/uzip:g_uzip_zlib_object_files",
+    "//sys/geom/uzip:g_uzip_lzma_object_files",
+    "//sys/geom/uzip:g_uzip_wrkthr_object_files",
+] + select({
+    "//tools/build/bazel/config:kernel_zstdio_enabled": ["//sys/geom/uzip:g_uzip_zstd_object_files"],
+    "//conditions:default": [],
+}))

@@ -587,6 +587,15 @@ nfsvno_getfh(struct vnode *vp, fhandle_t *fhp, struct thread *p)
 	int error;
 
 	NFSBZERO((caddr_t)fhp, sizeof(fhandle_t));
+#ifdef MAC
+	/* Check the resolved object before issuing a handle, including objects
+	 * reached by lookup or mount crossing after initial handle admission. */
+	error = mac_vnode_check_fh(p->td_ucred, vp);
+	if (error != 0) {
+		NFSEXITCODE(error);
+		return (error);
+	}
+#endif
 	fhp->fh_fsid = vp->v_mount->mnt_stat.f_fsid;
 	error = VOP_VPTOFH(vp, &fhp->fh_fid);
 
@@ -650,6 +659,17 @@ nfsvno_accchk(struct vnode *vp, accmode_t accmode, struct ucred *cred,
 		goto out;
 	}
 
+#ifdef MAC
+	/* Use the request credential, not the server thread's ambient identity.
+	 * A mandatory denial must not enter the owner/root DAC fallback below. */
+	error = mac_vnode_check_access(cred, vp, accmode);
+	if (error != 0) {
+		if (vpislocked == 0)
+			NFSVOPUNLOCK(vp);
+		goto out;
+	}
+#endif
+
 	/*
 	 * Should the override still be applied when ACLs are enabled?
 	 */
@@ -704,6 +724,43 @@ nfsvno_setattr(struct vnode *vp, struct nfsvattr *nvap, struct ucred *cred,
 	int error, savedit;
 	time_t savbtime;
 
+#ifdef MAC
+	/* Authorize the complete requested change before either MDS mutation
+	 * or DS forwarding. Size changes need write and truncate admission. */
+	if (nvap->na_vattr.va_size != VNOVAL) {
+		error = mac_vnode_check_write(cred, cred, vp);
+		if (error != 0)
+			return (error);
+		error = mac_vnode_check_truncate(cred, vp);
+		if (error != 0)
+			return (error);
+	}
+	if (nvap->na_vattr.va_uid != (uid_t)VNOVAL ||
+	    nvap->na_vattr.va_gid != (gid_t)VNOVAL) {
+		error = mac_vnode_check_setowner(cred, vp,
+		    nvap->na_vattr.va_uid, nvap->na_vattr.va_gid);
+		if (error != 0)
+			return (error);
+	}
+	if (nvap->na_vattr.va_mode != (mode_t)VNOVAL) {
+		error = mac_vnode_check_setmode(cred, vp, nvap->na_vattr.va_mode);
+		if (error != 0)
+			return (error);
+	}
+	if (nvap->na_vattr.va_flags != VNOVAL) {
+		error = mac_vnode_check_setflags(cred, vp, nvap->na_vattr.va_flags);
+		if (error != 0)
+			return (error);
+	}
+	if (nvap->na_vattr.va_atime.tv_sec != VNOVAL ||
+	    nvap->na_vattr.va_mtime.tv_sec != VNOVAL) {
+		error = mac_vnode_check_setutimes(cred, vp,
+		    nvap->na_vattr.va_atime, nvap->na_vattr.va_mtime);
+		if (error != 0)
+			return (error);
+	}
+#endif
+
 	/*
 	 * If this is an exported file system and a pNFS service is running,
 	 * don't VOP_SETATTR() of size for the MDS file system.
@@ -718,6 +775,8 @@ nfsvno_setattr(struct vnode *vp, struct nfsvattr *nvap, struct ucred *cred,
 		if (nvap->na_vattr.va_uid != (uid_t)VNOVAL ||
 		    nvap->na_vattr.va_gid != (gid_t)VNOVAL ||
 		    nvap->na_vattr.va_mode != (mode_t)VNOVAL ||
+		    nvap->na_vattr.va_flags != VNOVAL ||
+		    nvap->na_vattr.va_birthtime.tv_sec != VNOVAL ||
 		    nvap->na_vattr.va_atime.tv_sec != VNOVAL ||
 		    nvap->na_vattr.va_mtime.tv_sec != VNOVAL)
 			savedit = 1;
@@ -767,6 +826,10 @@ nfsvno_namei(struct nfsrv_descript *nd, struct nameidata *ndp,
 	*retdirp = NULL;
 	cnp->cn_nameptr = cnp->cn_pnbuf;
 	ndp->ni_lcf = 0;
+#ifdef MAC
+	/* NOMACCHECK does not waive handle-based directory admission. */
+	ndp->ni_lcf |= NI_LCF_FHTRAVERSE;
+#endif
 	/*
 	 * Extract and set starting directory.
 	 */
@@ -876,6 +939,13 @@ nfsvno_namei(struct nfsrv_descript *nd, struct nameidata *ndp,
 		auio.uio_segflg = UIO_SYSSPACE;
 		auio.uio_td = NULL;
 		auio.uio_resid = MAXPATHLEN;
+#ifdef MAC
+		/* Public lookup follows links without the ordinary namei MAC
+		 * checks. Admit the resolved object before reading its target. */
+		error = mac_vnode_check_fh(curthread->td_ucred, ndp->ni_vp);
+		if (error != 0)
+			goto badlink1;
+#endif
 		error = VOP_READLINK(ndp->ni_vp, &auio, cnp->cn_cred);
 		if (error) {
 		badlink1:
@@ -1155,6 +1225,18 @@ nfsvno_read(struct vnode *vp, off_t off, int cnt, struct ucred *cred,
 	struct uio io, *uiop = &io;
 	struct nfsheur *nh;
 
+#ifdef MAC
+	/* NFS has no retained file credential: both roles use the current
+	 * request credential. Check before local or data-server side effects. */
+	error = mac_vnode_check_read(cred, cred, vp);
+	if (error != 0) {
+		*mpp = NULL;
+		*mpendp = NULL;
+		NFSEXITCODE(error);
+		return (error);
+	}
+#endif
+
 	/*
 	 * Attempt to read from a DS file. A return of ENOENT implies
 	 * there is no DS file to read.
@@ -1276,6 +1358,16 @@ nfsvno_write(struct vnode *vp, off_t off, int retlen, int *stable,
 	struct uio io, *uiop = &io;
 	struct nfsheur *nh;
 
+#ifdef MAC
+	/* NFS has no retained file credential: both roles use the current
+	 * request credential. Check before local or data-server side effects. */
+	error = mac_vnode_check_write(cred, cred, vp);
+	if (error != 0) {
+		NFSEXITCODE(error);
+		return (error);
+	}
+#endif
+
 	/*
 	 * Attempt to write to a DS file. A return of ENOENT implies
 	 * there is no DS file to write.
@@ -1327,6 +1419,27 @@ nfsvno_createsub(struct nfsrv_descript *nd, struct nameidata *ndp,
 	struct thread *p = curthread;
 
 	error = nd->nd_repstat;
+#ifdef MAC
+	/* The lookup can bypass pathname MAC checks. Admit both the mutation
+	 * directory and any existing target before create, pNFS or truncation. */
+	if (error == 0) {
+		error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+		if (error == 0 && ndp->ni_vp != NULL &&
+		    ndp->ni_vp != ndp->ni_dvp)
+			error = mac_vnode_check_fh(p->td_ucred, ndp->ni_vp);
+		if (error != 0) {
+			nfsvno_relpathbuf(ndp);
+			if (ndp->ni_dvp == ndp->ni_vp)
+				vrele(ndp->ni_dvp);
+			else
+				vput(ndp->ni_dvp);
+			if (ndp->ni_vp != NULL)
+				vput(ndp->ni_vp);
+			*vpp = NULL;
+			goto out;
+		}
+	}
+#endif
 	if (!error && ndp->ni_vp == NULL) {
 		if (nvap->na_type == VREG || nvap->na_type == VSOCK) {
 			error = ENOENT;
@@ -1461,6 +1574,16 @@ nfsvno_mknod(struct nameidata *ndp, struct nfsvattr *nvap, struct ucred *cred,
 		error = NFSERR_BADTYPE;
 		goto out;
 	}
+#ifdef MAC
+	/* Lookup may skip pathname MAC checks; admit the locked parent
+	 * before creating any object in it. */
+	error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+	if (error != 0) {
+		nfsvno_relpathbuf(ndp);
+		vput(ndp->ni_dvp);
+		goto out;
+	}
+#endif
 	if (vtyp == VSOCK) {
 		error = VOP_CREATE(ndp->ni_dvp, &ndp->ni_vp,
 		    &ndp->ni_cnd, &nvap->na_vattr);
@@ -1509,6 +1632,16 @@ nfsvno_mkdir(struct nameidata *ndp, struct nfsvattr *nvap, uid_t saved_uid,
 		error = EEXIST;
 		goto out;
 	}
+#ifdef MAC
+	/* Lookup may skip pathname MAC checks; admit the locked parent
+	 * before creating any object in it. */
+	error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+	if (error != 0) {
+		nfsvno_relpathbuf(ndp);
+		vput(ndp->ni_dvp);
+		goto out;
+	}
+#endif
 	error = VOP_MKDIR(ndp->ni_dvp, &ndp->ni_vp, &ndp->ni_cnd,
 	    &nvap->na_vattr);
 	VOP_VPUT_PAIR(ndp->ni_dvp, error == 0 ? &ndp->ni_vp : NULL, false);
@@ -1540,6 +1673,16 @@ nfsvno_symlink(struct nameidata *ndp, struct nfsvattr *nvap, char *pathcp,
 		goto out;
 	}
 
+#ifdef MAC
+	/* Lookup may skip pathname MAC checks; admit the locked parent
+	 * before creating any object in it. */
+	error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+	if (error != 0) {
+		nfsvno_relpathbuf(ndp);
+		vput(ndp->ni_dvp);
+		goto out;
+	}
+#endif
 	error = VOP_SYMLINK(ndp->ni_dvp, &ndp->ni_vp, &ndp->ni_cnd,
 	    &nvap->na_vattr, pathcp);
 	/*
@@ -1617,6 +1760,13 @@ nfsvno_removesub(struct nameidata *ndp, bool is_v4, struct nfsrv_descript *nd,
 
 	vp = ndp->ni_vp;
 	dsdvpp = NULL;
+#ifdef MAC
+	error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+	if (error == 0 && vp != ndp->ni_dvp)
+		error = mac_vnode_check_fh(p->td_ucred, vp);
+	if (error != 0)
+		goto out;
+#endif
 	if (vp->v_type == VDIR) {
 		error = NFSERR_ISDIR;
 	} else if (is_v4) {
@@ -1638,6 +1788,7 @@ nfsvno_removesub(struct nameidata *ndp, bool is_v4, struct nfsrv_descript *nd,
 		NFSD_DEBUG(4, "aft nfsrv_pnfsremove dsfilecnt=%d fname=%s\n",
 		    dsfilecnt, fname);
 	}
+out:
 	free(dsdvpp, M_TEMP);
 	if (is_v4 && (nd->nd_flag & ND_NFSV41) != 0 && error == 0)
 		error = nfsvno_getfh(vp, &fh, p);
@@ -1699,6 +1850,12 @@ nfsvno_rmdirsub(struct nameidata *ndp, int is_v4, struct ucred *cred,
 	 */
 	if (vp->v_vflag & VV_ROOT)
 		error = EBUSY;
+#ifdef MAC
+	if (error == 0)
+		error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+	if (error == 0)
+		error = mac_vnode_check_fh(p->td_ucred, vp);
+#endif
 out:
 	if (!error)
 		error = VOP_RMDIR(ndp->ni_dvp, vp, &ndp->ni_cnd);
@@ -1709,6 +1866,44 @@ out:
 	vput(vp);
 	nfsvno_relpathbuf(ndp);
 	NFSEXITCODE(error);
+	return (error);
+}
+
+/*
+ * Resolve and admit a rename source before destination lookup takes locks.
+ * Return the same unlocked references as the usual WANTPARENT lookup.
+ */
+int
+nfsvno_renamefrom(struct nfsrv_descript *nd, struct nameidata *ndp,
+    struct vnode *dp, struct nfsexstuff *exp, struct vnode **retdirp)
+{
+	int error;
+#ifdef MAC
+	uint64_t lockflags;
+
+	lockflags = ndp->ni_cnd.cn_flags & (LOCKPARENT | LOCKLEAF | WANTPARENT);
+	ndp->ni_cnd.cn_flags &= ~WANTPARENT;
+	ndp->ni_cnd.cn_flags |= LOCKPARENT | LOCKLEAF;
+#endif
+	error = nfsvno_namei(nd, ndp, dp, 0, exp, retdirp);
+#ifdef MAC
+	ndp->ni_cnd.cn_flags = (ndp->ni_cnd.cn_flags &
+	    ~(LOCKPARENT | LOCKLEAF | WANTPARENT)) | lockflags;
+	if (error == 0) {
+		error = mac_vnode_check_fh(curthread->td_ucred, ndp->ni_dvp);
+		if (error == 0 && ndp->ni_vp != ndp->ni_dvp)
+			error = mac_vnode_check_fh(curthread->td_ucred, ndp->ni_vp);
+		NFSVOPUNLOCK(ndp->ni_dvp);
+		if (ndp->ni_vp != ndp->ni_dvp)
+			NFSVOPUNLOCK(ndp->ni_vp);
+		if (error != 0) {
+			nfsvno_relpathbuf(ndp);
+			vrele(ndp->ni_dvp);
+			vrele(ndp->ni_vp);
+			ndp->ni_dvp = ndp->ni_vp = NULL;
+		}
+	}
+#endif
 	return (error);
 }
 
@@ -1783,6 +1978,15 @@ nfsvno_rename(struct nameidata *fromndp, struct nameidata *tondp,
 		error = EJUSTRETURN;
 		goto out;
 	}
+#ifdef MAC
+	/* The source was admitted before destination lookup. These destination
+	 * objects are locked now; check them before recall or replacement. */
+	error = mac_vnode_check_fh(p->td_ucred, tdvp);
+	if (error == 0 && tvp != NULL && tvp != tdvp)
+		error = mac_vnode_check_fh(p->td_ucred, tvp);
+	if (error != 0)
+		goto out;
+#endif
 	if (nd->nd_flag & ND_NFSV4) {
 		if (NFSVOPLOCK(fvp, LK_EXCLUSIVE) == 0) {
 			if (nfsrv_recalldeleg || (nd->nd_flag & ND_NFSV41) == 0)
@@ -1919,7 +2123,13 @@ nfsvno_link(struct nameidata *ndp, struct vnode *vp, nfsquad_t clientid,
 	if (!error) {
 		NFSVOPLOCK(vp, LK_EXCLUSIVE | LK_RETRY);
 		if (!VN_IS_DOOMED(vp)) {
-			error = nfsrv_checkremove(vp, 0, NULL, clientid, p);
+#ifdef MAC
+			error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+			if (error == 0 && vp != ndp->ni_dvp)
+				error = mac_vnode_check_fh(p->td_ucred, vp);
+#endif
+			if (error == 0)
+				error = nfsrv_checkremove(vp, 0, NULL, clientid, p);
 			if (error == 0)
 				error = VOP_LINK(ndp->ni_dvp, vp, &ndp->ni_cnd);
 		} else
@@ -2585,6 +2795,34 @@ nfsvno_open(struct nfsrv_descript *nd, struct nameidata *ndp,
 	uint32_t oldrepstat;
 	u_long savflags;
 	int error;
+
+#ifdef MAC
+	if (nd->nd_repstat == 0) {
+		error = 0;
+		if (create == NFSV4OPEN_CREATE)
+			error = mac_vnode_check_fh(p->td_ucred, ndp->ni_dvp);
+		if (error == 0 && ndp->ni_vp != NULL)
+			error = mac_vnode_check_fh(p->td_ucred, ndp->ni_vp);
+		if (error != 0) {
+			/* Preserve Open's state-error precedence, but never pass a
+			 * denied vnode to state lookup or filesystem mutation. */
+			nd->nd_repstat = nfsrv_opencheck(clientid, stateidp,
+			    stp, NULL, nd, p, error);
+			nfsvno_relpathbuf(ndp);
+			if (create == NFSV4OPEN_CREATE) {
+				if (ndp->ni_dvp == ndp->ni_vp)
+					vrele(ndp->ni_dvp);
+				else
+					vput(ndp->ni_dvp);
+			}
+			if (ndp->ni_vp != NULL)
+				vput(ndp->ni_vp);
+			*vpp = NULL;
+			NFSEXITCODE2(0, nd);
+			return;
+		}
+	}
+#endif
 
 	if (ndp->ni_vp == NULL) {
 		/*
@@ -3535,6 +3773,20 @@ ateof:
 				}
 				KASSERT(refp != NULL || nvp != NULL,
 				    ("%s: undetected lookup error", __func__));
+#ifdef MAC
+				/* Recheck the resolved object after VGET/LOOKUP and
+				 * mount crossing, before attributes or handles escape.
+				 * A referral without a local vnode has no object here.
+				 * Do not turn a mandatory denial into RDATTRERROR data. */
+				if (nvp != NULL &&
+				    mac_vnode_check_fh(curthread->td_ucred, nvp) != 0) {
+					vput(nvp);
+					nvp = NULL;
+					if (needs_unbusy != 0)
+						vfs_unbusy(new_mp);
+					goto invalid;
+				}
+#endif
 
 				if (refp == NULL &&
 				    ((nd->nd_flag & ND_NFSV3) ||
@@ -4264,6 +4516,19 @@ nfsvno_fhtovp(struct mount *mp, fhandle_t *fhp, struct sockaddr *nam,
 	if (error != 0)
 		/* Make sure the server replies ESTALE to the client. */
 		error = ESTALE;
+#ifdef MAC
+	if (error == 0) {
+		/* A mandatory object denial must not be cleared by the NFSv4
+		 * pseudo-root export fallback below, including nam == NULL. */
+		error = mac_vnode_check_fh(curthread->td_ucred, *vpp);
+		if (error != 0) {
+			vput(*vpp);
+			*vpp = NULL;
+			NFSEXITCODE(error);
+			return (error);
+		}
+	}
+#endif
 	if (nam && !error) {
 		MNT_ILOCK(mp);
 		if (mp->mnt_exjail == NULL ||

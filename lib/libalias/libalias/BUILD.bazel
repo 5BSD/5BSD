@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "alias", srcs = ["//sys/netinet/libalias:" + source for source in ["alias.c", "alias_db.c", "alias_proxy.c", "alias_util.c", "alias_mod.c"]],
+    deps = ["//sys/netinet/libalias:headers"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":alias"], visibility = ["//visibility:public"])
+cc_shared_library(name = "alias_shared", deps = [":alias"], shared_lib_name = "libalias.so.7",
+    user_link_flags = ["-Wl,-soname,libalias.so.7", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//lib/libalias:installation.bzl", "alias_installation")
+alias_installation(library = "alias", shared = ":alias_shared", main = True)
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+_MODULES = ["//lib/libalias/modules/" + name + ":module" for name in ["dummy", "ftp", "irc", "nbt", "pptp", "skinny", "smedia"]]
+cc_test(
+    name = "module_test",
+    srcs = ["module_test.c"],
+    deps = [":alias"],
+    dynamic_deps = [":alias_shared"],
+    features = ["bsd_test_runtime_paths"],
+    linkstatic = True,
+    data = _MODULES,
+    args = ["$(rootpath " + module + ")" for module in _MODULES],
+    size = "small",
+)

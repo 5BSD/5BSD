@@ -57,4 +57,19 @@ SRCS.strrchr2_test=	strrchr_test.c
 LIBADD.memchr_test+=	md
 LIBADD.memcpy_test+=	md
 
+# These tests include shared test bodies as text, not separate objects.
+.for _src _body in bcmp_test.c memcmp_test.c \
+    ffsl_test.c ffs_test.c ffsll_test.c ffs_test.c \
+    flsl_test.c fls_test.c flsll_test.c fls_test.c \
+    strspn_test.c strcspn_test.c \
+    timingsafe_bcmp_test.c memcmp_test.c timingsafe_memcmp_test.c memcmp_test.c
+TEXTUAL_SRCS.${_src}= ${.CURDIR}/${_body}
+.endfor
+
 .include <bsd.test.mk>
+
+.for _src in ${SRCS}
+.if defined(TEXTUAL_SRCS.${_src})
+${_src:R}.o ${_src:R}.pieo: ${TEXTUAL_SRCS.${_src}}
+.endif
+.endfor

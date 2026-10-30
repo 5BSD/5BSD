@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files([
+    "cnvlist.c", "dnvlist.c", "nvlist.c", "bsd_nvpair.c",
+    "nv_impl.h", "nvlist_impl.h", "nvpair_impl.h",
+], visibility = ["//lib/libnv:__pkg__"])

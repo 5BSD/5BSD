@@ -116,6 +116,7 @@ main(int argc, char **argv)
 	char *kernfile;
 	struct includepath* ipath;
 	int printmachine;
+	bool printident = false;
 	bool cust_dest = false;
 
 	printmachine = 0;
@@ -132,7 +133,7 @@ main(int argc, char **argv)
 	STAILQ_INIT(&hints);
 	STAILQ_INIT(&envvars);
 	STAILQ_INIT(&optfntab);
-	while ((ch = getopt(argc, argv, "Cd:gI:mps:Vvx:")) != -1)
+	while ((ch = getopt(argc, argv, "Cd:giI:mps:Vvx:")) != -1)
 		switch (ch) {
 		case 'C':
 			filebased = 1;
@@ -146,6 +147,9 @@ main(int argc, char **argv)
 			break;
 		case 'g':
 			debugging++;
+			break;
+		case 'i':
+			printident = true;
 			break;
 		case 'I':
 			ipath = (struct includepath *) \
@@ -228,8 +232,15 @@ main(int argc, char **argv)
 		printf("cpu type must be specified\n");
 		exit(1);
 	}
-	checkversion();
+	if (printident && printmachine)
+		usage();
+	if (printident) {
+		if (printf("%s\n", ident) < 0 || fflush(stdout) == EOF)
+			err(EXIT_FAILURE, "stdout");
+		exit(0);
+	}
 
+	checkversion();
 	if (printmachine) {
 		printf("%s\t%s\n",machinename,machinearch);
 		exit(0);
@@ -298,7 +309,7 @@ usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: config [-CgmpV] [-d destdir] [-s srcdir] sysname\n");
+	    "usage: config [-CgimpV] [-d destdir] [-s srcdir] sysname\n");
 	fprintf(stderr, "       config -x kernel\n");
 	exit(EX_USAGE);
 }

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Native component of libclang; not an additional installed library.
+cc_library(name = "analysis", srcs = ["AnalysisDeclContext.cpp", "BodyFarm.cpp", "CFG.cpp", "CFGReachabilityAnalysis.cpp", "CFGStmtMap.cpp", "CalledOnceCheck.cpp", "CloneDetection.cpp", "CocoaConventions.cpp", "ConstructionContext.cpp", "Consumed.cpp", "ExprMutationAnalyzer.cpp", "FixitUtil.cpp", "LifetimeSafety.cpp", "LiveVariables.cpp", "ObjCNoReturn.cpp", "PostOrderCFGView.cpp", "ReachableCode.cpp", "ThreadSafety.cpp", "ThreadSafetyCommon.cpp", "ThreadSafetyTIL.cpp", "UninitializedValues.cpp", "UnsafeBufferUsage.cpp"] + select({"//tools/build/bazel/config:clang_full_enabled": ["CallGraph.cpp", "CodeInjector.cpp", "Dominators.cpp", "IssueHash.cpp", "MacroExpansionContext.cpp", "PathDiagnostic.cpp", "ProgramPoint.cpp", "RetainSummaryManager.cpp"], "//conditions:default": []}),
+    deps = ["//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers", "//lib/clang/libllvm:target_definition_headers", "//lib/clang/libllvm:directive_headers", "//contrib/llvm-project/clang/include:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    copts = ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections", "-UPIC"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}) + select({"//tools/build/bazel/config:clang_full_enabled": ["CLANG_ENABLE_STATIC_ANALYZER"], "//conditions:default": []}),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pic_archive", groups = [":analysis"], pic = True, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+bsd_component_objects(name = "pic_objects", group = ":analysis", pic = True, visibility = ["//visibility:public"])

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['netlink.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])

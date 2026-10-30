@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Test programs use SDK headers/link interfaces and execute with native libc/libsys.
+# No libc component objects are copied into the test executables.
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//lib/libc:test_runtime.bzl", "LIBC_TEST_RUNTIME")
+[cc_binary(name = name + "_runtime_program",
+    srcs = ["//contrib/netbsd-tests/lib/libc/inet:t_" + name + ".c"],
+    deps = ["//lib/libnetbsd:netbsd_pie", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name in ["inet_addr", "inet_network"]]
+[bsd_atf_test(name = "native_" + name + "_" + case, case_name = name + "_" + case,
+    interface = "program", body = ":" + name + "_runtime_program",
+    runtime_lib = LIBC_TEST_RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"],
+) for name in ["inet_addr", "inet_network"] for case in ["basic", "err"]]

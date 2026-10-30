@@ -9,7 +9,7 @@ SRCS=		bsdextension.c policy.c reclaim.c
 # The kernel-module allow-list (default-deny) config, delivered in the unit's
 # Config/ directory so a born-in-capmode broker opens it through the
 # switchboard-provided Config descriptor (service_config_open, SYSEXT_CONFIG_NAME);
-# a missing file leaves bsdextension's built-in allow-list.
+# missing or malformed policy stops startup; the executable grants nothing.
 CONFS=		bsdextension.ucl
 CONFSDIR=	${SYSEXT_CAP_CONFIG}
 CONFSNAME_bsdextension.ucl=	bsdextension.ucl

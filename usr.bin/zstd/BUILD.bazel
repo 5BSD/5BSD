@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = "zstd", srcs = ['//sys/contrib/zstd:programs/benchfn.c', '//sys/contrib/zstd:programs/benchzstd.c', '//sys/contrib/zstd:programs/datagen.c', '//sys/contrib/zstd:programs/dibio.c', '//sys/contrib/zstd:programs/fileio.c', '//sys/contrib/zstd:programs/fileio_asyncio.c', '//sys/contrib/zstd:programs/lorem.c', '//sys/contrib/zstd:programs/timefn.c', '//sys/contrib/zstd:programs/util.c', '//sys/contrib/zstd:programs/zstdcli.c', '//sys/contrib/zstd:programs/zstdcli_trace.c'],
+    deps = ["//lib/libzstd:zstd", "//sys/contrib/zstd:internal_headers"],
+    dynamic_deps = ["//lib/libzstd:zstd_shared"],
+    local_defines = ["XXH_NAMESPACE=ZSTD_", "HAVE_THREAD=1", "ZSTD_MULTITHREAD=1"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_command_install.bzl", "bsd_command_installation")
+bsd_command_installation(name = "install_manifest", package = "zstd", program = "zstd", manual = "//sys/contrib/zstd:programs/zstd.1",
+    aliases = ["unzstd", "zstdcat", "zstdmt"], manual_aliases = ["unzstd", "zstdcat", "zstdmt"])
+
+filegroup(name = "package_abi", srcs = [":stripped"], visibility = ["//packages/zstd:__pkg__"])

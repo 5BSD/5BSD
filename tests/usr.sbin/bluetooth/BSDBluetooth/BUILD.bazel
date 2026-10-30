@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Existing fixtures exercise the native library and crypto dependency.
+cc_library(name = "mesh_oracles", hdrs = ['spec_assigned_generated.h', 'spec_core63_generated.h', 'spec_mesh_net_oracles.h', 'spec_mesh_network_oracles.h', 'spec_mesh_relay_oracles.h', 'spec_oracles.h'])
+_CASES = {'mesh_crypto_test': ['mesh_aes128_e', 'mesh_aes_cmac_rfc4493', 'mesh_hmac_sha256_rfc4231', 'mesh_s2_definition', 'mesh_k5_definition', 'mesh_aes_cmac_empty', 'mesh_s1_test', 'mesh_k1_vector', 'mesh_k2_managed_flooding', 'mesh_k3_vectors', 'mesh_k4_vectors', 'mesh_nonce_layout', 'mesh_ccm_network_mic64', 'mesh_ccm_network_mic32', 'mesh_ccm_transport_device', 'mesh_ccm_tamper_rejected', 'mesh_input_validation'], 'mesh_net_test': ['mesh_net_decrypt_overlong', 'mesh_net_encrypt_message1', 'mesh_net_decrypt_message1', 'mesh_net_encrypt_message6', 'mesh_net_decrypt_message6', 'mesh_net_nid_mismatch', 'mesh_net_netmic_tamper', 'mesh_net_relay_boundaries', 'mesh_net_roundtrip', 'mesh_net_rpl_primitive', 'mesh_net_valid_field_arms', 'mesh_net_codec_guards', 'mesh_net_secure_guards', 'mesh_net_decrypt_length_arms', 'mesh_net_relay_rpl_null', 'mesh_net_ctl_netmic_bound', 'mesh_net_decrypt_empty', 'mesh_net_src_unicast'], 'mesh_transport_test': ['upper_device_msg6', 'upper_app_msg18', 'upper_virtual_msg22', 'upper_szmic64', 'upper_transmic_tamper', 'upper_wrong_aid', 'lower_unseg_access_msg18', 'lower_seg_access_msg6', 'lower_akf_aid_bit_isolation', 'lower_seg_szmic_roundtrip', 'lower_unseg_control', 'lower_unseg_access_cap', 'lower_negatives', 'sar_segment_msg6', 'sar_reassemble_msg6', 'sar_szmic64_3seg', 'sar_boundaries', 'sar_errors', 'seg_ack_msg7_msg9', 'blockack_helpers', 'upper_guards', 'lower_build_arms', 'lower_parse_arms', 'sar_segment_arms', 'reasm_arms', 'reasm_get_guards', 'seg_ack_blockack_arms'], 'mesh_rpl_test': ['mesh_rpl_semantics', 'mesh_rpl_max_iv_preserves_replay_history', 'mesh_rpl_field_bounds', 'mesh_rpl_full', 'mesh_rpl_net_receive_replay', 'mesh_rpl_degenerate', 'mesh_rpl_net_receive_null_out']}
+[cc_binary(name = name, srcs = [name + ".c"],
+    deps = [":mesh_oracles", "//lib/libmesh:blemesh", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True) for name in _CASES]
+[bsd_atf_test(name = program + "_" + case, case_name = case, body = ":" + program,
+    interface = "program", runner = "//tools/build/bazel:atf_runner",
+    body_timeout_seconds = 60, size = "small", timeout = "moderate")
+ for program, cases in _CASES.items() for case in cases]
+test_suite(name = "mesh_native_tests",
+    tests = [":" + program + "_" + case for program, cases in _CASES.items() for case in cases],
+    visibility = ["//visibility:public"])

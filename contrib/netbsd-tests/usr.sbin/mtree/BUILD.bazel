@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['t_mtree.sh', 'd_convert.in', 'd_convert_C.out', 'd_convert_C_S.out', 'd_convert_D.out', 'd_convert_D_S.out', 'd_merge.in', 'd_merge_C_M.out', 'd_merge_C_M_S.out', 'mtree_d_create.out', 'netbsd6_d_create.out'], visibility = ["//usr.sbin/nmtree/tests:__pkg__"])

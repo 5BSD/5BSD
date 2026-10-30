@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "kernel_headers", hdrs = ["zcalloc.h"], includes = ["../.."], deps = ["//sys/contrib/zlib:kernel_headers"], visibility = ["//visibility:public"])

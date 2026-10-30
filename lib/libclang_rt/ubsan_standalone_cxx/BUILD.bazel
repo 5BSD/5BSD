@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libclang_rt:runtime.bzl", "compiler_rt_archive")
+
+compiler_rt_archive(
+    stem = "ubsan_standalone_cxx",
+    cxx_srcs = [
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_handlers_cxx.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_type_hash.cpp",
+        "//contrib/llvm-project/compiler-rt/lib/ubsan:ubsan_type_hash_itanium.cpp",
+    ],
+    deps = ["//contrib/llvm-project/compiler-rt/lib/ubsan:headers"],
+    cxxopts = ["-frtti"],
+)

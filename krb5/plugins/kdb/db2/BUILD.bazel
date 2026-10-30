@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+[copy_file(name = "header_" + n, src = "//crypto/krb5/src/plugins/kdb/db2:libdb2/include/" + n + "in", out = n, allow_symlink = True) for n in ["db.h", "db-config.h"]]
+cc_import(name = "private_profile", static_library = "//krb5/util/profile:static_archive")
+cc_library(name = "db2",
+    srcs = ["//crypto/krb5/src/plugins/kdb/db2:" + f for f in ['adb_openclose.c', 'adb_policy.c', 'db2_exp.c', 'kdb_db2.c', 'kdb_xdr.c', 'lockout.c', 'pol_xdr.c', 'libdb2/btree/bt_close.c', 'libdb2/btree/bt_conv.c', 'libdb2/btree/bt_debug.c', 'libdb2/btree/bt_delete.c', 'libdb2/btree/bt_get.c', 'libdb2/btree/bt_open.c', 'libdb2/btree/bt_overflow.c', 'libdb2/btree/bt_page.c', 'libdb2/btree/bt_put.c', 'libdb2/btree/bt_search.c', 'libdb2/btree/bt_seq.c', 'libdb2/btree/bt_split.c', 'libdb2/btree/bt_utils.c', 'libdb2/db/db.c', 'libdb2/hash/dbm.c', 'libdb2/hash/hash.c', 'libdb2/hash/hash_bigkey.c', 'libdb2/hash/hash_debug.c', 'libdb2/hash/hash_func.c', 'libdb2/hash/hash_log2.c', 'libdb2/hash/hash_page.c', 'libdb2/hash/hsearch.c', 'libdb2/mpool/mpool.c', 'libdb2/recno/rec_close.c', 'libdb2/recno/rec_delete.c', 'libdb2/recno/rec_get.c', 'libdb2/recno/rec_open.c', 'libdb2/recno/rec_put.c', 'libdb2/recno/rec_search.c', 'libdb2/recno/rec_seq.c', 'libdb2/recno/rec_utils.c']],
+    hdrs = ["//crypto/krb5/src/plugins/kdb/db2:" + f for f in ['kdb_db2.h', 'kdb_xdr.h', 'libdb2/btree/btree.h', 'libdb2/btree/extern.h', 'libdb2/hash/extern.h', 'libdb2/hash/hash.h', 'libdb2/hash/page.h', 'libdb2/hash/search.h', 'libdb2/include/config.h', 'libdb2/include/db-dbm.h', 'libdb2/include/db-int.h', 'libdb2/include/db-ndbm.h', 'libdb2/include/db-queue.h', 'libdb2/mpool/mpool.h', 'libdb2/recno/extern.h', 'libdb2/recno/recno.h', 'policy_db.h']] + [":header_db.h", ":header_db-config.h"],
+    includes = ["."] + ["../../../../crypto/krb5/src/plugins/kdb/db2/" + d for d in [".", "libdb2", "libdb2/include", "libdb2/btree", "libdb2/db", "libdb2/hash", "libdb2/mpool", "libdb2/recno"]],
+    deps = [":private_profile", "//crypto/krb5/src/lib/kdb:headers", "//crypto/krb5/src/lib/kadm5:headers"] + ['//krb5/lib/krb5:krb5', '//krb5/util/et:com_err', '//krb5/lib/crypto:k5crypto', '//krb5/lib/kadm5srv:kadm5srv_mit', '//krb5/lib/kdb:kdb5', '//krb5/lib/rpc:gssrpc', '//krb5/lib/gssapi:gssapi_krb5', '//krb5/util/support:krb5support'],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "db2_shared", deps = [":db2"],
+    dynamic_deps = ['//krb5/lib/krb5:krb5_shared', '//krb5/util/et:com_err_shared', '//krb5/lib/crypto:k5crypto_shared', '//krb5/lib/kadm5srv:kadm5srv_mit_shared', '//krb5/lib/kdb:kdb5_shared', '//krb5/lib/rpc:gssrpc_shared', '//krb5/lib/gssapi:gssapi_krb5_shared', '//krb5/util/support:krb5support_shared'],
+    shared_lib_name = "db2.so.122", additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,db2.so.122"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_link")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_install_link(name = "plugin_alias", destination = "/usr/lib/krb5/plugins/kdb/db2.so", target = "db2.so.122",
+    kind = "symlink", owner = "root", group = "wheel", mode = "0755", install_tags = ["package=kerberos-kdc"])
+utility_installation(name = "install_manifest", program = "db2.so.122", binary = ":db2_shared", manual = None,
+    package = "kerberos-kdc", bindir = "/usr/lib/krb5/plugins/kdb", binary_mode = "0444", extra_entries = [":plugin_alias"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos-kdc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib", "/usr/lib/debug/usr/lib/krb5", "/usr/lib/debug/usr/lib/krb5/plugins", "/usr/lib/debug/usr/lib/krb5/plugins/kdb"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

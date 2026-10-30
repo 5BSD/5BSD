@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['atf-c/build.c', 'atf-c/check.c', 'atf-c/detail/dynstr.c', 'atf-c/detail/env.c', 'atf-c/error.c', 'atf-c/detail/fs.c', 'atf-c/detail/list.c', 'atf-c/detail/map.c', 'atf-c/detail/process.c', 'atf-c/detail/sanity.c', 'atf-c/detail/text.c', 'atf-c/detail/user.c', 'atf-c/utils.c', 'atf-c/tc.c', 'atf-c/tp.c', 'atf-c/detail/tp_main.c'], visibility = ["//lib/atf/libatf-c:__pkg__"])
+cc_library(name = "c_headers", hdrs = ['atf-c.h', 'atf-c/build.h', 'atf-c/check.h', 'atf-c/defs.h', 'atf-c/error.h', 'atf-c/error_fwd.h', 'atf-c/macros.h', 'atf-c/tc.h', 'atf-c/tp.h', 'atf-c/utils.h'], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_library(name = "c_private_headers", hdrs = ['config.h', 'atf-c/detail/dynstr.h', 'atf-c/detail/env.h', 'atf-c/detail/fs.h', 'atf-c/detail/list.h', 'atf-c/detail/map.h', 'atf-c/detail/process.h', 'atf-c/detail/sanity.h', 'atf-c/detail/text.h', 'atf-c/detail/user.h'], strip_include_prefix = ".", visibility = ["//lib/atf/libatf-c:__pkg__"])
+
+exports_files(['atf-c.h', 'atf-c/build.h', 'atf-c/check.h', 'atf-c/defs.h', 'atf-c/error.h', 'atf-c/error_fwd.h', 'atf-c/macros.h', 'atf-c/tc.h', 'atf-c/tp.h', 'atf-c/utils.h', 'atf-c/atf-c.3'], visibility = ["//lib/atf/libatf-c:__pkg__"])
+
+exports_files(['atf-c++/detail/application.cpp', 'atf-c++/build.cpp', 'atf-c++/check.cpp', 'atf-c++/detail/env.cpp', 'atf-c++/detail/exceptions.cpp', 'atf-c++/detail/fs.cpp', 'atf-c++/detail/process.cpp', 'atf-c++/tests.cpp', 'atf-c++/detail/text.cpp', 'atf-c++/utils.cpp', 'atf-c++.hpp', 'atf-c++/build.hpp', 'atf-c++/check.hpp', 'atf-c++/macros.hpp', 'atf-c++/tests.hpp', 'atf-c++/utils.hpp', 'atf-c++/atf-c++.3'], visibility = ["//lib/atf/libatf-c++:__pkg__"])
+cc_library(name = "cxx_headers", hdrs = ['atf-c++.hpp', 'atf-c++/build.hpp', 'atf-c++/check.hpp', 'atf-c++/macros.hpp', 'atf-c++/tests.hpp', 'atf-c++/utils.hpp'], strip_include_prefix = ".", deps = [":c_headers"], visibility = ["//visibility:public"])
+cc_library(name = "cxx_private_headers", deps = [":c_private_headers"], hdrs = ['config.h', 'atf-c++/detail/application.hpp', 'atf-c++/detail/env.hpp', 'atf-c++/detail/exceptions.hpp', 'atf-c++/detail/fs.hpp', 'atf-c++/detail/process.hpp', 'atf-c++/detail/sanity.hpp', 'atf-c++/detail/text.hpp'], strip_include_prefix = ".", visibility = ["//lib/atf/libatf-c++:__pkg__", "//lib/atf/libatf-c++/tests:__pkg__", "//libexec/atf:__subpackages__"])
+
+exports_files(['atf-c++/detail/env_test.cpp', 'atf-c++/detail/exceptions_test.cpp', 'atf-c++/detail/text_test.cpp', 'atf-c++/detail/test_helpers.cpp'], visibility = ["//lib/atf/libatf-c++/tests:__pkg__"])
+cc_library(name = "cxx_test_headers", hdrs = ["atf-c++/detail/test_helpers.hpp"], strip_include_prefix = ".", deps = [":cxx_private_headers", ":cxx_headers"], visibility = ["//lib/atf/libatf-c++/tests:__pkg__"])
+
+exports_files(['atf-sh/atf-check.cpp', 'atf-sh/atf-check.1', 'atf-sh/atf-sh.cpp', 'atf-sh/atf-sh.1', 'atf-sh/atf-sh.3', 'atf-sh/libatf-sh.subr'], visibility = ["//libexec/atf:__subpackages__"])
+
+exports_files(['atf-sh/atf-check_test.sh', 'atf-sh/atf_check_test.sh', 'atf-sh/config_test.sh', 'atf-sh/integration_test.sh', 'atf-sh/kmod_test.sh', 'atf-sh/normalize_test.sh', 'atf-sh/tc_test.sh', 'atf-sh/tp_test.sh', 'atf-sh/misc_helpers.sh'], visibility = ["//libexec/atf:__subpackages__"])

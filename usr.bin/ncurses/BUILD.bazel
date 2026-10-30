@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+_MANUALS = {"tic": "tic.1m", "tput": "tput.1", "infocmp": "infocmp.1m", "toe": "toe.1m", "tabs": "tabs.1", "clear": "clear.1", "tset": "tset.1"}
+_PROGRAMS = {'tic': ['tic.c', 'transform.c', 'dump_entry.c', 'tparm_type.c'], 'tput': ['tput.c', 'tparm_type.c', 'transform.c', 'dump_entry.c', 'clear_cmd.c', 'reset_cmd.c', 'tty_settings.c'], 'infocmp': ['infocmp.c', 'dump_entry.c'], 'toe': ['toe.c'], 'tabs': ['tabs.c', 'tty_settings.c'], 'clear': ['clear.c', 'clear_cmd.c', 'tty_settings.c'], 'tset': ['tset.c', 'tty_settings.c', 'transform.c', 'reset_cmd.c']}
+bsd_script_output(name = "termsort_header", script = "generate-termsort.sh",
+    src = "//contrib/ncurses:progs/MKtermsort.sh", additional_sources = ["//contrib/ncurses:include/Caps"],
+    input_mode = "argument", output = "termsort.h",
+    path_tools = {"@bsd_sdk//toolchain:" + tool: tool.removeprefix("extra_") for tool in ["sh", "awk", "cat", "sed", "rm", "extra_sort"]},
+    runtime = ["@bsd_sdk//toolchain:" + tool + "_runtime" for tool in ["sh", "awk", "cat", "sed", "rm", "extra_sort"]],
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+cc_library(name = "private_headers", hdrs = ["transform.h", ":termsort_header"], strip_include_prefix = ".")
+[cc_binary(name = name,
+    srcs = ["//contrib/ncurses:progs/" + source for source in sources],
+    deps = [":private_headers", "//contrib/ncurses:program_headers", "//lib/ncurses/tinfo:tinfo", "//lib/ncurses/tinfo:library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"],
+    dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+) for name, sources in _PROGRAMS.items()]
+[bsd_awk_output(name = name + "_manual",
+    script = "//lib/ncurses/tinfo:configure-header.awk",
+    srcs = ["//lib/ncurses/tinfo:header-policy.conf", "//contrib/ncurses:dist.mk", "//contrib/ncurses:man/" + _MANUALS[name]],
+    variables = {"substitution_names": "TERMINFO,DATADIR,NCURSES_OSPEED,NCURSES_MAJOR,NCURSES_MINOR,NCURSES_PATCH,TPUT,TSET,RESET,CLEAR,TABS,TIC,TOE,INFOCMP,CAPTOINFO,INFOTOCAP"},
+    output = name + ".1",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+) for name in _PROGRAMS]
+[utility_installation(name = name + "_install_manifest", program = name, manual = ":" + name + "_manual", package = "ncurses",
+    aliases = ["captoinfo", "infotocap"] if name == "tic" else (["reset"] if name == "tset" else []),
+) for name in _PROGRAMS]
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":" + name + "_install_manifest" for name in _PROGRAMS],
+    directories = {directory: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}' for directory in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

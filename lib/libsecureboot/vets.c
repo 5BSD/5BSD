@@ -1034,11 +1034,14 @@ test_hash(const br_hash_class *md, size_t hlen,
 
 #endif
 
-#define ve_test_hash(n, N) \
+#define ve_test_hash(n, N) do { \
+	int failed = test_hash(&br_ ## n ## _vtable, br_ ## n ## _SIZE, #n, \
+	    VE_HASH_KAT_STR, VE_HASH_KAT_STRLEN(VE_HASH_KAT_STR), vh_ ## N); \
 	printf("Testing hash: " #n "\t\t\t\t%s\n", \
-	    test_hash(&br_ ## n ## _vtable, br_ ## n ## _SIZE, #n, \
-	    VE_HASH_KAT_STR, VE_HASH_KAT_STRLEN(VE_HASH_KAT_STR), \
-	    vh_ ## N) ? "Failed" : "Passed")
+	    failed ? "Failed" : "Passed"); \
+	if (failed) \
+		return (once); /* Cache failure before any signature tests. */ \
+} while (0)
 
 /**
  * @brief
@@ -1048,7 +1051,7 @@ test_hash(const br_hash_class *md, size_t hlen,
  * Test that we can verify a certificate for each supported
  * Root CA.
  *
- * @return cached result.
+ * @return cached signature-test success count, or zero on hash failure.
  */
 int
 ve_self_tests(void)

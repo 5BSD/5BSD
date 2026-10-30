@@ -3,7 +3,7 @@
 MANGROUPS=	MAN FIDL
 
 FIDL=		fidl.7
-FIDLPACKAGE=	runtime-man
+FIDLPACKAGE=	runtime${FIDLSUBPACKAGE}
 
 #MISSING: eqnchar.7 ms.7 term.7
 MAN=	arch.7 \

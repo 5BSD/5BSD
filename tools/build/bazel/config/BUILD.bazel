@@ -1,0 +1,466 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag", "int_flag")
+
+# Mirrors the maintained BSD default: manual pages stay in their base package.
+bool_flag(
+    name = "split_manpages",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "split_manpages_enabled",
+    flag_values = {":split_manpages": "true"},
+    visibility = ["//visibility:public"],
+)
+
+# No wall-clock fallback: package builds require a declared release version.
+string_flag(
+    name = "package_version",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)
+
+# Zero preserves pkg's automatic compression threading default.
+int_flag(
+    name = "package_threads",
+    build_setting_default = 0,
+    visibility = ["//visibility:public"],
+)
+
+# Native equivalent of the supported userland MK_DTRACE choice.
+bool_flag(
+    name = "dtrace",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+config_setting(
+    name = "dtrace_enabled",
+    flag_values = {":dtrace": "true"},
+    visibility = ["//visibility:public"],
+)
+
+# Native equivalent of MK_OPENSSL_KTLS; consumers must select it explicitly.
+bool_flag(name = "openssl_ktls", build_setting_default = True,
+    visibility = ["//visibility:public"])
+config_setting(name = "openssl_ktls_enabled", flag_values = {":openssl_ktls": "true", ":openssl": "true", ":crypt": "true"},
+    visibility = ["//visibility:public"])
+
+# Native equivalent of MK_OPENSSL_FIPS module inclusion; not certification.
+bool_flag(name = "openssl_fips", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openssl_fips_enabled", flag_values = {":openssl_fips": "true", ":openssl": "true", ":crypt": "true"},
+    visibility = ["//visibility:public"])
+
+# Native MK_ICONV choice; each component retains its own static/shared contract.
+bool_flag(name = "iconv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "iconv_enabled", flag_values = {":iconv": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "openssl", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openssl_enabled", flag_values = {":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_INET6_SUPPORT input.
+bool_flag(name = "inet6_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet6_support_enabled", flag_values = {":inet6_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CDDL choice, initially consumed by libprocstat.
+bool_flag(name = "cddl", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "cddl_enabled", flag_values = {":cddl": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CTF library feature; object CTF conversion is separate.
+bool_flag(name = "ctf", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "ctf_enabled", flag_values = {":ctf": "true", ":cddl": "true", ":dtrace": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_CASPER choice; each consumer must opt into this setting explicitly.
+bool_flag(name = "casper", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "casper_enabled", flag_values = {":casper": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_SORT_THREADS choice; controls code, linkage and manual content.
+bool_flag(name = "sort_threads", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "sort_threads_enabled", flag_values = {":sort_threads": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_AUDIT choice; consumers select this feature explicitly.
+bool_flag(name = "audit", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "audit_enabled", flag_values = {":audit": "true"}, visibility = ["//visibility:public"])
+
+# Native equivalent of the optional PS_CHECK_KEYWORDS diagnostic build.
+bool_flag(name = "ps_check_keywords", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "ps_check_keywords_enabled", flag_values = {":ps_check_keywords": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_LS_COLORS choice, enabled by default as in src.opts.mk.
+bool_flag(name = "ls_colors", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ls_colors_enabled", flag_values = {":ls_colors": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_LOCALES choice; C.UTF-8 remains part of runtime either way.
+bool_flag(name = "locales", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "locales_enabled", flag_values = {":locales": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_NLS choice; selects catalog installation independently of MK_LOCALES.
+bool_flag(name = "nls", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nls_enabled", flag_values = {":nls": "true"}, visibility = ["//visibility:public"])
+
+# Native equivalent of MK_JAIL for userland consumers.
+bool_flag(name = "jail", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "jail_enabled", flag_values = {":jail": "true"}, visibility = ["//visibility:public"])
+
+# Userland MK_INET_SUPPORT, independent of IPv6.
+bool_flag(name = "inet_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet_support_enabled", flag_values = {":inet_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_TESTS installation choice; explicit test targets remain runnable.
+bool_flag(name = "tests", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tests_enabled", flag_values = {":tests": "true"}, visibility = ["//visibility:public"])
+
+# Mirrors MK_PF for generated system-call decoding and its compilation.
+bool_flag(name = "pf", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pf_enabled", flag_values = {":pf": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_WIRELESS_SUPPORT selection.
+bool_flag(name = "wireless_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "wireless_support_enabled", flag_values = {":wireless_support": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_USB selection.
+bool_flag(name = "usb", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "usb_enabled", flag_values = {":usb": "true"}, visibility = ["//visibility:public"])
+
+# Native MK_NETLINK_SUPPORT selection.
+bool_flag(name = "netlink_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "netlink_support_enabled", flag_values = {":netlink_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches default MK_PTHREADS_ASSERTIONS.
+bool_flag(name = "pthreads_assertions", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pthreads_assertions_enabled", flag_values = {":pthreads_assertions": "true"}, visibility = ["//visibility:public"])
+
+# Include the maintained secure DES/Blowfish implementations.
+bool_flag(name = "crypt", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "crypt_enabled", flag_values = {":crypt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "nis", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "nis_enabled", flag_values = {":nis": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "ldns", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ldns_enabled", flag_values = {":ldns": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "kerberos_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_support_enabled", flag_values = {":kerberos_support": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "mitkrb5", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "mitkrb5_enabled", flag_values = {":mitkrb5": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "tcp_wrappers", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tcp_wrappers_enabled", flag_values = {":tcp_wrappers": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "ssh_xauth_path", build_setting_default = "/usr/local/bin/xauth", visibility = ["//visibility:public"])
+string_flag(name = "ssh_askpass_path", build_setting_default = "", visibility = ["//visibility:public"])
+
+# MK_BLOCKLIST_SUPPORT controls service-side reporting to blocklistd.
+bool_flag(name = "blocklist_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "blocklist_support_enabled", flag_values = {":blocklist_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches src.opts.mk default-off warm-start support.
+bool_flag(name = "rpcbind_warmstart_support", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "rpcbind_warmstart_support_enabled", flag_values = {":rpcbind_warmstart_support": "true"}, visibility = ["//visibility:public"])
+
+# Maintained MAGICPATH default; shared by libmagic and file.
+string_flag(name = "magic_path", build_setting_default = "/usr/share/misc",
+    visibility = ["//visibility:public"])
+
+# Controls GoogleTest-dependent installation alongside the general tests flag.
+bool_flag(name = "googletest", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "googletest_enabled", flag_values = {":googletest": "true"}, visibility = ["//visibility:public"])
+
+# Qualification-only selection; live tracing and resource gates remain open.
+bool_flag(name = "experimental_dtrace_section_archives", build_setting_default = False,
+    visibility = ["//visibility:public"])
+config_setting(name = "experimental_dtrace_section_archives_enabled",
+    flag_values = {":dtrace": "true", ":experimental_dtrace_section_archives": "true"},
+    visibility = ["//visibility:public"])
+
+# src.opts.mk enables STATS by default.
+bool_flag(name = "stats", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "stats_enabled", flag_values = {":stats": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "ofed", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ofed_enabled", flag_values = {":ofed": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "geom_class_dir", build_setting_default = "/lib/geom", visibility = ["//visibility:public"])
+
+label_flag(name = "geom_directory_policy", build_setting_default = "//lib/geom:empty.mtree", visibility = ["//visibility:public"])
+
+# Matches libbearssl's MK_BEARSSL_SSL:Uno opt-in default.
+bool_flag(name = "bearssl_ssl", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bearssl_ssl_enabled", flag_values = {":bearssl_ssl": "true"}, visibility = ["//visibility:public"])
+
+# Site trust is explicitly supplied; the empty policy target fails library analysis.
+label_flag(name = "secureboot_policy", build_setting_default = "//lib/libsecureboot:unconfigured_policy", visibility = ["//visibility:public"])
+label_flag(name = "secureboot_trust_anchors", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
+label_flag(name = "secureboot_verification_certificates", build_setting_default = "//lib/libsecureboot:no_certificates", visibility = ["//visibility:public"])
+
+string_flag(name = "version_branch", build_setting_default = "", visibility = ["//visibility:public"])
+
+# MK_DYNAMICROOT: root-filesystem executables opt into this choice as converted.
+# Current consumers: bin/zsh and bin/csh. Not a world-wide static-root switch.
+bool_flag(name = "dynamic_root", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dynamic_root_enabled", flag_values = {":dynamic_root": "true"}, visibility = ["//visibility:public"])
+
+# Catalog availability within programs is distinct from catalog installation.
+bool_flag(name = "nls_catalogs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nls_catalogs_enabled", flag_values = {":nls": "true", ":nls_catalogs": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "nls_catalogs_iconv_stub", flag_values = {":nls": "true", ":nls_catalogs": "true", ":iconv": "false"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "examples", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "examples_enabled", flag_values = {":examples": "true"}, visibility = ["//visibility:public"])
+
+# Match ctfconvert's default when Make's VERSION environment label is absent.
+string_flag(name = "kernel_ctf_label", build_setting_default = "*** No Label Provided ***", visibility = ["//visibility:public"])
+
+# Explicit provenance; kernel version generation rejects an unset value.
+string_flag(name = "kernel_source_revision", build_setting_default = "", visibility = ["//visibility:public"])
+
+# Kernel and module installation roots, corresponding to KODIR/KERN_DEBUGDIR.
+string_flag(name = "kernel_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])
+string_flag(name = "kernel_debug_directory", build_setting_default = "/usr/lib/debug", visibility = ["//visibility:public"])
+
+# Shared authority for native config and option-selected kernel sources.
+bool_flag(name = "kernel_zstdio", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kernel_zstdio_enabled", flag_values = {":kernel_zstdio": "true"}, visibility = ["//visibility:public"])
+
+# Module diagnostic compilation, corresponding to WITHOUT_VERIEXEC_DEBUG.
+bool_flag(name = "veriexec_debug", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "veriexec_debug_enabled", flag_values = {":veriexec_debug": "true"}, visibility = ["//visibility:public"])
+
+# Match MK_SETUID_LOGIN; disabled builds retain a normal executable.
+bool_flag(name = "setuid_login", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "setuid_login_enabled", flag_values = {":setuid_login": "true"}, visibility = ["//visibility:public"])
+
+# libc name-service options; defaults follow src.opts.mk.
+bool_flag(name = "ns_caching", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ns_caching_enabled", flag_values = {":ns_caching": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "hesiod", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "hesiod_enabled", flag_values = {":hesiod": "true"}, visibility = ["//visibility:public"])
+
+# Match the default-off DETECT_TZ_CHANGES source option.
+bool_flag(name = "detect_tz_changes", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "detect_tz_changes_enabled", flag_values = {":detect_tz_changes": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "machdep_optimizations", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "machdep_optimizations_enabled", flag_values = {":machdep_optimizations": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "malloc_production", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "malloc_production_enabled", flag_values = {":malloc_production": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "jemalloc_lg_vaddr_wide", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "jemalloc_lg_vaddr_wide_enabled", flag_values = {":jemalloc_lg_vaddr_wide": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "hyperv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "hyperv_enabled", flag_values = {":hyperv": "true"}, visibility = ["//visibility:public"])
+
+# libc/librt NO_THREAD_STACK_UNWIND inverse; libthr has a distinct option.
+bool_flag(name = "thread_stack_unwind", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "thread_stack_unwind_enabled", flag_values = {":thread_stack_unwind": "true"}, visibility = ["//visibility:public"])
+
+# Base component selection shared with rc.d installation (src.opts.mk defaults).
+bool_flag(name = "mail", build_setting_default = True, visibility = ["//visibility:public"])
+bool_flag(name = "netgraph", build_setting_default = True, visibility = ["//visibility:public"])
+bool_flag(name = "acct", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "acct_enabled", flag_values = {":acct": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "autofs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "autofs_enabled", flag_values = {":autofs": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "blocklist", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "blocklist_enabled", flag_values = {":blocklist": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "bluetooth", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bluetooth_enabled", flag_values = {":bluetooth": "true", ":netgraph": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "bootparamd", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bootparamd_enabled", flag_values = {":bootparamd": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "bsnmp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bsnmp_enabled", flag_values = {":bsnmp": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "dummynet", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dummynet_enabled", flag_values = {":dummynet": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "hast", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "hast_enabled", flag_values = {":hast": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "inetd", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inetd_enabled", flag_values = {":inetd": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "iscsi", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "iscsi_enabled", flag_values = {":iscsi": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "legacy_console", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "legacy_console_enabled", flag_values = {":legacy_console": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "lpr", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "lpr_enabled", flag_values = {":lpr": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "ntp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ntp_enabled", flag_values = {":ntp": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "nuageinit", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "nuageinit_enabled", flag_values = {":nuageinit": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "ofed_extra", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "ofed_extra_enabled", flag_values = {":ofed_extra": "true", ":ofed": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "openssh", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "openssh_enabled", flag_values = {":openssh": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "ppp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ppp_enabled", flag_values = {":ppp": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "sendmail", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "sendmail_enabled", flag_values = {":sendmail": "true", ":mail": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "sound", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "sound_enabled", flag_values = {":sound": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "unbound", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "unbound_enabled", flag_values = {":unbound": "true", ":ldns": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "utmpx", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "utmpx_enabled", flag_values = {":utmpx": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "vi", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "vi_enabled", flag_values = {":vi": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "wireless", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "wireless_enabled", flag_values = {":wireless": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "zfs", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "zfs_enabled", flag_values = {":zfs": "true", ":cddl": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+# Native component selection used by rc.d.
+bool_flag(name = "acpi", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "acpi_enabled", flag_values = {":acpi": "true"}, visibility = ["//visibility:public"])
+
+# Native component selection used by rc.d.
+bool_flag(name = "kerberos", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kerberos_enabled", flag_values = {":kerberos": "true", ":openssl": "true", ":crypt": "true"}, visibility = ["//visibility:public"])
+
+# libexec component selection. These select aggregation, not direct target requests.
+bool_flag(name = "at", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "at_enabled", flag_values = {':at': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "bootpd", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bootpd_enabled", flag_values = {':bootpd': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "finger", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "finger_enabled", flag_values = {':finger': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "freebsd_update", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "freebsd_update_enabled", flag_values = {':freebsd_update': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "dmagent", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "dmagent_enabled", flag_values = {':dmagent': 'true', ':mail': 'true', ':openssl': 'true', ':crypt': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "pkgserve", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "pkgserve_enabled", flag_values = {':pkgserve': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "rbootd", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "rbootd_enabled", flag_values = {':rbootd': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "talk", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "talk_enabled", flag_values = {':talk': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "tftp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tftp_enabled", flag_values = {':tftp': 'true'}, visibility = ["//visibility:public"])
+bool_flag(name = "man_utils", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "man_utils_enabled", flag_values = {':man_utils': 'true'}, visibility = ["//visibility:public"])
+config_setting(name = "netgraph_enabled", flag_values = {":netgraph": "true"}, visibility = ["//visibility:public"])
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+# Make defaults TESTS_SUPPORT to TESTS, but permits an explicit override.
+string_flag(name = "tests_support", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "tests_support_requested", flag_values = {":tests_support": "yes"})
+config_setting(name = "tests_support_default", flag_values = {":tests_support": "auto", ":tests": "true"})
+selects.config_setting_group(name = "tests_support_enabled", match_any = [":tests_support_requested", ":tests_support_default"], visibility = ["//visibility:public"])
+
+# Runtime Perl interpreter for installed TAP tests (tap.test.mk default).
+string_flag(name = "tap_perl_interpreter", build_setting_default = "/usr/local/bin/perl", visibility = ["//visibility:public"])
+
+bool_flag(name = "tcsh", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "tcsh_enabled", flag_values = {":tcsh": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "quotas", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "quotas_enabled", flag_values = {":quotas": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "bearssl", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "bearssl_enabled", flag_values = {":bearssl": "true"}, visibility = ["//visibility:public"])
+
+# src.opts.mk defaults VERIEXEC to BEARSSL; an explicit choice is independent.
+string_flag(name = "veriexec", build_setting_default = "auto", values = ["auto", "yes", "no"], visibility = ["//visibility:public"])
+config_setting(name = "veriexec_requested", flag_values = {":veriexec": "yes"})
+config_setting(name = "veriexec_default", flag_values = {":veriexec": "auto", ":bearssl": "true"})
+selects.config_setting_group(name = "veriexec_enabled", match_any = [":veriexec_requested", ":veriexec_default"], visibility = ["//visibility:public"])
+selects.config_setting_group(name = "ip_enabled", match_any = [":inet_support_enabled", ":inet6_support_enabled"], visibility = ["//visibility:public"])
+
+# Make ENABLE_SUID_NEWGRP is an explicit opt-in.
+bool_flag(name = "enable_suid_newgrp", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "suid_newgrp_enabled", flag_values = {":enable_suid_newgrp": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "netgraph_support", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "netgraph_support_enabled", flag_values = {":netgraph_support": "true"}, visibility = ["//visibility:public"])
+
+# Matches the maintained default WITH_LLVM_ASSERTIONS setting.
+bool_flag(name = "llvm_assertions", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_assertions_enabled", flag_values = {":llvm_assertions": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "llvm_full_debuginfo", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_full_debuginfo_enabled", flag_values = {":llvm_full_debuginfo": "true"}, visibility = ["//visibility:public"])
+
+# Matches MK_CLANG_FULL; components consuming it enable static analyzer support.
+bool_flag(name = "clang_full", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "clang_full_enabled", flag_values = {":clang_full": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "lldb", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "lldb_enabled", flag_values = {":lldb": "true"}, visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_host_triple", build_setting_default = "", visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_default_target_triple", build_setting_default = "", visibility = ["//visibility:public"])
+
+string_flag(name = "llvm_default_sysroot", build_setting_default = "", visibility = ["//visibility:public"])
+
+bool_flag(name = "clang_format", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "clang_format_enabled", flag_values = {":clang_format": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "clang_extras", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "clang_extras_enabled", flag_values = {":clang_extras": "true"}, visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_format_or_extras_enabled", match_any = [":clang_format_enabled", ":clang_extras_enabled"], visibility = ["//visibility:public"])
+
+# Installed LLVM library selection; bootstrap is a separate contract.
+bool_flag(name = "lld", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "lld_enabled", flag_values = {":lld": "true"}, visibility = ["//visibility:public"])
+selects.config_setting_group(name = "clang_extras_or_lld_enabled", match_any = [":clang_extras_enabled", ":lld_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_extras_or_lld_or_lldb_enabled", match_any = [":clang_extras_enabled", ":lld_enabled", ":lldb_enabled"], visibility = ["//visibility:public"])
+
+selects.config_setting_group(name = "clang_extras_or_lldb_enabled", match_any = [":clang_extras_enabled", ":lldb_enabled"], visibility = ["//visibility:public"])
+
+# Native AMD64 compiler backend; cross-platform defaults remain unqualified.
+bool_flag(name = "llvm_target_x86", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_x86_enabled", flag_values = {":llvm_target_x86": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_arm", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_arm_enabled", flag_values = {":llvm_target_arm": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_powerpc", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_powerpc_enabled", flag_values = {":llvm_target_powerpc": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_aarch64", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_aarch64_enabled", flag_values = {":llvm_target_aarch64": "true"}, visibility = ["//visibility:public"])
+
+# Matches the current native AMD64 world LLVM target-all selection.
+bool_flag(name = "llvm_target_riscv", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_riscv_enabled", flag_values = {":llvm_target_riscv": "true"}, visibility = ["//visibility:public"])
+
+# Optional LLVM backend, matching src.opts.mk default.
+bool_flag(name = "llvm_target_bpf", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_bpf_enabled", flag_values = {":llvm_target_bpf": "true"}, visibility = ["//visibility:public"])
+
+# Optional LLVM backend, matching src.opts.mk default.
+bool_flag(name = "llvm_target_loongarch", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "llvm_target_loongarch_enabled", flag_values = {":llvm_target_loongarch": "true"}, visibility = ["//visibility:public"])
+
+# Opt-in resource headers that may conflict with the operating system headers.
+bool_flag(name = "install_conflicting_clang_headers", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "install_conflicting_clang_headers_enabled", flag_values = {":install_conflicting_clang_headers": "true"}, visibility = ["//visibility:public"])
+
+# Native LLVM tool default-name aliases (MK_LLVM_BINUTILS).
+bool_flag(name = "llvm_binutils", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "llvm_binutils_enabled", flag_values = {":llvm_binutils": "true"}, visibility = ["//visibility:public"])
+
+# Presence of ENABLE_SUID_K5SU in Make selects setuid installation metadata.
+bool_flag(name = "enable_suid_k5su", build_setting_default = False,
+    visibility = ["//visibility:public"])
+config_setting(name = "suid_k5su_enabled", flag_values = {":enable_suid_k5su": "true"},
+    visibility = ["//visibility:public"])
+
+# libcuse Makefile's optional HAVE_DEBUG diagnostics.
+bool_flag(name = "cuse_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "cuse_debug_enabled", flag_values = {":cuse_debug": "true"}, visibility = ["//visibility:public"])
+
+# pkg(7) repository selection: release/platform defaults or explicit file override.
+string_flag(name = "pkg_config_branch", build_setting_default = "", visibility = ["//visibility:public"])
+label_flag(name = "pkg_repository_config", build_setting_default = "//usr.sbin/pkg:default_repository", visibility = ["//visibility:public"])
+
+# amd64 defaults to snapshot support in src.opts.mk; other architectures remain
+# outside the initial native bhyvectl target's compatibility set.
+bool_flag(name = "bhyve_snapshot", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "bhyve_snapshot_enabled", flag_values = {":bhyve_snapshot": "true"}, visibility = ["//visibility:public"])

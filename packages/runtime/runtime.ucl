@@ -67,8 +67,145 @@ EOD
         '$1 == "capability" && $3 == 976 && $4 == 976 && \
         $9 == "/nonexistent" && $10 == "/usr/sbin/nologin" \
         { found = 1 } END { exit !found }' || exit 1
-    services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db \
+    /usr/sbin/services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db \
         ${PKG_ROOTDIR}/etc/services
 EOD
 
+}
+
+/* Fresh-generation derivations. Account migration and authorization remain
+ * separate; these actions consume the explicitly selected flat-file inputs. */
+annotations: {
+    "5bsd.construction" = <<EOD
+{"format":1,"actions":[{"name":"account-databases","argv":["/usr/sbin/pwd_mkdb","-p","-d","/etc","/etc/master.passwd"],"inputs":["/etc/master.passwd"],"outputs":{"/etc/passwd":{"type":"file","uid":0,"gid":0,"mode":420,"flags_set":0,"replace":false},"/etc/pwd.db":{"type":"file","uid":0,"gid":0,"mode":420,"flags_set":0,"replace":false},"/etc/spwd.db":{"type":"file","uid":0,"gid":0,"mode":384,"flags_set":0,"replace":false}}},{"name":"service-database","argv":["/usr/sbin/services_mkdb","${CAP_MKDB_ENDIAN}","-q","-o","/var/db/services.db","/etc/services"],"inputs":["/etc/services"],"outputs":{"/var/db/services.db":{"type":"file","uid":0,"gid":0,"mode":420,"flags_set":0,"replace":false}}}]}
+EOD
+}
+
+/* Login accounting and default pwd_mkdb account-update paths.
+ * Sources: login with shipped PAM lastlog; usr.sbin/pwd_mkdb/pwd_mkdb.c
+ * prefix selection, temporary database creation and final rename sequence.
+ * Declarations grant no authority and do not cover all account/PAM state.
+ * Alternate -d/input paths and other PAM modules need separate policy review. */
+annotations: {
+    "5bsd.state-requirements" = <<EOD
+{
+  "format": 2,
+  "requirements": [
+    {
+      "name": "ordinary-loader-hints",
+      "program": "/sbin/ldconfig",
+      "path": "/var/run/ld-elf.so.hints",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "Create or rescan the default ordinary ELF library hints cache; -f overrides require deployment reconciliation. Protected generation hints are a separate immutable construction output"
+    },
+    {
+      "name": "ordinary-loader-hints-workspace",
+      "program": "/sbin/ldconfig",
+      "path": "/var/run",
+      "type": "directory",
+      "lifetime": "boot",
+      "purpose": "Create a temporary hints file beside the default cache and atomically rename it; this declaration grants no authority over the directory or its other contents"
+    },
+    {
+      "name": "login-active-sessions",
+      "program": "/usr/bin/login",
+      "path": "/var/run/utx.active",
+      "type": "file",
+      "lifetime": "boot",
+      "purpose": "PAM lastlog records login and logout in the active session database"
+    },
+    {
+      "name": "login-last-login",
+      "program": "/usr/bin/login",
+      "path": "/var/log/utx.lastlogin",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "PAM lastlog reads the previous login and records the current login"
+    },
+    {
+      "name": "login-session-history",
+      "program": "/usr/bin/login",
+      "path": "/var/log/utx.log",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "PAM lastlog appends login and logout history"
+    },
+    {
+      "name": "account-public-database",
+      "program": "/usr/sbin/pwd_mkdb",
+      "path": "/etc/pwd.db",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Replace the public account database through pwd.db.tmp; account identities and executable shells require security policy"
+    },
+    {
+      "name": "account-secret-database",
+      "program": "/usr/sbin/pwd_mkdb",
+      "path": "/etc/spwd.db",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Replace the secret account database through spwd.db.tmp; password hashes and account authorization require security policy"
+    },
+    {
+      "name": "account-public-text",
+      "program": "/usr/sbin/pwd_mkdb",
+      "path": "/etc/passwd",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "With -p, replace the public account text file from the input .orig file"
+    },
+    {
+      "name": "account-master-text",
+      "program": "/usr/sbin/pwd_mkdb",
+      "path": "/etc/master.passwd",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Lock and read the supplied master input, preserve or set its secure permissions, and rename it last to master.passwd"
+    },
+    {
+      "name": "account-management-log",
+      "program": "/usr/sbin/pw",
+      "path": "/var/log/userlog",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Append user and group management records to the default pw log; pw.conf may select another path and logging is not independent BIP authorization evidence"
+    },
+    {
+      "name": "account-group-text",
+      "program": "/usr/sbin/pw",
+      "path": "/etc/group",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Lock, copy and atomically replace the local group file through gr_init, gr_tmp and gr_mkdb; group membership does not confer BIP authority"
+    },
+    {
+      "name": "account-group-workspace",
+      "program": "/usr/sbin/pw",
+      "path": "/etc",
+      "directory_mapping": "/etc/accounts",
+      "type": "directory",
+      "lifetime": "persistent",
+      "purpose": "Default group update directory selected by pw_defaultdir, including temporary files and directory synchronization; explicit -V and -R remain separate inputs"
+    },
+    {
+      "name": "account-update-workspace",
+      "program": "/usr/sbin/pwd_mkdb",
+      "path": "/etc",
+      "directory_mapping": "/etc/accounts",
+      "type": "directory",
+      "lifetime": "persistent",
+      "purpose": "Default update directory selected by pw_defaultdir: use /etc/accounts when present and valid, otherwise /etc. Explicit -d and input paths retain their meanings. This declaration grants no write authority"
+    },
+    {
+      "name": "crash-dump-storage",
+      "program": "/sbin/savecore",
+      "path": "/var/crash",
+      "type": "directory",
+      "lifetime": "persistent",
+      "purpose": "Default rc dumpdir for saved dumps, header metadata, encrypted dump key records, bounds and latest links. Standalone savecore defaults to the current directory; dumpdir and command-line overrides require deployment reconciliation. This declaration grants no device or storage authority; dump confidentiality and output-link policy require separate review"
+    }
+  ]
+}
+EOD
 }

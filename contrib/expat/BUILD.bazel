@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "internal_headers", hdrs = glob(["lib/*.h"]),
+    textual_hdrs = ["lib/xmltok_impl.c", "lib/xmltok_ns.c"], includes = ["lib"],
+    visibility = ["//lib/libexpat:__pkg__"])
+exports_files(["lib/random_arc4random_buf.c", "lib/xcs.c", "lib/xmlparse.c", "lib/xmlrole.c", "lib/xmltok.c", "lib/expat.h", "lib/expat_external.h"],
+    visibility = ["//lib/libexpat:__pkg__"])

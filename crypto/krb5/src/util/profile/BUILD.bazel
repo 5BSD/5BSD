@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files([
+    "prof_file.c", "prof_get.c", "prof_init.c", "prof_parse.c", "prof_set.c", "prof_tree.c",
+    "argv_parse.h", "prof_int.h", "profile.hin", "prof_err.et", "test_vtable.c",
+], visibility = ["//krb5:__subpackages__"])
+
+cc_library(name = "private_headers", hdrs = ["argv_parse.h", "prof_int.h"], includes = ["."], visibility = ["//krb5/util/profile:__pkg__"])

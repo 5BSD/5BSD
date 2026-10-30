@@ -65,8 +65,11 @@ WORLDDIR?=	${.CURDIR:H}
 PORTSDIR?=	/usr/ports
 RELEASE_OSVERSION!= awk '/^\#define[[:space:]]+__FreeBSD_version[[:space:]]/ { print $$3 }' ${WORLDDIR}/sys/sys/param.h
 HARDWARE_PYTHON?= python3.12
+# Explicit host-native generator; build-bsd supplies its maintained bootstrap build.
+HARDWARE_KLDXREF?=
 HARDWARE_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage \
-		--pkg ${PKG_CMD:Q} --repository ${HARDWARE_REPO:U:Q}
+		--pkg ${PKG_CMD:Q} --repository ${HARDWARE_REPO:U:Q} \
+		--kldxref ${HARDWARE_KLDXREF:Q}
 
 .if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
 .if defined(NOPKGBASE) && !empty(NOPKGBASE)
@@ -77,7 +80,8 @@ HARDWARE_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage
 .endif
 SIGNED_MEDIA_STAGE= ${HARDWARE_PYTHON} ${.CURDIR}/scripts/hardware-packages.py stage-signed-media \
 		--pkg ${PKG_CMD:Q} --repository ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built \
-		--public-key ${PKGBASE_REPO_PUBLIC_KEY:Q} --code-public-key ${PKGBASE_CODE_PUBLIC_KEY:Q}
+		--public-key ${PKGBASE_REPO_PUBLIC_KEY:Q} --code-public-key ${PKGBASE_CODE_PUBLIC_KEY:Q} \
+		--kldxref ${HARDWARE_KLDXREF:Q}
 .endif
 
 OSNAME?=	${BRAND}
@@ -376,7 +380,7 @@ pkgbase-repo.tar: pkgbase-repo
 pkgbase-repo-dir: pkgbase-repo
 	mkdir -p pkgbase-repo-dir
 .if defined(PKGBASE_SIGNED_REPOSITORY) && !empty(PKGBASE_SIGNED_REPOSITORY)
-	${HARDWARE_PYTHON} -c 'import json, pathlib, sys; print(json.dumps({"5BSD-base": {"url": pathlib.Path(sys.argv[1]).resolve().as_uri(), "enabled": True, "signature_type": "pubkey", "pubkey": str(pathlib.Path(sys.argv[2]).resolve())}}))' \
+	${HARDWARE_PYTHON} -c 'import json, pathlib, sys; print(json.dumps({"5BSD-base": {"url": "file://" + str(pathlib.Path(sys.argv[1]).resolve()), "enabled": True, "signature_type": "pubkey", "pubkey": str(pathlib.Path(sys.argv[2]).resolve())}}))' \
 	    ${.OBJDIR}/pkgbase-repo/${PKG_ABI}/latest-built ${PKGBASE_REPO_PUBLIC_KEY:Q} \
 	    > pkgbase-repo-dir/5BSD-base.conf
 .else

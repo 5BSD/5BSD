@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_binary(name = "ntalkd", srcs = ["talkd.c", "announce.c", "process.c", "table.c", "print.c", "extern.h", "//usr.bin/wall:ttymsg.c"],
+    deps = ["//usr.bin/wall:ttymsg_header"], copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ntalkd", manual = "", package = "utilities", bindir = "/usr/libexec")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+# The maintained executable is ntalkd, but its manual is talkd(8).
+bsd_compress(name = "manual", src = "talkd.8", output = "talkd.8.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/talkd.8.gz",
+    owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"],
+        "//conditions:default": ["package=utilities"]}))
+bsd_install_manifest(name = "install_extra", entries = [":install_manual"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//libexec:__pkg__"],
+    manifests = [":install_manifest", ":install_extra"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

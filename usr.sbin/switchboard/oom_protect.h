@@ -3,6 +3,6 @@
 #define SWITCHBOARD_OOM_PROTECT_H
 #include <sys/types.h>
 #include <stdbool.h>
-/* Caller owns an unreaped, launch-gated child; never accept a client PID. */
+/* Trusted launch code only, before credential/capmode transition; never a client PID. */
 int svc_oom_protect(pid_t, bool, bool);
 #endif

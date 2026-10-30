@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//lib/ncurses/tinfo:abi.bzl", "LIBRARY_ABIS")
+cc_library(
+    name = "menu",
+    srcs = ['//contrib/ncurses:menu/m_attribs.c', '//contrib/ncurses:menu/m_cursor.c', '//contrib/ncurses:menu/m_driver.c', '//contrib/ncurses:menu/m_format.c', '//contrib/ncurses:menu/m_global.c', '//contrib/ncurses:menu/m_hook.c', '//contrib/ncurses:menu/m_item_cur.c', '//contrib/ncurses:menu/m_item_nam.c', '//contrib/ncurses:menu/m_item_new.c', '//contrib/ncurses:menu/m_item_opt.c', '//contrib/ncurses:menu/m_item_top.c', '//contrib/ncurses:menu/m_item_use.c', '//contrib/ncurses:menu/m_item_val.c', '//contrib/ncurses:menu/m_item_vis.c', '//contrib/ncurses:menu/m_items.c', '//contrib/ncurses:menu/m_new.c', '//contrib/ncurses:menu/m_opts.c', '//contrib/ncurses:menu/m_pad.c', '//contrib/ncurses:menu/m_pattern.c', '//contrib/ncurses:menu/m_post.c', '//contrib/ncurses:menu/m_req_name.c', '//contrib/ncurses:menu/m_scale.c', '//contrib/ncurses:menu/m_spacing.c', '//contrib/ncurses:menu/m_sub.c', '//contrib/ncurses:menu/m_userptr.c', '//contrib/ncurses:menu/m_win.c'],
+    deps = ["//lib/ncurses/ncurses:ncurses", "//contrib/ncurses:menu_headers"],
+    implementation_deps = ["//lib/ncurses/tinfo:library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H"],
+    linkstatic = True, visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":menu"], visibility = ["//visibility:public"])
+cc_shared_library(name = "menu_shared", deps = [":menu"],
+    shared_lib_name = "libmenuw.so." + str(LIBRARY_ABIS["menuw"]),
+    dynamic_deps = ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared"],
+    user_link_flags = ["-Wl,-soname,libmenuw.so." + str(LIBRARY_ABIS["menuw"]), "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "install_library")
+install_library(name = "install_manifest")

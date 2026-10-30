@@ -9,7 +9,6 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
-#include <sys/stat.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -74,7 +73,6 @@ tzfs_limit_ioctls(int fd, tzfs_opset_t ops, tzfs_opset_t valid,
     const struct tzfs_ioctl_map *map, size_t nmap)
 {
 	struct zfd_limit_args limit;
-	struct stat sb;
 	cap_ioctl_t cmds[nmap + 1];
 	size_t i, ncmds;
 
@@ -85,15 +83,8 @@ tzfs_limit_ioctls(int fd, tzfs_opset_t ops, tzfs_opset_t valid,
 	/* A real handle must accept the inheritable kernel ceiling. */
 	memset(&limit, 0, sizeof(limit));
 	limit.zl_ops = ops;
-	if (ioctl(fd, ZFD_LIMIT, &limit) == -1) {
-		int saved = errno;
-
-		/* Socket-backed tests exercise only the generic Capsicum mapping. */
-		if (fstat(fd, &sb) == -1 || !S_ISSOCK(sb.st_mode)) {
-			errno = saved;
-			return (-1);
-		}
-	}
+	if (ioctl(fd, ZFD_LIMIT, &limit) == -1)
+		return (-1);
 	/* Retain only the monotonic, kernel-enforced narrowing operation itself. */
 	cmds[0] = ZFD_LIMIT;
 	ncmds = 1;
@@ -326,8 +317,12 @@ tzfs_set_prop(int zfd, const char *prop, const char *strval, uint64_t intval,
 	if (tzfs_str_arg(args.zsp_name, sizeof(args.zsp_name), prop,
 	    true) == -1)
 		return (-1);
+	/* Empty string values are meaningful (for example a cleared user
+	 * property). The kernel property pipeline validates native semantics. */
+	if (is_string && strval == NULL)
+		return (errno = EINVAL, -1);
 	if (is_string && tzfs_str_arg(args.zsp_strval,
-	    sizeof(args.zsp_strval), strval, true) == -1)
+	    sizeof(args.zsp_strval), strval, false) == -1)
 		return (-1);
 	args.zsp_intval = intval;
 	args.zsp_is_string = is_string ? 1 : 0;

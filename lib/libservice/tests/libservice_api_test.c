@@ -32,6 +32,7 @@
 #include <filesystemcmp.h>
 #include <service_runtime.h>
 #include <service_bootstrap.h>
+#include <sys/cryptodesc.h>
 #include <switchboard_svc_proto.h>
 #include <service_private.h>
 
@@ -433,6 +434,97 @@ run_bootstrap_case(enum bootstrap_case test_case, int expected_errno)
 	}
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	return (WIFEXITED(status) ? WEXITSTATUS(status) : 255);
+}
+
+ATF_TC(crypto_control_bootstrap_type);
+ATF_TC_HEAD(crypto_control_bootstrap_type, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(crypto_control_bootstrap_type, tc)
+{
+	for (int kind = 0; kind < 5; kind++) {
+		struct service_bootstrap bootstrap;
+		struct service_context *context;
+		struct cryptoctl_derive scope = { .scope = CRYPTOCTL_SCOPE_OWNER,
+		    .rights = CRYPTOCTL_STAT };
+		int channel[2], status;
+		pid_t pid;
+
+		capability_channel_pair(&channel[0], &channel[1]);
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			int raw, source, pair[2], delivered;
+
+			if (kind == 1) {
+				if (pipe(pair) == -1)
+					_exit(1);
+				raw = pair[0];
+				close(pair[1]);
+			} else {
+				raw = open("/dev/crypto", O_RDWR);
+				if (raw == -1)
+					_exit(2);
+				if (kind == 2) {
+					strlcpy(scope.owner, "test.owner", sizeof(scope.owner));
+					if (ioctl(raw, CIOCGCRYPTOCONTROL, &scope) == -1)
+						_exit(3);
+					close(raw);
+					raw = scope.fd;
+				}
+			}
+			source = fcntl(raw, F_DUPFD, 16);
+			if (source == -1)
+				_exit(4);
+			close(raw);
+			if (dup2(channel[0], 3) != 3)
+				_exit(5);
+			if (channel[0] != 3)
+				close(channel[0]);
+			if (channel[1] != 3)
+				close(channel[1]);
+			if (dup2(source, 6) != 6)
+				_exit(6);
+			close(source);
+			cap_rights_t rights;
+			const cap_ioctl_t commands[] = {
+			    CIOCGCRYPTOCONTROLINFO, CIOCGCRYPTOCONTROL
+			};
+			cap_rights_init(&rights, CAP_IOCTL);
+			if (kind == 4)
+				cap_rights_set(&rights, CAP_READ);
+			if (cap_rights_limit(6, &rights) == -1 ||
+			    cap_ioctls_limit(6, commands, kind == 3 ? 1 : 2) == -1)
+				_exit(11);
+			close(SERVICE_BOOTSTRAP_FD);
+			valid_empty_bootstrap(&bootstrap);
+			bootstrap.ncapabilities = 1;
+			bootstrap.capabilities[0].fd = 6;
+			strlcpy(bootstrap.capabilities[0].name, "crypto-control",
+			    sizeof(bootstrap.capabilities[0].name));
+			strlcpy(bootstrap.capabilities[0].type, "cryptoctl",
+			    sizeof(bootstrap.capabilities[0].type));
+			if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
+			    install_bootstrap(&bootstrap, sizeof(bootstrap), false) == -1)
+				_exit(7);
+			if (kind != 0)
+				_exit(service_acquire(&context) == -1 && errno == EINVAL ? 0 : 8);
+			if (service_acquire(&context) == -1)
+				_exit(9);
+			if (service_capability_open(context, "crypto-control", "cryptoctl", &delivered) == -1)
+				_exit(10);
+			close(delivered);
+			service_release(context);
+			_exit(0);
+		}
+		close(channel[0]);
+		close(channel[1]);
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_REQUIRE_MSG(WEXITSTATUS(status) == 0, "kind %d: child status %d", kind, WEXITSTATUS(status));
+	}
 }
 
 ATF_TC(shared_context);
@@ -1337,6 +1429,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, stale_bootstrap_preserves_descriptor);
+	ATF_TP_ADD_TC(tp, crypto_control_bootstrap_type);
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
 	ATF_TP_ADD_TC(tp, resource_directory_colon_path);

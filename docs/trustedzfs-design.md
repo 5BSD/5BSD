@@ -277,8 +277,11 @@ Follow the established pattern (procdesc/eventfd/timerfd; in-fork:
 - Capsicum: fds are born with full rights and narrowed by userland.
   `libtrustedzfs` exposes typed `TZFS_OP_*` masks through
   `tzfs_limit_dataset_ioctls()` / `tzfs_limit_pool_ioctls()`, plus complete
-  rights-to-verbs profiles for brokers. These call `cap_ioctls_limit()` and
-  reject unknown or cross-kind bits before changing the descriptor. The
+  rights-to-verbs profiles for brokers. These require successful `ZFD_LIMIT`
+  before calling `cap_ioctls_limit()` and reject unknown or cross-kind bits
+  before changing the descriptor. There is no descriptor-type exception for
+  tests. A later Capsicum failure does not undo the kernel narrowing; a failed
+  grant must be closed. The
   `bsdfilesystem` grant path installs the corresponding profile before SCM_RIGHTS
   transfer. Capsicum ioctl lists are per-fd: every handle returned by
   derive/openat/create/clone/root-open must be limited separately; the

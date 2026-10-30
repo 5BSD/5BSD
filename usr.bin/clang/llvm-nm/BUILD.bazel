@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-nm",
+    srcs = ['llvm-nm-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-nm:llvm-nm.cpp'],
+    options = "//contrib/llvm-project/llvm/tools/llvm-nm:Opts.td", manual = "llvm-nm.1")

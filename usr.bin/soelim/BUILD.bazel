@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "soelim", srcs = ["soelim.c"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "soelim", manual = "soelim.1", package = "utilities", bindir = "/usr/bin", man_section = "1")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_RUNTIME = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+bsd_compare_test(name = "bare_test", program = ":soelim", input = "bazel-fixtures/bare", expected = "bazel-fixtures/bare", arguments = [], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "spaces_test", program = ":soelim", input = "bazel-fixtures/spaces", expected = "bazel-fixtures/spaces", arguments = [], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "explicit_stdin_test", program = ":soelim", input = "bazel-fixtures/bare", expected = "bazel-fixtures/bare", arguments = ['-'], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "missing_test", program = ":soelim", input = "bazel-fixtures/missing", expected = "bazel-fixtures/empty", arguments = [], expected_exit = 1, expected_stderr = "bazel-fixtures/missing.err", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "joined_test", program = ":soelim", input = "bazel-fixtures/joined", expected = "bazel-fixtures/joined", arguments = [], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "compat_test", program = ":soelim", input = "bazel-fixtures/joined", expected = "bazel-fixtures/empty", arguments = ['-C'], expected_exit = 1, expected_stderr = "bazel-fixtures/missing.err", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [':file_missing_test', ':file_local_test', ':file_search_test', ':file_spaces_test'] + [':bare_test', ':spaces_test', ':explicit_stdin_test', ':missing_test', ':joined_test', ':compat_test'], visibility = ["//visibility:public"])
+bsd_compare_test(name = "file_missing_test", program = ":soelim",
+    file_arguments = ["tests/nonexisting.in"], arguments = [], working_files = {},
+    expected = "bazel-fixtures/file-missing.out", expected_exit = 1, expected_stderr = "bazel-fixtures/file-missing.err",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "file_local_test", program = ":soelim",
+    file_arguments = ["tests/basic.in"], arguments = [], working_files = {'tests/basic': 'basic'},
+    expected = "tests/basic.out", expected_exit = 0, expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "file_search_test", program = ":soelim",
+    file_arguments = ["tests/basic.in"], arguments = ['-Iinclude'], working_files = {'tests/basic': 'include/basic'},
+    expected = "tests/basic.out", expected_exit = 0, expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "file_spaces_test", program = ":soelim",
+    file_arguments = ["tests/basic-with-space.in"], arguments = ['-Iinclude'], working_files = {'tests/basic': 'include/basic'},
+    expected = "tests/basic-with-space.out", expected_exit = 0, expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")

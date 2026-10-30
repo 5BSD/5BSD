@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_SOURCES = ['//contrib/sendmail:libsmdb/smdb.c', '//contrib/sendmail:libsmdb/smdb1.c', '//contrib/sendmail:libsmdb/smdb2.c', '//contrib/sendmail:libsmdb/smndbm.c', '//contrib/sendmail:libsmdb/smcdb.c']
+[cc_library(name = "smdb" + suffix, srcs = _SOURCES, deps = ["//lib/libsm:headers"],
+    local_defines = ['NEWDB', 'NOT_SENDMAIL'],
+    copts = ["-Wno-deprecated-non-prototype"] + (["-fpie"] if suffix else []),
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"]) for suffix in ["", "_pie"]]
+# Internal archives: no installed package payload.
+bsd_component_archive(name = "static_archive", groups = [":smdb"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":smdb_pie"], visibility = ["//visibility:public"])

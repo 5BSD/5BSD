@@ -118,7 +118,7 @@ saved=no
 while true
 do
 	data=
-	read data
+	read data || break
 	test -z "$data" && break
 	case "$data" in #(vi
 	**) #(vi

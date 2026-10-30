@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "nfsd", srcs = ["nfsd.c"], deps = ["//lib/libutil:util"], dynamic_deps = ["//lib/libutil:util_shared"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+_MANUALS = {"nfsv4.4": "4", "stablerestart.5": "5", "pnfs.4": "4", "pnfsserver.4": "4"}
+[bsd_compress(name = "manual_" + name, src = name, output = "manuals/" + name + ".gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for name in _MANUALS]
+[bsd_install_file(name = "install_manual_" + name, src = ":manual_" + name,
+    destination = "/usr/share/man/man" + section + "/" + name + ".gz", owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=nfs-man"], "//conditions:default": ["package=nfs"]})) for name, section in _MANUALS.items()]
+utility_installation(name = "install_manifest", program = "nfsd", manual = "nfsd.8", package = "nfs", bindir = "/usr/sbin", man_section = "8", extra_entries = [":install_manual_" + name for name in _MANUALS])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=nfs","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

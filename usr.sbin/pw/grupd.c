@@ -58,7 +58,7 @@ gr_update(struct group * grp, char const * group)
 	if (group != NULL)
 		old_gr = GETGRNAM(group);
 
-	if (gr_init(conf.etcpath, NULL))
+	if (gr_init(conf.altroot ? conf.etcpath : NULL, NULL))
 		err(1, "gr_init()");
 
 	if ((pfd = gr_lock()) == -1) {

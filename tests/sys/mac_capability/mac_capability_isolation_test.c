@@ -11,6 +11,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/extattr.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/jail.h>
@@ -322,6 +323,94 @@ ATF_TC_BODY(claim_blocks_inherited_write, tc)
 	close(svc);
 }
 ATF_TC_CLEANUP(claim_blocks_inherited_write, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(claim_blocks_inherited_read);
+ATF_TC_HEAD(claim_blocks_inherited_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "An inherited readable FD must obey the active reader's isolation authority");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_blocks_inherited_read, tc)
+{
+	struct fi_reply rpl;
+	char descriptor[32];
+	int svc, target, status, expected;
+	pid_t pid;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &rpl));
+	ATF_REQUIRE_EQ(1, pwrite(target, "o", 1, 0));
+	snprintf(descriptor, sizeof(descriptor), "%d", target);
+	/* Exec changes the nonce, while the ordinary UNIX descriptor survives. */
+	for (expected = 1; expected >= 0; expected--) {
+		if (expected == 0)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_RELEASE, target, 0, &rpl));
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			execl(fi_helper_path(tc), "isolation-helper", "inherited-read",
+			    descriptor, NULL);
+			_exit(127);
+		}
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_CHECK_EQ(expected, WEXITSTATUS(status));
+	}
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(claim_blocks_inherited_read, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(claim_blocks_inherited_map_read);
+ATF_TC_HEAD(claim_blocks_inherited_map_read, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "New readable mappings through an inherited FD must obey isolation authority");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(claim_blocks_inherited_map_read, tc)
+{
+	struct fi_reply rpl;
+	char descriptor[32];
+	int svc, target, status, expected;
+	pid_t pid;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &rpl));
+	ATF_REQUIRE_EQ(1, pwrite(target, "o", 1, 0));
+	snprintf(descriptor, sizeof(descriptor), "%d", target);
+	/* Exec changes the nonce, while the ordinary UNIX descriptor survives. */
+	for (expected = 1; expected >= 0; expected--) {
+		if (expected == 0)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_RELEASE, target, 0, &rpl));
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			execl(fi_helper_path(tc), "isolation-helper", "inherited-map-read",
+			    descriptor, NULL);
+			_exit(127);
+		}
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_CHECK_EQ(expected, WEXITSTATUS(status));
+	}
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(claim_blocks_inherited_map_read, tc)
 {
 	cleanup_tmpfile();
 }
@@ -734,6 +823,54 @@ cleanup_tmpsock(void)
 {
 
 	unlink(tmpsockpath);
+}
+
+/* Directory claims protect that vnode, not a recursive content boundary. */
+ATF_TC_WITH_CLEANUP(dir_claim_content_scope);
+ATF_TC_HEAD(dir_claim_content_scope, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A child descriptor needs its own file claim to deny a foreign writer");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(dir_claim_content_scope, tc)
+{
+	struct fi_reply rpl;
+	char descriptor[32], content;
+	int svc, directory, target, status, expected;
+	pid_t pid;
+
+	make_tmpdir();
+	svc = fi_connect();
+	directory = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	target = open(tmpdir_file, O_RDWR);
+	ATF_REQUIRE(directory >= 0 && target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, directory, 0, &rpl));
+	snprintf(descriptor, sizeof(descriptor), "%d", target);
+	for (expected = 0; expected <= 1; expected++) {
+		if (expected == 1)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &rpl));
+		ATF_REQUIRE_EQ(1, pwrite(target, "o", 1, 0));
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			execl(fi_helper_path(tc), "isolation-helper", "inherited-write",
+			    descriptor, NULL);
+			_exit(127);
+		}
+		ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_REQUIRE_EQ(expected, WEXITSTATUS(status));
+		ATF_REQUIRE_EQ(1, pread(target, &content, 1, 0));
+		ATF_CHECK_EQ(expected == 0 ? 'x' : 'o', content);
+	}
+	close(target);
+	close(directory);
+	close(svc);
+}
+ATF_TC_CLEANUP(dir_claim_content_scope, tc)
+{
+	cleanup_tmpdir();
 }
 
 ATF_TC_WITH_CLEANUP(dir_claim_blocks_lookup);
@@ -2452,6 +2589,86 @@ ATF_TC_BODY(token_close_revokes_access, tc)
 	close(svc);
 }
 ATF_TC_CLEANUP(token_close_revokes_access, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(token_does_not_survive_reclaim);
+ATF_TC_HEAD(token_does_not_survive_reclaim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A live token cannot authorize a replacement claim on the same vnode");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(token_does_not_survive_reclaim, tc)
+{
+	struct fi_reply rpl;
+	int svc, target, token;
+	pid_t pid;
+	int status, readyfd[2], gofd[2];
+	char buf;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDONLY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	token = fi_mint(svc, target, FI_FS_ALL);
+	ATF_REQUIRE(token >= 0);
+
+	ATF_REQUIRE(pipe(readyfd) == 0);
+	ATF_REQUIRE(pipe(gofd) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char token_str[16], ready_str[16], go_str[16];
+		const char *path;
+
+		close(readyfd[0]);
+		close(gofd[1]);
+		close(svc);
+		close(target);
+
+		/*
+		 * Exec the helper to rotate the nonce.  Without exec
+		 * the child shares the parent's nonce and bypasses
+		 * isolation (same-nonce fast path).
+		 */
+		path = fi_helper_path(tc);
+		snprintf(token_str, sizeof(token_str), "%d", token);
+		snprintf(ready_str, sizeof(ready_str), "%d", readyfd[1]);
+		snprintf(go_str, sizeof(go_str), "%d", gofd[0]);
+		execl(path, path, "token-reclaim", token_str, ready_str,
+		    go_str, tmppath, NULL);
+		_exit(127);
+	}
+	close(readyfd[1]);
+	close(gofd[0]);
+
+	/* Wait for successful delegated access, retaining both token copies. */
+	ATF_REQUIRE(read(readyfd[0], &buf, 1) == 1);
+	close(readyfd[0]);
+
+	/* Replace the claim without closing either copy of its old token. */
+	ATF_REQUIRE(fi_call(svc, FI_OP_RELEASE, target, 0, &rpl) == 0);
+	ATF_REQUIRE(fi_call(svc, FI_OP_CLAIM, target, 0, &rpl) == 0);
+
+	/* Signal child to try the open. */
+	ATF_REQUIRE(write(gofd[1], "x", 1) == 1);
+	close(gofd[1]);
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exit %d (expected 0 = blocked)", status);
+
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_does_not_survive_reclaim, tc)
 {
 	cleanup_tmpfile();
 }
@@ -5112,9 +5329,166 @@ ATF_TC_CLEANUP(jail_stress_claim_release, tc)
 	cleanup_jail_by_name("fi_stress_jail");
 }
 
+ATF_TC_WITH_CLEANUP(token_mapping_read_ceiling);
+ATF_TC_HEAD(token_mapping_read_ceiling, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Read token permits a bounded read mapping but denies write/execute escalation");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(token_mapping_read_ceiling, tc)
+{
+	struct fi_reply reply;
+	int svc, target, token, result;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(1, pwrite(target, "q", 1, 0));
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &reply));
+	token = fi_mint(svc, target, FI_FS_READ);
+	ATF_REQUIRE(token >= 0);
+	result = run_token_helper(tc, "token-map-read", token, tmppath, NULL);
+	ATF_CHECK_MSG(result == 0, "mapping grant helper failed at check %d", result);
+	close(token);
+	close(target);
+	close(svc);
+}
+ATF_TC_CLEANUP(token_mapping_read_ceiling, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(inherited_extattr_authority);
+ATF_TC_HEAD(inherited_extattr_authority, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Extended attributes obey current claim and action-specific tokens");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(inherited_extattr_authority, tc)
+{
+	const char *operations[] = {"set", "get", "list", "delete"};
+	uint64_t actions[] = {0, FI_FS_READ, FI_FS_STAT, FI_FS_SETATTR, 0};
+	struct fi_reply reply;
+	char fd_arg[24], token_arg[24], byte;
+	int svc, target, token, status, phase, expected;
+	pid_t child;
+
+	make_tmpfile();
+	svc = fi_connect();
+	target = open(tmppath, O_RDWR);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &reply));
+	snprintf(fd_arg, sizeof(fd_arg), "%d", target);
+	for (phase = 0; phase < 5; phase++) {
+		if (phase == 4)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_RELEASE, target, 0, &reply));
+		token = -1;
+		if (actions[phase] != 0) {
+			token = fi_mint(svc, target, actions[phase]);
+			ATF_REQUIRE(token >= 0);
+		}
+		snprintf(token_arg, sizeof(token_arg), "%d", token);
+		for (unsigned op = 0; op < nitems(operations); op++) {
+			ATF_REQUIRE_EQ(1, extattr_set_fd(target, EXTATTR_NAMESPACE_USER, "isolation", "q", 1));
+			expected = !(phase == 4 || (phase == 1 && op == 1) ||
+			    (phase == 2 && op == 2) || (phase == 3 && (op == 0 || op == 3)));
+			child = fork();
+			ATF_REQUIRE(child >= 0);
+			if (child == 0) {
+				close(svc);
+				execl(fi_helper_path(tc), "isolation-helper", "inherited-xattr",
+				    fd_arg, operations[op], token_arg, NULL);
+				_exit(127);
+			}
+			ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+			ATF_REQUIRE(WIFEXITED(status));
+			ATF_CHECK_MSG(WEXITSTATUS(status) == expected,
+			    "phase %d operation %s: expected %d got %d", phase, operations[op], expected, WEXITSTATUS(status));
+			byte = 0;
+			if (expected == 0 && op == 3) {
+				ATF_CHECK_ERRNO(ENOATTR, extattr_get_fd(target,
+				    EXTATTR_NAMESPACE_USER, "isolation", &byte, 1) == -1);
+			} else {
+				ATF_CHECK_EQ(1, extattr_get_fd(target, EXTATTR_NAMESPACE_USER, "isolation", &byte, 1));
+				ATF_CHECK_EQ(expected == 0 && op == 0 ? 'x' : 'q', byte);
+			}
+		}
+		if (token >= 0) close(token);
+	}
+	close(target); close(svc);
+}
+ATF_TC_CLEANUP(inherited_extattr_authority, tc)
+{
+	cleanup_tmpfile();
+}
+
+ATF_TC_WITH_CLEANUP(inherited_directory_authority);
+ATF_TC_HEAD(inherited_directory_authority, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Inherited directory descriptors obey current read and traversal authority");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(inherited_directory_authority, tc)
+{
+	const char *operations[] = {"read", "chdir", "chroot"};
+	uint64_t actions[] = {0, FI_FS_READ, FI_FS_LOOKUP, 0};
+	struct fi_reply reply;
+	char fd_arg[24], token_arg[24];
+	int svc, target, token, status, phase, expected;
+	pid_t child;
+
+	make_tmpdir();
+	svc = fi_connect();
+	target = open(tmpdir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(target >= 0);
+	ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_CLAIM, target, 0, &reply));
+	snprintf(fd_arg, sizeof(fd_arg), "%d", target);
+	for (phase = 0; phase < 4; phase++) {
+		if (phase == 3)
+			ATF_REQUIRE_EQ(0, fi_call(svc, FI_OP_RELEASE, target, 0, &reply));
+		token = -1;
+		if (actions[phase] != 0) {
+			token = fi_mint(svc, target, actions[phase]);
+			ATF_REQUIRE(token >= 0);
+		}
+		snprintf(token_arg, sizeof(token_arg), "%d", token);
+		for (unsigned op = 0; op < nitems(operations); op++) {
+			ATF_REQUIRE_EQ(0, lseek(target, 0, SEEK_SET));
+			expected = !(phase == 3 || (phase == 1 && op == 0) ||
+			    (phase == 2 && (op == 1 || op == 2)));
+			child = fork();
+			ATF_REQUIRE(child >= 0);
+			if (child == 0) {
+				close(svc);
+				execl(fi_helper_path(tc), "isolation-helper", "inherited-directory",
+				    fd_arg, operations[op], token_arg, NULL);
+				_exit(127);
+			}
+			ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+			ATF_REQUIRE(WIFEXITED(status));
+			ATF_CHECK_MSG(WEXITSTATUS(status) == expected,
+			    "phase %d operation %s: expected %d got %d", phase, operations[op], expected, WEXITSTATUS(status));
+
+		}
+		if (token >= 0) close(token);
+	}
+	close(target); close(svc);
+}
+ATF_TC_CLEANUP(inherited_directory_authority, tc)
+{
+	cleanup_tmpdir();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, claim_blocks_inherited_write);
+	ATF_TP_ADD_TC(tp, claim_blocks_inherited_read);
+	ATF_TP_ADD_TC(tp, claim_blocks_inherited_map_read);
+	ATF_TP_ADD_TC(tp, token_mapping_read_ceiling);
+	ATF_TP_ADD_TC(tp, inherited_extattr_authority);
+	ATF_TP_ADD_TC(tp, inherited_directory_authority);
 
 	ATF_TP_ADD_TC(tp, claim_and_query);
 	ATF_TP_ADD_TC(tp, claim_allows_same_nonce);
@@ -5138,6 +5512,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cross_nonce_lifecycle_blocked);
 
 	/* Directory isolation */
+	ATF_TP_ADD_TC(tp, dir_claim_content_scope);
 	ATF_TP_ADD_TC(tp, dir_claim_blocks_lookup);
 	ATF_TP_ADD_TC(tp, dir_claim_blocks_stat_inside);
 	ATF_TP_ADD_TC(tp, dir_release_allows_lookup);
@@ -5165,6 +5540,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, token_mint_returns_fd);
 	ATF_TP_ADD_TC(tp, token_authorize_grants_access);
 	ATF_TP_ADD_TC(tp, token_close_revokes_access);
+	ATF_TP_ADD_TC(tp, token_does_not_survive_reclaim);
 	ATF_TP_ADD_TC(tp, token_mint_requires_ownership);
 	ATF_TP_ADD_TC(tp, token_query_shows_authorized);
 	ATF_TP_ADD_TC(tp, token_scoped_to_claim);

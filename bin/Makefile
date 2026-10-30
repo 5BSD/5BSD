@@ -9,7 +9,6 @@ SUBDIR= cat \
 	date \
 	dd \
 	df \
-	domainname \
 	echo \
 	ed \
 	expr \
@@ -41,6 +40,7 @@ SUBDIR= cat \
 	uuidgen \
 	zsh
 
+SUBDIR.${MK_NIS}+=	domainname
 SUBDIR.${MK_SENDMAIL}+=	rmail
 SUBDIR.${MK_TCSH}+=	csh
 SUBDIR.${MK_TESTS}+=	tests

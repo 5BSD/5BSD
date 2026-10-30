@@ -629,6 +629,7 @@ class OwnedDataSection : public SectionBase {
   MAKE_SEC_WRITER_FRIEND
 
   std::vector<uint8_t> Data;
+  SectionBase *LinkSection = nullptr;
 
 public:
   OwnedDataSection(StringRef SecName, ArrayRef<uint8_t> Data)
@@ -653,6 +654,20 @@ public:
     Size = Data.size();
   }
 
+  void setSymTabLink(SymbolTableSection &SymTab);
+  void finalize() override {
+    if (LinkSection)
+      Link = LinkSection->Index;
+  }
+  Error removeSectionReferences(
+      bool AllowBrokenLinks,
+      function_ref<bool(const SectionBase *)> ToRemove) override {
+    if (LinkSection && ToRemove(LinkSection)) {
+      LinkSection = nullptr;
+      Link = 0;
+    }
+    return Error::success();
+  }
   void appendHexData(StringRef HexData);
   Error accept(SectionVisitor &Sec) const override;
   Error accept(MutableSectionVisitor &Visitor) override;
@@ -764,6 +779,8 @@ struct Symbol {
   SectionBase *DefinedIn = nullptr;
   SymbolShndxType ShndxType;
   uint32_t Index;
+  // Input identity survives reordering; newly added symbols have no input entry.
+  uint32_t OriginalIndex = UINT32_MAX;
   std::string Name;
   uint32_t NameIndex;
   uint64_t Size;
@@ -832,6 +849,7 @@ public:
   // An 'empty' symbol table still contains a null symbol.
   bool empty() const { return Symbols.size() == 1; }
   bool indicesChanged() const { return IndicesChanged; }
+  auto symbols() { return make_pointee_range(Symbols); }
   void setShndxTable(SectionIndexSection *ShndxTable) {
     SectionIndexTable = ShndxTable;
   }

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "duration_test", srcs = ["duration_test.c"],
+    deps = ["//usr.sbin/BSDPowerctl:client_source", "//lib/libpowercmp:powercmp", "//lib/libfidl:fidl",
+        "//lib/libchannel:channel", "//lib/libservice:service", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+bsd_kyua_test(name = "duration_test_run", program = ":duration_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_duration_test", program = "duration_test", manual = "",
+    package = "runtime-tests", bindir = "/usr/tests/usr.sbin/BSDPowerctl")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["duration_test"], interfaces = {"duration_test":"atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/BSDPowerctl/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//usr.sbin/BSDPowerctl:__pkg__"])

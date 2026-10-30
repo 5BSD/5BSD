@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "capreclaim_test", srcs = ["capreclaim_test.c"],
+    deps = ["//lib/libcapreclaim:capreclaim", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True, visibility = ["//visibility:public"])
+_HOST_CASES = ['unreadable_source_fails_the_pass', 'too_many_sources_is_einval', 'floored_pass_is_reported', 'unobserved_pass_restarts_the_grace', 'missing_callbacks_are_einval', 'non_directory_source_is_a_hard_error', 'all_sources_absent_reaps_nothing', 'strip_cap_accepts_only_marker_dirs', 'overlong_names_are_ignored', 'enumerate_failure_destroys_nothing', 'destroy_failure_is_not_counted_and_retried', 'grace_resets_when_owner_reappears', 'boot_pass_does_not_seed_grace', 'live_set_deduplicates_across_sources', 'duplicate_owned_names_destroy_once', 'many_owners_reconcile_exactly', 'fini_is_null_safe_and_idempotent', 'allow_empty_live_reaps_the_last_owner', 'boot_destroys_orphans_immediately', 'timer_requires_seen_gone_twice', 'transient_absence_survives_upgrade', 'running_counts_as_live', 'empty_live_set_reaps_nothing', 'long_owner_marker_is_still_live', 'live_match_is_exact_not_prefix', 'strip_cap_edge_names', 'partial_destroy_continues_past_a_failure', 'status_record_lists_the_managed_set']
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":capreclaim_test",
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for case in _HOST_CASES]
+cc_binary(name = "capreclaim_shared_test", srcs = ["capreclaim_test.c"],
+    deps = ["//lib/libcapreclaim:capreclaim", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/libcapreclaim:capreclaim_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"])
+[bsd_atf_test(name = "shared_" + case, case_name = case, interface = "program", body = ":capreclaim_shared_test",
+    runtime_lib = ["//lib/libcapreclaim:capreclaim_shared", "//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small") for case in _HOST_CASES]
+test_suite(name = "host_tests", tests = [":" + prefix + case for prefix in ["", "shared_"] for case in _HOST_CASES], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_test", program = "capreclaim_test", manual = "", package = "libcapreclaim-tests", bindir = "/usr/tests/lib/libcapreclaim")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["capreclaim_test"], interfaces = {"capreclaim_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libcapreclaim/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libcapreclaim-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libcapreclaim:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["com_err.h", "com_right.h"], includes = ["."], visibility = ["//lib/libcom_err:__pkg__"])
+exports_files(["com_err.c", "error.c", "com_err.h", "com_right.h", "com_err.3", "version-script.map"], visibility = ["//lib/libcom_err:__pkg__"])

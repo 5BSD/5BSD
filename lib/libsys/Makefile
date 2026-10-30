@@ -33,6 +33,9 @@ CFLAGS+=-I${LIBC_SRCTOP}/${LIBC_ARCH}
 
 .PATH: ${LIBC_SRCTOP}/string
 SRCS+=	memcpy.c memset.c strlcpy.c
+# memcpy textually includes this implementation; it is not a separate object.
+TEXTUAL_SRCS.memcpy.c= ${LIBC_SRCTOP}/string/bcopy.c
+memcpy.o memcpy.pico memcpy.pieo memcpy.nossppico: ${TEXTUAL_SRCS.memcpy.c}
 
 CLEANFILES+=tags
 INSTALL_PIC_ARCHIVE=

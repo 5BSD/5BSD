@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//tools/build/bazel:bsd_nls.bzl", "bsd_catalogue")
+bsd_catalogue(name = "catalogue", sources = ["catalogue.msg"], output = "catalogue.cat",
+    gencat = "//usr.bin/gencat:gencat", cat = "@bsd_sdk//toolchain:cat",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+cc_test(name = "catalogue_test", srcs = ["catalogue_test.c"], data = [":catalogue"],
+    args = ["$(location :catalogue)"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

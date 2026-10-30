@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":components.bzl", "ZFS_MANIFESTS")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = ZFS_MANIFESTS,
+    directory_packages = ["zfs"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.var.dist": "/var",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
+load("//tools/build/bazel:bsd_pkg_manifest.bzl", "bsd_pkg_manifests")
+load("//tools/build/bazel:bsd_pkg_create.bzl", "bsd_pkg_create")
+# Source-owned package membership and development/debug dependencies.
+bsd_pkg_layout(
+    name = "package_layout",
+    manifests = ZFS_MANIFESTS,
+    packages = ["zfs", "zfs-dbg", "zfs-dev", "zfs-lib"] + select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["zfs-man"],
+        "//conditions:default": [],
+    }),
+    suffix_tags = ["dbg", "dev", "lib"],
+    dependencies = select({
+        "//tools/build/bazel/config:split_manpages_enabled": {
+            "zfs-dbg": ["zfs"], "zfs-dev": ["zfs"], "zfs-man": ["zfs"],
+        },
+        "//conditions:default": {"zfs-dbg": ["zfs"], "zfs-dev": ["zfs"]},
+    }),
+)
+
+bsd_pkg_manifests(
+    name = "package_manifests",
+    layout = ":package_layout",
+    version = "//tools/build/bazel/config:package_version",
+    templates = select({
+        "//tools/build/bazel/config:split_manpages_enabled": {
+            "zfs": "zfs.ucl", "zfs-dbg": "zfs.ucl", "zfs-dev": "zfs.ucl", "zfs-lib": "zfs.ucl",
+            "zfs-man": "zfs.ucl",
+        },
+        "//conditions:default": {
+            "zfs": "zfs.ucl", "zfs-dbg": "zfs.ucl", "zfs-dev": "zfs.ucl", "zfs-lib": "zfs.ucl",
+        },
+    }),
+    prefix = "5BSD",
+    maintainer = "re@5bsd.org",
+    www = "https://github.com/5BSD/5BSD",
+    license_logic = "single",
+    licenses = ["CDDL-1.0"],
+    annotations = {"set": "minimal"},
+    generator = "//release/packages:generate-ucl.lua",
+    flua = "@bsd_sdk//toolchain:extra_flua",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_flua_runtime"],
+)
+
+bsd_pkg_create(
+    name = "packages",
+    manifests = ":package_manifests",
+    archive = ":install_archive",
+    abi_file = "//sbin/bectl:package_abi",
+    osversion_header = "//sys/sys:param.h",
+    format = "tzst",
+    threads = "//tools/build/bazel/config:package_threads",
+    epoch = 0,
+    pkg = "@bsd_sdk//toolchain:extra_pkg",
+    tar = "@bsd_sdk//toolchain:extra_tar",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_pkg_runtime", "@bsd_sdk//toolchain:extra_tar_runtime"],
+)

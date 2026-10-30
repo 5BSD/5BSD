@@ -191,7 +191,8 @@ remove_quotes(char *str)
  * Turn a simple string <str> separated by any of
  * the set of <chars> into an array.  The last element
  * of the array will be NULL, as is proper.
- * Free using freearraystr()
+ * The caller retains ownership of str. Returned storage belongs to the
+ * shared login capability buffers.
  */
 
 static const char **
@@ -212,9 +213,7 @@ arrayize(const char *str, const char *chars, int *size)
 
     /* alloc the array */
     if ((ptr = allocstr(str)) != NULL) {
-	if ((res = allocarray(++i)) == NULL)
-	    free((void *)(uintptr_t)(const void *)str);
-	else {
+	if ((res = allocarray(++i)) != NULL) {
 	    /* now split the string */
 	    i = 0;
 	    while (*ptr) {
@@ -481,11 +480,20 @@ const char **
 login_getcaplist(login_cap_t *lc, const char *cap, const char *chars)
 {
     const char *lstring;
+    const char **result;
+    int error;
 
     if (chars == NULL)
 	chars = ", \t";
-    if ((lstring = login_getcapstr(lc, cap, NULL, NULL)) != NULL)
-	return arrayize(lstring, chars, NULL);
+    if ((lstring = login_getcapstr(lc, cap, NULL, NULL)) != NULL) {
+	result = arrayize(lstring, chars, NULL);
+	error = errno;
+	/* arrayize copies into shared storage; release the decoded temporary
+	 * on success and every allocation failure without hiding errno. */
+	free(__DECONST(char *, lstring));
+	errno = error;
+	return result;
+    }
     return NULL;
 }
 

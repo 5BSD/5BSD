@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["libder.h", "libder_private.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libder:__pkg__"])
+exports_files(["libder.c", "libder_error.c", "libder_obj.c", "libder_read.c", "libder_type.c", "libder_write.c"],
+    visibility = ["//lib/libder:__pkg__"])

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "compat_headers", hdrs = ["openbsd_compat.h"],
+    strip_include_prefix = ".", visibility = ["//sbin/ifconfig:__pkg__", "//libexec/tftp-proxy:__pkg__", "//usr.sbin/ftp-proxy:__pkg__"])
+
+cc_library(name = "util_headers", hdrs = ["util.h"], strip_include_prefix = ".", visibility = ["//sbin/pflogd:__pkg__"])
+
+cc_library(name = "pfctl_headers", hdrs = ["openbsd_compat.h", "util.h", "sys/refcnt.h", "sys/timeout.h"], strip_include_prefix = ".", visibility = ["//sbin/pfctl:__subpackages__"])
+exports_files(["pfctl_jail.c", "pfctl_ether.c"], visibility = ["//sbin/pfctl:__subpackages__"])

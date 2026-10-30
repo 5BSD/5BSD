@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h"]),
+    strip_include_prefix = ".", include_prefix = "safestack",
+    deps = ["//contrib/llvm-project/compiler-rt/lib/sanitizer_common:headers"],
+    visibility = ["//visibility:public"])
+exports_files(["safestack.cpp"], visibility = ["//lib/libclang_rt:__subpackages__"])

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_lex(name = "lexer", src = "acplex.l", output = "acplex.c",
+    lex = "//usr.bin/lex:lex", m4 = "@bsd_sdk//toolchain:extra_m4",
+    runtime = ["@bsd_sdk//toolchain:extra_m4_runtime"])
+bsd_yacc(name = "parser", src = "acpyacc.y", output = "acpyacc.c", header = "y.tab.h",
+    yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+cc_library(name = "headers", hdrs = ["ar.h", ":parser_header"], strip_include_prefix = "/usr.bin/ar")
+cc_binary(name = "ar", srcs = ["ar.c", "read.c", "util.c", "write.c", ":lexer", ":parser_source"],
+    deps = [":headers", "//lib/libarchive:archive", "//lib/libelf:elf"],
+    dynamic_deps = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared"],
+    copts = ["-fPIE", "-Wno-missing-variable-declarations"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "ar_installation")
+ar_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+_TEST_BASE_LIBRARIES = ["//lib/libarchive:archive_shared", "//lib/libelf:elf_shared",
+    "//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared",
+    "//lib/libexpat:bsdxml_shared", "//lib/libzstd:zstd_shared", "//lib/libmd:md_shared"]
+_TEST_LIBRARIES = _TEST_BASE_LIBRARIES + select({
+        "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": [],
+    })
+cc_test(name = "functional_test", srcs = ["functional_test.c"],
+    data = [":ar"] + _TEST_LIBRARIES,
+    args = ["$(rootpath :ar)"] + ["$(rootpath " + lib + ")" for lib in _TEST_BASE_LIBRARIES] + select({
+        "//tools/build/bazel/config:openssl_enabled": ["$(rootpath //secure/lib/libcrypto:crypto_shared)"], "//conditions:default": [],
+    }),
+    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

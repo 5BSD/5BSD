@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_import")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "bsdextension_provider.d", output = "bsdextension_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = False,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+# Make translates pthread to a trailing -pthread link dependency.
+cc_library(name = "objects", srcs = ["bsdextension.c", "policy.c", "reclaim.c", "bsdextension.h", "bsdextension_reclaim.h", "trace_pressure.h", "bsdextension_probes.h"],
+    deps = ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers'] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-fPIE"], target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "bsdextension_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers'])
+load("//tools/build/bazel:bsd_capimage.bzl", "bsd_capimage_policy")
+bsd_capimage_policy(name = "policy_assembly", src = "//usr.sbin/BSDExtension/capbundle:bsdextension.ucl")
+cc_binary(name = "BSDExtension", srcs = [":policy_assembly"], deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared', '//lib/libchannel:channel_shared', '//lib/libucl:ucl_shared', '//lib/libcapreclaim:capreclaim_shared', '//lib/liblogcmp:logcmp_shared', '//lib/libfidl:fidl_shared', '//lib/libthr:thr_shared'],
+    linkopts = ["-pie", "-Wl,-z,now"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_BUNDLE = "/Capabilities/System/SystemExtension.cap"
+_UNIT = _BUNDLE + "/Units/bsdextension.unit"
+utility_installation(name = "program_install", keep_sections = [".5bsd.policy"], program = "BSDExtension", manual = "BSDExtension.8",
+    package = "runtime", bindir = _UNIT + "/bin", man_section = "8")
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = mode, install_tags = tags)
+ for name, src, dest, mode, tags in [
+    ("bundle_install", "//usr.sbin/BSDExtension/capbundle:Bundle.ucl", _BUNDLE + "/Bundle.ucl", "0444", ["package=runtime"]),
+    ("unit_install", "//usr.sbin/BSDExtension/capbundle:bsdextension.ucl", _UNIT + "/Unit.ucl", "0444", ["package=runtime"]),
+    ("config_install", "bsdextension.ucl", _UNIT + "/Config/bsdextension.ucl", "0644", ["package=runtime", "config"]),
+ ]]
+bsd_install_manifest(name = "bundle_install_manifest", entries = [":bundle_install", ":unit_install", ":config_install"])
+bsd_install_archive(name = "daemon_install_archive",
+    manifests = [":program_install", ":bundle_install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'
+        for d in [_BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin", _UNIT + "/Config"]} |
+        {"/etc/bsdextension": '{"owner":"capability","group":"capability","mode":"0700","tags":["package=runtime"]}'} |
+        {"/usr/lib/debug" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+         for d in ["/Capabilities", "/Capabilities/System", _BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin"]},
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+
+exports_files(["bsdextension.c", "policy.c", "reclaim.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
+cc_library(name = "test_headers",
+    hdrs = ["bsdextension.h", "bsdextension_reclaim.h", "bsdextension_probes.h", "trace_pressure.h"],
+    textual_hdrs = ["bsdextension.c"], strip_include_prefix = ".",
+    deps = ["//lib/libservice:headers", "//lib/libcapsulert:extension_protocol_headers"],
+    visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
+
+load("//usr.sbin/BSDExtension/tests:installation.bzl", TEST_MANIFESTS = "MANIFESTS", TEST_DIRECTORIES = "DIRECTORIES")
+bsd_install_archive(name = "install_archive",
+    manifests = [":program_install", ":bundle_install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'
+        for d in [_BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin", _UNIT + "/Config"]} |
+        {"/etc/bsdextension": '{"owner":"capability","group":"capability","mode":"0700","tags":["package=runtime"]}'} |
+        {"/usr/lib/debug" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+         for d in ["/Capabilities", "/Capabilities/System", _BUNDLE, _BUNDLE + "/Units", _UNIT, _UNIT + "/bin"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

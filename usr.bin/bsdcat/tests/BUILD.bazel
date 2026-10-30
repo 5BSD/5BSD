@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("//contrib/libarchive:test_list.bzl", "archive_test_list")
+load(":sources.bzl", "TEST_SOURCES", "REFERENCE_FILES")
+archive_test_list(name = "registry", srcs = TEST_SOURCES,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "registry_header", hdrs = [":registry"], strip_include_prefix = "registry")
+_LIBRARIES = ["//lib/libz:z", "//lib/libbz2:bz2", "//lib/liblzma:lzma", "//lib/libexpat:bsdxml", "//lib/libzstd:zstd"] + select({
+    "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto"], "//conditions:default": ["//lib/libmd:md_link"],
+})
+_SHARED = ["//lib/libz:z_shared", "//lib/libbz2:bz2_shared", "//lib/liblzma:lzma_shared", "//lib/libexpat:bsdxml_shared", "//lib/libzstd:zstd_shared"] + select({
+    "//tools/build/bazel/config:openssl_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": ["//lib/libmd:md_shared"],
+})
+
+_DEPS = ["//contrib/libarchive:internal_headers", ":registry_header", "//contrib/libarchive:cat_test_headers", "//lib/libarchive:configuration", "//lib/libarchive:archive"]
+_DEFINES = ['PLATFORM_CONFIG_H=\\"config_freebsd.h\\"'] + select({
+    "//tools/build/bazel/config:openssl_enabled": ["WITH_OPENSSL", "OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": [],
+})
+cc_library(name = "utilities", srcs = ["//contrib/libarchive:test_utils/test_utils.c"],
+    deps = _DEPS, local_defines = _DEFINES, copts = ["-Wno-cast-align", "-fPIE"], linkstatic = True, alwayslink = True)
+cc_binary(name = "bsdcat_test", srcs = TEST_SOURCES + ["//contrib/libarchive:test_utils/test_main.c"],
+    deps = _LIBRARIES + _DEPS + [":utilities"], local_defines = _DEFINES, copts = ["-fPIE"], linkopts = ["-pie"],
+    dynamic_deps = _SHARED + ["//lib/libarchive:archive_shared"], data = REFERENCE_FILES,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//contrib/libarchive:cli_test.bzl", "archive_cli_suite")
+archive_cli_suite(name = "functional_test", harness = ":bsdcat_test", program = "//usr.bin/bsdcat:bsdcat", references = REFERENCE_FILES)
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+
+bsd_script_wrapper(name = "installed_functional_test", body = "functional_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["functional_test"], interfaces = {"functional_test": "atf"})
+[bsd_install_file(name = "fixture_" + str(i), src = source, destination = "/usr/tests/usr.bin/bsdcat/" + source.split("/")[-1],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"]) for i, source in enumerate(REFERENCE_FILES)]
+[bsd_install_file(name = "install_" + name, src = source, destination = "/usr/tests/usr.bin/bsdcat/" + name,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"]) for name, source, mode in [
+    ("functional_test", ":installed_functional_test", "0555"), ("Kyuafile", ":kyuafile", "0444")]]
+utility_installation(name = "install_manifest", program = "bsdcat_test", manual = None, package = "tests", bindir = "/usr/tests/usr.bin/bsdcat",
+    extra_entries = [":install_functional_test", ":install_Kyuafile"] + [":fixture_" + str(i) for i in range(len(REFERENCE_FILES))])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["awkgram.y", "b.c", "lex.c", "lib.c", "main.c", "parse.c", "run.c", "tran.c", "maketab.c"], visibility = ["//usr.bin/awk:__pkg__"])
+cc_library(name = "headers", hdrs = ["awk.h", "proto.h"], strip_include_prefix = ".", visibility = ["//usr.bin/awk:__pkg__"])

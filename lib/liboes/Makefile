@@ -39,6 +39,11 @@ OES_SCHEMAPACKAGE=	oes
 OES_NOTICE=	${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 OES_NOTICEDIR=	/usr/share/licenses/liboes/fuchsia
 
+# Record the package license ancestor as well as the notice directory.
+DIRS+= OES_NOTICEPARENT
+OES_NOTICEPARENT= ${OES_NOTICEDIR:H}
+OES_NOTICEPARENTTAGS= ${OES_NOTICEDIRTAGS}
+
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+cc_binary(
+    name = "runtime_driver",
+    srcs = ["runtime.cc"],
+    copts = ["-std=c++23", "-nostdinc++"],
+    deps = ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    linkopts = ["-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_compare_test(
+    name = "runtime",
+    program = ":runtime_driver",
+    expected = "runtime.out",
+    expected_stderr = "empty.err",
+    runtime_lib = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)
+
+cc_import(name = "static_libcxx", static_library = "//lib/libc++:static_archive")
+cc_binary(
+    name = "static_runtime_driver",
+    srcs = ["runtime.cc"],
+    copts = ["-std=c++23", "-nostdinc++"],
+    deps = [":static_libcxx", "//contrib/llvm-project/libcxx/include:headers", "//lib/msun:m"],
+    dynamic_deps = ["//lib/msun:m_shared"],
+    linkopts = ["-pthread"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+)
+bsd_compare_test(
+    name = "static_runtime",
+    program = ":static_runtime_driver",
+    expected = "runtime.out",
+    expected_stderr = "empty.err",
+    runtime_lib = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+)

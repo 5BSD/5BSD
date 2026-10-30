@@ -10,7 +10,7 @@
 
 require_truss()
 {
-	truss -o /dev/null /usr/bin/true >/dev/null 2>&1 ||
+	truss -o /dev/null "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)" >/dev/null 2>&1 ||
 	    atf_skip "unable to trace a child process here"
 }
 
@@ -67,7 +67,7 @@ unknown_group_head()
 unknown_group_body()
 {
 	atf_check -s exit:1 -e match:'unknown system call group @nosuch' \
-	    truss -t @nosuch /usr/bin/true
+	    truss -t @nosuch "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)"
 }
 
 atf_test_case empty_term
@@ -95,7 +95,7 @@ empty_term_body()
 
 	# A negation with nothing to negate is still a mistake.
 	atf_check -s exit:1 -e match:"missing pattern after" \
-	    truss -t '!' /usr/bin/true
+	    truss -t '!' "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)"
 }
 
 atf_test_case none
@@ -184,7 +184,7 @@ bad_number_body()
 
 	# Too large to be a system call number at all: an error.
 	atf_check -s exit:1 -e match:'system call number is too large' \
-	    truss -t 4294967296 /usr/bin/true
+	    truss -t 4294967296 "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)"
 }
 
 atf_test_case unknown_syscall
@@ -342,11 +342,11 @@ negation_body()
 {
 	require_truss
 
-	atf_check -s exit:0 -o ignore truss -o out -t '!@all' /usr/bin/true
+	atf_check -s exit:0 -o ignore truss -o out -t '!@all' "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)"
 	syscall_names out names
 	atf_check -o empty cat names
 
-	atf_check -s exit:0 -o ignore truss -o out2 -t '!@memory' /usr/bin/true
+	atf_check -s exit:0 -o ignore truss -o out2 -t '!@memory' "$(atf_config_get usr.bin.truss.test_true /usr/bin/true)"
 	syscall_names out2 names2
 	no_name '^(mmap|munmap|mprotect)$' names2
 	some_name '.' names2

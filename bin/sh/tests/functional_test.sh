@@ -58,6 +58,9 @@ add_testcase()
 		;;
 	esac
 
+	# The expected exit status is part of the fixture identity (alias.0/alias.1).
+	tc_escaped="${tc_escaped}_exit_${tc##*.}"
+
 	atf_test_case ${tc_escaped}
 	eval "${tc_escaped}_body() { check ${tc}; }"
 	atf_add_test_case ${tc_escaped}

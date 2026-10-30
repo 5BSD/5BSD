@@ -29,6 +29,32 @@
 #include "capsule_svc_proto.h"
 #include "config.h"
 
+/* Exact wire shape; no aliases in trailing bytes or operation dispatch. */
+static inline bool
+validate_boot_req(const void *payload, uint32_t len,
+    const struct capsule_boot_storage_req **reqp, int *errp)
+{
+	const struct capsule_boot_storage_req *req = payload;
+	size_t length, i;
+
+	if (payload == NULL || len != sizeof(*req))
+		goto invalid;
+	if (req->op != CAPSULE_OP_BOOT_STORAGE &&
+	    req->op != CAPSULE_OP_BOOT_CRYPTO)
+		goto invalid;
+	length = strnlen(req->recipient, sizeof(req->recipient));
+	if (length == 0 || length == sizeof(req->recipient))
+		goto invalid;
+	for (i = length; i < sizeof(req->recipient); i++)
+		if (req->recipient[i] != '\0')
+			goto invalid;
+	*reqp = req;
+	return (true);
+invalid:
+	*errp = EINVAL;
+	return (false);
+}
+
 static inline bool
 validate_service_req(const void *payload, uint32_t len,
     const struct capsule_service_req **reqp, int *errp)

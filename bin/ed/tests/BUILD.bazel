@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+CASES = ['append', 'address', 'change', 'delete', 'insert', 'join', 'mark', 'move', 'transfer', 'transfer_search', 'undo', 'global_move', 'global_change', 'global_substitute', 'global_undo', 'global_copy', 'inverse_global', 'subst_backreference', 'subst_range', 'subst_charclass', 'edit_file', 'edit_command', 'edit_reread', 'edit_lowercase', 'read_command', 'read_default', 'read_file', 'write_pipe', 'quit', 'shell_command', 'newline_insert', 'newline_search', 'unicode_list_multibyte', 'unicode_list_cjk', 'unicode_list_mixed', 'unicode_list_invalid', 'unicode_list_wrap_cjk', 'unicode_print', 'unicode_number', 'unicode_regex', 'unicode_regex_charclass', 'unicode_substitute', 'unicode_substitute_cjk', 'unicode_global_substitute', 'unicode_join', 'unicode_append', 'unicode_cyrillic', 'err_append_suffix', 'err_addr_out_of_range', 'err_addr_negative', 'err_bang_addr', 'err_bang_double', 'err_change_suffix', 'err_change_zero', 'err_delete_suffix', 'err_edit_suffix', 'err_edit_addr', 'err_edit_nosuffix', 'err_file_addr', 'err_file_suffix', 'err_global_delim', 'err_global_empty', 'err_global_incomplete', 'err_help_addr', 'err_insert_suffix', 'err_insert_zero', 'err_mark_upper', 'err_mark_zero', 'err_mark_ref', 'err_move_dest', 'err_quit_addr', 'err_read_nofile', 'err_subst_delim', 'err_subst_infinite', 'err_subst_bracket', 'err_subst_escape', 'err_subst_empty', 'err_subst_bare', 'err_subst_sr', 'err_subst_equiv', 'err_subst_class', 'err_subst_collate', 'err_transfer_suffix', 'err_transfer_addr', 'err_undo_addr', 'err_write_nopath', 'err_write_suffix', 'err_write_flags', 'err_crypt_addr', 'err_scroll']
+[bsd_atf_test(
+    name = "native_" + case,
+    case_name = case,
+    body = "ed_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ['//bin/sh:sh', '//libexec/atf/atf-sh:atf-sh', '//libexec/atf/atf-check:atf-check', '//bin/ed:ed', '//usr.bin/cmp:cmp', '//bin/test:test', '//bin/cat:cat', '//usr.bin/dirname:dirname', '//usr.bin/basename:basename', '//usr.bin/grep:grep', '//usr.bin/sed:sed', '//usr.bin/diff:diff', '//bin/rm:rm'],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared"],
+    locale_files = {"//share/ctypedef:C.UTF-8": "C.UTF-8/LC_CTYPE"},
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "ed_test", body = "ed_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["ed_test"], interfaces = {"ed_test": "atf"})
+bsd_install_file(name = "install_shell", src = ":ed_test",
+    destination = "/usr/tests/bin/ed/ed_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/bin/ed/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])

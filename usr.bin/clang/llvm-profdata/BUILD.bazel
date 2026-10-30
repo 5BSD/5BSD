@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-profdata",
+    srcs = ['llvm-profdata-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-profdata:llvm-profdata.cpp'],
+    options = None, manual = "llvm-profdata.1",
+    deps = [])

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_FILES = {"legacy_test": "legacy_test.sh"} | {n: n for n in ["regress.00.in", "regress.00.out", "regress.01.out", "regress.01.sh", "regress.sh"]}
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["legacy_test"], interfaces = {"legacy_test": "tap"})
+[bsd_install_file(name = "install_" + name, src = source, destination = "/usr/tests/usr.bin/apply/" + name,
+    owner = "root", group = "wheel", mode = "0555" if name == "legacy_test" else "0444",
+    install_tags = ["package=tests"]) for name, source in _FILES.items()]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.bin/apply/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + n for n in _FILES] + [":install_kyuafile"],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Debug mode exercises command expansion without an undeclared shell process.
+[bsd_compare_test(name = "debug_" + name, program = "//usr.bin/apply:apply",
+    arguments = arguments, expected = "debug_" + name + ".out", expected_stderr = "empty.out",
+    runtime_lib = ["//lib/libsbuf:sbuf_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for name, arguments in [
+    ("substitution", ["-d", "echo %2 %1", "a", "b", "c", "d"]),
+    ("grouping", ["-d", "-2", "echo", "alpha", "beta", "gamma", "delta"]),
+    ("magic", ["-d", "-a@", "echo @2 @1", "alpha", "beta"]),
+ ]]
+test_suite(name = "tests", tests = [":debug_substitution", ":debug_grouping", ":debug_magic"],
+    visibility = ["//visibility:public"])

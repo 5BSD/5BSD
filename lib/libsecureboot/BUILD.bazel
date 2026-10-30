@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_secureboot_headers.bzl", "bsd_secureboot_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# Selecting no policy must fail when the library is analyzed. There is no
+# implicit empty-trust or test policy for production consumers.
+filegroup(name = "unconfigured_policy", srcs = [], visibility = ["//visibility:public"])
+filegroup(name = "no_certificates", srcs = [], visibility = ["//visibility:public"])
+
+bsd_secureboot_headers(
+    name = "generated",
+    policy = "//tools/build/bazel/config:secureboot_policy",
+    anchors = ["//tools/build/bazel/config:secureboot_trust_anchors"],
+    verification = ["//tools/build/bazel/config:secureboot_verification_certificates"],
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+)
+cc_library(name = "generated_headers", hdrs = [":generated"], strip_include_prefix = "generated", visibility = ["//lib/libsecureboot/tests:__pkg__"])
+cc_library(name = "headers", hdrs = ["h/libsecureboot.h"], strip_include_prefix = "h",
+    deps = ["//contrib/bearssl:headers"], visibility = ["//visibility:public"])
+cc_library(
+    name = "secureboot",
+    srcs = ["readfile.c", "brf.c", "vesigned.c", "x509_tbs.c", "vets.c", "veta.c",
+            "//contrib/bearssl:tools/xmem.c", "//contrib/bearssl:tools/vector.c"],
+    hdrs = ["libsecureboot-priv.h", "x509_tbs.h"],
+    deps = [":headers", ":generated_headers", "//contrib/bearssl:tool_headers", "//lib/libbearssl:bearssl"],
+    copts = ["-include", "secureboot_config.h"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":secureboot"], visibility = ["//visibility:public"])
+
+cc_shared_library(name = "secureboot_shared", deps = [":secureboot"],
+    dynamic_deps = ["//lib/libbearssl:bearssl_shared"],
+    shared_lib_name = "libsecureboot.so.5",
+    user_link_flags = ["-Wl,-soname,libsecureboot.so.5", "-Wl,-z,defs"],
+    visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# A unit-test translation unit includes the production implementation to corrupt
+# only its private expected KAT value. This is not an installed interface.
+cc_library(name = "selftest_source", testonly = True,
+    textual_hdrs = ["vets.c"], hdrs = ["libsecureboot-priv.h", "x509_tbs.h"],
+    deps = [":headers", ":generated_headers", "//contrib/bearssl:tool_headers"],
+    visibility = ["//lib/libsecureboot/tests:__pkg__"])

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+"""Invoke config without embedding an absolute action root into its Makefile."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+program, config, anchor, output = [Path(p).absolute() for p in sys.argv[1:5]]
+identity = Path(sys.argv[5]).absolute()
+debug = sys.argv[6] == '1'
+overrides = Path(sys.argv[7]).absolute()
+libraries = [Path(p).absolute() for p in sys.argv[8:]]
+env = dict(os.environ)
+if libraries:
+    env['LD_LIBRARY_PATH'] = ':'.join(dict.fromkeys(str(p.parent) for p in libraries))
+# config uses -s only for the generated Makefile's S variable. Relative to its
+# output directory, this remains usable and independent of the action root.
+source_root = anchor.parent.parent
+# Keep the original parser and include resolution. A declared override list
+# controls both native config and Bazel source selection.
+active_config = overrides if overrides.read_text() else config
+command = [str(program)] + (['-g'] if debug else [])
+command += ['-d', str(output), '-s', os.path.relpath(source_root, output), str(active_config)]
+subprocess.run(command, cwd=config.parent, env=env, check=True)
+
+# Ask the same parser for the resolved identity; do not parse its Makefile.
+result = subprocess.run([str(program), '-i', '-s', str(source_root), str(active_config)],
+                        cwd=config.parent, env=env, check=True, capture_output=True)
+identity.write_bytes(result.stdout)

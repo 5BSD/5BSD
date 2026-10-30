@@ -23,6 +23,11 @@ NAMESPACECMP_SCHEMAPACKAGE= libnamespacecmp-dev
 FILESGROUPS+= NAMESPACECMP_NOTICE
 NAMESPACECMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 NAMESPACECMP_NOTICEDIR= /usr/share/licenses/libnamespacecmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= NAMESPACECMP_NOTICEPARENT
+NAMESPACECMP_NOTICEPARENT= ${NAMESPACECMP_NOTICEDIR:H}
+NAMESPACECMP_NOTICEPARENTTAGS= ${NAMESPACECMP_NOTICEDIRTAGS}
+
 INCS=	namespacecmp.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

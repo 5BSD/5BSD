@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = "//lib/libfido2:static_archive")
+[cc_test(name = "regress_" + name,
+    srcs = ["//contrib/libfido2/regress:" + name + ".c"] + (["//contrib/libfido2/regress:mock.c", "//contrib/libfido2/regress:extern.h", "//contrib/libfido2/fuzz:wiredata_fido2.h"] if name in ["cred", "dev"] else []),
+    deps = [":archive_link", "//contrib/libfido2:headers", "//lib/libcbor:cbor", "//secure/lib/libcrypto:crypto", "//lib/libz:z"],
+    dynamic_deps = ["//lib/libcbor:cbor_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libz:z_shared"],
+    local_defines = ["OPENSSL_API_COMPAT=0x10100000L"], features = ["bsd_test_runtime_paths"], size = "small",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name in ["assert", "cred", "dev", "eddsa", "es256", "es384", "rs256", "compress"]]
+test_suite(name = "regress_tests", tests = [":regress_" + name for name in ["assert", "cred", "dev", "eddsa", "es256", "es384", "rs256", "compress"]], visibility = ["//visibility:public"])

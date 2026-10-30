@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd October 10, 2026
+.Dd October 20, 2026
 .Dt CAPSULE 8
 .Os
 .Sh NAME
@@ -14,6 +14,10 @@
 .Op Fl f Ar conffile
 .Op Fl p Ar pidfile
 .Op Fl T
+.Nm
+.Fl n
+.Op Fl j
+.Fl f Ar conffile
 .Sh DESCRIPTION
 .Nm
 is the capability-plane root supervisor for the capability world.
@@ -137,6 +141,80 @@ Enter the event loop, monitoring the switchboard process descriptor
 and control socket connections via
 .Xr kqueue 2 .
 .El
+.Sh CONFIGURATION VALIDATION
+When invoked outside PID 1,
+.Fl n Fl f Ar conffile
+loads the explicitly selected file through the same configuration parser and
+static constraints used at startup, then exits without daemon setup.
+The selected file must exist and be loaded; validation does not accept the
+normal writable-boot fallback for a missing optional default file.
+It accepts host identity and storage assignments for static checking.
+It does not create a pidfile or control socket, start services, open storage,
+claim capabilities, authenticate the input, or authorize runtime operations.
+It does not require root if the caller can read the selected file.
+The optional
+.Fl j
+flag emits a JSON object with format version 1, scope
+.Dq capsule-effective-manager ,
+and the effective
+.Dq service_manager
+string after native defaults and configuration parsing, plus
+the compiled-in PID 1 policy path in
+.Dq boot_configuration .
+An empty string means that manager startup is disabled.
+This report does not attest to the selected executable or its dependencies.
+The flag is accepted only with
+.Fl n .
+Other daemon options cannot be combined with this mode.
+An exit status of zero means syntax and static validation succeeded;
+resource availability, dataset identities, signatures and runtime behavior
+require separate verification.
+
+.Sh PROTECTED WRITABLE STORAGE
+In the BSD Integrity Protection (BIP) bootstrap profile, PID 1 prepares
+.Pa /tmp
+before launching the service manager.
+An explicit ordinary storage attachment at that path takes precedence over the
+fallback tmpfs. PID 1 requires its successfully retained directory descriptor to
+match the current path; protected, missing or replaced attachments fail startup.
+The configured dataset retains its selected metadata, execution flags and
+persistence behavior. It grants no provider authority.
+.Pp
+Without an explicit attachment, the fallback requires an empty root-owned
+directory on the immutable system filesystem; symlinks, foreign mounts and
+existing contents are rejected.
+The fallback tmpfs has a 64 MiB limit, mode 1777, and nosuid/noexec mount flags.
+It is public scratch space and contains no delegated service authority.
+Its contents do not persist across reboot and are not confidential from root.
+Interpreters may still read scripts stored there.
+.Pp
+.Pa /Capabilities/Run
+is a separate bounded tmpfs whose isolation claim remains with PID 1.
+The service manager receives scoped access; ordinary root descendants do not.
+Manager restart preserves both mounts and the claim.
+The boot-only
+.Va storage
+policy in
+.Xr capsule.conf 5
+selects explicit pool and dataset identities, devices, recipients and rights.
+PID 1 acquires and retains bounded dataset anchors before launching the manager;
+only verified system Core units may receive the configured derivatives.
+There are no default storage recipients or GUIDs.
+Ordinary attachments may omit recipients and never supply provider derivatives.
+Attachments preserve the selected dataset's
+.Va readonly
+property; protected data also retains mandatory no-execute and no-setuid flags.
+Ordinary attachments obtain execute and setuid policy from the dataset.
+Effective mount flags are checked after attachment.
+Read-only attachment alone does not authenticate dataset contents.
+Storage policy must also supply the stable
+.Va hostuuid
+that PID 1 establishes before importing pools.
+The maintained VM tests exercise this handoff using explicit fixture grants;
+that evidence does not qualify a full installed system.
+Persistent service data, user storage, third-party installation prefixes and
+.Pa /var/tmp
+still require completed storage policy and integrated VM acceptance.
 .Sh SURVIVABILITY
 When running as PID 1,
 .Nm
@@ -202,9 +280,21 @@ Intended for automated tests.
 reads its configuration from
 .Pa /etc/capsule.conf
 in UCL format.
-The configuration file is optional \(em if it does not exist,
-compiled-in defaults are used.
-Syntax errors are fatal.
+Only an absent default file outside BIP permits compiled-in defaults.
+Missing explicit files and malformed configuration are fatal.
+Under BIP, PID 1 selects
+.Pa /boot/capsule.conf
+from the authenticated read-only system, without fallback to
+.Pa /etc/capsule.conf .
+The boot policy is generated and verified with the system generation.
+The native JSON validation report uses format 2:
+.Va boot_configuration
+names the hardened path and
+.Va normal_boot_configuration
+names the normal installation path, independently of the validation host's mode.
+See
+.Xr capsule.conf 5
+for schema, file and input restrictions.
 .Pp
 The following keys are supported:
 .Bl -tag -width "control_socket_mode"
@@ -649,9 +739,11 @@ dtrace -n 'capsule*:::dyn-release-* { printf("refcount=%d result=%d",
 .Ed
 .Sh FILES
 .Bl -tag -width "/usr/libexec/switchboard"
+.It Pa /boot/capsule.conf
+Required immutable PID 1 configuration under BIP (UCL format).
 .It Pa /etc/capsule.conf
-Configuration file (UCL format).
-Optional.
+Normal installation and daemon configuration (UCL format).
+Optional only outside BIP at the default path.
 .It Pa /usr/libexec/switchboard
 Default service manager binary.
 Started by
@@ -705,7 +797,7 @@ Claim a privileged port range and system operations:
 claims {
     network = [
         {
-            port = ".<1024";
+            port = "<1024";
             protocol = "tcp";
             direction = "bind";
             domain = "inet";

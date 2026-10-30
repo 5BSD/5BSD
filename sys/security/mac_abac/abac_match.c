@@ -91,7 +91,7 @@ done:
  * - Whether process has a controlling TTY
  *
  * For subject context: pass cred (caller's credential), proc=NULL
- * For object context: pass cred=NULL, proc (target process)
+ * For object context: pass cred=NULL, proc (target process), PROC_LOCK held.
  *
  * At least one of cred or proc must be provided if flags are set.
  */
@@ -116,11 +116,11 @@ abac_context_matches(const struct abac_context *ctx,
 		check_cred = crhold(cred);
 		check_proc = curproc;
 	} else if (proc != NULL) {
-		PROC_LOCK(proc);
+		/* mac_proc_check_{debug,sched,signal,wait} owns this lock. */
+		PROC_LOCK_ASSERT(proc, MA_OWNED);
 		check_cred = proc->p_ucred;
 		if (check_cred != NULL)
 			crhold(check_cred);
-		PROC_UNLOCK(proc);
 		check_proc = proc;
 	} else {
 		/* No context info available, can't match constraints */
@@ -134,20 +134,14 @@ abac_context_matches(const struct abac_context *ctx,
 
 	/* Check capability mode (sandboxed) */
 	if (ctx->vc_flags & ABAC_CTX_CAP_SANDBOXED) {
-		bool is_sandboxed = false;
+		bool is_sandboxed;
 
 		/*
-		 * For subject context, check curthread.
-		 * For object context, check target process flag.
+		 * Match the same credential as the other context predicates.
+		 * The executing thread need not be the supplied subject.
 		 */
-		if (cred != NULL) {
-			/* Subject: check current thread */
-			struct thread *td = curthread;
-			if (td != NULL)
-				is_sandboxed = IN_CAPABILITY_MODE(td);
-		} else
-			is_sandboxed =
-			    (check_cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+		is_sandboxed =
+		    (check_cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
 
 		if (is_sandboxed != ctx->vc_cap_sandboxed) {
 			match = false;

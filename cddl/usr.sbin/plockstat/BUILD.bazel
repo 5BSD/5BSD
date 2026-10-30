@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(
+    name = "plockstat",
+    srcs = ["//cddl/contrib/opensolaris:cmd/plockstat/plockstat.c"],
+    # IN_BASE uses the Solaris compatibility API, as in the maintained Make build.
+    deps = ["//cddl/compat/opensolaris/include:proc_headers", "//cddl/contrib/opensolaris:dtrace_headers", "//cddl/lib/libdtrace:dtrace", "//cddl/lib/libdtrace:proc_compat_headers", "//lib/libproc:proc"],
+    dynamic_deps = ["//cddl/lib/libdtrace:dtrace_shared", "//lib/libproc:proc_shared"],
+    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "plockstat", manual = "plockstat.1", package = "dtrace", bindir = "/usr/sbin")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

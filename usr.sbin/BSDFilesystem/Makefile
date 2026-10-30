@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=	BSDFilesystem
 MAN=		BSDFilesystem.8 tzfs.conf.5
 
-SRCS=		bsdfilesystem.c config.c layout.c nvwalk.c request.c oes_factory.c oes_session.c
+SRCS=		bsdfilesystem.c layout.c nvwalk.c request.c oes_factory.c oes_session.c
 
 # Default configuration under /Capabilities/Config.
 CONFS=		bsdfilesystem.ucl
@@ -50,19 +50,7 @@ CAP_UNITPACKAGE=	runtime
 # (libservice over libchannel), and the bsd.filesystem.v1 and bsd.oes.v1
 # server bindings (their generated code is linked from libfilesystemcmp and
 # liboes).
-CFLAGS+=	-I${FIDLGEN.filesystemcmp} -I${FIDLGEN.oes_broker}
-CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
-CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
-CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
-CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
-CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
-CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/lib/libchannel
-CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/liboes
-CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-
-LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp \
-		filesystemcmp oes fidl_bsd
+.include "${.CURDIR}/Makefile.common"
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		bsdfilesystem_provider.d
@@ -73,16 +61,6 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CAPIMAGE_MANIFEST= ${CAP_UNIT}
-
-# Bindings generated at build time (fidl-bindings.mk).
-FIDL_BINDINGS+=	filesystemcmp oes_broker
-FIDL_SCHEMAS.filesystemcmp=	lib/libfidl/tests/zx.fidl \
-	lib/libfilesystemcmp/filesystemcmp.fidl
-FIDL_LIBRARY.filesystemcmp=	bsd.filesystem.v1
-FIDL_SCHEMAS.oes_broker=	lib/libfidl/tests/zx.fidl \
-	lib/liboes/oes_broker.fidl
-FIDL_LIBRARY.oes_broker=	bsd.oes.v1
-.include "${SRCTOP}/lib/libfidl/fidl-bindings.mk"
 
 .include <bsd.prog.mk>
 

@@ -297,39 +297,51 @@ lua_closefile(lua_State *L)
 static int
 lua_readfile(lua_State *L)
 {
-	FILE	**f;
-	size_t	size, r;
-	char * buf;
+	FILE **f;
+	lua_Integer requested;
+	size_t size, r;
+	char *buf;
+	int valid;
 
-	if (lua_gettop(L) < 1 || lua_gettop(L) > 2) {
-		lua_pushnil(L);
-		lua_pushinteger(L, 0);
-		return 2;
-	}
-
-	f = (FILE**)lua_touserdata(L, 1);
-
-	if (f == NULL || *f == NULL) {
-		lua_pushnil(L);
-		lua_pushinteger(L, 0);
-		return 2;
-	}
-
-	if (lua_gettop(L) == 2)
-		size = (size_t)lua_tonumber(L, 2);
-	else
+	if (lua_gettop(L) < 1 || lua_gettop(L) > 2)
+		goto failure;
+	f = (FILE **)lua_touserdata(L, 1);
+	if (f == NULL || *f == NULL)
+		goto failure;
+	if (lua_gettop(L) == 2) {
+		requested = lua_tointegerx(L, 2, &valid);
+		if (!valid || requested < 0 || (uintmax_t)requested > SSIZE_MAX)
+			goto failure;
+		size = (size_t)requested;
+	} else {
 		size = (*f)->size;
-
-
-	buf = (char*)malloc(size);
+		if (size > SSIZE_MAX)
+			goto failure;
+	}
+	if (ferror(*f))
+		goto failure;
+	if (size == 0) {
+		lua_pushliteral(L, "");
+		lua_pushinteger(L, 0);
+		return (2);
+	}
+	buf = malloc(size);
+	if (buf == NULL)
+		goto failure;
 	r = fread(buf, 1, size, *f);
+	if (ferror(*f)) {
+		free(buf);
+		goto failure;
+	}
 	lua_pushlstring(L, buf, r);
 	free(buf);
 	lua_pushinteger(L, r);
-
-	return 2;
+	return (2);
+failure:
+	lua_pushnil(L);
+	lua_pushinteger(L, 0);
+	return (2);
 }
-
 /*
  * Implements io.write(file, ...)
  * Any number of string and number arguments may be passed to it,

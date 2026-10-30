@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "db_objects",
+    srcs = [
+        "btree/bt_close.c",
+        "btree/bt_conv.c",
+        "btree/bt_debug.c",
+        "btree/bt_delete.c",
+        "btree/bt_get.c",
+        "btree/bt_open.c",
+        "btree/bt_overflow.c",
+        "btree/bt_page.c",
+        "btree/bt_put.c",
+        "btree/bt_search.c",
+        "btree/bt_seq.c",
+        "btree/bt_split.c",
+        "btree/bt_utils.c",
+        "db/db.c",
+        "hash/hash.c",
+        "hash/hash_bigkey.c",
+        "hash/hash_buf.c",
+        "hash/hash_func.c",
+        "hash/hash_log2.c",
+        "hash/hash_page.c",
+        "hash/ndbm.c",
+        "mpool/mpool.c",
+        "mpool/mpool-compat.c",
+        "recno/rec_close.c",
+        "recno/rec_delete.c",
+        "recno/rec_get.c",
+        "recno/rec_open.c",
+        "recno/rec_put.c",
+        "recno/rec_search.c",
+        "recno/rec_seq.c",
+        "recno/rec_utils.c",
+        "btree/btree.h",
+        "btree/extern.h",
+        "hash/extern.h",
+        "hash/hash.h",
+        "hash/page.h",
+        "recno/extern.h",
+        "recno/recno.h",
+    ],
+    implementation_deps = ["//lib/libc/include:rt_private_headers"],
+    local_defines = ["__DBINTERFACE_PRIVATE", "_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
+        select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+
+# Raw objects for qualification and eventual aggregate libc linkage.
+bsd_component_archive(name = "objects_archive", groups = [":db_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":db_objects"], pic = True)
+exports_files(["Symbol.map"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_man_btree.3', 'man/btree.3'),
+    ('libc_manual_man_dbm.3', 'man/dbm.3'),
+    ('libc_manual_man_dbopen.3', 'man/dbopen.3'),
+    ('libc_manual_man_hash.3', 'man/hash.3'),
+    ('libc_manual_man_mpool.3', 'man/mpool.3'),
+    ('libc_manual_man_recno.3', 'man/recno.3'),
+]]

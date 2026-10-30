@@ -296,7 +296,8 @@ mac_capability_instance_free(struct mac_capability_instance *s)
 {
 
 	mac_capability_callback_state_rele(s->ci_callback_state);
-	cap_authority_drop(s->ci_authority);
+	cap_authority_lease_detach(s);
+	cap_authority_binding_release(&s->ci_binding);
 	knlist_destroy(&s->ci_rknotes);
 	knlist_destroy(&s->ci_wknotes);
 	mtx_destroy(&s->ci_mtx);

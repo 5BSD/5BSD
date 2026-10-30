@@ -81,6 +81,8 @@ def create(pkg, output, meta, payload=None):
             identity = root / 'usr/share/5bsd/hardware-abi'
             identity.parent.mkdir(parents=True)
             identity.write_text(meta['annotations']['5BSD_kernel_sha256'] + '\n')
+            meta['directories'] = {'/usr/share/5bsd': {
+                'uname': 'root', 'gname': 'wheel', 'perm': '0755'}}
             meta['files'] = {'/usr/share/5bsd/hardware-abi': {
                 'sum': sha256(identity), 'uname': 'root', 'gname': 'wheel',
                 'perm': '0644'}}
@@ -147,7 +149,8 @@ def raw_gpu_firmware(pkg, output, package, meta):
         converted = dict(meta)
         converted['files'] = {}
         converted.pop('scripts', None)
-        converted.pop('directories', None)
+        # Preserve source-declared directory metadata, including license
+        # parents. Moving firmware files does not authorize dropping it.
         converted.pop('flatsize', None)
         for name, attrs in meta['files'].items():
             if name.startswith('/usr/local/share/licenses/'):
@@ -377,6 +380,23 @@ def merge_hardware(repository, base, pkg):
     return info
 
 
+def copy_public_key(source, destination):
+    """Emit only a parsed public key, never arbitrary supplied PEM contents."""
+    with os.fdopen(os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1048576:
+            raise ValueError('public key must be a bounded regular file')
+        data = stream.read(1048577)
+    if (len(data) > 1048576 or not re.fullmatch(
+            br'\s*-----BEGIN (PUBLIC KEY|RSA PUBLIC KEY)-----[\r\n]+[A-Za-z0-9+/=\r\n]+-----END \1-----\s*', data)):
+        raise ValueError('trust input requires public-key-only PEM')
+    result = subprocess.run(['/usr/bin/openssl', 'pkey', '-pubin', '-pubout'],
+        input=data, capture_output=True, check=True, timeout=60,
+        env={'PATH': '/sbin:/bin:/usr/sbin:/usr/bin', 'LC_ALL': 'C', 'OPENSSL_CONF': '/dev/null'})
+    with Path(destination).open('xb') as stream:
+        stream.write(result.stdout)
+
+
 def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None,
                                 verify_archives=False):
     """Verify an offline catalogue using only the consumer public trust key.
@@ -391,11 +411,13 @@ def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None
     with tempfile.TemporaryDirectory(prefix='5bsd-verify-') as work:
         work = Path(work)
         public = work / 'repository.pub'
-        shutil.copyfile(public_key, public)
+        copy_public_key(public_key, public)
         repos = work / 'repos'
         repos.mkdir()
+        # pkg's file transport opens the literal path after file://; it does
+        # not percent-decode URI paths. JSON handles configuration escaping.
         definition = {'bsd_build_verify': {
-            'url': repository.resolve().as_uri(), 'enabled': True,
+            'url': 'file://' + str(repository.resolve()), 'enabled': True,
             'signature_type': 'pubkey', 'pubkey': str(public),
             'mirror_type': 'none'}}
         (repos / 'verify.conf').write_text(json.dumps(definition) + '\n')
@@ -405,7 +427,7 @@ def verify_catalogue_public_key(repository, public_key, pkg, abi, osversion=None
             '-o', 'ABI=' + abi, '-o', 'OSVERSION=' + str(osversion),
             '-o', 'PKG_DBDIR=' + str(work / 'db'),
             '-o', 'PKG_CACHEDIR=' + str(work / 'cache'),
-            '-o', 'ENABLE_PLUGINS=no', '-o', 'REPO_AUTOUPDATE=no',
+            '-o', 'PKG_ENABLE_PLUGINS=no', '-o', 'REPO_AUTOUPDATE=no',
             '-o', 'INSTALL_AS_USER=yes']
         result = run(*command, 'update', '-f', '-r', 'bsd_build_verify',
                      capture_output=True)
@@ -516,7 +538,6 @@ def add_bootstrap_package(source, expected, candidate, info):
     return {'file': target.name, 'sha256': actual, 'version': meta['version']}
 
 
-
 def add_application_packages(selection_path, candidate, info):
     """Copy a pinned format-1 application selection, retaining package identities.
 
@@ -583,9 +604,8 @@ def add_application_packages(selection_path, candidate, info):
             'packages': sorted(records, key=lambda row: row['name'])}
 
 
-
 def publish(args):
-    """Publish a complete immutable generation, then atomically advance latest."""
+    """Publish a complete generation, optionally advancing latest atomically."""
     bootstrap = getattr(args, 'pkg_package', None)
     bootstrap_hash = getattr(args, 'pkg_package_sha256', None)
     if bool(bootstrap) != bool(bootstrap_hash):
@@ -625,12 +645,13 @@ def publish(args):
                                   if application_selection is not None else None)
             if bootstrap_record is not None and application_record is None:
                 validate_package_payloads(candidate)
-            # Refresh the catalogue after adding the unchanged application archives.
+            # Adding applications changes the catalogue assembled by merge_hardware.
             if application_record is not None:
                 run(args.pkg, 'repo', candidate)
             # Check dependencies using the actual combined package manifests.
             combined = inventory(candidate)
             closure(combined, list(combined))
+            package_closure.require_shared_libraries(meta for _, meta in combined.values())
             if args.signing_key:
                 run(args.pkg, 'repo', candidate, args.signing_key)
                 verify_signed_catalogue(candidate, args.signing_key, args.pkg, info['abi'], info.get('osversion'))
@@ -645,18 +666,31 @@ def publish(args):
                           if application_record is not None else
                           'complete base and matching hardware generation')}, indent=2) + '\n')
             candidate.rename(output)
-            pointer = Path(temp) / 'latest'
-            pointer.symlink_to(output.name)
-            pointer.replace(parent / 'latest')
+            if not getattr(args, 'no_latest', False):
+                pointer = Path(temp) / 'latest'
+                pointer.symlink_to(output.name)
+                pointer.replace(parent / 'latest')
     return output
 
 
+def hints_generator(value):
+    if value is None:
+        raise ValueError('media requires an explicit kldxref executable')
+    path = Path(value)
+    if not path.is_absolute() or path.is_symlink() or not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError('kldxref must be an absolute regular executable')
+    return path.resolve(strict=True)
+
+
 def stage(args):
+    if args.media:
+        hints_generator(getattr(args, 'kldxref', None))
     info = verify(args.repository, args.kernel_package)
     if args.base_repository:
         base = args.base_repository.resolve()
         latest = base.parent / 'latest'
-        if latest.is_symlink() and latest.resolve() == base:
+        if ((base / 'publication.json').exists() or (base / 'publication.json').is_symlink() or
+                (latest.is_symlink() and latest.resolve() == base)):
             raise ValueError('cannot stage into a published generation; use publish')
         merge_hardware(args.repository, base, args.pkg)
     if args.media:
@@ -691,10 +725,12 @@ def stage(args):
                 kind = ('type=link link=' + str(path.readlink()) if path.is_symlink()
                         else 'type=dir mode=0755' if path.is_dir() else 'type=file mode=0644')
                 metalog.write(name + ' uname=root gname=wheel ' + kind + '\n')
-        install_live_firmware(args.media, args.repository, args.pkg, info)
+        install_live_firmware(args.media, args.repository, args.pkg, info, args.kldxref)
 
 
-def install_live_firmware(media, repository, pkg, info, public_key=None):
+def install_live_firmware(media, repository, pkg, info, kldxref, public_key=None):
+    generator = hints_generator(kldxref)
+    generator_hash = sha256(generator)
     live = [r['package'] for n, r in info['packages'].items()
             if n.startswith(('wifi-firmware-', 'gpu-firmware-')) or
             n in ('iwmbt-firmware', 'rtlbt-firmware')]
@@ -702,7 +738,7 @@ def install_live_firmware(media, repository, pkg, info, public_key=None):
         # --rootdir redirects payloads only. Explicitly isolate the package
         # database, cache and repository configuration from the build host.
         with tempfile.TemporaryDirectory() as config:
-            definition = {'url': repository.resolve().as_uri(), 'enabled': True}
+            definition = {'url': 'file://' + str(repository.resolve()), 'enabled': True}
             if public_key is not None:
                 definition.update(signature_type='pubkey', pubkey=str(public_key))
             Path(config, 'hardware.conf').write_text(
@@ -721,16 +757,22 @@ def install_live_firmware(media, repository, pkg, info, public_key=None):
     # module index explicitly so the live kernel can locate firmware names.
     modules = media / 'boot/modules'
     if modules.exists() and any(modules.glob('*.ko')):
-        run('kldxref', modules)
+        run(generator, modules)
+        if sha256(generator) != generator_hash:
+            raise ValueError('kldxref changed during hints generation')
         hints = modules / 'linker.hints'
-        if not hints.is_file():
+        if hints.is_symlink() or not hints.is_file():
             raise ValueError('live hardware modules have no linker.hints')
         with (media / 'METALOG').open('a') as metalog:
             metalog.write('./boot/modules/linker.hints type=file uname=root gname=wheel mode=0644\n')
+        print('MODULE_HINTS_GENERATED ' + json.dumps({'generator': str(generator),
+            'generator_sha256': generator_hash, 'hints_sha256': sha256(hints),
+            'scope': 'trusted-builder-media', 'inputs_authenticated': False}, sort_keys=True))
 
 
 def stage_signed_media(args):
     """Stage a complete signed publication and explicit trust on live media."""
+    hints_generator(getattr(args, 'kldxref', None))
     if args.media.is_symlink():
         raise ValueError('media root must not be a symlink')
     media = args.media.resolve(strict=True)
@@ -766,8 +808,8 @@ def stage_signed_media(args):
         prepared.mkdir()
         keys = prepared / 'keys'
         keys.mkdir()
-        shutil.copyfile(args.public_key, keys / 'repository.pub')
-        shutil.copyfile(args.code_public_key, keys / 'code.pub')
+        copy_public_key(args.public_key, keys / 'repository.pub')
+        copy_public_key(args.code_public_key, keys / 'code.pub')
         copy_signed_repository(repository, prepared / 'offline', keys / 'repository.pub',
                                args.pkg, info['abi'], info.get('osversion'))
         verify(prepared / 'offline')
@@ -784,7 +826,7 @@ def stage_signed_media(args):
             metalog.write('./' + str(path.relative_to(media)) +
                           ' type=' + kind + ' uname=root gname=wheel\n')
     install_live_firmware(media, destination / 'offline', args.pkg, info,
-                          destination / 'keys/repository.pub')
+                          args.kldxref, destination / 'keys/repository.pub')
 
 
 def main():
@@ -804,6 +846,7 @@ def main():
     s.add_argument('--kernel-package', type=Path)
     s.add_argument('--base-repository', type=Path)
     s.add_argument('--media', type=Path)
+    s.add_argument('--kldxref', type=Path)
     pub = sub.add_parser('publish')
     pub.add_argument('--repository', type=Path, required=True)
     pub.add_argument('--base-repository', type=Path, required=True)
@@ -813,6 +856,8 @@ def main():
     pub.add_argument('--pkg-package-sha256')
     pub.add_argument('--application-selection', type=Path,
         help='format-1 hash-bound application archives; format 2 is unsupported')
+    pub.add_argument('--no-latest', action='store_true',
+        help='retain the verified generation without advancing the repository channel')
     offline = sub.add_parser('copy-signed-repository',
         help='preserve and verify a complete signed offline catalogue')
     offline.add_argument('--repository', type=Path, required=True)
@@ -823,6 +868,7 @@ def main():
     media = sub.add_parser('stage-signed-media')
     media.add_argument('--repository', type=Path, required=True)
     media.add_argument('--media', type=Path, required=True)
+    media.add_argument('--kldxref', type=Path, required=True)
     media.add_argument('--public-key', type=Path, required=True)
     media.add_argument('--code-public-key', type=Path, required=True)
     for parser in (b, s, pub, offline, media):

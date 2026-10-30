@@ -5,6 +5,7 @@ GENERATED=	init_sysent.c			\
 		systrace_args.c			\
 		${SYSDIR}/sys/syscall.h		\
 		${SYSDIR}/sys/syscall.mk	\
+		${SYSDIR}/sys/syscall_symbols.bzl	\
 		${SYSDIR}/sys/sysproto.h
 
 .include "../conf/sysent.mk"

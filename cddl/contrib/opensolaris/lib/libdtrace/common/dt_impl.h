@@ -329,6 +329,8 @@ struct dtrace_hdl {
 	uint64_t dt_guestrefsize; /* largest guest by-reference result (0: */
 				/* DT_GUESTREFSIZE_DEFAULT; "guestrefsize") */
 	uint_t dt_linktype;	/* dtrace link output file type (see below) */
+	uint_t dt_linkpath;	/* use normalized relative object identities */
+	uint_t dt_linksection;	/* optional single -G input section index */
 	uint_t dt_link_machine;	/* ELF machine selected from -G input objects */
 	uint_t dt_link_flags;	/* ELF ABI flags selected from -G input objects */
 	uint_t dt_xlatemode;	/* dtrace translator linking mode (see below) */

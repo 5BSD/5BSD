@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//crypto/openssl:module_sources_amd64.bzl", "MODULE_SOURCES")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_ENGINES = ["capi", "devcrypto", "loader_attic", "padlock"]
+[
+    cc_library(name = name + "_objects", srcs = MODULE_SOURCES["engines/" + name],
+        deps = ["//secure/lib/libcrypto:crypto"],
+        implementation_deps = ["//crypto/openssl:engine_headers", "//crypto/openssl:internal_headers"],
+        local_defines = ["L_ENDIAN", "NDEBUG"] + (["OPENSSL_NO_PROVIDER_CORE"] if name == "loader_attic" else []),
+        linkstatic = True, target_compatible_with = _PLATFORM)
+    for name in _ENGINES
+]
+[
+    cc_shared_library(name = name, deps = [":" + name + "_objects"],
+        dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"], shared_lib_name = name + ".so",
+        user_link_flags = ["-Wl,-soname," + name + ".so", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+        target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+    for name in _ENGINES
+]
+filegroup(name = "engines", srcs = [":" + name for name in _ENGINES],
+    visibility = ["//visibility:public"])
+
+load("//secure/lib/libcrypto:install_helpers.bzl", "openssl_binary_entries")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_manifest")
+_INSTALL_GROUPS = [openssl_binary_entries(name + "_install", ":" + name, "/usr/lib/engines-3/" + name + ".so") for name in _ENGINES]
+bsd_install_manifest(name = "install_manifest", entries = [entry for group in _INSTALL_GROUPS for entry in group],
+    visibility = ["//visibility:public"])

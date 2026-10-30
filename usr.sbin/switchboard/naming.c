@@ -351,7 +351,7 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 {
 	int provider_end, client_end;
 	uint64_t rights;
-	bool operator_session;
+	bool management_eligible;
 
 	(void)sender;
 	(void)requester;
@@ -360,12 +360,12 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		*errp = EACCES;
 		return (-1);
 	}
-	operator_session = svc_anoint_holds(&domain->anoint,
+	management_eligible = svc_anoint_holds(&domain->anoint,
 	    SVC_ANOINT_SWITCHBOARD_ADMIN);
-	rights = operator_session ? SVC_RIGHTS_ALL :
+	rights = management_eligible ? SVC_RIGHTS_ALL :
 	    (SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN);
 	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL,
-	    operator_session ? 1U : 0U);
+	    management_eligible ? 1U : 0U);
 	if (switchboard_fd_budget_check(2, "capability control connection") == -1) {
 		*errp = errno;
 		return (-1);
@@ -381,7 +381,7 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		*errp = ENOTCAPABLE;
 		return (-1);
 	}
-	if (svc_authority_bind(domain, client_end) == -1) {
+	if (svc_authority_bind_invocation(domain, client_end) == -1) {
 		*errp = errno;
 		close(provider_end);
 		close(client_end);
@@ -397,8 +397,8 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 	return (client_end);
 }
 
-int
-naming_lookup(const char *name, struct svc_runtime *requester,
+static int
+naming_lookup_impl(const char *name, struct svc_runtime *requester,
     const struct svc_domain *domain, const struct channel_sender *sender,
     int *errp, bool *sendablep)
 {
@@ -409,7 +409,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	char registry_requires[SWITCHBOARD_MAX_REQUIRES][SWITCHBOARD_LABEL_MAX];
 	unsigned nrequires;
 	int provider_end, client_end;
-	uid_t sender_uid = sender != NULL ? (uid_t)sender->uid : (uid_t)-1;
+	uid_t sender_uid = svc_authority_personal_uid(domain, sender);
 
 	if (sendablep != NULL)
 		*sendablep = false;
@@ -422,8 +422,9 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	/*
 	 * switchboard self-serves two spine control names with no provider process:
 	 * its own control plane (P3, handled in-process) and the system lifecycle
-	 * plane (P4b, relayed to capsule).  Both are gated on the switchboard admin
-	 * attribute and always carry ADMIN rights.
+	 * plane (P4b, relayed to capsule). Each channel is bound to the requesting
+	 * invocation. Protected mode requires independent session rights in addition
+	 * to the software attribute; development mode retains software admission.
 	 */
 	if (strcmp(name, SWITCHBOARD_CONTROL_NAME) == 0)
 		return (naming_lookup_self_control(name, requester, domain,
@@ -568,9 +569,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 
-	/* Non-forwardable sessions are also bound to the issued authority.
-	 * Public anonymous sessions have no elevated rights. Providers that
-	 * explicitly publish sendable endpoints retain bearer delegation. */
+	/* Bind non-forwardable and administrative endpoints to software authority. */
 	if (domain != NULL && domain->authority_identity != 0 &&
 	    (!e->sendable || domain->anoint.admin_rights) &&
 	    svc_authority_bind(domain, client_end) == -1) {
@@ -579,6 +578,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		close(client_end);
 		return (-1);
 	}
+
 
 	/* Check provider is still alive before sending. */
 	if (provider->channel_fd < 0) {
@@ -617,10 +617,12 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	/* Retired authentication rights are never issued to service clients. */
 	notify.rights = SVC_RIGHTS_ALL &
 	    ~(SERVICE_RIGHTS_ADMIN | SERVICE_RIGHTS_AUTHENTICATE);
+	/* Preserve the ordinary administrative endpoint grant. */
 	if (domain != NULL && domain->anoint.admin_rights)
 		notify.rights |= SERVICE_RIGHTS_ADMIN;
 
-	if (svc_channel_send_event(provider, &notify, sizeof(notify),
+	if (svc_channel_send_event(provider,
+	    &notify, sizeof(notify),
 	    &provider_end, 1, switchboard_kq) == -1) {
 		syslog(LOG_WARNING,
 		    "naming: lookup '%s': failed to notify provider '%s': %m",
@@ -654,4 +656,21 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		*sendablep = e->sendable;
 	*errp = 0;
 	return (client_end);
+}
+
+int
+naming_lookup(const char *name, struct svc_runtime *requester,
+    const struct svc_domain *domain, const struct channel_sender *sender,
+    int *errp, bool *sendablep)
+{
+	return (naming_lookup_impl(name, requester, domain, sender, errp, sendablep));
+}
+
+int
+naming_lookup_observed(const char *name, struct svc_runtime *requester,
+    const struct svc_domain *domain, const struct channel_message *request,
+    int *errp, bool *sendablep)
+{
+	return (naming_lookup_impl(name, requester, domain, channel_message_sender(request),
+	    errp, sendablep));
 }

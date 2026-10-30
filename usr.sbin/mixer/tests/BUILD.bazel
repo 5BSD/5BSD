@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Installed Kyua suite; execution requires an isolated snd_dummy environment.
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "mixer_test", body = "mixer_test.sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["mixer_test"], interfaces = {"mixer_test": "atf"},
+    metadata = {"mixer_test": json.encode({"is_exclusive": True, "required_kmods": "snd_dummy"})})
+bsd_install_file(name = "install_shell", src = ":mixer_test",
+    destination = "/usr/tests/usr.sbin/mixer/mixer_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/usr.sbin/mixer/Kyuafile", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])

@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":zfs_installation.bzl", "zfs_installation")
+zfs_installation(name = "zfs_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "zfs_install_archive",
+    manifests = [":zfs_install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load(":unconditional_installation.bzl", "unconditional_installation")
+unconditional_installation(name = "unconditional_install_manifest")
+bsd_install_archive(
+    name = "unconditional_install_archive",
+    manifests = [":unconditional_install_manifest"],
+    directories = {"/etc/rc.d": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load(":selected_installation.bzl", "selected_installation")
+selected_installation(name = "selected_install_manifest")
+bsd_install_archive(
+    name = "selected_install_archive",
+    manifests = [":unconditional_install_manifest", ":selected_install_manifest"],
+    directories = {"/etc/rc.d": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+[config_setting(name = "acpi_" + name, constraint_values = [cpu],
+    flag_values = {"//tools/build/bazel/config:acpi": "true"})
+ for name, cpu in [("amd64", "@platforms//cpu:x86_64"), ("i386", "@platforms//cpu:x86_32"), ("arm64", "@platforms//cpu:aarch64")]]
+selects.config_setting_group(name = "acpi_platform", match_any = [":acpi_amd64", ":acpi_i386", ":acpi_arm64"])
+config_setting(name = "heimdal", visibility = ["//libexec/rc:__pkg__"], flag_values = {"//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:kerberos": "true", "//tools/build/bazel/config:mitkrb5": "false"})
+config_setting(name = "mit", flag_values = {"//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:kerberos": "true", "//tools/build/bazel/config:mitkrb5": "true"})
+config_setting(name = "ktls_services", flag_values = {"//tools/build/bazel/config:crypt": "true", "//tools/build/bazel/config:openssl": "true", "//tools/build/bazel/config:openssl_ktls": "true"})
+load(":compound_installation.bzl", "compound_installation", "service_directories")
+compound_installation(name = "compound_install_manifest")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":unconditional_install_manifest", ":selected_install_manifest", ":compound_install_manifest"],
+    directories = service_directories(),
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+exports_files(["os-release"], visibility = ["//libexec/rc/tests:__pkg__"])
+
+exports_files(["sshd", "syslogd"], visibility = ["//libexec/rc/tests:__pkg__"])

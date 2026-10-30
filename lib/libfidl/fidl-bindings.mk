@@ -86,6 +86,7 @@ _FIDL_RUNTIME_HEADERS=	${SRCTOP}/lib/libfidl/include/fidl/bsd/*.h
 .endif
 FIDLGEN.${_s}=	${.OBJDIR}/fidlgen/${_s}
 FIDLGEN_SRCS.${_s}= ${_FIDLGEN_FILES:@f@fidlgen/${_s}/fidl/${FIDL_LIBRARY.${_s}}/${f}@}
+FIDLGEN_HEADERS.${_s}= ${_FIDLGEN_HEADERS:@f@fidlgen/${_s}/fidl/${FIDL_LIBRARY.${_s}}/${f}@}
 _FIDLGEN_INPUTS.${_s}= ${FIDL_SCHEMAS.${_s}:M/*} \
 		${FIDL_SCHEMAS.${_s}:N/*:S,^,${SRCTOP}/,}
 fidlgen/${_s}.stamp: ${_FIDLGEN_INPUTS.${_s}} ${_FIDLGEN_TOOLS}
@@ -95,8 +96,7 @@ fidlgen/${_s}.stamp: ${_FIDLGEN_INPUTS.${_s}} ${_FIDLGEN_TOOLS}
 	    --available ${FIDL_AVAILABLE} \
 	    ${FIDL_FLAGS.${_s}:@f@--fidlc-flag=${f}@} ${_FIDLGEN_INPUTS.${_s}}
 fidlgen: fidlgen/${_s}.stamp
-${FIDLGEN_SRCS.${_s}} \
-    ${_FIDLGEN_HEADERS:@f@fidlgen/${_s}/fidl/${FIDL_LIBRARY.${_s}}/${f}@}: \
+${FIDLGEN_SRCS.${_s}} ${FIDLGEN_HEADERS.${_s}}: \
     fidlgen/${_s}.stamp
 .NOPATH: fidlgen/${_s}.stamp ${FIDLGEN_SRCS.${_s}}
 # The generator leaves unchanged files untouched, so a source can keep its

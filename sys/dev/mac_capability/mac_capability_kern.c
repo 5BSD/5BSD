@@ -1107,6 +1107,41 @@ mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv)
 	s->ci_priv = priv;
 }
 
+void
+mac_capability_authorization_snapshot(struct thread *td,
+    struct mac_capability_authorization *context)
+{
+	struct proc *p = td->td_proc;
+	bool acquired;
+
+	acquired = !PROC_LOCKED(p);
+	if (acquired)
+		PROC_LOCK(p);
+	cap_authority_stamp_locked(p, &context->authority);
+	context->process_identity = p->p_cap_identity;
+	context->execution_nonce = mac_capability_proc_nonce(p->p_ucred);
+	if (acquired)
+		PROC_UNLOCK(p);
+}
+
+bool
+mac_capability_instance_authorization_allows(struct mac_capability_instance *s,
+    const struct mac_capability_authorization *context, uint64_t accessor_nonce)
+{
+	bool allowed;
+
+	mtx_lock(&s->ci_mtx);
+	allowed = (s->ci_flags & MAC_CAPABILITY_SF_DEAD) == 0 &&
+	    cap_authority_lease_valid(s->ci_lease) &&
+	    cap_authority_binding_matches(&s->ci_binding, &context->authority,
+	    context->process_identity, context->execution_nonce);
+	if (allowed && s->ci_binding.authority != NULL)
+		allowed = context->execution_nonce != 0 &&
+		    context->execution_nonce == accessor_nonce;
+	mtx_unlock(&s->ci_mtx);
+	return (allowed);
+}
+
 void *
 mac_capability_instance_get_priv(struct mac_capability_instance *s)
 {

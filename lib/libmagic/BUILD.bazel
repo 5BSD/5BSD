@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+bsd_awk_output(name = "magic_header", script = "magic-header.awk",
+    srcs = ["config.h", "//contrib/file:src/magic.h.in"], output = "magic.h",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_library(name = "headers", hdrs = ["config.h", ":magic_header"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+cc_binary(name = "mkmagic", srcs = ['//contrib/file:src/apprentice.c', '//contrib/file:src/cdf_time.c', '//contrib/file:src/encoding.c', '//contrib/file:src/funcs.c', '//contrib/file:src/magic.c', '//contrib/file:src/print.c', '//contrib/file:src/swap.c'],
+    deps = [":configuration", ":headers", "//contrib/file:headers"],
+    local_defines = ["HAVE_CONFIG_H", "COMPILE_ONLY"],
+    visibility = ["//visibility:public"])
+
+load(":magic_database.bzl", "magic_database")
+magic_database(name = "magic_database", fragments = ["//contrib/file:magic_fragments"], compiler = ":mkmagic",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", cwd_exec = "//tools/build/bazel:cwd_exec")
+filegroup(name = "magic_source", srcs = [":magic_database"], output_group = "source", visibility = ["//visibility:public"])
+filegroup(name = "magic_compiled", srcs = [":magic_database"], output_group = "database", visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "magic", srcs = ['//contrib/file:src/apprentice.c', '//contrib/file:src/apptype.c', '//contrib/file:src/ascmagic.c', '//contrib/file:src/buffer.c', '//contrib/file:src/cdf.c', '//contrib/file:src/cdf_time.c', '//contrib/file:src/compress.c', '//contrib/file:src/der.c', '//contrib/file:src/encoding.c', '//contrib/file:src/fsmagic.c', '//contrib/file:src/funcs.c', '//contrib/file:src/is_json.c', '//contrib/file:src/is_csv.c', '//contrib/file:src/is_simh.c', '//contrib/file:src/is_tar.c', '//contrib/file:src/magic.c', '//contrib/file:src/print.c', '//contrib/file:src/readcdf.c', '//contrib/file:src/readelf.c', '//contrib/file:src/seccomp.c', '//contrib/file:src/softmagic.c', '//contrib/file:src/swap.c'],
+    deps = [":configuration", ":headers", "//contrib/file:headers", "//lib/libz:z"], local_defines = ["HAVE_CONFIG_H"],
+    linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":magic"], visibility = ["//visibility:public"])
+cc_shared_library(name = "magic_shared", deps = [":magic"], dynamic_deps = ["//lib/libz:z_shared"],
+    shared_lib_name = "libmagic.so.4", user_link_flags = ["-Wl,-soname,libmagic.so.4", "-Wl,-z,defs"], visibility = ["//visibility:public"])
+
+bsd_awk_output(
+    name = "pkgconfig",
+    script = "magic-pc.awk",
+    srcs = ["config.h", "//contrib/file:libmagic.pc.in"],
+    output = "libmagic.pc",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+    visibility = ["//visibility:public"],
+)
+
+load(":magic_configuration.bzl", "magic_configuration")
+magic_configuration(name = "configuration", path = "//tools/build/bazel/config:magic_path",
+    visibility = ["//visibility:public"])
+
+load(":magic_configuration.bzl", "magic_manual")
+magic_manual(name = "libmagic_manual", configuration = ":configuration",
+    config = "config.h", template = "//contrib/file:doc/libmagic.man",
+    script = "magic-man.awk", output = "libmagic.3",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"], visibility = ["//visibility:public"])
+magic_manual(name = "magic_manual", configuration = ":configuration",
+    config = "config.h", template = "//contrib/file:doc/magic.man",
+    script = "magic-man.awk", output = "magic.5",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"], visibility = ["//visibility:public"])
+magic_manual(name = "file_manual", configuration = ":configuration",
+    config = "config.h", template = "//contrib/file:doc/file.man",
+    script = "magic-man.awk", output = "file.1",
+    awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libmagic","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files([
+    "fid.h", "lib9p.h", "backend/fs.h",
+    "connection.c", "genacl.c", "hashtable.c", "log.c", "pack.c",
+    "request.c", "rfuncs.c", "threadpool.c", "utils.c",
+    "backend/fs.c", "transport/socket.c",
+], visibility = ["//lib/lib9p:__pkg__"])
+cc_library(
+    name = "headers",
+    hdrs = [
+        "fid.h", "lib9p.h", "fcall.h", "lib9p_impl.h", "genacl.h",
+        "hashtable.h", "log.h", "rfuncs.h", "threadpool.h",
+        "linux_errno.h", "backend/backend.h", "backend/fs.h", "transport/socket.h",
+    ],
+    strip_include_prefix = ".",
+    deps = ["//lib/libcasper/libcasper:headers"],
+    visibility = ["//lib/lib9p:__pkg__", "//usr.sbin/bhyve:__pkg__"],
+)

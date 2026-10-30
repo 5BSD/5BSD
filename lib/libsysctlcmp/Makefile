@@ -26,6 +26,11 @@ SYSCTLCMP_SCHEMAPACKAGE= libsysctlcmp-dev
 FILESGROUPS+= SYSCTLCMP_NOTICE
 SYSCTLCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 SYSCTLCMP_NOTICEDIR= /usr/share/licenses/libsysctlcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= SYSCTLCMP_NOTICEPARENT
+SYSCTLCMP_NOTICEPARENT= ${SYSCTLCMP_NOTICEDIR:H}
+SYSCTLCMP_NOTICEPARENTTAGS= ${SYSCTLCMP_NOTICEDIRTAGS}
+
 INCS=	sysctlcmp.h sysctlcmp_protocol.h sysctlcmp_server.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

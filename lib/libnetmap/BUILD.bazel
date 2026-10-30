@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+cc_library(name = "headers", hdrs = ['libnetmap.h'], strip_include_prefix = ".", deps = ['//sys/net:netmap_user_headers'], visibility = ["//visibility:public"])
+cc_library(name = "netmap", srcs = ['nmctx.c', 'nmport.c', 'nmctx-pthreads.c', 'nmreq.c'], deps = [":headers"], linkstatic = True, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":netmap"], visibility = ["//visibility:public"])
+cc_shared_library(name = "netmap_shared", deps = [":netmap"], shared_lib_name = "libnetmap.so.5", user_link_flags = ["-Wl,-soname,libnetmap.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libnetmap/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=netmap","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": {
+        "/usr/tests/lib/libnetmap": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=netmap-tests"]}',
+    } | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=netmap-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libnetmap"]}, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

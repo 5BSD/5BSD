@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+_TOOLS = ["//usr.bin/bsdiff/bsdiff:bsdiff", "//usr.bin/bsdiff/bspatch:bspatch"]
+_RUNTIME = ["//lib/libbz2:bz2_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+
+cc_test(
+    name = "unchanged_test",
+    srcs = ["roundtrip.c"],
+    linkopts = ["-static"],
+    data = _TOOLS + ["unchanged.old", "unchanged.new"] + _RUNTIME,
+    args = ["$(rootpath " + label + ")" for label in _TOOLS + ["unchanged.old", "unchanged.new"] + _RUNTIME],
+    size = "small",
+)
+
+cc_test(
+    name = "growth_test",
+    srcs = ["roundtrip.c"],
+    linkopts = ["-static"],
+    data = _TOOLS + ["growth.old", "growth.new"] + _RUNTIME,
+    args = ["$(rootpath " + label + ")" for label in _TOOLS + ["growth.old", "growth.new"] + _RUNTIME],
+    size = "small",
+)
+
+cc_test(
+    name = "binary_test",
+    srcs = ["roundtrip.c"],
+    linkopts = ["-static"],
+    data = _TOOLS + ["binary.old", "binary.new"] + _RUNTIME,
+    args = ["$(rootpath " + label + ")" for label in _TOOLS + ["binary.old", "binary.new"] + _RUNTIME],
+    size = "small",
+)
+
+cc_test(
+    name = "truncate_test",
+    srcs = ["roundtrip.c"],
+    linkopts = ["-static"],
+    data = _TOOLS + ["truncate.old", "truncate.new"] + _RUNTIME,
+    args = ["$(rootpath " + label + ")" for label in _TOOLS + ["truncate.old", "truncate.new"] + _RUNTIME],
+    size = "small",
+)
+
+test_suite(name = "tests", tests = [':unchanged_test', ':growth_test', ':binary_test', ':truncate_test'], visibility = ["//visibility:public"])

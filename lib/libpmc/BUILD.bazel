@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "pmc", srcs = ["libpmc.c", "pmclog.c", "libpmc_pmu_util.c", "libpmc_json.cc", "//lib/libpmc/pmu-events:events_x86"], hdrs = ["pmc.h", "pmclog.h", "pmcformat.h", "libpmcinternal.h"], deps = ['//sys/bsm:pmc_user_headers', '//sys/dev/hwpmc:pmc_user_headers', '//sys/sys:pmc_user_headers', '//lib/libpmcstat:headers', '//lib/libpmc/pmu-events:headers', '//lib/libc++:cxx', '//lib/msun:m'], copts = ["-Isys", "-Ilib/libpmc", "-nostdinc++"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":pmc"], visibility = ["//visibility:public"])
+cc_shared_library(name = "pmc_shared", deps = [":pmc"], dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"], shared_lib_name = "libpmc.so.5", user_link_flags = ["-Wl,-soname,libpmc.so.5", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pmc","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+cc_library(name = "public_headers", hdrs = ["pmc.h", "pmclog.h", "pmcformat.h"], includes = ["."], visibility = ["//visibility:public"])

@@ -62,85 +62,62 @@ int
 env_setenv(const char *name, int flags, const void *value,
     ev_sethook_t sethook, ev_unsethook_t unsethook)
 {
-	struct env_var	*ev, *curr, *last;
+	struct env_var *ev, *curr, *last;
+	char *replacement;
 
-	if ((ev = env_getenv(name)) != NULL) {
-		/*
-		 * If the new value doesn't have NOKENV set, we'll drop the flag
-		 * if it's set on the entry so that the override propagates
-		 * correctly.  We do this *before* sending it to the hook in
-		 * case the hook declines to operate on it (e.g., because the
-		 * value matches what was already set) -- we would still want
-		 * the explicitly set value to propagate.
-		 */
+	ev = env_getenv(name);
+	if (ev != NULL && ev->ev_sethook != NULL && !(flags & EV_NOHOOK)) {
+		/* Preserve explicit override propagation even if the hook is a no-op. */
 		if (!(flags & EV_NOKENV))
 			ev->ev_flags &= ~EV_NOKENV;
+		return (ev->ev_sethook(ev, flags, value));
+	}
 
-		/*
-		 * If there's a set hook, let it do the work
-		 * (unless we are working for one already).
-		 */
-		if ((ev->ev_sethook != NULL) && !(flags & EV_NOHOOK))
-			return (ev->ev_sethook(ev, flags, value));
-
-		/* If there is data in the variable, discard it. */
-		if (ev->ev_value != NULL && (ev->ev_flags & EV_DYNAMIC) != 0)
-			free(ev->ev_value);
-		ev->ev_value = NULL;
-		ev->ev_flags &= ~EV_DYNAMIC;
-	} else {
-
-		/*
-		 * New variable; create and sort into list
-		 */
-		ev = malloc(sizeof(struct env_var));
+	/* Prepare all fallible allocations before replacing any existing value. */
+	replacement = (char *)value;
+	if ((flags & EV_VOLATILE) && value != NULL) {
+		replacement = strdup(value);
+		if (replacement == NULL)
+			return (ENOMEM);
+		flags |= EV_DYNAMIC;
+	}
+	if (ev == NULL) {
+		ev = calloc(1, sizeof(*ev));
+		if (ev == NULL)
+			goto nomem;
 		ev->ev_name = strdup(name);
-		ev->ev_value = NULL;
-		ev->ev_flags = 0;
-		/* hooks can only be set when the variable is instantiated */
+		if (ev->ev_name == NULL) {
+			free(ev);
+			goto nomem;
+		}
+		/* Hooks are assigned only when the variable is created. */
 		ev->ev_sethook = sethook;
 		ev->ev_unsethook = unsethook;
-
-		/* Sort into list */
-		ev->ev_prev = NULL;
-		ev->ev_next = NULL;
-		/* Search for the record to insert before */
 		for (last = NULL, curr = environ; curr != NULL;
 		    last = curr, curr = curr->ev_next) {
-
-			if (strcmp(ev->ev_name, curr->ev_name) < 0) {
-				if (curr->ev_prev) {
-					curr->ev_prev->ev_next = ev;
-				} else {
-					environ = ev;
-				}
-				ev->ev_next = curr;
-				ev->ev_prev = curr->ev_prev;
-				curr->ev_prev = ev;
+			if (strcmp(name, curr->ev_name) < 0)
 				break;
-			}
 		}
-		if (curr == NULL) {
-			if (last == NULL) {
-				environ = ev;
-			} else {
-				last->ev_next = ev;
-				ev->ev_prev = last;
-			}
-		}
+		ev->ev_prev = last;
+		ev->ev_next = curr;
+		if (last != NULL)
+			last->ev_next = ev;
+		else
+			environ = ev;
+		if (curr != NULL)
+			curr->ev_prev = ev;
 	}
-
-	/* If we have a new value, use it */
-	if (flags & EV_VOLATILE) {
-		ev->ev_value = strdup(value);
-		flags |= EV_DYNAMIC;
-	} else {
-		ev->ev_value = (char *)value;
-	}
-
+	if (ev->ev_value != replacement && (ev->ev_flags & EV_DYNAMIC))
+		free(ev->ev_value);
+	ev->ev_value = replacement;
+	ev->ev_flags &= ~(EV_DYNAMIC | EV_NOKENV);
 	ev->ev_flags |= flags & (EV_DYNAMIC | EV_NOKENV);
-
 	return (0);
+nomem:
+	/* EV_DYNAMIC ownership transfers only on success. */
+	if ((flags & EV_VOLATILE) && replacement != NULL)
+		free(replacement);
+	return (ENOMEM);
 }
 
 /* coverity[ -tainted_string_return_content ] */

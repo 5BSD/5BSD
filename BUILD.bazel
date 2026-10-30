@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["COPYRIGHT"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', 'sys/amd64/vmm/io/vioapic.h', 'sys/contrib/dev/acpica/include/acbuffer.h', 'sys/contrib/dev/acpica/include/acconfig.h', 'sys/contrib/dev/acpica/include/acexcep.h', 'sys/contrib/dev/acpica/include/acnames.h', 'sys/contrib/dev/acpica/include/acoutput.h', 'sys/contrib/dev/acpica/include/acpi.h', 'sys/contrib/dev/acpica/include/acpiosxf.h', 'sys/contrib/dev/acpica/include/acpixf.h', 'sys/contrib/dev/acpica/include/acrestyp.h', 'sys/contrib/dev/acpica/include/actbl.h', 'sys/contrib/dev/acpica/include/actbl1.h', 'sys/contrib/dev/acpica/include/actbl2.h', 'sys/contrib/dev/acpica/include/actbl3.h', 'sys/contrib/dev/acpica/include/actypes.h', 'sys/contrib/dev/acpica/include/platform/acenv.h', 'sys/contrib/dev/acpica/include/platform/acenvex.h', 'sys/contrib/dev/acpica/include/platform/acfreebsd.h', 'sys/contrib/dev/acpica/include/platform/acgcc.h', 'sys/contrib/dev/acpica/include/platform/acgccex.h', 'sys/dev/e1000/e1000_defines.h', 'sys/dev/e1000/e1000_regs.h', 'sys/dev/evdev/input-event-codes.h', 'sys/dev/evdev/input.h', 'sys/dev/ic/ns16550.h', 'sys/dev/io/iodev.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "bhyve_e1000_headers", hdrs = ['sys/dev/e1000/e1000_defines.h', 'sys/dev/e1000/e1000_regs.h'], strip_include_prefix = '/sys/dev/e1000', visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "bhyve_kernemu_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', 'sys/amd64/vmm/io/vioapic.h'], strip_include_prefix = '/sys/amd64', visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+exports_files(['sys/amd64/vmm/vmm_instruction_emul.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])

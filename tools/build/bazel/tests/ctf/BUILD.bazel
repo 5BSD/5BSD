@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test", "cc_binary", "cc_shared_library")
+load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library", "bsd_ctf_merge")
+cc_library(name = "support", srcs = ["support.c"], testonly = True)
+cc_library(name = "objects", hdrs = ["ctf_api.h"], strip_include_prefix = ".", deps = [":support"], srcs = ["first.c", "second.c"], copts = ["-g", "-gdwarf-4"], testonly = True)
+bsd_ctf_library(name = "converted", library = ":objects", converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    ctf_label = "bazel-ctf-test", testonly = True)
+filegroup(testonly = True, name = "regular_objects", srcs = [":converted"], output_group = "regular_objects")
+filegroup(testonly = True, name = "pic_objects", srcs = [":converted"], output_group = "pic_objects")
+cc_test(name = "linked", srcs = ["main.c"], deps = [":converted"], linkstatic = True, size = "small")
+
+cc_binary(name = "unmerged", srcs = ["main.c"], deps = [":converted"], linkstatic = True, testonly = True)
+bsd_ctf_merge(name = "merged", linked = ":unmerged", objects = [":regular_objects"],
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    output = "merged-program", ctf_label = "bazel-ctf-merged", is_executable = True, testonly = True)
+cc_test(name = "merged_execution", srcs = ["execute_test.c"],
+    data = [":merged", "//cddl/usr.bin/ctfdump:ctfdump", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    args = ["$(rootpath :merged)", "$(rootpath //cddl/usr.bin/ctfdump:ctfdump)",
+        "$(rootpath //lib/libelf:elf_shared)", "$(rootpath //lib/libz:z_shared)"], size = "small")
+
+cc_shared_library(name = "shared_unmerged", deps = [":converted"], shared_lib_name = "libctf_fixture.so.1",
+    user_link_flags = ["-Wl,-soname,libctf_fixture.so.1"], testonly = True)
+bsd_ctf_merge(name = "shared_merged", linked = ":shared_unmerged", objects = [":pic_objects"],
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    output = "merged/libctf_fixture.so.1", ctf_label = "bazel-ctf-merged", testonly = True)
+cc_test(name = "shared_execution", srcs = ["execute_test.c"],
+    data = [":shared_merged", "//cddl/usr.bin/ctfdump:ctfdump", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    args = ["--shared", "$(rootpath :shared_merged)", "$(rootpath //cddl/usr.bin/ctfdump:ctfdump)",
+        "$(rootpath //lib/libelf:elf_shared)", "$(rootpath //lib/libz:z_shared)"], size = "small")
+
+filegroup(name = "regular_archive", srcs = [":converted"], output_group = "regular_archive", testonly = True)
+bsd_ctf_merge(name = "archive_merged", linked = ":unmerged", objects = [":regular_archive"],
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    output = "archive-merged-program", ctf_label = "bazel-ctf-merged", is_executable = True, testonly = True)
+cc_test(name = "archive_execution", srcs = ["execute_test.c"],
+    data = [":archive_merged", "//cddl/usr.bin/ctfdump:ctfdump", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    args = ["$(rootpath :archive_merged)", "$(rootpath //cddl/usr.bin/ctfdump:ctfdump)",
+        "$(rootpath //lib/libelf:elf_shared)", "$(rootpath //lib/libz:z_shared)"], size = "small")
+
+# Exercise conversion before provider rewriting, then merge after linking.
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+load("@rules_cc//cc:defs.bzl", "cc_import")
+bsd_dtrace_header(
+    name = "composition_provider", source = "composition.d", output = "composition.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], testonly = True,
+)
+cc_library(name = "composition_headers", hdrs = [":composition_provider", "ctf_api.h"], strip_include_prefix = ".", testonly = True)
+cc_library(name = "composition_objects", srcs = ["traced_first.c", "second.c"],
+    deps = [":support", ":composition_headers"], copts = ["-g", "-gdwarf-4"], testonly = True)
+bsd_ctf_library(name = "composition_converted", library = ":composition_objects",
+    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    ctf_label = "bazel-ctf-test", testonly = True)
+bsd_dtrace_cc_objects(name = "composition_rewritten", library = ":composition_converted", provider = ":composition_provider",
+    provider_object = "composition_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner", testonly = True)
+filegroup(name = "composition_regular_objects", srcs = [":composition_rewritten"], output_group = "regular_objects", testonly = True)
+filegroup(name = "composition_regular_provider", srcs = [":composition_rewritten"], output_group = "regular_provider", testonly = True)
+filegroup(name = "composition_pic_objects", srcs = [":composition_rewritten"], output_group = "pic_objects", testonly = True)
+filegroup(name = "composition_pic_provider", srcs = [":composition_rewritten"], output_group = "pic_provider", testonly = True)
+cc_import(name = "composition_provider_link", objects = [":composition_regular_provider"], pic_objects = [":composition_pic_provider"], alwayslink = True, testonly = True)
+cc_import(name = "composition_link", objects = [":composition_regular_objects"], pic_objects = [":composition_pic_objects"],
+    deps = [":composition_provider_link", ":support", ":composition_headers"], testonly = True)
+cc_binary(name = "composition_unmerged", srcs = ["main.c"], deps = [":composition_link"], linkstatic = True, testonly = True)
+bsd_ctf_merge(name = "composition_merged", linked = ":composition_unmerged", objects = [":composition_regular_objects"],
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    output = "composition-merged-program", ctf_label = "bazel-ctf-merged", is_executable = True, testonly = True)
+cc_test(name = "composition_execution", srcs = ["execute_test.c"],
+    data = [":composition_merged", "//cddl/usr.bin/ctfdump:ctfdump", "//lib/libelf:elf_shared", "//lib/libz:z_shared"],
+    args = ["$(rootpath :composition_merged)", "$(rootpath //cddl/usr.bin/ctfdump:ctfdump)",
+        "$(rootpath //lib/libelf:elf_shared)", "$(rootpath //lib/libz:z_shared)"], size = "small")

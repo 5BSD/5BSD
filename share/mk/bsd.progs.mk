@@ -19,10 +19,10 @@ _save_srcs:=	${SRCS:U}
 # just one of many
 PROG_OVERRIDE_VARS +=	BINDIR BINGRP BINOWN BINMODE CSTD CXXSTD DPSRCS MAN \
 			NO_SHARED MK_WERROR PROGNAME STRIP WARNS MK_ASAN MK_UBSAN
-PROG_VARS +=	SRCS CFLAGS CXXFLAGS DEBUG_FLAGS DPADD INTERNALPROG LDADD \
+PROG_VARS +=	SRCS CFLAGS CXXFLAGS DEBUG_FLAGS DPADD INTERNALPROG LDADD ELF_FEATURES \
 		LIBADD LINKS LDFLAGS MLINKS ${PROG_OVERRIDE_VARS}
 .for v in ${PROG_VARS:O:u}
-.if empty(${PROG_OVERRIDE_VARS:M$v})
+.if empty(PROG_OVERRIDE_VARS:M${v})
 .if defined(${v}.${PROG})
 $v += ${${v}.${PROG}}
 .elif defined(${v}_${PROG})
@@ -34,7 +34,6 @@ $v = ${${v}.${PROG}}
 .elif defined(${v}_${PROG})
 $v = ${${v}_${PROG}}
 .endif
-$v ?=
 .endif
 .endfor
 

@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+# Keep constructor-bearing sources in maintained registration order.
+cc_binary(
+    name = "ifconfig",
+    srcs = ["ifconfig.c", "af_link.c"] +
+        select({"//tools/build/bazel/config:inet_support_enabled": ["af_inet.c"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["af_inet6.c", "af_nd6.c"], "//conditions:default": []}) +
+        ["ifclone.c", "ifmac.c", "ifmedia.c", "iffib.c", "ifrdomain.c", "ifvlan.c", "ifvxlan.c", "ifgre.c", "ifgif.c", "ifipsec.c", "sfp.c"] +
+        select({"//tools/build/bazel/config:wireless_support_enabled": ["ifieee80211.c"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:usb_enabled": ["ifue.c"], "//conditions:default": []}) +
+        ["carp.c", "ifgroup.c"] +
+        select({"//tools/build/bazel/config:pf_enabled": ["ifpf.c"], "//conditions:default": []}) +
+        ["ifbridge.c", "iflagg.c"] +
+        select({"//tools/build/bazel/config:netlink_support_enabled": ["ifconfig_netlink.c", "ifvfstatus.c", "ifgeneve.c"], "//conditions:default": []}) +
+        ["ifconfig.h", "ifconfig_netlink.h"],
+    deps = ["//lib/libifconfig:ifconfig_pie", "//lib/msun:m", "//lib/libutil:util", "//lib/libnv:nv"] +
+        select({"//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:80211"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:pf_enabled": ["//sys/netpfil/openbsd-pf/user:compat_headers"], "//conditions:default": []}),
+    dynamic_deps = ["//lib/msun:m_shared", "//lib/libutil:util_shared", "//lib/libnv:nv_shared"] +
+        select({"//tools/build/bazel/config:wireless_support_enabled": ["//lib/lib80211:80211_shared"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": []}),
+    local_defines = select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:jail_enabled": ["JAIL"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:netlink_support_enabled": [], "//conditions:default": ["WITHOUT_NETLINK"]}),
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ifconfig", manual = "ifconfig.8",
+    package = "runtime", man_section = "8", bindir = "/sbin")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive", visibility = ["//sbin:__pkg__"],
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/ifconfig/tests:install_manifest"], "//conditions:default": []}),
+    directories = select({
+        "//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/sbin"]} | {
+            "/usr/tests/sbin/ifconfig": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
+        },
+        "//conditions:default": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/sbin"]},
+    }),
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

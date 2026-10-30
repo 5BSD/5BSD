@@ -6,7 +6,7 @@
 # These verify that the running capsule instance has applied all
 # expected hardening.  Many tests work by confirming that external
 # access is DENIED — the denial itself is proof the protection is
-# active.  They run against the live system daemon and require root.
+# active.  They run against a private test-local daemon and require root.
 #
 
 . "$(atf_get_srcdir)/capd_test_harness.sh"
@@ -26,16 +26,15 @@ capsule_sock=
 #
 require_pidfile()
 {
-	capsule_pidfile=/var/run/capsule.pid
-	capsule_sock=/var/run/capsule.sock
-	if [ ! -f "$capsule_pidfile" ]; then
+	# Never attach to the installed daemon: these cases change its state.
+	if [ -z "$capsule_pidfile" ]; then
 		capd_start_stack
 		capsule_pidfile=$CAPD_PIDFILE
 		capsule_sock=$CAPD_CAPSULE_SOCKET
 	fi
 	pid=$(cat "$capsule_pidfile" 2>/dev/null)
 	if [ -z "$pid" ]; then
-		atf_skip "capsule pidfile is empty"
+		atf_fail "test-local capsule pidfile is empty"
 	fi
 	# Several cases hand a single-quoted script to sh(1) via atf_check:
 	# the path has to reach that shell through the environment.
@@ -436,22 +435,18 @@ stale_socket_cleanup_cleanup()
 
 # --- configuration ---
 
-atf_test_case config_missing_file_uses_defaults cleanup
-config_missing_file_uses_defaults_head()
+atf_test_case config_explicit_missing_rejected cleanup
+config_explicit_missing_rejected_head()
 {
-	atf_set "descr" "capsule starts with defaults when config file is absent"
+	atf_set "descr" "capsule rejects a missing explicitly selected configuration"
 }
-config_missing_file_uses_defaults_body()
+config_explicit_missing_rejected_body()
 {
-	local pidfile="$(pwd)/cfg_test.pid"
-	capsule -T -f /nonexistent/capsule.conf -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f /nonexistent/capsule.conf -p "$(pwd)/cfg_test.pid"
+	atf_check -s exit:1 test -e cfg_test.pid
 }
-config_missing_file_uses_defaults_cleanup()
+config_explicit_missing_rejected_cleanup()
 {
 	if [ -f cfg_test.pid ]; then
 		kill "$(cat cfg_test.pid)" 2>/dev/null || true
@@ -599,7 +594,7 @@ config_integrity_settings_cleanup()
 atf_test_case config_claims_paths cleanup
 config_claims_paths_head()
 {
-	atf_set "descr" "claims.paths are parsed from config"
+	atf_set "descr" "retired claims.paths configuration is rejected"
 }
 config_claims_paths_body()
 {
@@ -613,12 +608,9 @@ claims {
     ];
 }
 ENDCONF
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_claims_paths_cleanup()
 {
@@ -667,7 +659,7 @@ config_claims_network_cleanup()
 atf_test_case config_claims_bad_path cleanup
 config_claims_bad_path_head()
 {
-	atf_set "descr" "nonexistent claim path does not prevent startup"
+	atf_set "descr" "unsupported path claims cannot be silently skipped"
 }
 config_claims_bad_path_body()
 {
@@ -680,13 +672,9 @@ claims {
     ];
 }
 ENDCONF
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	# Should start despite bad path (graceful degradation)
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_claims_bad_path_cleanup()
 {
@@ -730,7 +718,7 @@ config_claims_system_cleanup()
 atf_test_case config_claims_system_bad_name cleanup
 config_claims_system_bad_name_head()
 {
-	atf_set "descr" "unknown system gate name warns but starts"
+	atf_set "descr" "unknown system gate name rejects configuration"
 }
 config_claims_system_bad_name_body()
 {
@@ -741,12 +729,9 @@ claims {
     system = ["nosuchgate"];
 }
 ENDCONF
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_claims_system_bad_name_cleanup()
 {
@@ -775,13 +760,9 @@ claims {
     ];
 }
 ENDCONF
-	# Should start (bad port is skipped with warning, not fatal)
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_bad_port_cleanup()
 {
@@ -834,13 +815,9 @@ config_integer_mode_rejected_body()
 	cat > "$conffile" <<'ENDCONF'
 control_socket_mode = 700;
 ENDCONF
-	# Should start (integer mode rejected with warning, uses default)
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_integer_mode_rejected_cleanup()
 {
@@ -1322,7 +1299,7 @@ control_socket_services_any_user_cleanup()
 atf_test_case config_claims_files_alias cleanup
 config_claims_files_alias_head()
 {
-	atf_set "descr" "claims.files is accepted as alias for claims.paths"
+	atf_set "descr" "retired claims.files configuration is rejected"
 }
 config_claims_files_alias_body()
 {
@@ -1333,12 +1310,9 @@ claims {
     files = ["/dev/mac_capability", "/etc/capsule.conf"];
 }
 ENDCONF
-	capsule -T -f "$conffile" -p "$pidfile" &
-	local pid=$!
-	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while [ ! -s '$pidfile' ] && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; test -s '$pidfile'"
-	atf_check -s exit:0 kill -TERM "$pid"
-	wait "$pid"
+	atf_check -s not-exit:0 -o empty -e not-empty \
+	    capsule -T -f "$conffile" -p "$pidfile"
+	atf_check -s exit:1 test -e "$pidfile"
 }
 config_claims_files_alias_cleanup()
 {
@@ -1417,7 +1391,7 @@ atf_init_test_cases()
 	atf_add_test_case control_socket_services_any_user
 
 	# Configuration
-	atf_add_test_case config_missing_file_uses_defaults
+	atf_add_test_case config_explicit_missing_rejected
 	atf_add_test_case config_syntax_error_exits
 	atf_add_test_case config_custom_pidfile
 	atf_add_test_case config_cli_overrides_config

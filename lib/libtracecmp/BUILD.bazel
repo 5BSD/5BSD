@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
+exports_files(["tracecmp.fidl"])
+bsd_fidl_ir(name = "tracecmp_ir", schemas = ["//lib/libfidl/tests:zx.fidl", "tracecmp.fidl"], available = "bsd:1",
+    compiler = "//tools/build/fuchsia/fidlc:fidlc",
+    runtime_libraries = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"])
+bsd_fidl_bindings(name = "tracecmp_bindings", ir = ":tracecmp_ir",
+    generator = "//tools/build/fuchsia:fidlgen-build.py", modules = ["//tools/build/fuchsia:binding_modules"],
+    templates = ["@fuchsia_runtime_src//:binding_templates"],
+    sources = ["fidl/bsd.trace.v1/" + name for name in ["cpp/natural_types.cc", "cpp/common_types.cc", "c/bsd.cc"]],
+    headers = ["fidl/bsd.trace.v1/" + name for name in ["cpp/markers.h", "cpp/common_types.h", "cpp/natural_types.h", "cpp/bsd.h", "c/bsd.h", "c/bridge.h"]],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import")
+filegroup(name = "binding_sources", srcs = [":tracecmp_bindings"], output_group = "sources")
+filegroup(name = "binding_headers", srcs = [":tracecmp_bindings"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":binding_headers"], strip_include_prefix = "tracecmp_bindings", visibility = ["//lib/libtracecmp/tests:__pkg__", "//usr.sbin/BSDTrace:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__"])
+# Make sets STATIC_CFLAGS, not STATIC_CXXFLAGS: C++ static objects are non-PIC.
+# cc_shared_library consumes the separately compiled PIC variant.
+cc_library(name = "generated_bindings", srcs = [":binding_sources"],
+    deps = [":generated_headers", "//lib/libfidl:headers", "//contrib/llvm-project/libcxx/include:headers"], copts = ["-std=c++20", "-nostdinc++"], linkstatic = True, visibility = ["//lib/libtracecmp/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_SECTION_TRACE = "//tools/build/bazel/config:experimental_dtrace_section_archives_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["tracecmp.h", "tracecmp_protocol.h", "tracecmp_server.h"], deps = ["//cddl/lib/libdtrace:public_headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+bsd_dtrace_header(name = "provider", source = "tracecmp_provider.d", output = "tracecmp_provider.h",
+    flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+cc_library(name = "objects", srcs = ["tracecmp.c", "tracecmp_legacy.c", "tracecmp_probes.h"], copts = ["-fPIC"], deps = [":headers", ":generated_headers", "//lib/libservice:headers", "//lib/libfidl:headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}), local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}), linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider",
+    provider_object = "tracecmp_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    archive_members = True, archive_runner = "//tools/build/bazel:dtrace_archive_member")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider",
+               "regular_archive_objects", "pic_archive_objects"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"])
+cc_import(name = "section_traced", objects = [":regular_archive_objects"],
+    pic_objects = [":pic_archive_objects"])
+cc_library(name = "tracecmp", deps = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects"]}) + [":headers", ":generated_bindings", "//cddl/lib/libdtrace:dtrace", "//lib/libservice:service", "//lib/libfidl:fidl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects"]}) + [":generated_bindings"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "tracecmp_shared", deps = [":tracecmp"],
+    dynamic_deps = ["//cddl/lib/libdtrace:dtrace_shared", "//lib/libservice:service_shared", "//lib/libfidl:fidl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"],
+    shared_lib_name = "libtracecmp.so.1", user_link_flags = ["-Wl,-soname,libtracecmp.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Library payload; test installation is added separately.
+bsd_install_archive(
+    name = "library_install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp"]}' for d in ["/usr/share/licenses/libtracecmp", "/usr/share/licenses/libtracecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+exports_files(["tracecmp_legacy.c"], visibility = ["//lib/libtracecmp/tests:__pkg__"])
+cc_library(name = "test_source_headers", hdrs = ["tracecmp_probes.h"], textual_hdrs = ["tracecmp.c"], strip_include_prefix = ".",
+    deps = [":headers", ":generated_headers"], visibility = ["//lib/libtracecmp/tests:__pkg__", "//usr.sbin/BSDTrace/tests:__pkg__"])
+
+load("//lib/libtracecmp/tests:installation.bzl", TEST_MANIFESTS = "MANIFESTS", TEST_DIRECTORIES = "DIRECTORIES")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": TEST_MANIFESTS, "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp"]}' for d in ["/usr/share/licenses/libtracecmp", "/usr/share/licenses/libtracecmp/fuchsia"]} | {"/usr/share/fidl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp-dev"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libtracecmp","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+exports_files(["tracecmp.c", "tracecmp_provider.d"], visibility = ["//usr.sbin/BSDTrace/tests:__pkg__"])

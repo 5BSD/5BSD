@@ -25,6 +25,7 @@
 #ifdef _KERNEL
 
 #include <sys/param.h>
+#include <sys/cap_authority.h>
 #include <sys/lock.h>
 #include <sys/sx.h>
 #include <sys/mutex.h>
@@ -194,6 +195,9 @@ struct mac_capability_service_params {
  * Public kernel API.
  * ---------------------------------------------------------------- */
 
+/* Direct channel identity, used to constrain lifetime binding. */
+bool mac_capability_channel_is_service(const struct mac_capability_service *);
+
 /* Service lifecycle. */
 int	mac_capability_service_create(const struct mac_capability_service_params *params,
 	    struct mac_capability_service **svcp);
@@ -222,6 +226,24 @@ bool	mac_capability_instance_tryhold(struct mac_capability_instance *s);
 void	mac_capability_instance_rele(struct mac_capability_instance *s);
 void	mac_capability_instance_kick(struct mac_capability_instance *s);
 void	mac_capability_instance_set_priv(struct mac_capability_instance *s, void *priv);
+/* Kernel-only operation context. Capture before service/claim locks. It owns
+ * no pointers or references; issuer/authority identities are never recycled.
+ * A concurrent transition may finish an already admitted operation; this does
+ * not implement in-flight I/O drain. Never fill this from a request payload. */
+struct mac_capability_authorization {
+	struct cap_authority_stamp authority;
+	uint64_t process_identity;
+	uint64_t execution_nonce;
+};
+void mac_capability_authorization_snapshot(struct thread *,
+    struct mac_capability_authorization *);
+/* Caller stabilizes the instance and must not hold its ci_mtx: this helper
+ * acquires it. A service table lock can stabilize a weak instance pointer only
+ * if revoke removes the table entry before instance destruction, and the core
+ * invokes that service's revoke callback without ci_mtx held. Capture the
+ * operation context before table locks. Nonce/action checks remain required. */
+bool mac_capability_instance_authorization_allows(struct mac_capability_instance *,
+    const struct mac_capability_authorization *, uint64_t accessor_nonce);
 void   *mac_capability_instance_get_priv(struct mac_capability_instance *s);
 uint64_t mac_capability_instance_get_badge(struct mac_capability_instance *s);
 

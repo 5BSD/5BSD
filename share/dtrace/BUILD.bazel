@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load(":installation_data.bzl", "SCRIPTS")
+
+[bsd_install_file(
+    name = "script_" + script,
+    src = script,
+    destination = "/usr/share/dtrace/" + script,
+    owner = "root", group = "wheel", mode = "0555",
+    install_tags = ["package=dtrace"],
+) for script in SCRIPTS]
+bsd_install_file(
+    name = "mbuf",
+    src = "mbuf.d",
+    destination = "/usr/lib/dtrace/mbuf.d",
+    owner = "root", group = "wheel", mode = "0444",
+    install_tags = ["package=dtrace"],
+)
+bsd_install_manifest(
+    name = "install_manifest",
+    entries = [":script_" + script for script in SCRIPTS] + [":mbuf"],
+    visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+# Source fixtures shipped with Switchboard contract tests.
+exports_files(['Makefile', 'switchboard-anoint'], visibility = ["//usr.sbin/switchboard/tests:__pkg__"])

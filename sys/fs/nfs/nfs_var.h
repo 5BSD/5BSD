@@ -732,6 +732,8 @@ int nfsvno_removesub(struct nameidata *, bool, struct nfsrv_descript *,
     NFSPROC_T *, struct nfsexstuff *);
 int nfsvno_rmdirsub(struct nameidata *, int, struct ucred *, NFSPROC_T *,
     struct nfsexstuff *);
+int nfsvno_renamefrom(struct nfsrv_descript *, struct nameidata *,
+    vnode_t, struct nfsexstuff *, vnode_t *);
 int nfsvno_rename(struct nameidata *, struct nameidata *,
     struct nfsrv_descript *, NFSPROC_T *);
 int nfsvno_link(struct nameidata *, vnode_t, nfsquad_t, struct ucred *,

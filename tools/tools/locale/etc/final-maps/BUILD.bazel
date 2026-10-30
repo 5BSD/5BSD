@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['map.ARMSCII-8', 'map.Big5', 'map.CP1131', 'map.CP1251', 'map.CP866', 'map.GB18030', 'map.GB2312', 'map.GBK', 'map.ISCII-DEV', 'map.ISO8859-1', 'map.ISO8859-13', 'map.ISO8859-15', 'map.ISO8859-2', 'map.ISO8859-5', 'map.ISO8859-7', 'map.ISO8859-9', 'map.KOI8-R', 'map.KOI8-U', 'map.SJIS', 'map.US-ASCII', 'map.UTF-8', 'map.eucCN', 'map.eucJP', 'map.eucKR', 'widths.txt'], visibility = ["//share/ctypedef:__pkg__", "//share/colldef:__pkg__", "//share/colldef_unicode:__pkg__"])

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+
+# These failures occur before opening or updating any hints file.
+[bsd_compare_test(
+    name = name,
+    program = "//sbin/ldconfig:ldconfig",
+    arguments = arguments,
+    expected = "empty.out",
+    expected_stderr = diagnostic,
+    expected_exit = 1,
+    runtime_lib = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner",
+    size = "small",
+) for name, arguments, diagnostic in [
+    ("strict_missing_directories", ["-S"], "strict-options.err"),
+    ("strict_conflicting_options", ["-S", "-i", "relative"], "strict-options.err"),
+    ("strict_relative_directory", ["-S", "relative"], "relative.err"),
+    ("unsupported_aout", ["-aout"], "aout.err"),
+]]

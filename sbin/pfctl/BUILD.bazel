@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_yacc")
+bsd_yacc(name = "parser", src = "//contrib/openbsd-pf/sbin/pfctl:parse.y", output = "parse.c", yacc = "//usr.bin/yacc:yacc", visibility = ["//sbin/pfctl/tests:__pkg__"])
+cc_binary(name = "pfctl", srcs = ['//contrib/openbsd-pf/sbin/pfctl:pfctl.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_parser.c', '//contrib/openbsd-pf/sbin/pfctl:pf_print_state.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_osfp.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_radix.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_table.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_optimize.c', '//contrib/openbsd-pf/sbin/pfctl:pfctl_queue.c', ':parser', '//contrib/openbsd-pf/sys/net:pf_ruleset.c', '//sys/netpfil/openbsd-pf/user:pfctl_jail.c', '//sys/netpfil/openbsd-pf/user:pfctl_ether.c'],
+    deps = ["//sys/netpfil/openbsd-pf/user:pfctl_headers", "//contrib/openbsd-pf/sbin/pfctl:headers", "//lib/msun:m", "//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/msun:m_shared", "//lib/libmd:md_shared"], copts = ["-fPIE", "-include", "openbsd_compat.h"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "pfctl", manual = "//contrib/openbsd-pf/sbin/pfctl:pfctl.8",
+    package = "pf", bindir = "/sbin", man_section = "8", extra_entries = [":config"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pf","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "config", src = "//contrib/openbsd-pf/etc:pf.os", destination = "/etc/pf.os", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=pf", "config"])
+
+bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/pfctl/tests:install_helper", "//sbin/pfctl/tests:install_extra", "//contrib/openbsd-pf/regress/sbin:pfctl_corpus"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pf","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {
+        "/usr/tests/sbin/pfctl/files": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}', "/usr/tests/sbin/pfctl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
+    } | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/sbin", "/usr/lib/debug/usr/tests/sbin/pfctl"]}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

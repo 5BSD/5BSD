@@ -246,13 +246,18 @@ moved from `System/` to `Apps/` with no reload) and `upgradeflow.sh` (same
 
 ## The local repository loop
 
+The commands below describe the existing mutable-system workflow. They do not
+implement BIP updates: protected base changes require an authenticated inactive
+system generation and reboot activation. That complete update path is still
+being qualified; see [System security](../capability/system-security.md).
+
 The shipped `5BSD-base` entry already points at a standard `/usr/src`
 build's repository under `/usr/obj/usr/src/repo/${ABI}/latest`. Explicit
 `-r 5BSD-base` works with its disabled default; no override file is required.
 
 ```sh
 cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld buildkernel
+make -j$(sysctl -n hw.ncpu) WITH_MALLOC_PRODUCTION=yes buildworld buildkernel
 make packages PKG_CMD=/usr/local/sbin/pkg-static
 # Build matching hardware and publish the complete generation (see below).
 bectl create pre-upgrade
@@ -452,3 +457,108 @@ media staging and coordinated updates. Installer tests cover PCI graphics plus
 USB Wi-Fi selection, offline persistence, rejected mismatches and missing
 dependencies, and catalogue retry with revalidation. Device initialization still
 requires boot tests on the supported hardware before publishing a release.
+
+
+### Explicit media module-hints generator
+
+`build-bsd media` builds kldxref with the maintained bootstrap Makefile under its
+standard `/usr/obj/usr/src/build-runs/.../native-tools` directory and passes that
+absolute executable path to release as `HARDWARE_KLDXREF`. It does not use an
+ambient host PATH lookup for module indexing. Direct release Makefile callers
+must supply `HARDWARE_KLDXREF=/absolute/path/to/qualified/host-native/kldxref`.
+The hardware staging CLI accepts `--kldxref`; it is required for signed-media
+staging and whenever ordinary staging supplies `--media`.
+
+Missing, relative, symlinked or non-executable tool inputs fail. Module generation
+must succeed and produce a regular hints file before its METALOG entry is added.
+The backend checks the generator hash before/after execution and logs
+`MODULE_HINTS_GENERATED` with the executable path, executable hash and hints hash.
+This is trusted-builder provenance; it does not authenticate source modules,
+approve a system generation or establish BIP runtime enforcement. Inventory-bound
+module selection and generated-output receipts remain separate requirements.
+
+
+### Registering new base library packages
+
+A library's `PACKAGE` assignment and staged plist do not by themselves add it to
+the package build. Its package directory must be selected by `packages/Makefile`,
+with the appropriate subpackages and set annotations. `libcapimage` and its test
+package now have those definitions. The maintained package targets produce the
+archives; no hand-maintained image selection substitutes for package inclusion.
+
+Before publication, the advertised shared-library closure check rejects missing
+providers. An ABI bump also requires rebuilding consumers: adding a provider for
+the current SONAME cannot repair archived binaries requiring an older SONAME.
+Use a clean production world build when qualifying a generation after such
+changes, then regenerate package staging and packages. Rebuilding a single
+library archive does not prove a coherent complete generation.
+
+
+`create-world-packages` now runs `check-world-package-coverage.sh` before archive
+creation. The checker queries `SUBDIR` and `_ALLPACKAGES` from the active makefiles
+using the same build variables, then requires each freshly generated world plist
+to have a selected target. Missing targets, duplicate targets, failed queries,
+invalid plist objects and empty inputs fail. It never consults existing archives
+as evidence of coverage. `build-bsd packages` and `system-packages` inherit this
+check through their maintained base-package target.
+
+`world-kmod-metadata.awk` supplies the same explicit world-package selection to
+module materialization and plist generation. Kernel and DTB metadata stay with
+their separate packaging targets; world kernel manual-page metadata is retained.
+The coverage gate concerns staged package assignments, not complete filesystem
+reconciliation, dependency solving or authentication.
+
+The system build frontend (`bsd-build`) and executable signing utility (`capsign`)
+have explicit world package definitions, including their test packages. Signing
+packages follow the source OpenSSL option and test packages follow the tests
+option. Changing source installation tags or adding subpackages must keep these
+package targets aligned; the world coverage gate rejects omitted staged payloads.
+
+When a manual group overrides its package, retain the standard group's subpackage
+suffix so MANSPLITPKG still controls the output. For example, the FIDL manual uses
+`runtime${FIDLSUBPACKAGE}`. A fixed `runtime-man` assignment strands that payload
+when manual splitting is disabled. Compiled test packages also need a `dbg`
+subpackage declaration; shared package rules omit it when DEBUG_FILES is disabled.
+
+Optional component selection must agree across program builds, example files and
+package directories. NIS controls domainname, the ypldap example and the yp package
+together. The coverage tests query both enabled and disabled selections. Existing
+stages must be regenerated after selection changes; deleting a reported plist
+would leave its filesystem payload unaccounted for.
+
+Unconditionally created mtree directories need base hierarchy owners even if the
+program that may use them is optional. Express this in the mtree package tags;
+do not discard directory-only coverage failures. The runtime and clibs-dev
+packages own the corrected LPR/include scaffolding, while optional components
+retain ownership of their actual files. Regenerate the stage and manifests after
+changing these tags so package inventory and constructed filesystem agree.
+
+Package-database qualification must preserve record structure. The retained pkg
+2.8.4 audit found that raw manifest export combines multiple license rows into a
+single comma-delimited element even though SQLite stores the correct separate
+values. Do not use string splitting or ignored differences as database approval.
+Use a verified structure-preserving reader, account explicitly for install-time
+fields, and include the resulting database bytes in the generation receipt.
+
+The maintained custom ports pkg patch preserves separate license rows during
+manifest export and increments the port revision. Rebuild the bootstrap package
+through the selected PORTSDIR to consume it; retained bootstrap binaries and
+archives keep their previous behavior. The patch does not change the required
+archive verification, construction receipts or complete database qualification.
+
+To select a rebuilt pkg engine for combined publication, pass the resulting
+archive and its digest through `build-bsd packages --pkg-package <archive>
+--pkg-package-sha256 <sha256>` (or inspect `build-bsd plan packages` first).
+The frontend passes these inputs to system-packages; validation does not publish
+an archive by itself. Keep the standard /usr/obj/usr/src/repo publication path.
+Verify the binary inside the packaged archive, not only the pre-package build
+binary, before selecting it as the bootstrap input.
+
+### Incremental allocator build modes
+
+Switching between development and production malloc invalidates the allocator
+objects through a mode dependency in libc. Repeated builds in the same mode
+remain incremental. Publication still checks the resulting libc for debug
+assertions as well as the production marker; a requested build option or marker
+alone does not establish a production binary. Do not bypass this check to
+recover from stale build objects.

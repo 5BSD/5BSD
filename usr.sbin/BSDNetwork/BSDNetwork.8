@@ -264,11 +264,14 @@ entirely.
 The shipped default equals the compiled-in policy: outbound resolve, TCP, and
 UDP over both address families permitted, internal destinations denied, and at
 most 16 resolver results per session.
-The entry schema is closed \(em an unknown key, a non-boolean value, or an
-invalid or duplicate label makes the file malformed \(em but the file-level
-failure direction is fail-soft: a missing or malformed file leaves the
-compiled-in default policy in force and logs a warning, so a bad
-configuration can never take the network provider down with it.
+The entry schema is closed: unknown or duplicate keys, non-boolean values,
+embedded NULs, invalid labels, and include directives reject the entire file.
+Variables are not expanded.
+The provider requires a valid policy file through its delivered Config directory.
+Unavailable or rejected policy stops startup before accepting sessions.
+Rejected policy cannot restore the compiled outbound grants.
+The bounded descriptor loader reads from offset zero and checks for observed
+length and metadata changes before applying the validated configuration.
 The applied policy source
 .Pq admin, label, or default
 is logged at each session start.

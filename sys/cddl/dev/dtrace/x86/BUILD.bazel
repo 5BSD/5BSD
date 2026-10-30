@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["dis_tables.c", "instr_size.c"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+cc_library(name = "headers", hdrs = ["dis_tables.h", "regset.h"], includes = ["."], visibility = ["//cddl/lib/libdtrace:__pkg__"])

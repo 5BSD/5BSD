@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":generation.bzl", "fidl_schema")
+fidl_schema(name = "schema", script = "@fuchsia_runtime_src//:tools/fidl/fidlc/gen-json-schema.sh",
+    schema = "@fuchsia_runtime_src//:tools/fidl/fidlc/schema.json",
+    shell = "@bsd_sdk//toolchain:sh", cat = "@bsd_sdk//toolchain:cat",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:cat_runtime"])
+# Build-only compiler: no target installation manifest.
+cc_binary(name = "fidlc", srcs = ["@fuchsia_runtime_src//:fidlc_sources", ":schema"],
+    deps = ["@fuchsia_runtime_src//:fidlc_headers", "@fuchsia_runtime_src//:cmdline_headers", "@fuchsia_runtime_src//:headers",
+            "//lib/libmd:md_link", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libmd:md_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    copts = ["-std=gnu++20", "-nostdinc++", "-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])

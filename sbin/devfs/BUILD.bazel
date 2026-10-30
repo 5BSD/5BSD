@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_binary(name = "devfs", srcs = ['devfs.c', 'rule.c', 'extern.h'],
+
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "devfs", manual = "devfs.8",
+    package = "runtime", bindir = "/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest", ":config_install"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for d in ["/etc", "/etc/defaults"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+[bsd_install_file(name = target, src = source, destination = destination, owner = "root", group = "wheel", mode = mode, install_tags = ["package=runtime", "config"])
+ for target, source, destination, mode in [("install_conf", "devfs.conf", "/etc/devfs.conf", "0644"), ("install_rules", "devfs.rules", "/etc/defaults/devfs.rules", "0600")]]
+bsd_install_manifest(name = "config_install", entries = [":install_conf", ":install_rules"])

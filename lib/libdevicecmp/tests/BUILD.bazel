@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[cc_binary(name = name, srcs = [name + ".c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libdevicecmp:devicecmp", "//lib/libdevicecmp:generated_headers",
+        "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr", "//lib/libservice:service"] +
+        (["//lib/libdevicecmp:client_source_headers"] if name == "client_protocol_test" else []),
+    linkstatic = True, linkopts = ["-static"])
+ for name in ["devicecmp_api_test", "client_protocol_test"]]
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    case_timeout = 120 if name == "client_protocol_test" else 300,
+    test_metadata = '{"required_user":"root"}' if name == "client_protocol_test" else "{}",
+    tags = ["manual", "requires-matching-kernel"] if name == "client_protocol_test" else [],
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["devicecmp_api_test", "client_protocol_test"]]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load(":installation.bzl", "TESTDIR", "ATF_PROGRAMS", "BINARIES")
+[utility_installation(name = "install_" + p, program = p, manual = "",
+    package = "libdevicecmp-tests", bindir = TESTDIR) for p in BINARIES]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
+    interfaces = {p: "atf" for p in ATF_PROGRAMS},
+    metadata = {n: '{"required_user":"root","timeout":"120"}' for n in ["client_protocol_test"]})
+_FILES = [(":kyuafile", TESTDIR + "/Kyuafile")] + [
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/libdevicecmp-tests/fuchsia/" + n) for n in ["LICENSE", "PATENTS"]]
+[bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libdevicecmp-tests"])
+ for i, (source, dest) in enumerate(_FILES)]
+bsd_install_manifest(name = "install_extra", entries = [":install_file_" + str(i) for i in range(len(_FILES))],
+    visibility = ["//lib/libdevicecmp:__pkg__"])

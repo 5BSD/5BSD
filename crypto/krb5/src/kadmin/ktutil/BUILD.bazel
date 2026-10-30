@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ktutil_ct.ct", "ktutil.c", "ktutil_funcs.c", "ktutil.h"])

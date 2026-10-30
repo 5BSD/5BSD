@@ -86,8 +86,8 @@ def main():
     try:
         keys = scratch / 'keys'
         keys.mkdir()
-        shutil.copyfile(pub, keys / 'repository.pub')
-        shutil.copyfile(codepub, keys / 'code.pub')
+        hw.copy_public_key(pub, keys / 'repository.pub')
+        hw.copy_public_key(codepub, keys / 'code.pub')
         snapshot = hw.copy_signed_repository(repository, scratch / 'repository',
             keys / 'repository.pub', str(PKG), info['abi'], info['osversion'])
         hw.verify(snapshot)
@@ -99,7 +99,7 @@ def main():
         repos = scratch / 'repos'
         repos.mkdir()
         (repos / '5BSD-base.conf').write_text(json.dumps({'5BSD-base': {
-            'url': snapshot.as_uri(), 'enabled': True, 'mirror_type': 'none',
+            'url': 'file://' + str(snapshot), 'enabled': True, 'mirror_type': 'none',
             'signature_type': 'pubkey', 'pubkey': str(keys / 'repository.pub')}}) + '\n')
         for name in ('tmp', 'etc', 'boot'):
             (scratch / name).mkdir()

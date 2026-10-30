@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 6, 2026
+.Dd October 18, 2026
 .Dt TZFS.CONF 5
 .Os
 .Sh NAME
@@ -15,13 +15,30 @@ configures
 .Xr bsdfilesystem 8 .
 It is a
 .Xr libucl 3
-document; every key is optional, and a missing file leaves the built-in
-opinionated defaults in force.
-Unknown keys are ignored so the schema can grow.
-An existing configuration file must be a regular file owned by the daemon's
-effective user and must not be writable by its group or by other users.
-Symbolic links, malformed input, truncated values, and invalid types are fatal
-startup errors.
+document with optional keys and the defaults listed below.
+Under BSD Integrity Protection (BIP), the file is required, must be owned by
+root without group or other write permission, and must reside on the
+read-only authenticated system filesystem.
+The kernel's BIP protections prevent replacement of that filesystem and its
+backing storage; a read-only flag alone does not authenticate policy.
+Capsule's boot storage assignment selects and retains the policy file;
+SwitchBoard and the provider parse duplicates of that same opened object.
+The command-line override is rejected under BIP.
+Outside BIP, only an absent default policy file permits built-in defaults.
+A file explicitly selected with
+.Fl c
+must exist, belong to the daemon's effective user, and not be group or
+other writable.
+.Pp
+Supplied policy must be a regular file no larger than 1 MiB.
+Malformed input, unknown or duplicate keys, truncated values, embedded NULs,
+control characters in strings, invalid types, and duplicate path grants are
+fatal startup errors.
+Includes and macros are rejected, and variable expansion is disabled.
+An invalid policy is never replaced by built-in defaults.
+The retired BIP
+.Va access
+key is rejected, including an empty array.
 .Sh KEYS
 .Bl -tag -width ".Va default_refquota"
 .It Va pool
@@ -33,6 +50,7 @@ Default
 .Ql zroot .
 .It Va roots.base
 Base dataset for the capability storage tree.
+Setting it recomputes omitted persistent and ephemeral roots.
 Default
 .Ql <pool>/Capabilities .
 .It Va roots.persistent
@@ -72,18 +90,18 @@ Grace period, in seconds, between reclaim timer passes that destroy orphaned
 ephemeral datasets.
 Bounded to
 .Ql 10 Ns .. Ns Ql 86400 ;
-an out-of-range value is clamped to the default and logged.
+out-of-range, fractional, and nonfinite values are rejected.
 Default
 .Ql 300 .
 .It Va staging_idle_grace
-Minimum age, in seconds, of an abandoned transaction staging clone before the
-live-system idle reap (run each reconcile timer pass) reclaims it.
-A clone held by a live transaction is mounted and so is never reclaimed
-regardless of age; this grace only keeps the reap from racing an in-progress
-.Xr service_storage_txn_begin 3 .
+Legacy staging-age setting, accepted for configuration compatibility.
+Automatic staging reclamation is suspended: age and mount state do not establish
+transaction ownership or safe recursive deletion.
+Startup and idle sweeps preserve unresolved transaction datasets.
+This value currently does not authorize deletion.
 Bounded to
 .Ql 1 Ns .. Ns Ql 86400 ;
-an out-of-range value is clamped to the default and logged.
+out-of-range, fractional, and nonfinite values are rejected.
 Default
 .Ql 300 .
 .It Va open_paths

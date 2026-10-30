@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+cc_binary(name = "protocol_test", srcs = ["protocol_test.c"],
+    deps = ["//lib/libtimecmp:timecmp", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+bsd_kyua_test(name = "protocol_test_run", program = ":protocol_test", interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+utility_installation(name = "install_protocol_test", program = "protocol_test", manual = "",
+    package = "libtimecmp-tests", bindir = "/usr/tests/lib/libtimecmp")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["protocol_test"],
+    interfaces = {"protocol_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libtimecmp/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=libtimecmp-tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile"], visibility = ["//lib/libtimecmp:__pkg__"])

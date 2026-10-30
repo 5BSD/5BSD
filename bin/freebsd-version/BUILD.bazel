@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_freebsd_version.bzl", "bsd_freebsd_version")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+bsd_freebsd_version(name = "version_script", newvers = "//sys/conf:newvers.sh", param = "//sys/sys:param.h",
+    template = "freebsd-version.sh.in", branch = "//tools/build/bazel/config:version_branch",
+    shell = "@bsd_sdk//toolchain:sh", awk = "@bsd_sdk//toolchain:awk",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"])
+bsd_install_file(name = "install_script", src = ":version_script", destination = "/bin/freebsd-version", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"])
+bsd_compress(name = "manual", src = "freebsd-version.1", output = "freebsd-version.1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man1/freebsd-version.1.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_manual"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", visibility = ["//bin:__pkg__"], manifests = [":install_manifest"],
+    directories = {"/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

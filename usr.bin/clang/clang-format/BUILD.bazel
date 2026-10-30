@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:clang_utility.bzl", "clang_utility")
+clang_utility(name = "clang-format", srcs = ['//contrib/llvm-project/clang/tools/clang-format:ClangFormat.cpp'],
+    deps = ["//contrib/llvm-project/clang/lib/Format:match_file_path_header"],
+    compatible_with = select({"//tools/build/bazel/config:clang_format_or_extras_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}))

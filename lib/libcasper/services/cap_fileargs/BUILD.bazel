@@ -1,0 +1,107 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_spec", "bsd_dtrace_cc_objects")
+
+cc_library(
+    name = "headers",
+    hdrs = ["cap_fileargs.h"],
+    strip_include_prefix = "/lib/libcasper/services/cap_fileargs",
+    include_prefix = "casper",
+    deps = ["//lib/libcasper/libcasper:headers"],
+    visibility = ["//visibility:public"],
+)
+cc_library(
+    name = "objects",
+    srcs = ["cap_fileargs.c", "cap_fileargs_probes.h"],
+    deps = [":headers", "//lib/libnv:nv", "//lib/libcasper/libcasper:headers"],
+    local_defines = ["WITH_CASPER"] + select({
+        "//tools/build/bazel/config:dtrace_enabled": ["WITH_DTRACE"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = ["@platforms//os:freebsd"],
+)
+bsd_dtrace_spec(
+    name = "provider",
+    source = "cap_fileargs_provider.d",
+    output = "cap_fileargs_provider.o",
+    flags = ["-C", "-x", "nolibs"],
+    object_path_mode = "relative",
+    dtrace = "@bsd_sdk//toolchain:extra_dtrace",
+    cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "@bsd_sdk//toolchain:sysroot/usr/lib/dtrace/drti.o",
+    tool_inputs = ["@bsd_sdk//toolchain:extra_dtrace_runtime", "@bsd_sdk//toolchain:compile_inputs",
+                   "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"],
+)
+bsd_dtrace_cc_objects(
+    name = "traced_objects",
+    library = ":objects",
+    provider = ":provider",
+    provider_object = "cap_fileargs_provider",
+    copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+)
+filegroup(name = "regular_objects", srcs = [":traced_objects"], output_group = "regular_objects")
+filegroup(name = "pic_objects", srcs = [":traced_objects"], output_group = "pic_objects")
+filegroup(name = "regular_provider", srcs = [":traced_objects"], output_group = "regular_provider")
+filegroup(name = "pic_provider", srcs = [":traced_objects"], output_group = "pic_provider")
+# Registration constructors must survive static archive selection. Keep only
+# the provider always-linked; ordinary library objects remain demand-linked.
+cc_import(
+    name = "provider_link",
+    objects = [":regular_provider"],
+    pic_objects = [":pic_provider"],
+    alwayslink = True,
+)
+cc_import(
+    name = "traced_library",
+    objects = [":regular_objects"],
+    pic_objects = [":pic_objects"],
+    deps = [":headers", ":provider_link", "//lib/libnv:nv"],
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+alias(
+    name = "cap_fileargs",
+    actual = select({
+        "//tools/build/bazel/config:dtrace_enabled": ":traced_library",
+        "//conditions:default": ":objects",
+    }),
+    visibility = ["//visibility:public"],
+)
+cc_shared_library(
+    name = "cap_fileargs_shared",
+    deps = [":cap_fileargs"],
+    dynamic_deps = ["//lib/libnv:nv_shared"],
+    shared_lib_name = "libcap_fileargs.so.1",
+    user_link_flags = ["-Wl,-soname,libcap_fileargs.so.1", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    # src.opts.mk declares CASPER required; reject unsupported profiles.
+    target_compatible_with = select({"//tools/build/bazel/config:casper_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    manifests = [":install_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libcasper","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

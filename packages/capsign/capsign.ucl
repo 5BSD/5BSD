@@ -1,7 +1,5 @@
-# SPDX-License-Identifier: BSD-2-Clause
-
-comment = "Tools for signing and verifying ELF images and capability bundles"
+comment = "5BSD executable and system bundle signing tool"
 
 desc = <<EOD
-Tools for signing and verifying ELF images and capability bundles.
+5BSD executable and system bundle signing tool.
 EOD

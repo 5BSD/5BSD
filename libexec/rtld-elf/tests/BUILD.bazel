@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_RUNTIME = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/msun:m_shared"]
+_PROGRAMS = [("set_var_test", "set_var_library_path_fds", ["common.c", "common.h"]), ("dlopen_hash_test", "dlopen_hash", [])]
+[cc_binary(name = program, srcs = [program + ".c"] + extra_sources,
+    deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for program, _, extra_sources in _PROGRAMS]
+[bsd_atf_test(name = case, interface = "program", body = ":" + program, case_name = case,
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _RUNTIME,
+    data = ["//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"],
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for program, case, _ in _PROGRAMS]
+
+load("//libexec/rtld-elf/tests/rtld_deepbind:fixtures.bzl", "fixture_alias")
+# Preserve dlopen("libthr.so") with an explicit alias to the native DSO.
+fixture_alias(name = "thr_alias", src = "//lib/libthr:thr_shared", out = "libthr.so")
+cc_binary(name = "dlopen_test", srcs = ["dlopen_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+[bsd_atf_test(name = case, interface = "program", body = ":dlopen_test", case_name = case,
+    loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_lib = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared",
+        ":thr_alias", "//lib/libthr:thr_shared"],
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for case in ["dlopen_basic", "dlopen_recursing"]]
+
+# Preserve the maintained injection of structural classification and syscall
+# transport. This exercises verifier control flow, not cryptographic validation.
+cc_binary(name = "signature_verify_test", srcs = ["signature_verify_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//libexec/rtld-elf:signature_test_inputs"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_atf_test(name = "same_descriptor", interface = "program",
+    body = ":signature_verify_test", case_name = "same_descriptor",
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_filter_fixture")
+# Match the maintained Make extraction; the production source is an action input.
+bsd_filter_fixture(name = "parse_integer_func", src = "//libexec/rtld-elf:rtld.c",
+    output = "parse_integer_func.c", tool = "@bsd_sdk//toolchain:sed",
+    arguments = ["-ne", "/^parse_integer/,/^}/p"],
+    runtime = ["@bsd_sdk//toolchain:sed_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+cc_binary(name = "parse_integer_test",
+    srcs = ["parse_integer_test.c"],
+    deps = ["//lib/atf/libatf-c:atf_c", ":parse_integer_header"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_atf_test(name = "integers", interface = "program", body = ":parse_integer_test",
+    case_name = "integers", loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small")
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "parse_integer_header", textual_hdrs = [":parse_integer_func"],
+    includes = ["."])
+
+# Child fexecve selects the installed PT_INTERP. These are build targets, not
+# native-rtld runtime claims; qualification needs an isolated installed root.
+[cc_binary(name = program, srcs = [program + ".c", "common.c", "common.h"],
+    deps = ["//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for program in ["ld_library_pathfds", "ld_preload_fds"]]
+filegroup(name = "fd_loading_suite", srcs = [":ld_library_pathfds", ":ld_preload_fds",
+    "//libexec/rtld-elf/tests/target:target",
+    "//libexec/rtld-elf/tests/libpythagoras:pythagoras_shared"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load(":installation.bzl", "TEST_PROGRAMS", "TEST_MANIFESTS", "TEST_DIRECTORIES")
+[utility_installation(name = "install_" + program, program = program, manual = "",
+    package = "tests", bindir = "/usr/tests/libexec/rtld-elf")
+ for program in TEST_PROGRAMS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = TEST_PROGRAMS,
+    interfaces = {program: "atf" for program in TEST_PROGRAMS},
+    subdirectories = ["rtld_deepbind"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile",
+    destination = "/usr/tests/libexec/rtld-elf/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_metadata", entries = [":install_kyuafile"],
+    visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Complete maintained rtld test directory, including both helper families.
+bsd_install_archive(name = "install_archive",
+    manifests = TEST_MANIFESTS, directories = TEST_DIRECTORIES,
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

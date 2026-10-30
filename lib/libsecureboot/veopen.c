@@ -64,9 +64,11 @@ fingerprint_info_init(void)
  *	optional prefix within manifest entries which should be skipped
  *
  * @param[in] data
- *	manifest data
+ *	manifest data; retained on success, owned by the caller on failure
+ *
+ * @return zero on insertion, -1 on invalid input or allocation failure
  */
-void
+int
 fingerprint_info_add(const char *filename, const char *prefix,
     const char *skip, const char *data, struct stat *stp)
 {
@@ -81,16 +83,24 @@ fingerprint_info_add(const char *filename, const char *prefix,
 		printf("%s: out of memory! %lu\n", __func__,
 		    (unsigned long)sizeof(struct fingerprint_info));
 #endif
-		return;
+		return (-1);
 	}
 	if (prefix) {
 		nfip->fi_prefix = strdup(prefix);
+		if (nfip->fi_prefix == NULL) {
+			free(nfip);
+			return (-1);
+		}
 	} else {
 		if (!filename) {
 			free(nfip);
-			return;
+			return (-1);
 		}
 		nfip->fi_prefix = strdup(filename);
+		if (nfip->fi_prefix == NULL) {
+			free(nfip);
+			return (-1);
+		}
 		cp = strrchr(nfip->fi_prefix, '/');
 		if (cp == nfip->fi_prefix) {
 			cp[1] = '\0';
@@ -99,7 +109,7 @@ fingerprint_info_add(const char *filename, const char *prefix,
 		} else {
 			free(nfip->fi_prefix);
 			free(nfip);
-			return;
+			return (-1);
 		}
 	}
 	/* collapse any trailing ..[/] */
@@ -121,17 +131,25 @@ fingerprint_info_add(const char *filename, const char *prefix,
 		if (n == 0)
 			break;
 	}
-	nfip->fi_dev = stp->st_dev;
 #ifdef UNIT_TEST
+	/* The host harness supplies no filesystem metadata. */
+	(void)stp;
 	nfip->fi_dev = 0;
+#else
+	nfip->fi_dev = stp->st_dev;
 #endif
 	nfip->fi_data = data;
 	nfip->fi_prefix_len = strlen(nfip->fi_prefix);
 	if (skip) {
 		nfip->fi_skip_len = strlen(skip);
-		if (nfip->fi_skip_len)
+		if (nfip->fi_skip_len) {
 			nfip->fi_skip = strdup(skip);
-		else
+			if (nfip->fi_skip == NULL) {
+				free(nfip->fi_prefix);
+				free(nfip);
+				return (-1);
+			}
+		} else
 			nfip->fi_skip = NULL;
 	} else {
 		nfip->fi_skip = NULL;
@@ -142,7 +160,7 @@ fingerprint_info_add(const char *filename, const char *prefix,
 		LIST_INSERT_HEAD(&fi_list, nfip, entries);
 		DEBUG_PRINTF(4, ("inserted %zu %s at head\n",
 			nfip->fi_prefix_len, nfip->fi_prefix));
-		return;
+		return (0);
 	}
 	LIST_FOREACH(fip, &fi_list, entries) {
 		if (nfip->fi_prefix_len >= fip->fi_prefix_len) {
@@ -150,7 +168,7 @@ fingerprint_info_add(const char *filename, const char *prefix,
 			DEBUG_PRINTF(4, ("inserted %zu %s before %zu %s\n",
 				nfip->fi_prefix_len, nfip->fi_prefix,
 				fip->fi_prefix_len, fip->fi_prefix));
-			return;
+			return (0);
 		}
 		lfip = fip;
 	}
@@ -158,6 +176,7 @@ fingerprint_info_add(const char *filename, const char *prefix,
 	DEBUG_PRINTF(4, ("inserted %zu %s after %zu %s\n",
 		nfip->fi_prefix_len, nfip->fi_prefix,
 		lfip->fi_prefix_len, lfip->fi_prefix));
+	return (0);
 }
 
 #ifdef MANIFEST_SKIP_MAYBE
@@ -171,6 +190,8 @@ maybe_skip(char *fp, struct fingerprint_info *fip, size_t *nplenp)
 {
 	char *tp;
 
+	if ((size_t)(fp - fip->fi_data) < sizeof(MANIFEST_SKIP_MAYBE))
+		return (fp);
 	tp = fp - sizeof(MANIFEST_SKIP_MAYBE);
 
 	if (tp >= fip->fi_data) {
@@ -217,17 +238,17 @@ fingerprint_info_lookup(int fd, const char *path)
 		return (NULL);
 	prefix = pbuf;
 	ep = NULL;
-	cp = &pbuf[fip->fi_prefix_len];
+	cp = &pbuf[MIN(fip->fi_prefix_len, n)];
 	do {
 		if (ep) {
 			*ep = '/';
-			cp -= 2;
-			if (cp < pbuf)
+			if (cp - pbuf < 2)
 				break;
+			cp -= 2;
 		}
 		nlen = plen = 0;	/* keep gcc quiet */
 		if (cp > pbuf) {
-			for ( ; cp >= pbuf && *cp != '/'; cp--)
+			for ( ; cp > pbuf && *cp != '/'; cp--)
 				;	/* nothing */
 			if (cp > pbuf) {
 				ep = cp++;
@@ -284,11 +305,14 @@ fingerprint_info_lookup(int fd, const char *path)
 					nplen = snprintf(nbuf, sizeof(nbuf),
 					    "%s/%s",
 					    fip->fi_skip, cp);
-					nplen = MIN(nplen, sizeof(nbuf) - 1);
+					if (nplen >= sizeof(nbuf))
+						continue;
 				} else {
 					np = cp;
 					nplen = nlen;
 				}
+				if (nplen == 0)
+					continue;
 				DEBUG_PRINTF(3, ("lookup: '%s'\n", np));
 				if (!(fp = strstr(fip->fi_data, np)))
 					continue;
@@ -345,13 +369,12 @@ fingerprint_info_lookup(int fd, const char *path)
 }
 
 static int
-verify_fingerprint(int fd, const char *path, const char *cp, off_t off)
+fingerprint_hash(const char *path, const char **fingerprint,
+    const br_hash_class **algorithm, size_t *length)
 {
-	unsigned char buf[PAGE_SIZE];
+	const char *cp = *fingerprint;
 	const br_hash_class *md;
-	br_hash_compat_context mctx;
 	size_t hlen;
-	int n;
 
 	if (strncmp(cp, "no_hash", 7) == 0) {
 		return (VE_FINGERPRINT_IGNORE);
@@ -382,9 +405,30 @@ verify_fingerprint(int fd, const char *path, const char *cp, off_t off)
 		return (VE_FINGERPRINT_UNKNOWN);
 	}
 
+	*fingerprint = cp;
+	*algorithm = md;
+	*length = hlen;
+	return (VE_FINGERPRINT_OK);
+}
+
+static int
+verify_fingerprint(int fd, const char *path, const char *cp, off_t off)
+{
+	unsigned char buf[PAGE_SIZE];
+	const br_hash_class *md;
+	br_hash_compat_context mctx;
+	size_t hlen;
+	int n, rc;
+
+	rc = fingerprint_hash(path, &cp, &md, &hlen);
+	if (rc != VE_FINGERPRINT_OK)
+		return (rc);
+
 	md->init(&mctx.vtable);
-	if (off)
-		lseek(fd, 0, SEEK_SET);
+	if (off < 0 || (off != 0 && lseek(fd, 0, SEEK_SET) != 0)) {
+		ve_error_set("%s: cannot rewind verified input", path);
+		return (VE_FINGERPRINT_WRONG);
+	}
 	do {
 		n = read(fd, buf, sizeof(buf));
 		if (n < 0)
@@ -392,7 +436,10 @@ verify_fingerprint(int fd, const char *path, const char *cp, off_t off)
 		if (n > 0)
 			md->update(&mctx.vtable, buf, n);
 	} while (n > 0);
-	lseek(fd, off, SEEK_SET);
+	if (lseek(fd, off, SEEK_SET) != off) {
+		ve_error_set("%s: cannot restore verified offset", path);
+		return (VE_FINGERPRINT_WRONG);
+	}
 	return (ve_check_hash(&mctx, md, path, cp, hlen));
 }
 
@@ -439,6 +486,40 @@ verify_fd(int fd, const char *path, off_t off, struct stat *stp)
 	default:
 		return (VE_FINGERPRINT_WRONG);
 	}
+}
+
+/*
+ * Verify caller-owned bytes against an already registered manifest entry.
+ * The caller must authenticate/register the manifest first and must consume
+ * these same bytes, without modifying or rereading them after verification.
+ * fd is used only for manifest namespace lookup, never for payload I/O.
+ * Only VE_FINGERPRINT_OK establishes a match; no_hash is not verification.
+ */
+int
+verify_buf(int fd, const char *path, const void *buf, size_t size)
+{
+	const br_hash_class *md;
+	br_hash_compat_context mctx;
+	const char *cp;
+	size_t hlen;
+	int rc;
+
+	if (buf == NULL && size != 0) {
+		ve_error_set("%s: missing verification buffer", path);
+		return (VE_FINGERPRINT_WRONG);
+	}
+	cp = fingerprint_info_lookup(fd, path);
+	if (cp == NULL) {
+		ve_error_set("%s: no entry", path);
+		return (VE_FINGERPRINT_NONE);
+	}
+	rc = fingerprint_hash(path, &cp, &md, &hlen);
+	if (rc != VE_FINGERPRINT_OK)
+		return (rc);
+	md->init(&mctx.vtable);
+	if (size != 0)
+		md->update(&mctx.vtable, buf, size);
+	return (ve_check_hash(&mctx, md, path, cp, hlen));
 }
 
 /**

@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "unifdef", srcs = ["//contrib/unifdef:unifdef.c"], deps = ["//contrib/unifdef:headers"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "unifdef", manual = "//contrib/unifdef:unifdef.1", package = "toolchain", bindir = "/usr/bin", man_section = "1", manual_aliases = ["unifdefall"], extra_entries = [":script_install"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {
+        "/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=toolchain"]}',
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=toolchain","dbg"]}',
+        "/usr/lib/debug/usr/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=toolchain","dbg"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+
+
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "script_install", src = "//contrib/unifdef:unifdefall.sh", destination = "/usr/bin/unifdefall",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=toolchain"])
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+_RUNTIME = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+bsd_compare_test(name = "comment_test", program = ":unifdef", input = "bazel-fixtures/comment", expected = "bazel-fixtures/comment", arguments = [], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_0_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/a", arguments = ['-DFOO'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_1_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/a", arguments = ['-UFOO', '-DFOO'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_2_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/a", arguments = ['-DFOO=0', '-DFOO'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_3_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/b", arguments = ['-UFOO'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_4_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/b", arguments = ['-DFOO', '-UFOO'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "redefine_5_test", program = ":unifdef", input = "bazel-fixtures/conditional", expected = "bazel-fixtures/b", arguments = ['-DFOO', '-DFOO=0'], expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "symbols_undef_test", program = ":unifdef", input = "bazel-fixtures/empty", expected = "bazel-fixtures/empty", arguments = ['-s', '-DFOO', '-UFOO'], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+bsd_compare_test(name = "symbols_define_test", program = ":unifdef", input = "bazel-fixtures/empty", expected = "bazel-fixtures/empty", arguments = ['-s', '-DFOO', '-DBAR=FOO'], expected_exit = 0, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+test_suite(name = "tests", tests = [":netbsd_basic_test", ":netbsd_lastline_test", ':comment_test', ':redefine_0_test', ':redefine_1_test', ':redefine_2_test', ':redefine_3_test', ':redefine_4_test', ':redefine_5_test', ':symbols_undef_test', ':symbols_define_test'], visibility = ["//visibility:public"])
+
+# Maintained NetBSD fixtures; this 5BSD version returns 1 when output changes.
+bsd_compare_test(name = "netbsd_basic_test", program = ":unifdef",
+    file_arguments = ["//contrib/netbsd-tests/usr.bin/unifdef:d_basic.in"],
+    arguments = ["-U__FreeBSD__"], expected = "//contrib/netbsd-tests/usr.bin/unifdef:d_basic.out",
+    expected_exit = 1, expected_stderr = "bazel-fixtures/empty", runtime_lib = _RUNTIME,
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+# The maintained FreeBSD adaptation skips the no-final-newline variant.
+bsd_compare_test(name = "netbsd_lastline_test", program = ":unifdef",
+    file_arguments = ["bazel-fixtures/lastline"], arguments = ["-Ubar"],
+    expected = "bazel-fixtures/lastline", expected_stderr = "bazel-fixtures/empty",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:byte_compare_runner", size = "small")

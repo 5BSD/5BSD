@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//krb5/util/et:error_table.bzl", "mit_error_table")
+load(":header.bzl", "profile_header")
+mit_error_table(name = "errors", src = "//crypto/krb5/src/util/profile:prof_err.et", basename = "prof_err",
+    textdomain = "mit-krb5", awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+filegroup(name = "error_source", srcs = [":errors"], output_group = "source")
+filegroup(name = "error_header", srcs = [":errors"], output_group = "header")
+profile_header(name = "profile_header", visibility = ["//krb5/include:__pkg__"], interface = "//crypto/krb5/src/util/profile:profile.hin", errors = ":error_header",
+    cat = "@bsd_sdk//toolchain:cat", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:cat_runtime"])
+cc_library(name = "headers", hdrs = [":profile_header", ":error_header"],
+    includes = ["."],
+    deps = ["//crypto/krb5/src/util/et:headers", "//crypto/krb5/src/util/profile:private_headers"], visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"])
+cc_library(name = "krb5profile",
+    srcs = ["//crypto/krb5/src/util/profile:" + f for f in ["prof_file.c", "prof_get.c", "prof_init.c", "prof_parse.c", "prof_set.c", "prof_tree.c"]] + [":error_source"],
+    deps = [":headers", "//krb5/util/et:com_err", "//krb5/util/support:krb5support"],
+    local_defines = ["HAS_STDARG", 'LIBDIR=\\"/usr/lib\\"'], copts = ["-fPIC"],
+    linkstatic = True, visibility = ["//krb5:__subpackages__", "//crypto/krb5/src/include:__pkg__"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+# Make declares INTERNALLIB: consumed by Kerberos, not installed as a DSO.
+bsd_component_archive(name = "static_archive", groups = [":krb5profile"], visibility = ["//visibility:public"])
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "vtable_test", srcs = ["//crypto/krb5/src/util/profile:test_vtable.c"],
+    deps = [":archive_link", ":headers", "//krb5/util/et:com_err", "//krb5/util/support:krb5support"],
+    copts = ["-UNDEBUG"], size = "small")

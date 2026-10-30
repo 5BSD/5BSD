@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "addrmerge_test", srcs = ["addrmerge_test.c", "//usr.sbin/rpcbind:util.c"],
+    deps = ["//usr.sbin/rpcbind:headers", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    local_defines = select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+_IPV4_CASES = ['addrmerge_noifaddrs', 'addrmerge_localhost_only', 'addrmerge_singlehomed', 'addrmerge_one_addr_on_each_subnet', 'addrmerge_one_addr_on_each_subnet_rev', 'addrmerge_point2point', 'addrmerge_point2point_rev', 'addrmerge_bindip', 'addrmerge_bindip_rev', 'addrmerge_recvdstaddr', 'addrmerge_recvdstaddr_rev']
+_IPV6_CASES = ['addrmerge_localhost_only6', 'addrmerge_singlehomed6', 'addrmerge_one_addr_on_each_subnet6', 'addrmerge_one_addr_on_each_subnet6_rev', 'addrmerge_point2point6', 'addrmerge_point2point6_rev', 'addrmerge_bindip6', 'addrmerge_bindip6_rev', 'addrmerge_ipv6_linklocal', 'addrmerge_ipv6_linklocal_rev', 'addrmerge_recvdstaddr6', 'addrmerge_recvdstaddr6_rev', 'addrmerge_ipv6_other_subnet']
+[bsd_atf_test(name = case, case_name = case, interface = "program", body = ":addrmerge_test",
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small",
+    target_compatible_with = select({"//tools/build/bazel/config:inet6_support_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}) if case in _IPV6_CASES else []) for case in _IPV4_CASES + _IPV6_CASES]
+test_suite(name = "ipv4_tests", tests = [":" + case for case in _IPV4_CASES], visibility = ["//visibility:public"])
+test_suite(name = "ipv6_tests", tests = [":" + case for case in _IPV6_CASES], visibility = ["//visibility:public"])
+test_suite(name = "tests", tests = [":ipv4_tests", ":ipv6_tests"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["addrmerge_test"], interfaces = {"addrmerge_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/rpcbind/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+utility_installation(name = "install_manifest", program = "addrmerge_test", manual = None, package = "tests",
+    bindir = "/usr/tests/usr.sbin/rpcbind", extra_entries = [":install_kyuafile"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/usr.sbin", "/usr/lib/debug/usr/tests/usr.sbin/rpcbind"]} | {"/usr/tests/usr.sbin/rpcbind": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

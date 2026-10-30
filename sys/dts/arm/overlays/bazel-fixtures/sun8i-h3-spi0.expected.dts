@@ -1,0 +1,17 @@
+/dts-v1/;
+
+/  {
+
+	compatible = "allwinner,sun8i-h3";
+	fragment@0 {
+
+		target-path = "/soc/spi@1c68000";
+		__overlay__ {
+
+			status = "okay";
+		};
+	};
+	__symbols__ {
+
+	};
+};

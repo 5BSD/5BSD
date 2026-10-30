@@ -56,15 +56,29 @@ static const char	*dirs[MAXDIRS];
 static int		 ndirs;
 static bool		 is_be;
 bool			 insecure;
+bool			 strict;
 
 static void
 add_dir(const char *hintsfile, const char *name, bool trusted)
 {
 	struct stat 	stbuf;
+	char		resolved[PATH_MAX];
 	int		i;
 
+	/* Strict construction accepts canonical directory inputs only. */
+	if (strict) {
+		if (name[0] != '/' || strchr(name, ':') != NULL ||
+		    realpath(name, resolved) == NULL || strcmp(name, resolved) != 0)
+			errx(1, "%s: requires a canonical absolute directory", name);
+		if (stat(name, &stbuf) == -1)
+			err(1, "%s", name);
+		if (!S_ISDIR(stbuf.st_mode) || stbuf.st_uid != 0 ||
+		    (stbuf.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+			errx(1, "%s: requires a root-owned directory without group or other write permission", name);
+	}
+
 	/* Do some security checks */
-	if (!trusted && !insecure) {
+	if (!strict && !trusted && !insecure) {
 		if (stat(name, &stbuf) == -1) {
 			warn("%s", name);
 			return;
@@ -84,8 +98,11 @@ add_dir(const char *hintsfile, const char *name, bool trusted)
 	}
 
 	for (i = 0;  i < ndirs;  i++)
-		if (strcmp(dirs[i], name) == 0)
+		if (strcmp(dirs[i], name) == 0) {
+			if (strict)
+				errx(1, "%s: duplicate directory", name);
 			return;
+		}
 	if (ndirs >= MAXDIRS)
 		errx(1, "\"%s\": Too many directories in path", hintsfile);
 	dirs[ndirs++] = name;
@@ -253,6 +270,10 @@ update_elf_hints(const char *hintsfile, int argc, char **argv, bool merge,
 	if (merge)
 		read_elf_hints(hintsfile, false, force_be);
 	for (i = 0;  i < argc;  i++) {
+		if (strict) {
+			add_dir(hintsfile, argv[i], false);
+			continue;
+		}
 		if (stat(argv[i], &s) == -1)
 			warn("warning: %s", argv[i]);
 		else if (S_ISREG(s.st_mode))

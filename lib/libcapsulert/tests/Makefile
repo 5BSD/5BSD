@@ -1,6 +1,6 @@
 PACKAGE=	libcapsulert-tests
 
-ATF_TESTS_C=	claim_parse_test
+ATF_TESTS_C=	claim_parse_test storage_namespace_test
 
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert

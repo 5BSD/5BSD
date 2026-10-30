@@ -41,7 +41,8 @@
 .Nm cgetustr ,
 .Nm cgetfirst ,
 .Nm cgetnext ,
-.Nm cgetclose
+.Nm cgetclose ,
+.Nm cgetusedb
 .Nd capability database access routines
 .Sh LIBRARY
 .Lb libc
@@ -67,6 +68,8 @@
 .Fn cgetnext "char **buf" "char **db_array"
 .Ft int
 .Fn cgetclose "void"
+.Ft int
+.Fn cgetusedb "int usedb"
 .Sh DESCRIPTION
 The
 .Fn cgetent
@@ -266,6 +269,24 @@ function closes the sequential access and frees any memory and file descriptors
 being used.
 Note that it does not erase the buffer pushed by a call to
 .Fn cgetset .
+.Pp
+The
+.Fn cgetusedb
+function selects whether compiled databases are consulted.
+Zero selects text files only; a nonzero value restores preference for
+.Dq .db
+files, which is the default.
+The previous setting is returned.
+This setting is process-wide and is not reset by
+.Fn cgetclose .
+Applications must serialize changes with other capability database operations.
+Database generators should select text-only input before traversal.
+.Pp
+Sequential traversal rejects a name field that exceeds its internal buffer,
+including continued name fields, with a return value of \-1 and
+.Va errno
+set to
+.Er EOVERFLOW .
 .Sh CAPABILITY DATABASE SYNTAX
 Capability databases are normally
 .Tn ASCII

@@ -72,6 +72,7 @@
 #define	SVC_OP_HEARTBEAT	12	/* provider liveness ping (watchdog reset) */
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
 #define SVC_OP_ISSUE_AUTHORITY 15 /* retired: always rejected; do not reuse */
+/* Opcodes 16 through 25 were BIP session/storage grants; retired, do not reuse. */
 /* Opcode 14 was SESSION_COALITION; reserved, no longer supported. */
 
 /*
@@ -80,6 +81,7 @@
 #define	SVC_OP_ACTIVATE_NAME	127	/* initialize one reserved name */
 #define	SVC_OP_NEW_CLIENT	128	/* new client connection (pushed) */
 #define	SVC_OP_QUIESCE		129	/* stop admission and drain */
+/* Opcode 130 was BIP principal metadata; retired, do not reuse. */
 
 #define	SVC_QUIESCE_REASON_STOP		1
 #define	SVC_QUIESCE_REASON_SHUTDOWN	2
@@ -282,7 +284,7 @@ struct svc_name_result_req {
  * it rides the claim rather than the manifest.
  */
 #define	SVC_NAME_CLAIM_SENDABLE	0x1u
-
+/* Claim flag 0x2 was BIP principal metadata; retired, do not reuse. */
 struct svc_name_claim_req {
 	uint32_t	op;		/* SVC_OP_NAME_CLAIM */
 	uint32_t	flags;		/* SVC_NAME_CLAIM_* */
@@ -402,8 +404,9 @@ struct svc_new_client_msg {
 	 * authorize a Data/Shared/<group>/ claim.  Empty slots are "".
 	 */
 	char		groups[SVC_GROUPS_MAX][64];
+	uint64_t storage_client_id; /* broker association, never bearer authority */
 };
-_Static_assert(sizeof(struct svc_new_client_msg) == 752,
+_Static_assert(sizeof(struct svc_new_client_msg) == 760,
     "svc_new_client_msg wire layout");
 _Static_assert(sizeof(((struct svc_new_client_msg *)0)->client_label) ==
     SVC_ANOINT_NAME_MAX, "anointment names share the bundle-label bound");

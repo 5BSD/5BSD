@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":buildinfo.bzl", "openssl_buildinfo")
+# Only the current amd64 target is qualified; other targets must be modeled explicitly.
+openssl_buildinfo(name = "buildinfo", machine_arch = "amd64",
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load("//crypto/openssl:crypto_sources_amd64.bzl", "AMD64_CRYPTO_SOURCES", "AMD64_ASM_SOURCES")
+# Source inventory qualification target; it does not claim a compiled library.
+filegroup(name = "amd64_sources", srcs = AMD64_CRYPTO_SOURCES + AMD64_ASM_SOURCES,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# Selected native amd64 assembly profile. Other architectures/NO_ASM need their
+# own explicit source inventories before they can be supported by this target.
+load("//crypto/openssl:build_config_amd64.bzl", _DEFINES = "AMD64_DEFINES")
+
+_NIST = "//crypto/openssl:crypto/bn/bn_nist.c"
+cc_library(name = "buildinfo_headers", hdrs = [":buildinfo"],
+    strip_include_prefix = "/secure/lib/libcrypto",
+    visibility = ["//secure/lib/libssl:__pkg__", "//secure/usr.bin/openssl:__pkg__"])
+# Separate groups express the maintained per-file flag without changing
+# optimization or aliasing behavior for the other 948 C translation units.
+[
+    cc_library(name = name, srcs = sources, linkstatic = True,
+        deps = ["//crypto/openssl:headers"],
+        implementation_deps = ["//crypto/openssl:internal_headers", ":buildinfo_headers"],
+        local_defines = _DEFINES + select({
+            "//tools/build/bazel/config:openssl_ktls_enabled": [],
+            "//conditions:default": ["OPENSSL_NO_KTLS"],
+        }),
+        copts = flags, features = ["bsd_openssl_pic"],
+        linkopts = ["-pthread"] if name == "crypto_objects" else [],
+        target_compatible_with = _PLATFORM)
+    for name, sources, flags in [
+        ("crypto_objects", [src for src in AMD64_CRYPTO_SOURCES if src != _NIST], []),
+        ("nist_objects", [_NIST], ["-fno-strict-aliasing"]),
+        ("asm_objects", AMD64_ASM_SOURCES, ["-Wa,--noexecstack"]),
+    ]
+]
+cc_library(name = "crypto", linkstatic = True, deps = [":crypto_objects", ":nist_objects", ":asm_objects"],
+    target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":crypto_objects", ":nist_objects", ":asm_objects"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "crypto_shared", deps = [":crypto"],
+    shared_lib_name = "libcrypto.so.35", additional_linker_inputs = ["Version.map"],
+    user_link_flags = ["-Wl,-soname,libcrypto.so.35", "-Wl,--fatal-warnings,--warn-shared-textrel",
+        "-Wl,--version-script=$(location Version.map),--no-undefined-version"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+# Link the actual installable archive, not an alternative reconstruction.
+cc_import(name = "archive_link", static_library = ":static_archive",
+    visibility = ["//secure/lib/libssl:__pkg__"])
+cc_test(name = "smoke_static", srcs = ["tests/native_smoke.c"],
+    deps = [":archive_link", "//crypto/openssl:headers"], linkopts = ["-pthread"],
+    linkstatic = True, size = "small", target_compatible_with = _PLATFORM)
+cc_test(name = "smoke_shared", srcs = ["tests/native_smoke.c"], deps = [":crypto"],
+    dynamic_deps = [":crypto_shared"], features = ["bsd_test_runtime_paths"],
+    size = "small", target_compatible_with = _PLATFORM)
+
+load(":installation.bzl", "crypto_installation")
+crypto_installation(name = "install_manifest")

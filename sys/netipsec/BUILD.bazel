@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "userspace_headers", hdrs = ["ipsec.h", "keydb.h", "key_debug.h", "key_var.h", "xform.h"], strip_include_prefix = "/sys", visibility = ["//sbin/setkey:__pkg__"])
+exports_files(["key_debug.c"], visibility = ["//sbin/setkey:__pkg__"])

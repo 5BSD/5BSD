@@ -362,7 +362,7 @@ install(char *pkgname)
 
 	fp = file_findfile(NULL, NULL);
 	if (fp != NULL)
-		file_formats[fp->f_loader]->l_exec(fp);
+		file_exec(fp);
 	error = CMD_ERROR;
 	command_errmsg = "unable to start installation";
 

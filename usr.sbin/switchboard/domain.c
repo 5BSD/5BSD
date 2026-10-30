@@ -291,8 +291,8 @@ lookup_channel_is_live(const struct svc_lookup_channel *lc)
 
 	for (p = lookup_channels; p != NULL; p = p->next) {
 		if (p == lc)
-			return (p->owner_label[0] == '\0' ||
-			    lookup_channel_requester(p) != NULL);
+			return ((p->owner_label[0] == '\0' ||
+			    lookup_channel_requester(p) != NULL));
 	}
 	return (false);
 }
@@ -511,8 +511,9 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_register(lc, request);
 		goto out;
 	}
-	/* Every other op carries no descriptor. */
-	if (channel_message_fd_count(request) != 0) {
+	/* Lookup may attach one restricted self process descriptor. */
+	if (channel_message_fd_count(request) != 0 &&
+	    !(op == SVC_OP_LOOKUP && channel_message_fd_count(request) == 1)) {
 		lookup_channel_reply(request, EINVAL, NULL, 0);
 		goto out;
 	}
@@ -584,8 +585,8 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, EACCES, NULL, 0);
 		goto out;
 	}
-	client_fd = naming_lookup(req->name, sender, &authority,
-	    channel_message_sender(request), &error, &sendable);
+	client_fd = naming_lookup_observed(req->name, sender, &authority,
+	    request, &error, &sendable);
 	if (client_fd < 0) {
 		/*
 		 * A miss on an on-demand name activates its provider, exactly as
@@ -597,7 +598,7 @@ lookup_channel_request(struct channel *channel,
 		 * channel's authority.
 		 */
 		if (error == ENOENT &&
-		    on_demand_launch_ambient(req->name, lc, &authority,
+		    on_demand_launch_ambient(req->name, lc,
 		    request, switchboard_kq) == 0)
 			return;
 		/*
@@ -835,6 +836,7 @@ domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 	return (domain_mint_channel(kind,
 	    uid, set, out_fd, kq));
 }
+
 
 bool
 domain_channel_owns_event(uintptr_t ident)

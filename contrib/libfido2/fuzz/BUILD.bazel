@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["wiredata_fido2.h"], visibility = ["//lib/libfido2/tests:__pkg__"])

@@ -54,6 +54,10 @@
 #include "opt_mac.h"
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
+#include <sys/fcntl.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>

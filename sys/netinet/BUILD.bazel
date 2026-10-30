@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["tcp_stats.c"], visibility = ["//lib/libstats:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
+    deps = ["//sys/net:network_headers", "//sys/netinet6:address_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "pcb_headers", hdrs = ["in_pcb.h"], includes = [".."],
+    deps = [":address_headers", "//sys/net:route_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "ip_headers", hdrs = ["ip_var.h", "in_kdtrace.h"], includes = [".."], deps = [":pcb_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "ip6_wire_headers", hdrs = ["ip6.h"], includes = [".."], visibility = ["//sys/netinet6:__pkg__"])
+
+cc_library(name = "ipv4_wire_headers", hdrs = ["in_systm.h", "ip.h"], includes = [".."], deps = [":address_headers"], visibility = ["//sys/security/audit:__pkg__"])
+
+cc_library(name = "tcp_wire_headers", hdrs = ["tcp.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
+
+# Source-header closure for the maintained truss build on amd64.
+cc_library(name = "truss_headers", hdrs = ['in.h', 'sctp.h', 'sctp_uio.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
+
+# Explicit source-header closure for the amd64 bhyve engine.
+cc_library(name = "bhyve_engine_headers", hdrs = ['in.h', 'tcp.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])

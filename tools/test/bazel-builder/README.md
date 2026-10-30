@@ -182,11 +182,13 @@ python3.12 /tests/bazel-builder/resources.py --disposable-vm \
 ```
 
 The budget JSON must explicitly specify all six fields: max_physical_memory_bytes
-(at most2147483648), max_elapsed_seconds(1..86400), min_free_memory_bytes,
+(at most 25769803776 bytes, or 24 GiB), max_elapsed_seconds(1..86400), min_free_memory_bytes,
 min_free_disk_bytes, max_used_disk_growth_bytes, and sample_interval_seconds
 (0.1..30). Byte limits are nonnegative integers. Duplicate, nonfinite, missing or
 unknown fields are rejected. Choose these limits before execution; retain failed
-runs if a reviewed budget subsequently changes.
+runs if a reviewed budget subsequently changes. A 24 GiB builder declares
+max_physical_memory_bytes=25769803776; the higher parser ceiling does not raise
+any existing run's configured budget.
 
 Preflight and sampled violations fail the run. Measurement failures are fatal.
 On termination, the wrapper kills the command process group and preserves the

@@ -12,6 +12,7 @@ MLINKS+=cap_rights_init.3 cap_rights_clear.3
 MLINKS+=cap_rights_init.3 cap_rights_is_empty.3
 MLINKS+=cap_rights_init.3 cap_rights_is_set.3
 MLINKS+=cap_rights_init.3 cap_rights_is_valid.3
+MLINKS+=cap_rights_init.3 cap_rights_intersect.3
 MLINKS+=cap_rights_init.3 cap_rights_merge.3
 MLINKS+=cap_rights_init.3 cap_rights_remove.3
 MLINKS+=cap_rights_init.3 cap_rights_contains.3

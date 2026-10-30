@@ -1808,26 +1808,15 @@ main(void)
 	openlog("bsdnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
-	/*
-	 * Per-label policy, loaded via the switchboard-delivered Config directory
-	 * descriptor (service_config_open, openat(2) — capability-mode safe;
-	 * falls back to the $CAPABILITY_UNIT_DIR path for a legacy launch).
-	 * FAIL-SOFT by design: the network provider is depended on by nearly
-	 * everything, so a missing or malformed config must never brick it — the
-	 * compiled-in default policy (outbound allowed, internal denied) stays in
-	 * force and the problem is logged for the operator.
-	 */
+	/* Invalid or unavailable policy must not restore outbound grants. */
 	ctx = NULL;
-	networkcmp_config_defaults(&config);
 	if (service_config_open(NETWORKCMP_CONFIG_NAME, &cfgfd) == -1) {
-		if (errno != ENOENT)
-			syslog(LOG_WARNING,
-			    "policy config unavailable; using built-in default "
-			    "network policy: %m");
-	} else if (networkcmp_config_load_fd(&config, cfgfd) == -1) {
-		syslog(LOG_WARNING,
-		    "policy config rejected; using built-in default network "
-		    "policy: %m");
+		syslog(LOG_ERR, "required network policy unavailable: %m");
+		return (1);
+	}
+	if (networkcmp_config_load_fd(&config, cfgfd) == -1) {
+		syslog(LOG_ERR, "network policy rejected: %m");
+		return (1);
 	}
 	/*
 	 * Acquire the bootstrap context, then initialize the in-process resolver

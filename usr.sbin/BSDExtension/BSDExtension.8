@@ -210,11 +210,15 @@ block.
 capability bundle shipping
 .Nm
 .It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
-Optional allow-list policy, read at daemon startup and on authorized reload.
-The allowed_extensions array replaces the built-in list.
-The built-in list includes cryptodev, vhid, zfs, linux64, vmm, fdescfs,
-linprocfs, linsysfs, drm, i915kms, amdgpu, radeonkms, cpuctl, coretemp,
-amdsmn, amdtemp, dummynet, and pf.
+Required allow-list policy, read at daemon startup and on authorized reload.
+The allowed_extensions array specifies the complete base grant set.
+The executable contains no default module grants.
+Missing or malformed startup policy is fatal; a failed reload preserves the
+last accepted policy. An empty array explicitly denies all module requests.
+Both base policy and persisted overrides reject includes/macros, duplicate
+keys, unknown fields, embedded NULs and implicit arrays. Reads are bounded to
+one MiB and do not consume or reposition the caller's descriptor.
+The packaged configuration selects the base system's on-demand modules.
 The CPU telemetry drivers are built into the amd64 and i386 GENERIC kernels;
 the allow-list also supports loading them on kernels that omit them.
 Graphics startup uses this broker when the capability plane is enabled.

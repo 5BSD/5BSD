@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["fdt.h", "libfdt.h", "libfdt_env.h"],
+    strip_include_prefix = ".", visibility = ["//visibility:public"])
+exports_files(['fdt.c', 'fdt_addresses.c', 'fdt_empty_tree.c', 'fdt_overlay.c', 'fdt_ro.c', 'fdt_rw.c', 'fdt_strerror.c', 'fdt_sw.c', 'fdt_wip.c', 'libfdt_internal.h'], visibility = ["//lib/libfdt:__pkg__"])

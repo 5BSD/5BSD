@@ -250,7 +250,12 @@ ${FULLPROG}: ${KMOD}.kld
 .endif
 .endif
 
+# Standalone ports module builds may not include src local.sys.mk. Do not
+# leave a partially linked or transformed module usable by a later build.
+.DELETE_ON_ERROR:
+
 EXPORT_SYMS?=	NO
+CLEANFILES+=	${KMOD}.symbols
 .if ${EXPORT_SYMS} != YES
 CLEANFILES+=	export_syms
 .endif
@@ -278,13 +283,17 @@ ${FULLPROG}: ${OBJS} ${BLOB_OBJS}
 .else
 	grep -v '^#' < ${EXPORT_SYMS} > export_syms
 .endif
-	${AWK} -f ${SYSDIR}/conf/kmod_syms.awk ${.TARGET} \
-	    export_syms | ${XARGS} ${XARGS_J} % ${OBJCOPY} % ${.TARGET}
+	${NM} -g ${.TARGET} > ${KMOD}.symbols
+	options=$$(${AWK} -v modname=${.TARGET} -f ${SYSDIR}/conf/kmod_syms.awk \
+	    ${KMOD}.symbols export_syms) || exit $$?; \
+	    printf '%s\n' "$$options" | ${XARGS} ${XARGS_J} % ${OBJCOPY} % ${.TARGET}
 .endif
 .endif # defined(EXPORT_SYMS)
 .if defined(PREFIX_SYMS)
-	${AWK} -v prefix=${PREFIX_SYMS} -f ${SYSDIR}/conf/kmod_syms_prefix.awk \
-	    ${.TARGET} /dev/null | ${XARGS} ${XARGS_J} % ${OBJCOPY} % ${.TARGET}
+	${NM} ${.TARGET} > ${KMOD}.symbols
+	options=$$(${AWK} -v prefix=${PREFIX_SYMS} -f ${SYSDIR}/conf/kmod_syms_prefix.awk \
+	    ${KMOD}.symbols /dev/null) || exit $$?; \
+	    printf '%s\n' "$$options" | ${XARGS} ${XARGS_J} % ${OBJCOPY} % ${.TARGET}
 .endif
 .if !defined(DEBUG_FLAGS) && ${__KLD_SHARED} == no
 	${OBJCOPY} --strip-debug ${.TARGET}

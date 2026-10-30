@@ -137,30 +137,41 @@ ofw_readin(readin_handle_t fd, vm_offset_t dest, const size_t len)
 	ssize_t		got;
 	vm_offset_t	p;
 
+	int		error;
+
+	if (len == 0)
+		return (0);
 	p = dest;
 
 	chunk = min(READIN_BUF, len);
 	buf = malloc(chunk);
 	if (buf == NULL) {
 		printf("ofw_readin: buf malloc failed\n");
-		return (0);
+		errno = ENOMEM;
+		return (-1);
 	}
 
-        if (ofw_mapmem(dest, len)) {
-                printf("ofw_readin: map error\n");
-                free(buf);
-                return (0);
-        }
+	error = ofw_mapmem(dest, len);
+	if (error != 0) {
+		printf("ofw_readin: map error\n");
+		free(buf);
+		errno = error;
+		return (-1);
+	}
 
 	for (resid = len; resid > 0; resid -= got, p += got) {
 		get = min(chunk, resid);
 		got = VECTX_READ(fd, buf, get);
 
-		if (got <= 0) {
-			if (got < 0)
-				printf("ofw_readin: read failed\n");
-			break;
+		if (got < 0) {
+			error = errno;
+			printf("ofw_readin: read failed\n");
+			free(buf);
+			errno = error;
+			return (-1);
 		}
+		if (got == 0)
+			break;
 
 		bcopy(buf, (void *)p, got);
 	}

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["samplerate.c", "src_linear.c", "src_sinc.c", "src_zoh.c", "samplerate.h"])
+cc_library(
+    name = "headers",
+    hdrs = ["samplerate.h", "common.h", "fastest_coeffs.h", "mid_qual_coeffs.h", "high_qual_coeffs.h"],
+    strip_include_prefix = ".",
+    visibility = ["//lib/libsamplerate:__pkg__"],
+)
+
+cc_library(name = "public_headers", hdrs = ["samplerate.h"], strip_include_prefix = ".", visibility = ["//lib/libsamplerate:__pkg__"])

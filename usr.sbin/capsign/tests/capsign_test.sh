@@ -10,6 +10,34 @@ setup()
     atf_check -s exit:0 "$capsign" note -m policy -o policy.S
     atf_check -s exit:0 -o ignore -e ignore cc demo.c policy.S -o demo
 }
+atf_test_case key_id_public_only
+key_id_public_only_head()
+{
+    atf_set require.progs 'openssl'
+    atf_set timeout 15
+}
+key_id_public_only_body()
+{
+    capsign=$(atf_config_get capsign /usr/sbin/capsign)
+    [ -x "$capsign" ] || atf_skip "capsign not installed"
+    atf_check -s exit:0 -o ignore -e ignore openssl genpkey -algorithm ed25519 -out key
+    atf_check -s exit:0 -o ignore -e ignore openssl pkey -in key -pubout -out public
+    atf_check -s exit:0 -o save:expected "$capsign" key-id -p public
+    { printf '\n \t'; cat public; printf '\n \t'; } > whitespace
+    atf_check -s exit:0 -o file:expected "$capsign" key-id -p whitespace
+    cat public key > appended-private
+    cat key public > prefixed-private
+    cat public public > two-public
+    { printf 'untrusted prefix\n'; cat public; } > prefix
+    { cat public; printf 'untrusted suffix\n'; } > suffix
+    truncate -s 4097 oversized
+    mkfifo fifo
+    ln -s public symlink
+    for rejected in key appended-private prefixed-private two-public prefix suffix oversized fifo symlink; do
+        atf_check -s not-exit:0 -o empty -e not-empty "$capsign" key-id -p "$rejected"
+    done
+}
+
 atf_test_case resign_image
 resign_image_head() { atf_set require.progs 'cc openssl'; }
 resign_image_body()
@@ -405,6 +433,14 @@ stage_sign_body()
     mv Demo.cap stage/Capabilities/System/
     printf './Capabilities/System/Demo.cap/Bundle.ucl type=file uname=root gname=wheel mode=0444 tags=package=runtime\n' > stage/METALOG
     image=./Capabilities/System/Demo.cap/Units/demo.unit/bin/demo
+    mkdir -p stage/etc/capability/keys
+    cp public stage/etc/capability/keys/unrequested.pub
+    cp "stage/$image" unsigned-image
+    atf_check -s not-exit:0 -o empty -e match:'empty trust catalogue' env CAPSIGN="$capsign" \
+        sh "$(atf_get_srcdir)/sign-stage.sh" -e -r stage -k key
+    atf_check -s exit:0 cmp unsigned-image "stage/$image"
+    [ ! -e stage/Capabilities/System/Demo.cap/Signature ] || atf_fail 'sealed rejected stage'
+    rm stage/etc/capability/keys/unrequested.pub
     printf '%s type=file uname=root gname=wheel mode=0555 size=1 tags=package=runtime\n' "$image" >> stage/METALOG
     atf_check -s exit:0 -o ignore -e ignore env CAPSIGN="$capsign" \
         sh "$(atf_get_srcdir)/sign-stage.sh" -e -r stage -k key
@@ -629,13 +665,40 @@ verify_stage_body()
     [ -f "$helper" ] || atf_fail 'missing stage verification helper'
     rm Demo.cap/Units/demo.unit/Unit.ucl
     atf_check -s exit:0 "$capsign" bundle-sign -k key Demo.cap
-    mkdir -p stage/Capabilities/System stage/etc/capability
+    mkdir -p stage/Capabilities/System stage/etc/capability/keys
+    id=$("$capsign" key-id -p public)
+    cp public "stage/etc/capability/keys/$id.pub"
     : > stage/etc/capability/require-signatures
     cp -Rp Demo.cap stage/Capabilities/System/
     atf_check -s exit:0 -o match:'verified signed system bundles=1' -e empty env CAPSIGN="$capsign" sh "$helper" -r stage -p public
     atf_check -s exit:0 -o ignore -e ignore openssl genpkey -algorithm ed25519 -out wrong
     atf_check -s exit:0 -o ignore -e ignore openssl pkey -in wrong -pubout -out wrong-public
     atf_check -s not-exit:0 -o ignore -e ignore env CAPSIGN="$capsign" sh "$helper" -r stage -p wrong-public
+    catalogue=stage/etc/capability/keys
+    # A matching public identifier must not hide private material in either
+    # the staged catalogue or the externally selected trust input.
+    cat public key > mixed-public-private
+    cp mixed-public-private "$catalogue/$id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'public-key-only' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    cp public "$catalogue/$id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'public-key-only' env CAPSIGN="$capsign" sh "$helper" -r stage -p mixed-public-private
+    atf_check -s exit:0 -o match:'verified signed system bundles=1' -e empty env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    wrong_id=$("$capsign" key-id -p wrong-public)
+    cp wrong-public "$catalogue/$wrong_id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'additional trust' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    rm "$catalogue/$wrong_id.pub"
+    cp wrong-public "$catalogue/$id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'does not match' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    rm "$catalogue/$id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'does not enroll' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    ln -s "$(pwd)/public" "$catalogue/$id.pub"
+    atf_check -s not-exit:0 -o empty -e match:'does not enroll' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    rm "$catalogue/$id.pub"
+    cp public "$catalogue/$id.pub"
+    : > "$catalogue/.extra"
+    atf_check -s not-exit:0 -o empty -e match:'additional trust' env CAPSIGN="$capsign" sh "$helper" -r stage -p public
+    rm "$catalogue/.extra"
+    atf_check -s exit:0 -o match:'verified signed system bundles=1' -e empty env CAPSIGN="$capsign" sh "$helper" -r stage -p public
     cp stage/Capabilities/System/Demo.cap/Units/demo.unit/bin/demo original
     printf corrupt >> stage/Capabilities/System/Demo.cap/Units/demo.unit/bin/demo
     atf_check -s not-exit:0 -o ignore -e ignore env CAPSIGN="$capsign" sh "$helper" -r stage -p public
@@ -682,6 +745,7 @@ atf_init_test_cases()
 {
     atf_add_test_case elf_note_tooling
     atf_add_test_case verify_stage
+    atf_add_test_case key_id_public_only
     atf_add_test_case resign_image
     atf_add_test_case remove_signature
     atf_add_test_case direct_binary

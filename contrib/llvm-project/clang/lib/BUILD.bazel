@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Source components declare their own inputs in child packages.

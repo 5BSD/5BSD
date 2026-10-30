@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//usr.sbin/bsnmpd/gensnmptree:install_archive",
+    "//usr.sbin/bsnmpd/bsnmpd:install_archive",
+    "//usr.sbin/bsnmpd/modules:installation_archives",
+    "//usr.sbin/bsnmpd/tools/bsnmptools:install_archive",
+], visibility = ["//visibility:public"])

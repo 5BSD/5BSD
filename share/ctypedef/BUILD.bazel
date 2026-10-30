@@ -1,0 +1,288 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_locale.bzl", "bsd_locale_ctype")
+
+# Explicit source aliases match the maintained ctypedef definitions.
+bsd_locale_ctype(
+    name = 'C.UTF-8',
+    src = 'C.UTF-8.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.UTF-8",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'be_BY.CP1131',
+    src = 'be_BY.CP1131.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.CP1131",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ca_IT.ISO8859-1',
+    src = 'ca_IT.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-1",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ca_IT.ISO8859-15',
+    src = 'ca_IT.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-15",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'el_GR.ISO8859-7',
+    src = 'el_GR.ISO8859-7.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-7",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'en_US.ISO8859-1',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-1",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'en_US.ISO8859-15',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-15",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'en_US.US-ASCII',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.US-ASCII",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'hi_IN.ISCII-DEV',
+    src = 'hi_IN.ISCII-DEV.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISCII-DEV",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'hy_AM.ARMSCII-8',
+    src = 'hy_AM.ARMSCII-8.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ARMSCII-8",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ja_JP.SJIS',
+    src = 'ja_JP.eucJP.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.SJIS",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ja_JP.eucJP',
+    src = 'ja_JP.eucJP.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.eucJP",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ko_KR.eucKR',
+    src = 'ko_KR.eucKR.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.eucKR",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'lv_LV.ISO8859-13',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-13",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ru_RU.CP1251',
+    src = 'be_BY.CP1131.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.CP1251",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ru_RU.CP866',
+    src = 'be_BY.CP1131.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.CP866",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ru_RU.ISO8859-5',
+    src = 'be_BY.CP1131.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-5",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'ru_RU.KOI8-R',
+    src = 'be_BY.CP1131.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.KOI8-R",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'sr_RS.ISO8859-2',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-2",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'tr_TR.ISO8859-9',
+    src = 'en_US.ISO8859-1.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-9",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'uk_UA.CP1251',
+    src = 'uk_UA.CP1251.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.CP1251",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'uk_UA.ISO8859-5',
+    src = 'uk_UA.CP1251.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.ISO8859-5",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'uk_UA.KOI8-U',
+    src = 'uk_UA.CP1251.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.KOI8-U",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'zh_CN.GB18030',
+    src = 'zh_CN.eucCN.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.GB18030",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'zh_CN.GB2312',
+    src = 'zh_CN.eucCN.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.GB2312",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'zh_CN.GBK',
+    src = 'zh_CN.eucCN.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.GBK",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'zh_CN.eucCN',
+    src = 'zh_CN.eucCN.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.eucCN",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+bsd_locale_ctype(
+    name = 'zh_TW.Big5',
+    src = 'zh_TW.Big5.src',
+    charmap = "//tools/tools/locale/etc/final-maps:map.Big5",
+    widths = "//tools/tools/locale/etc/final-maps:widths.txt",
+    endian = select({"@platforms//cpu:x86_64": "little"}),
+    localedef = "//usr.bin/localedef:localedef",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(name = "ctype_data", srcs = [':C.UTF-8', ':be_BY.CP1131', ':ca_IT.ISO8859-1', ':ca_IT.ISO8859-15', ':el_GR.ISO8859-7', ':en_US.ISO8859-1', ':en_US.ISO8859-15', ':en_US.US-ASCII', ':hi_IN.ISCII-DEV', ':hy_AM.ARMSCII-8', ':ja_JP.SJIS', ':ja_JP.eucJP', ':ko_KR.eucKR', ':lv_LV.ISO8859-13', ':ru_RU.CP1251', ':ru_RU.CP866', ':ru_RU.ISO8859-5', ':ru_RU.KOI8-R', ':sr_RS.ISO8859-2', ':tr_TR.ISO8859-9', ':uk_UA.CP1251', ':uk_UA.ISO8859-5', ':uk_UA.KOI8-U', ':zh_CN.GB18030', ':zh_CN.GB2312', ':zh_CN.GBK', ':zh_CN.eucCN', ':zh_TW.Big5'], visibility = ["//visibility:public"])
+
+load(":installation.bzl", "ctype_installation")
+ctype_installation()

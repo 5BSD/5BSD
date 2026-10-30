@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//crypto/openssl:ssl_cli_sources.bzl", "SSL_SOURCES")
+load("//crypto/openssl:build_config_amd64.bzl", "AMD64_DEFINES")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_KTLS = "//crypto/openssl:ssl/record/methods/ktls_meth.c"
+cc_library(name = "ssl", srcs = [source for source in SSL_SOURCES if source != _KTLS] + select({
+    "//tools/build/bazel/config:openssl_ktls_enabled": [_KTLS], "//conditions:default": [],
+}), deps = ["//secure/lib/libcrypto:crypto"],
+    implementation_deps = ["//crypto/openssl:internal_headers", "//crypto/openssl:ssl_headers",
+        "//secure/lib/libcrypto:buildinfo_headers"],
+    local_defines = AMD64_DEFINES + select({
+        "//tools/build/bazel/config:openssl_ktls_enabled": [], "//conditions:default": ["OPENSSL_NO_KTLS"],
+    }),
+    features = ["bsd_openssl_pic"], linkopts = ["-pthread"], linkstatic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":ssl"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "ssl_shared", deps = [":ssl"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared"], shared_lib_name = "libssl.so.35",
+    additional_linker_inputs = ["Version.map"],
+    user_link_flags = ["-Wl,-soname,libssl.so.35", "-Wl,--fatal-warnings,--warn-shared-textrel",
+        "-Wl,--version-script=$(location Version.map),--no-undefined-version"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_test")
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "tls_static", srcs = ["tls_test.c"],
+    deps = [":archive_link", "//secure/lib/libcrypto:archive_link", "//crypto/openssl:headers"],
+    linkopts = ["-pthread"], linkstatic = True, size = "small", target_compatible_with = _PLATFORM)
+cc_test(name = "tls_shared", srcs = ["tls_test.c"], deps = [":ssl", "//secure/lib/libcrypto:crypto"],
+    dynamic_deps = [":ssl_shared", "//secure/lib/libcrypto:crypto_shared"],
+    features = ["bsd_test_runtime_paths"], size = "small", target_compatible_with = _PLATFORM)
+
+load(":installation.bzl", "ssl_installation")
+ssl_installation(name = "install_manifest")

@@ -49,7 +49,10 @@ void	sysctlcmp_config_defaults(struct sysctlcmp_config *);
  * missing file keeps the compiled-in defaults (returns 0); a malformed file
  * returns -1 with *config holding the defaults.  Hardened like the sibling
  * providers (O_NOFOLLOW, regular file, trusted owner, not group/other
- * writable, size cap).  load_fd takes ownership of fd and closes it.
+ * writable, size cap). Unknown/duplicate/NUL-aliased keys or prefixes,
+ * duplicate prefixes and external includes/macros reject the whole input.
+ * Variables are not expanded. load_fd reads from offset zero, checks observed
+ * length/metadata changes, and takes ownership of fd and closes it.
  */
 int	sysctlcmp_config_load(struct sysctlcmp_config *, const char *path);
 int	sysctlcmp_config_load_fd(struct sysctlcmp_config *, int fd);

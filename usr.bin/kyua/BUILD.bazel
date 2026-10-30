@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(name = "configuration", hdrs = ["config.h", "utils/defs.hpp"], strip_include_prefix = ".")
+cc_binary(
+    name = "kyua",
+    srcs = ['//contrib/kyua:main.cpp', '//contrib/kyua:utils/datetime.cpp', '//contrib/kyua:utils/env.cpp', '//contrib/kyua:utils/memory.cpp', '//contrib/kyua:utils/passwd.cpp', '//contrib/kyua:utils/sanity.cpp', '//contrib/kyua:utils/stacktrace.cpp', '//contrib/kyua:utils/stream.cpp', '//contrib/kyua:utils/units.cpp', '//contrib/kyua:utils/cmdline/base_command.cpp', '//contrib/kyua:utils/cmdline/exceptions.cpp', '//contrib/kyua:utils/cmdline/globals.cpp', '//contrib/kyua:utils/cmdline/options.cpp', '//contrib/kyua:utils/cmdline/parser.cpp', '//contrib/kyua:utils/cmdline/ui.cpp', '//contrib/kyua:utils/cmdline/ui_mock.cpp', '//contrib/kyua:utils/config/exceptions.cpp', '//contrib/kyua:utils/config/keys.cpp', '//contrib/kyua:utils/config/lua_module.cpp', '//contrib/kyua:utils/config/nodes.cpp', '//contrib/kyua:utils/config/parser.cpp', '//contrib/kyua:utils/config/tree.cpp', '//contrib/kyua:utils/format/exceptions.cpp', '//contrib/kyua:utils/format/formatter.cpp', '//contrib/kyua:utils/fs/auto_cleaners.cpp', '//contrib/kyua:utils/fs/directory.cpp', '//contrib/kyua:utils/fs/exceptions.cpp', '//contrib/kyua:utils/fs/lua_module.cpp', '//contrib/kyua:utils/fs/operations.cpp', '//contrib/kyua:utils/fs/path.cpp', '//contrib/kyua:utils/logging/operations.cpp', '//contrib/kyua:utils/process/child.cpp', '//contrib/kyua:utils/process/deadline_killer.cpp', '//contrib/kyua:utils/process/exceptions.cpp', '//contrib/kyua:utils/process/executor.cpp', '//contrib/kyua:utils/process/fdstream.cpp', '//contrib/kyua:utils/process/isolation.cpp', '//contrib/kyua:utils/process/operations.cpp', '//contrib/kyua:utils/process/status.cpp', '//contrib/kyua:utils/process/system.cpp', '//contrib/kyua:utils/process/systembuf.cpp', '//contrib/kyua:utils/signals/exceptions.cpp', '//contrib/kyua:utils/signals/interrupts.cpp', '//contrib/kyua:utils/signals/misc.cpp', '//contrib/kyua:utils/signals/programmer.cpp', '//contrib/kyua:utils/signals/timer.cpp', '//contrib/kyua:utils/sqlite/c_gate.cpp', '//contrib/kyua:utils/sqlite/database.cpp', '//contrib/kyua:utils/sqlite/exceptions.cpp', '//contrib/kyua:utils/sqlite/statement.cpp', '//contrib/kyua:utils/sqlite/transaction.cpp', '//contrib/kyua:utils/text/exceptions.cpp', '//contrib/kyua:utils/text/operations.cpp', '//contrib/kyua:utils/text/regex.cpp', '//contrib/kyua:utils/text/table.cpp', '//contrib/kyua:utils/text/templates.cpp', '//contrib/kyua:model/context.cpp', '//contrib/kyua:model/exceptions.cpp', '//contrib/kyua:model/metadata.cpp', '//contrib/kyua:model/test_case.cpp', '//contrib/kyua:model/test_program.cpp', '//contrib/kyua:model/test_result.cpp', '//contrib/kyua:engine/atf.cpp', '//contrib/kyua:engine/atf_list.cpp', '//contrib/kyua:engine/atf_result.cpp', '//contrib/kyua:engine/config.cpp', '//contrib/kyua:engine/exceptions.cpp', '//contrib/kyua:engine/filters.cpp', '//contrib/kyua:engine/googletest.cpp', '//contrib/kyua:engine/googletest_list.cpp', '//contrib/kyua:engine/googletest_result.cpp', '//contrib/kyua:engine/kyuafile.cpp', '//contrib/kyua:engine/plain.cpp', '//contrib/kyua:engine/requirements.cpp', '//contrib/kyua:engine/scanner.cpp', '//contrib/kyua:engine/tap.cpp', '//contrib/kyua:engine/tap_parser.cpp', '//contrib/kyua:engine/scheduler.cpp', '//contrib/kyua:engine/execenv/execenv.cpp', '//contrib/kyua:engine/execenv/execenv_host.cpp', '//contrib/kyua:engine/prepare/prepare.cpp', '//contrib/kyua:engine/prepare/prepare_all.cpp', '//contrib/kyua:os/freebsd/execenv_jail_manager.cpp', '//contrib/kyua:os/freebsd/main.cpp', '//contrib/kyua:os/freebsd/reqs_checker_kmods.cpp', '//contrib/kyua:os/freebsd/prepare_kmods.cpp', '//contrib/kyua:store/dbtypes.cpp', '//contrib/kyua:store/exceptions.cpp', '//contrib/kyua:store/layout.cpp', '//contrib/kyua:store/metadata.cpp', '//contrib/kyua:store/migrate.cpp', '//contrib/kyua:store/read_backend.cpp', '//contrib/kyua:store/read_transaction.cpp', '//contrib/kyua:store/write_backend.cpp', '//contrib/kyua:store/write_transaction.cpp', '//contrib/kyua:drivers/debug_test.cpp', '//contrib/kyua:drivers/list_tests.cpp', '//contrib/kyua:drivers/report_junit.cpp', '//contrib/kyua:drivers/run_tests.cpp', '//contrib/kyua:drivers/scan_results.cpp', '//contrib/kyua:cli/cmd_about.cpp', '//contrib/kyua:cli/cmd_config.cpp', '//contrib/kyua:cli/cmd_db_exec.cpp', '//contrib/kyua:cli/cmd_db_migrate.cpp', '//contrib/kyua:cli/cmd_debug.cpp', '//contrib/kyua:cli/cmd_help.cpp', '//contrib/kyua:cli/cmd_list.cpp', '//contrib/kyua:cli/cmd_prepare.cpp', '//contrib/kyua:cli/cmd_report.cpp', '//contrib/kyua:cli/cmd_report_html.cpp', '//contrib/kyua:cli/cmd_report_junit.cpp', '//contrib/kyua:cli/cmd_test.cpp', '//contrib/kyua:cli/common.cpp', '//contrib/kyua:cli/config.cpp', '//contrib/kyua:cli/main.cpp'] + select({
+        "//tools/build/bazel/config:jail_enabled": ["//contrib/kyua:os/freebsd/execenv_jail.cpp", "//contrib/kyua:os/freebsd/utils/jail.cpp"],
+        "//conditions:default": ["//contrib/kyua:os/freebsd/execenv_jail_stub.cpp"],
+    }),
+    deps = ["//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", ":configuration", "//contrib/kyua:headers", "//lib/liblutok:lutok_pie", "//lib/libsqlite3:sqlite3", "//lib/libutil:util"] + select({
+        "//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail"], "//conditions:default": [],
+    }),
+    dynamic_deps = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libsqlite3:sqlite3_shared", "//lib/libutil:util_shared"] + select({
+        "//tools/build/bazel/config:jail_enabled": ["//lib/libjail:jail_shared"], "//conditions:default": [],
+    }),
+    local_defines = ['HAVE_CONFIG_H', 'GDB=\\"/usr/local/bin/gdb\\"', 'KYUA_ARCHITECTURE=\\"amd64\\"', 'KYUA_PLATFORM=\\"amd64\\"', 'KYUA_CONFDIR=\\"/etc/kyua\\"', 'KYUA_DOCDIR=\\"/usr/share/doc/kyua\\"', 'KYUA_MISCDIR=\\"/usr/share/kyua/misc\\"', 'KYUA_STOREDIR=\\"/usr/share/kyua/store\\"'],
+    copts = ["-fPIE", "-nostdinc++"],
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+load(":installation.bzl", "kyua_installation")
+kyua_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kyua","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kyua"]}' for d in ["/etc/kyua", "/usr/share/doc/kyua", "/usr/share/kyua/misc", "/usr/share/kyua/store"]} | select({"//tools/build/bazel/config:examples_enabled": {"/usr/share/examples/kyua": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kyua"]}'}, "//conditions:default": {}}),
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+cc_library(name = "pythagoras", srcs = ["pythagoras.c"], hdrs = ["pythagoras.h"], strip_include_prefix = ".",
+    deps = ["//lib/msun:m"], visibility = ["//libexec/rtld-elf/tests/target:__pkg__"])
+cc_shared_library(name = "pythagoras_shared", deps = [":pythagoras"],
+    dynamic_deps = ["//lib/msun:m_shared"], shared_lib_name = "libpythagoras.so.0",
+    user_link_flags = ["-Wl,-soname,libpythagoras.so.0"], visibility = ["//libexec/rtld-elf/tests:__pkg__", "//libexec/rtld-elf/tests/target:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link")
+bsd_component_archive(name = "static_archive", groups = [":pythagoras"], pic = False)
+bsd_install_file(name = "install_static", src = ":static_archive",
+    destination = "/usr/tests/libexec/rtld-elf/libpythagoras.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_link(name = "install_link", destination = "/usr/tests/libexec/rtld-elf/libpythagoras.so",
+    target = "libpythagoras.so.0", kind = "symlink", owner = "root", group = "wheel",
+    mode = "0755", install_tags = ["package=tests"])
+utility_installation(name = "install_manifest", program = "libpythagoras.so.0",
+    binary = ":pythagoras_shared", binary_mode = "0444", manual = "",
+    package = "tests", bindir = "/usr/tests/libexec/rtld-elf",
+    extra_entries = [":install_static", ":install_link"])

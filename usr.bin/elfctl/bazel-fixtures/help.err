@@ -1,0 +1,8 @@
+Usage: elfctl [options] file...
+  Set or display the control features for an ELF object.
+
+  Supported options are:
+  -l                        List known control features.
+  -i                        Ignore unknown features.
+  -e [+-=]feature,list      Edit features from a comma separated list.
+  -h | --help               Print a usage message and exit.

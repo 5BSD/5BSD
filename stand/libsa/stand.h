@@ -119,6 +119,9 @@ struct fs_ops {
     int		(*fo_preload)(struct open_file *f);
     int		(*fo_mount)(const char *, const char *, void **);
     int		(*fo_unmount)(const char *, void *);
+    /* Single-file transform: borrowed backing fd retained until fo_close. */
+    int		(*fo_source)(struct open_file *);
+
 };
 
 /*

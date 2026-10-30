@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# The parent Makefile always installs the ATF discovery Kyuafile, including
+# WITHOUT_TESTS; only the two program-specific test directories are optional.
+_BASE_DIRS = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=atf","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]} | {
+    "/usr/share/atf": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=atf"]}',
+    "/usr/tests/libexec/atf": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
+}
+_TEST_DIRS = {"/usr/tests/libexec/atf/" + d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}' for d in ["atf-check", "atf-sh"]}
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = ["//libexec/atf/atf-check:install_manifest", "//libexec/atf/atf-sh:install_manifest", "//libexec/atf/atf-sh:support_manifest", "//libexec/atf/atf-pytest-wrapper:install_manifest", "//libexec/atf/tests:install_manifest"] + select({
+        "//tools/build/bazel/config:tests_enabled": ["//libexec/atf/atf-check/tests:install_manifest", "//libexec/atf/atf-sh/tests:install_manifest"],
+        "//conditions:default": [],
+    }),
+    directories = select({"//tools/build/bazel/config:tests_enabled": _BASE_DIRS | _TEST_DIRS, "//conditions:default": _BASE_DIRS}),
+    mtree_specs = {
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

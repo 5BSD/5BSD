@@ -216,6 +216,7 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 #define	NI_LCF_STRICTREL_KTR	0x0004	/* trace relative lookups */
 #define	NI_LCF_CAP_DOTDOT_KTR	0x0008	/* ".." in strictrelative case */
 #define	NI_LCF_SCOPEDROOT 0x0010	/* Own a reference on ni_rbeneath_dpp */
+#define	NI_LCF_FHTRAVERSE 0x0020	/* Admit directories for handle-based lookup */
 #define	NI_LCF_KTR_FLAGS	(NI_LCF_STRICTREL_KTR | NI_LCF_CAP_DOTDOT_KTR)
 
 /*

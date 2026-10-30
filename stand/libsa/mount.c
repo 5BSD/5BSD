@@ -115,10 +115,10 @@ mount(const char *dev, const char *path, int flags __unused, void *data)
 			continue;
 
 		rc = add_mnt_info(fs, dev, path, data);
-		if (rc != 0 && mnt->mnt_fs->fo_unmount != NULL) {
+		if (rc != 0 && fs->fo_unmount != NULL) {
 			printf("failed to mount %s: %s\n", dev,
 			    strerror(rc));
-			(void)mnt->mnt_fs->fo_unmount(dev, data);
+			(void)fs->fo_unmount(dev, data);
 		}
 		break;
 	}

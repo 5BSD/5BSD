@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load(":programs.bzl", "PTHREAD_CASES", "PTHREAD_C_PROGRAMS", "PTHREAD_SHELL_PROGRAMS")
+_PROGRAMS = PTHREAD_CASES
+_NETBSD = ["barrier", "equal", "once", "mutex", "rwlock", "join", "detach", "cond", "condwait", "fork", "sigmask", "sleep", "preempt", "kill", "sigsuspend", "siglongjmp", "swapcontext", "timedmutex", "fpu"]
+[cc_binary(name = case + "_test", srcs = ["//contrib/netbsd-tests/lib/libpthread:t_" + case + ".c" if case in _NETBSD else case + "_test.c"],
+    deps = ["//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"] + (["//contrib/netbsd-tests/lib/libpthread:common", "//lib/libnetbsd:netbsd_pie"] if case in _NETBSD else []) + (["//contrib/netbsd-tests/lib/libc/gen:isqemu"] if case == "condwait" else []) + (["//contrib/netbsd-tests/lib/libpthread:mutex_source"] if case == "timedmutex" else []) + (["//lib/msun:m"] if case == "fpu" else []),
+    dynamic_deps = ["//lib/libthr:thr_shared", "//lib/atf/libatf-c:atf_c_shared"] + (["//lib/msun:m_shared"] if case == "fpu" else []),
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for case in _PROGRAMS]
+# timedmutex registers ordinary mutex cases too; preserve all case identities.
+[bsd_atf_test(name = "native_" + (program + "_" if program == "timedmutex" else "") + case, case_name = case,
+    interface = "program", body = ":" + program + "_test",
+    runtime_lib = ["//lib/libthr:thr_shared", "//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + (["//lib/msun:m_shared"] if program == "fpu" else []),
+    runner = "//tools/build/bazel:atf_runner", size = "small") for program, cases in _PROGRAMS.items() for case in cases]
+test_suite(name = "tests", tests = [":native_" + (program + "_" if program == "timedmutex" else "") + case for program, cases in _PROGRAMS.items() for case in cases] + ["//lib/libthr/tests/dlopen:tests", ":helper_tests", ":semaphore_tests"], visibility = ["//visibility:public"])
+
+# Helpers are ordinary programs in the maintained Make tests package.
+[cc_binary(name = "h_" + name, srcs = ["//contrib/netbsd-tests/lib/libpthread:h_" + name + ".c"],
+    deps = ["//lib/libthr:thr"], dynamic_deps = ["//lib/libthr:thr_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name in ["atexit", "cancel", "exit", "resolv"]]
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+[bsd_compare_test(name = "native_helper_" + name, program = ":h_" + name,
+    expected = "helper_" + name + ".out", expected_stderr = "helper_empty.out",
+    runtime_lib = ["//lib/libthr:thr_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+                   "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for name in ["atexit", "cancel", "exit"]]
+test_suite(name = "helper_tests", tests = [":native_helper_" + name for name in ["atexit", "cancel", "exit"]],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+[bsd_script_wrapper(name = name + "_test", body = "//contrib/netbsd-tests/lib/libpthread:t_" + name + ".sh",
+    interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name in ["atexit", "cancel", "exit", "resolv"]]
+
+# The named semaphore case modifies a global name; execution needs isolation.
+cc_binary(name = "sem_test", srcs = ["//contrib/netbsd-tests/lib/libpthread:t_sem.c"],
+    deps = ["//lib/libthr:thr", "//lib/librt:rt", "//lib/atf/libatf-c:atf_c",
+            "//lib/libnetbsd:netbsd_pie", "//contrib/netbsd-tests/lib/libpthread:common"],
+    dynamic_deps = ["//lib/libthr:thr_shared", "//lib/librt:rt_shared", "//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "", package = "tests",
+    bindir = "/usr/tests/lib/libthr") for name in PTHREAD_C_PROGRAMS + ["h_" + n for n in PTHREAD_SHELL_PROGRAMS]]
+[bsd_install_file(name = "install_shell_" + name, src = ":" + name + "_test",
+    destination = "/usr/tests/lib/libthr/" + name + "_test", owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=tests"]) for name in PTHREAD_SHELL_PROGRAMS]
+bsd_install_file(name = "install_d_mach", src = "//contrib/netbsd-tests/lib/libpthread:d_mach",
+    destination = "/usr/tests/lib/libthr/d_mach", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+_ALL_TESTS = sorted(PTHREAD_C_PROGRAMS + [n + "_test" for n in PTHREAD_SHELL_PROGRAMS])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _ALL_TESTS,
+    interfaces = {n: "atf" for n in _ALL_TESTS}, subdirectories = ["dlopen"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libthr/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_extra", entries = [":install_shell_" + n for n in PTHREAD_SHELL_PROGRAMS] + [":install_d_mach", ":install_kyuafile"],
+    visibility = ["//lib/libthr:__pkg__"])
+
+# These cases use process-local semaphores; named remains an isolated-run case.
+[bsd_atf_test(name = "native_sem_" + case, case_name = case,
+    interface = "program", body = ":sem_test",
+    runtime_lib = ["//lib/libthr:thr_shared", "//lib/librt:rt_shared",
+        "//lib/atf/libatf-c:atf_c_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for case in ["unnamed", "before_start_no_threads", "before_start_one_thread"]]
+test_suite(name = "semaphore_tests",
+    tests = [":native_sem_" + case for case in ["unnamed", "before_start_no_threads", "before_start_one_thread"]],
+    visibility = ["//visibility:public"])

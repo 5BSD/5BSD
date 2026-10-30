@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(name = "headers", hdrs = ["locate.h", "pathnames.h", "fastfind.c"], includes = ["."], visibility = ["//usr.bin/locate:__subpackages__"])
+cc_binary(name = 'locate', srcs = ['util.c', 'locate.c'], deps = ["//usr.bin/locate/locate:headers"], dynamic_deps = [], local_defines = ["MMAP"], copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = 'locate', manual = 'locate.1', package = 'utilities', bindir = "/usr/bin", man_section = '1', extra_entries = [":configuration", ":update_manual_file", ":update_manual_alias"] + [":script_" + n for n in ["updatedb", "mklocatedb", "concatdb"]])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin/locate:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]} | {"/usr/libexec": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}', "/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_compress")
+bsd_install_file(name = "configuration", src = "locate.rc", destination = "/etc/locate.rc",
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=utilities", "config"])
+[bsd_install_file(name = "script_" + n, src = n + ".sh", destination = "/usr/libexec/locate." + n,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=utilities"]) for n in ["updatedb", "mklocatedb", "concatdb"]]
+bsd_compress(name = "update_manual", src = "locate.updatedb.8", output = "locate.updatedb.8.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+_MAN_TAGS = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]})
+bsd_install_file(name = "update_manual_file", src = ":update_manual", destination = "/usr/share/man/man8/locate.updatedb.8.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)
+bsd_install_link(name = "update_manual_alias", destination = "/usr/share/man/man8/updatedb.8.gz", target = "/usr/share/man/man8/locate.updatedb.8.gz",
+    kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = _MAN_TAGS)

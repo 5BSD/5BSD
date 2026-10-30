@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/clang:llvm_utility.bzl", "llvm_utility")
+llvm_utility(name = "llvm-symbolizer",
+    srcs = ['llvm-symbolizer-driver.cpp', '//contrib/llvm-project/llvm/tools/llvm-symbolizer:llvm-symbolizer.cpp'],
+    options = "//contrib/llvm-project/llvm/tools/llvm-symbolizer:Opts.td", manual = "llvm-symbolizer.1",
+    deps = [], aliases = {"llvm-addr2line": "llvm-addr2line.1"})

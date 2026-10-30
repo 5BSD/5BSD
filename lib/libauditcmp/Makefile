@@ -23,6 +23,11 @@ AUDITCMP_SCHEMAPACKAGE= libauditcmp-dev
 FILESGROUPS+= AUDITCMP_NOTICE
 AUDITCMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 AUDITCMP_NOTICEDIR= /usr/share/licenses/libauditcmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= AUDITCMP_NOTICEPARENT
+AUDITCMP_NOTICEPARENT= ${AUDITCMP_NOTICEDIR:H}
+AUDITCMP_NOTICEPARENTTAGS= ${AUDITCMP_NOTICEDIRTAGS}
+
 INCS=	auditcmp.h auditcmp_protocol.h auditcmp_server.h
 LIBADD=	pthread service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

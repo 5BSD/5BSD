@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//lib/ncurses/tinfo:abi.bzl", "LIBRARY_ABIS")
+_CPP_DEPS = ["//lib/ncurses/tinfo:public_headers", "//lib/ncurses/tinfo:library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"]
+_TOOLS = ["sh", "awk", "cat", "sed", "rm", "extra_grep", "extra_head"]
+[bsd_script_output(
+    name = name,
+    script = script,
+    src = source,
+    additional_sources = additional,
+    input_mode = "argument",
+    output = output,
+    use_cpp = True,
+    cpp_deps = _CPP_DEPS,
+    cpp_flags = ["-D_XOPEN_SOURCE_EXTENDED", "-DNDEBUG", "-DHAVE_CONFIG_H"],
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    path_tools = {"@bsd_sdk//toolchain:" + tool: tool.removeprefix("extra_") for tool in _TOOLS},
+    runtime = ["@bsd_sdk//toolchain:" + tool + "_runtime" for tool in _TOOLS],
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+) for name, script, source, additional, output in [
+    ("library_source", "generate-library.sh", "//contrib/ncurses:ncurses/base/MKlib_gen.sh", ["//lib/ncurses/tinfo:curses_header"], "lib_gen.c"),
+    ("expanded_source", "generate-expanded.sh", "//contrib/ncurses:ncurses/tty/MKexpanded.sh", [], "expanded.c"),
+]]
+cc_library(
+    name = "ncurses",
+    srcs = ['//contrib/ncurses:ncurses/base/new_pair.c', '//contrib/ncurses:ncurses/base/lib_dft_fgbg.c', '//contrib/ncurses:ncurses/base/legacy_coding.c', '//contrib/ncurses:ncurses/base/lib_addch.c', '//contrib/ncurses:ncurses/base/lib_addstr.c', '//contrib/ncurses:ncurses/base/lib_beep.c', '//contrib/ncurses:ncurses/base/lib_bkgd.c', '//contrib/ncurses:ncurses/base/lib_box.c', '//contrib/ncurses:ncurses/base/lib_chgat.c', '//contrib/ncurses:ncurses/base/lib_clear.c', '//contrib/ncurses:ncurses/base/lib_clearok.c', '//contrib/ncurses:ncurses/base/lib_clrbot.c', '//contrib/ncurses:ncurses/base/lib_clreol.c', '//contrib/ncurses:ncurses/base/lib_color.c', '//contrib/ncurses:ncurses/base/lib_colorset.c', '//contrib/ncurses:ncurses/base/lib_delch.c', '//contrib/ncurses:ncurses/base/lib_delwin.c', '//contrib/ncurses:ncurses/base/lib_echo.c', '//contrib/ncurses:ncurses/base/lib_endwin.c', '//contrib/ncurses:ncurses/base/lib_erase.c', '//contrib/ncurses:ncurses/base/lib_flash.c', '//contrib/ncurses:ncurses/base/lib_getch.c', '//contrib/ncurses:ncurses/base/lib_getstr.c', '//contrib/ncurses:ncurses/base/lib_hline.c', '//contrib/ncurses:ncurses/base/lib_immedok.c', '//contrib/ncurses:ncurses/base/lib_inchstr.c', '//contrib/ncurses:ncurses/base/lib_initscr.c', '//contrib/ncurses:ncurses/base/lib_insch.c', '//contrib/ncurses:ncurses/base/lib_insdel.c', '//contrib/ncurses:ncurses/base/lib_insnstr.c', '//contrib/ncurses:ncurses/base/lib_instr.c', '//contrib/ncurses:ncurses/base/lib_isendwin.c', '//contrib/ncurses:ncurses/base/lib_leaveok.c', '//contrib/ncurses:ncurses/base/lib_mouse.c', '//contrib/ncurses:ncurses/base/lib_move.c', '//contrib/ncurses:ncurses/base/lib_mvwin.c', '//contrib/ncurses:ncurses/base/lib_newterm.c', '//contrib/ncurses:ncurses/base/lib_newwin.c', '//contrib/ncurses:ncurses/base/lib_nl.c', '//contrib/ncurses:ncurses/base/lib_overlay.c', '//contrib/ncurses:ncurses/base/lib_pad.c', '//contrib/ncurses:ncurses/tinfo/lib_print.c', '//contrib/ncurses:ncurses/base/lib_printw.c', '//contrib/ncurses:ncurses/base/lib_redrawln.c', '//contrib/ncurses:ncurses/base/lib_refresh.c', '//contrib/ncurses:ncurses/base/lib_restart.c', '//contrib/ncurses:ncurses/base/lib_scanw.c', '//contrib/ncurses:ncurses/base/lib_screen.c', '//contrib/ncurses:ncurses/base/lib_scroll.c', '//contrib/ncurses:ncurses/base/lib_scrollok.c', '//contrib/ncurses:ncurses/base/lib_scrreg.c', '//contrib/ncurses:ncurses/base/lib_set_term.c', '//contrib/ncurses:ncurses/base/lib_slk.c', '//contrib/ncurses:ncurses/base/lib_slkatr_set.c', '//contrib/ncurses:ncurses/base/lib_slkatrof.c', '//contrib/ncurses:ncurses/base/lib_slkatron.c', '//contrib/ncurses:ncurses/base/lib_slkatrset.c', '//contrib/ncurses:ncurses/base/lib_slkattr.c', '//contrib/ncurses:ncurses/base/lib_slkclear.c', '//contrib/ncurses:ncurses/base/lib_slkcolor.c', '//contrib/ncurses:ncurses/base/lib_slkinit.c', '//contrib/ncurses:ncurses/base/lib_slklab.c', '//contrib/ncurses:ncurses/base/lib_slkrefr.c', '//contrib/ncurses:ncurses/base/lib_slkset.c', '//contrib/ncurses:ncurses/base/lib_slktouch.c', '//contrib/ncurses:ncurses/base/lib_touch.c', '//contrib/ncurses:ncurses/base/lib_ungetch.c', '//contrib/ncurses:ncurses/base/lib_vline.c', '//contrib/ncurses:ncurses/base/lib_wattroff.c', '//contrib/ncurses:ncurses/base/lib_wattron.c', '//contrib/ncurses:ncurses/base/lib_winch.c', '//contrib/ncurses:ncurses/base/lib_window.c', '//contrib/ncurses:ncurses/base/nc_panel.c', '//contrib/ncurses:ncurses/base/resizeterm.c', '//contrib/ncurses:ncurses/base/safe_sprintf.c', '//contrib/ncurses:ncurses/base/vsscanf.c', '//contrib/ncurses:ncurses/base/wresize.c', '//contrib/ncurses:ncurses/base/lib_freeall.c', '//contrib/ncurses:ncurses/tinfo/use_screen.c', '//contrib/ncurses:ncurses/base/use_window.c', '//contrib/ncurses:ncurses/trace/varargs.c', '//contrib/ncurses:ncurses/tty/hardscroll.c', '//contrib/ncurses:ncurses/tty/hashmap.c', '//contrib/ncurses:ncurses/tty/lib_mvcur.c', '//contrib/ncurses:ncurses/tty/lib_tstp.c', '//contrib/ncurses:ncurses/tty/lib_vidattr.c', '//contrib/ncurses:ncurses/tty/tty_update.c', '//contrib/ncurses:ncurses/widechar/charable.c', '//contrib/ncurses:ncurses/widechar/lib_add_wch.c', '//contrib/ncurses:ncurses/widechar/lib_box_set.c', '//contrib/ncurses:ncurses/widechar/lib_cchar.c', '//contrib/ncurses:ncurses/widechar/lib_erasewchar.c', '//contrib/ncurses:ncurses/widechar/lib_get_wch.c', '//contrib/ncurses:ncurses/widechar/lib_get_wstr.c', '//contrib/ncurses:ncurses/widechar/lib_hline_set.c', '//contrib/ncurses:ncurses/widechar/lib_in_wch.c', '//contrib/ncurses:ncurses/widechar/lib_in_wchnstr.c', '//contrib/ncurses:ncurses/widechar/lib_ins_wch.c', '//contrib/ncurses:ncurses/widechar/lib_inwstr.c', '//contrib/ncurses:ncurses/widechar/lib_key_name.c', '//contrib/ncurses:ncurses/widechar/lib_pecho_wchar.c', '//contrib/ncurses:ncurses/widechar/lib_slk_wset.c', '//contrib/ncurses:ncurses/widechar/lib_unget_wch.c', '//contrib/ncurses:ncurses/widechar/lib_vid_attr.c', '//contrib/ncurses:ncurses/widechar/lib_vline_set.c', '//contrib/ncurses:ncurses/widechar/lib_wacs.c', '//contrib/ncurses:ncurses/widechar/lib_wunctrl.c'] + [":library_source", ":expanded_source"],
+    deps = ["//lib/ncurses/tinfo:tinfo"],
+    implementation_deps = _CPP_DEPS,
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H"],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":ncurses"], visibility = ["//visibility:public"])
+cc_shared_library(name = "ncurses_shared", deps = [":ncurses"],
+    shared_lib_name = "libncursesw.so." + str(LIBRARY_ABIS["ncursesw"]),
+    dynamic_deps = ["//lib/ncurses/tinfo:tinfo_shared"],
+    user_link_flags = ["-Wl,-soname,libncursesw.so." + str(LIBRARY_ABIS["ncursesw"]), "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "install_library")
+install_library(name = "install_manifest")

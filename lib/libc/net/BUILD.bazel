@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(features = LIBC_VARIANT_FEATURES, name = "resolver_config_headers", hdrs = ["res_config.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libc/resolv:__pkg__"])
+
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+bsd_yacc(name = "parser", src = "nsparser.y", output = "nsparser.c", header = "nsparser.h",
+    flags = ["-p_nsyy"], yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "lexer", src = "nslexer.l", output = "nslexer.c", flags = ["-P_nsyy"],
+    lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(features = LIBC_VARIANT_FEATURES, name = "private_headers", hdrs = ["netdb_private.h", "nss_backends.h", "res_config.h", ":parser_header"],
+    strip_include_prefix = ".")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_DEFINES = (["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] +
+    select({"//tools/build/bazel/config:nls_enabled": ["NLS"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:ns_caching_enabled": ["NS_CACHING"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:hesiod_enabled": ["HESIOD"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}) +
+    select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}))
+_DEPS = ([":private_headers", "//lib/libc/include:rpc_private_headers", "//lib/libc/resolv:net_private_headers"] +
+    select({_TRACE: ["//lib/libc:nameres_provider_headers"], "//conditions:default": []}) +
+    select({"//tools/build/bazel/config:hesiod_enabled": ["//include:hesiod_header"], "//conditions:default": []}))
+# Raw objects retain NSS probe references for final combined libc DOF processing.
+[cc_library(features = LIBC_VARIANT_FEATURES, name = name, srcs = sources,
+    implementation_deps = _DEPS, local_defines = _DEFINES + extra_defines,
+    copts = ["-ftls-model=initial-exec"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+) for name, sources, extra_defines in [
+    ("net_objects", ['base64.c', 'ether_addr.c', 'eui64.c', 'gai_strerror.c', 'getaddrinfo.c', 'gethostbydns.c', 'gethostbyht.c', 'gethostbynis.c', 'gethostnamadr.c', 'getifaddrs.c', 'getifmaddrs.c', 'getnameinfo.c', 'getnetbydns.c', 'getnetbyht.c', 'getnetbynis.c', 'getnetnamadr.c', 'getproto.c', 'getprotoent.c', 'getprotoname.c', 'getservent.c', 'if_indextoname.c', 'if_nameindex.c', 'if_nametoindex.c', 'ip6opt.c', 'linkaddr.c', 'map_v4v6.c', 'name6.c', 'ntoh.c', 'nsdispatch.c', 'nss_compat.c', 'rcmd.c', 'rcmdsh.c', 'rthdr.c', 'sctp_sys_calls.c', 'sockatmark.c', 'sourcefilter.c', 'vars.c'] + [":parser_source"] +
+        select({"//tools/build/bazel/config:ns_caching_enabled": ["nscache.c", "nscachedcli.c"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:hesiod_enabled": ["hesiod.c"], "//conditions:default": []}), []),
+    ("lexer_objects", [":lexer"], ["YY_BUF_SIZE=1024"]),
+]]
+bsd_component_archive(name = "objects_archive", groups = [":net_objects", ":lexer_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":net_objects", ":lexer_objects"], pic = True)
+exports_files(["Symbol.map", "Symbol.hesiod.map"], visibility = ["//lib/libc:__pkg__"])
+
+load("//tools/build/bazel:native_cc.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_template(name = "nsswitch_generated", script = "gen-nsswitch.sh", template = "nsswitch.conf",
+    output = "configuration/nsswitch.conf", shell = "@bsd_sdk//toolchain:sh",
+    tools = ["@bsd_sdk//toolchain:sed", "@bsd_sdk//toolchain:cat"],
+    execution_runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:sed_runtime", "@bsd_sdk//toolchain:cat_runtime"],
+    arguments = select({"//tools/build/bazel/config:nis_enabled": ["yes"], "//conditions:default": ["no"]}))
+[bsd_install_file(name = "config_" + name, src = source, destination = "/etc/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=runtime", "config"])
+ for name, source in [("hosts", "hosts"), ("hosts.equiv", "hosts.equiv"), ("networks", "networks"),
+                      ("protocols", "protocols"), ("nsswitch.conf", ":nsswitch_generated")]]
+bsd_install_manifest(name = "config_manifest", entries = [":config_" + n for n in ["hosts", "hosts.equiv", "networks", "protocols", "nsswitch.conf"]],
+    visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_byteorder.3', 'byteorder.3'),
+    ('libc_manual_ethers.3', 'ethers.3'),
+    ('libc_manual_eui64.3', 'eui64.3'),
+    ('libc_manual_getaddrinfo.3', 'getaddrinfo.3'),
+    ('libc_manual_gai_strerror.3', 'gai_strerror.3'),
+    ('libc_manual_gethostbyname.3', 'gethostbyname.3'),
+    ('libc_manual_getifaddrs.3', 'getifaddrs.3'),
+    ('libc_manual_getifmaddrs.3', 'getifmaddrs.3'),
+    ('libc_manual_getipnodebyname.3', 'getipnodebyname.3'),
+    ('libc_manual_getnameinfo.3', 'getnameinfo.3'),
+    ('libc_manual_getnetent.3', 'getnetent.3'),
+    ('libc_manual_getprotoent.3', 'getprotoent.3'),
+    ('libc_manual_getservent.3', 'getservent.3'),
+    ('libc_manual_if_indextoname.3', 'if_indextoname.3'),
+    ('libc_manual_inet.3', 'inet.3'),
+    ('libc_manual_inet_net.3', 'inet_net.3'),
+    ('libc_manual_inet6_opt_init.3', 'inet6_opt_init.3'),
+    ('libc_manual_inet6_option_space.3', 'inet6_option_space.3'),
+    ('libc_manual_inet6_rth_space.3', 'inet6_rth_space.3'),
+    ('libc_manual_inet6_rthdr_space.3', 'inet6_rthdr_space.3'),
+    ('libc_manual_linkaddr.3', 'linkaddr.3'),
+    ('libc_manual_nsdispatch.3', 'nsdispatch.3'),
+    ('libc_manual_rcmd.3', 'rcmd.3'),
+    ('libc_manual_rcmdsh.3', 'rcmdsh.3'),
+    ('libc_manual_resolver.3', 'resolver.3'),
+    ('libc_manual_sockatmark.3', 'sockatmark.3'),
+    ('libc_manual_sourcefilter.3', 'sourcefilter.3'),
+    ('libc_manual_sctp_bindx.3', 'sctp_bindx.3'),
+    ('libc_manual_sctp_connectx.3', 'sctp_connectx.3'),
+    ('libc_manual_sctp_freepaddrs.3', 'sctp_freepaddrs.3'),
+    ('libc_manual_sctp_getaddrlen.3', 'sctp_getaddrlen.3'),
+    ('libc_manual_sctp_getassocid.3', 'sctp_getassocid.3'),
+    ('libc_manual_sctp_getpaddrs.3', 'sctp_getpaddrs.3'),
+    ('libc_manual_sctp_opt_info.3', 'sctp_opt_info.3'),
+    ('libc_manual_sctp_recvmsg.3', 'sctp_recvmsg.3'),
+    ('libc_manual_sctp_send.3', 'sctp_send.3'),
+    ('libc_manual_sctp_sendmsg.3', 'sctp_sendmsg.3'),
+]]

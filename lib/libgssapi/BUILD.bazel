@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:configured_version_map.bzl", "bsd_configured_version_map")
+# The legacy dispatcher uses its own ABI headers, not the MIT GSS interface.
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_SOURCES = ['gss_accept_sec_context.c', 'gss_acquire_cred.c', 'gss_add_cred.c', 'gss_add_oid_set_member.c', 'gss_buffer_set.c', 'gss_canonicalize_name.c', 'gss_compare_name.c', 'gss_context_time.c', 'gss_create_empty_oid_set.c', 'gss_decapsulate_token.c', 'gss_delete_sec_context.c', 'gss_display_name.c', 'gss_display_status.c', 'gss_duplicate_name.c', 'gss_duplicate_oid.c', 'gss_encapsulate_token.c', 'gss_export_name.c', 'gss_export_sec_context.c', 'gss_get_mic.c', 'gss_import_name.c', 'gss_import_sec_context.c', 'gss_indicate_mechs.c', 'gss_init_sec_context.c', 'gss_inquire_context.c', 'gss_inquire_cred.c', 'gss_inquire_cred_by_mech.c', 'gss_inquire_cred_by_oid.c', 'gss_inquire_mechs_for_name.c', 'gss_inquire_names_for_mech.c', 'gss_inquire_sec_context_by_oid.c', 'gss_mech_switch.c', 'gss_names.c', 'gss_oid_to_str.c', 'gss_pname_to_uid.c', 'gss_process_context_token.c', 'gss_pseudo_random.c', 'gss_release_buffer.c', 'gss_release_cred.c', 'gss_release_name.c', 'gss_release_oid.c', 'gss_release_oid_set.c', 'gss_seal.c', 'gss_set_cred_option.c', 'gss_set_sec_context_option.c', 'gss_sign.c', 'gss_test_oid_set_member.c', 'gss_unseal.c', 'gss_unwrap.c', 'gss_utils.c', 'gss_verify.c', 'gss_verify_mic.c', 'gss_wrap.c', 'gss_wrap_size_limit.c']
+cc_library(name = "gssapi", srcs = _SOURCES, hdrs = ["context.h", "cred.h", "mech_switch.h", "name.h", "spnego.h", "utils.h"],
+    deps = ["//include:legacy_gss_headers"], linkstatic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":gssapi"], visibility = ["//visibility:public"])
+bsd_configured_version_map(
+    name = "version_map",
+    symbol_maps = ["Symbol.map"],
+    versions = "//lib/libc:Versions.def",
+    generator = "//share/mk:version_gen.awk",
+    # This symbol inventory has no includes or target-dependent conditionals.
+    cpp_flags = ["-P", "-nostdinc", "-undef"],
+    compiler = "@bsd_sdk//toolchain:bin/clang",
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    cat = "@bsd_sdk//toolchain:cat",
+    cat_runtime = "@bsd_sdk//toolchain:cat_runtime",
+    awk = "@bsd_sdk//toolchain:awk",
+    awk_runtime = "@bsd_sdk//toolchain:awk_runtime",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+)
+
+cc_shared_library(name = "gssapi_shared", deps = [":gssapi"], shared_lib_name = "libgssapi.so.10",
+    additional_linker_inputs = [":version_map"],
+    user_link_flags = ["-Wl,-soname,libgssapi.so.10", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"])
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//visibility:public"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

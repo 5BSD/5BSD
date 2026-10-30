@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['resolvconf.in', 'libc.in', 'dnsmasq.in', 'named.in', 'pdnsd.in', 'pdns_recursor.in', 'unbound.in', 'resolvconf.conf.5.in', 'resolvconf.8.in'], visibility = ["//sbin/resolvconf:__pkg__"])

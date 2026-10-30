@@ -23,6 +23,11 @@ TIMECMP_SCHEMAPACKAGE= libtimecmp-dev
 FILESGROUPS+= TIMECMP_NOTICE
 TIMECMP_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 TIMECMP_NOTICEDIR= /usr/share/licenses/libtimecmp/fuchsia
+# Record the package license ancestor as well as the notice directory.
+DIRS+= TIMECMP_NOTICEPARENT
+TIMECMP_NOTICEPARENT= ${TIMECMP_NOTICEDIR:H}
+TIMECMP_NOTICEPARENTTAGS= ${TIMECMP_NOTICEDIRTAGS}
+
 INCS=	timecmp.h timecmp_protocol.h
 LIBADD=	service fidl_bsd cplusplus
 CFLAGS+=	-I${SRCTOP}/lib/libservice

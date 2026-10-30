@@ -96,7 +96,15 @@ An unlisted label falls back to
 .Va default .
 A missing or malformed
 .Pa time.conf
-is fail-soft: the built-in default-deny stands.
+leaves all write operations denied by the built-in default.
+Malformed policy is reported as an error; no partial grants are applied.
+Policy accepts only the documented keys and boolean grant values.
+Duplicate or unknown keys, embedded NULs, includes, macros, and invalid types
+reject the entire file. Variables are not expanded.
+The loader consumes one bounded regular-file descriptor from offset zero and
+rejects observed changes in its contents' length or metadata.
+These checks do not authenticate writable backing storage or establish an
+independent user/session authorization boundary.
 Stepping the clock is dangerous \(em a backward step invalidates TLS
 certificate validity windows, audit ordering, and Kerberos tickets \(em so
 grant

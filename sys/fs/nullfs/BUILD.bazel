@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "headers", hdrs = ["null.h"], strip_include_prefix = ".", include_prefix = "fs/nullfs",
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"],
+    visibility = ["//sys/security/mac_veriexec:__pkg__"])
+
+amd64_generic_module_objects(srcs = ["null_subr.c", "null_vfsops.c", "null_vnops.c"], deps = [":headers"])

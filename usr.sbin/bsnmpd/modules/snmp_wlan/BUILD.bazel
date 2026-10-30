@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//usr.sbin/bsnmpd/bsnmpd:generation.bzl", "snmp_tree")
+snmp_tree(name = "generated", source = "wlan_tree.def", prefix = "wlan_", local_includes = False, symbols = ["begemotWlan"],
+    generator = "//usr.sbin/bsnmpd/gensnmptree:gensnmptree", driver = "//usr.sbin/bsnmpd/bsnmpd:generate.py",
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+filegroup(name = "tree_source", srcs = [":generated"], output_group = "source")
+filegroup(name = "tree_headers", srcs = [":generated"], output_group = "headers")
+cc_library(name = "generated_headers", hdrs = [":tree_headers"], strip_include_prefix = "generated")
+cc_library(name = "objects", srcs = ["wlan_snmp.c", "wlan_sys.c", "wlan_snmp.h"] + [":tree_source"],
+    deps = [":generated_headers", "//contrib/bsnmp/snmpd:public_headers"] + ["//contrib/bsnmp/snmp_mibII:public_headers"],
+    local_defines = ["HAVE_STRLCPY"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_shared_library(name = "module", deps = [":objects"], shared_lib_name = "snmp_wlan.so.6",
+    user_link_flags = ["-Wl,-soname,snmp_wlan.so.6", "-Wl,--fatal-warnings,--warn-shared-textrel"], visibility = ["//visibility:public"])
+
+load("//usr.sbin/bsnmpd/modules:installation.bzl", "module_installation")
+module_installation(module = "wlan", binary = ":module", manual = "snmp_wlan.3",
+    definitions = {"wlan_tree.def": "wlan_tree.def"},
+    mibs = {"BEGEMOT-WIRELESS-MIB.txt": "BEGEMOT-WIRELESS-MIB.txt"}, headers = {})

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
+kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "user_headers", hdrs = ["iscsi_ioctl.h", "iscsi_proto.h"],
+    strip_include_prefix = ".", visibility = ["//lib/libiscsiutil:__pkg__", "//usr.bin/iscsictl:__pkg__"])

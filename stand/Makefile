@@ -97,6 +97,10 @@ SUBDIR_PARALLEL=	yes
 
 .include <bsd.subdir.mk>
 
+# Build only the EFI loader and its declared library/interpreter dependencies.
+.PHONY: efi-loader
+efi-loader: all_subdir_efi
+
 # Simplified way to build-test the most important build combinations for the
 # loader.
 universe:

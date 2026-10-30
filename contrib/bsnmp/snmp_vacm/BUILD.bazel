@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["vacm_snmp.c", "vacm_tree.def"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_vacm:__pkg__"])
+
+exports_files(["snmp_vacm.3"], visibility = ["//usr.sbin/bsnmpd/modules/snmp_vacm:__pkg__"])

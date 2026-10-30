@@ -1,0 +1,452 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# Each generated header declares the capability tables and execution tools.
+bsd_script_output(
+    name = "parametrized_header",
+    script = "//contrib/ncurses:include/MKparametrized.sh",
+    src = "//contrib/ncurses:include/Caps",
+    additional_sources = ["//contrib/ncurses:include/Caps-ncurses"],
+    input_mode = "argument",
+    output = "parametrized.h",
+    environment = {"AWK": "awk"},
+    path_tools = {"@bsd_sdk//toolchain:cat": "cat", "@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk"]],
+)
+
+bsd_script_output(
+    name = "hashsize_header",
+    script = "//contrib/ncurses:include/MKhashsize.sh",
+    src = "//contrib/ncurses:include/Caps",
+    additional_sources = ["//contrib/ncurses:include/Caps-ncurses"],
+    input_mode = "argument",
+    output = "hashsize.h",
+    path_tools = {
+        "@bsd_sdk//toolchain:cat": "cat",
+        "@bsd_sdk//toolchain:extra_grep": "grep",
+        "@bsd_sdk//toolchain:extra_wc": "wc",
+    },
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "extra_grep", "extra_wc"]],
+)
+
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+
+# BSD ncurses uses compact string tables. These are generator inputs, not
+# generated C checked into the tree.
+[bsd_awk_output(
+    name = name + "_source",
+    script = "//contrib/ncurses:ncurses/tinfo/MK" + name + ".awk",
+    srcs = ["//contrib/ncurses:include/Caps"],
+    variables = {"bigstrings": "1"},
+    output = name + ".c",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+) for name in ["names", "codes"]]
+
+bsd_awk_output(
+    name = "unctrl_source",
+    script = "//contrib/ncurses:ncurses/base/MKunctrl.awk",
+    stdin_text = "\n",
+    variables = {"bigstrings": "1"},
+    output = "unctrl.c",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+
+bsd_script_output(
+    name = "keys_list",
+    script = "generate-keys.sh",
+    src = "//contrib/ncurses:ncurses/tinfo/MKkeys_list.sh",
+    additional_sources = ["//contrib/ncurses:include/Caps", "//contrib/ncurses:include/Caps-ncurses"],
+    input_mode = "argument",
+    output = "keys.list",
+    environment = {"AWK": "awk", "USE_SIGWINCH": "1"},
+    path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
+        ("sh", "sh"), ("awk", "awk"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("extra_sort", "sort"),
+    ]},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "awk", "cat", "sed", "rm", "extra_sort"]],
+)
+
+bsd_awk_output(
+    name = "keyname_source",
+    script = "//contrib/ncurses:ncurses/base/MKkeyname.awk",
+    srcs = [":keys_list"],
+    variables = {"bigstrings": "1", "use_sigwinch": "1"},
+    output = "lib_keyname.c",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+
+# Configured templates share explicit policy and upstream version inputs.
+[bsd_awk_output(
+    name = name + "_header",
+    script = "configure-header.awk",
+    srcs = ["header-policy.conf", "//contrib/ncurses:dist.mk", "//contrib/ncurses:include/" + name + ".h.in"],
+    output = name + ".h",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+) for name in ["termcap", "unctrl", "ncurses_dll"]]
+
+bsd_script_output(
+    name = "ncurses_def_header",
+    script = "//contrib/ncurses:include/MKncurses_def.sh",
+    src = "//contrib/ncurses:include/ncurses_defs",
+    input_mode = "argument",
+    output = "ncurses_def.h",
+    environment = {"AWK": "awk"},
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:cat": "cat"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "awk", "cat"]],
+)
+
+bsd_awk_output(
+    name = "term_generator",
+    script = "configure-header.awk",
+    srcs = ["header-policy.conf", "//contrib/ncurses:dist.mk", "//contrib/ncurses:include/MKterm.h.awk.in"],
+    output = "MKterm.h.awk",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+
+bsd_awk_output(
+    name = "term_unedited",
+    script = ":term_generator",
+    srcs = ["//contrib/ncurses:include/Caps", "//contrib/ncurses:include/Caps-ncurses"],
+    output = "term.h.unedited",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+
+bsd_script_output(
+    name = "term_header",
+    script = "edit-term.sh",
+    src = ":term_unedited",
+    additional_sources = ["ncurses_cfg.h", "//contrib/ncurses:include/edit_cfg.sh"],
+    input_mode = "argument",
+    output = "term.h",
+    path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
+        ("sh", "sh"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("mv", "mv"), ("extra_grep", "grep"),
+    ]} | {"@bsd_sdk//toolchain:extra_cmp": "cmp"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "sed", "rm", "mv", "extra_grep", "extra_cmp"]],
+)
+
+bsd_awk_output(
+    name = "curses_head",
+    script = "configure-header.awk",
+    srcs = ["header-policy.conf", "//contrib/ncurses:dist.mk", "//contrib/ncurses:include/curses.h.in"],
+    variables = {"bsd_wchar_names": "1"},
+    output = "curses.head",
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+)
+
+bsd_script_output(
+    name = "key_definitions",
+    script = "//contrib/ncurses:include/MKkey_defs.sh",
+    src = "//contrib/ncurses:include/Caps",
+    additional_sources = ["//contrib/ncurses:include/Caps-ncurses"],
+    input_mode = "argument",
+    output = "key_definitions.h",
+    environment = {"AWK": "awk", "_POSIX2_VERSION": "199209"},
+    path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
+        ("sh", "sh"), ("awk", "awk"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("extra_sort", "sort"), ("extra_basename", "basename"),
+    ]},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "awk", "cat", "sed", "rm", "extra_sort", "extra_basename"]],
+)
+
+bsd_script_output(
+    name = "curses_header",
+    visibility = ["//lib/ncurses:__subpackages__", "//usr.bin/ncurses:__pkg__"],
+    script = "assemble-curses.sh",
+    src = ":curses_head",
+    additional_sources = [":key_definitions", "//contrib/ncurses:include/curses.wide", "//contrib/ncurses:include/curses.tail"],
+    input_mode = "argument",
+    output = "curses.h",
+    path_tools = {"@bsd_sdk//toolchain:cat": "cat"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:cat_runtime"],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_library(
+    name = "generator_headers",
+    hdrs = ["ncurses_cfg.h", ":ncurses_def_header", ":ncurses_dll_header", ":curses_header", ":term_header", ":termcap_header", ":unctrl_header", ":hashsize_header"],
+    textual_hdrs = [":names_source"],
+    strip_include_prefix = ".",
+)
+[cc_binary(
+    name = name,
+    srcs = ["//contrib/ncurses:ncurses/tinfo/" + name + ".c"],
+    deps = [":generator_headers", "//contrib/ncurses:build_include_headers", "//contrib/ncurses:build_private_headers"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H", "TERMIOS"] + (["MAIN_PROGRAM"] if name == "make_hash" else []),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name in ["make_keys", "make_hash"]]
+
+bsd_script_output(
+    name = "init_keytry_header",
+    script = "generate-keytry.sh",
+    src = ":keys_list",
+    input_mode = "argument",
+    output = "init_keytry.h",
+    path_tools = {":make_keys": "make_keys"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime"],
+    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+)
+
+[bsd_script_output(
+    name = name + "_source",
+    script = "generate-" + name + ".sh",
+    src = "//contrib/ncurses:ncurses/tinfo/MK" + name + ".sh",
+    additional_sources = (["//contrib/ncurses:ncurses/tinfo/MKcaptab.awk"] if name == "captab" else []) + ["//contrib/ncurses:include/Caps", "//contrib/ncurses:include/Caps-ncurses"],
+    arguments = ["1"],
+    input_mode = "argument",
+    output = "comp_" + name + ".c",
+    environment = {"MAKE_HASH": "make_hash"},
+    path_tools = {"@bsd_sdk//toolchain:sh": "sh", "@bsd_sdk//toolchain:cat": "cat", "@bsd_sdk//toolchain:awk": "awk", "@bsd_sdk//toolchain:rm": "rm", ":make_hash": "make_hash"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "awk", "rm"]],
+    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+) for name in ["captab", "userdefs"]]
+
+# The base system has no embedded fallback terminal entries. Supply all four
+# upstream parameters explicitly; no tic/infocmp runs occur for an empty list.
+bsd_script_output(
+    name = "fallback_source",
+    script = "generate-fallback.sh",
+    src = "//contrib/ncurses:ncurses/tinfo/MKfallback.sh",
+    arguments = ["", "", "", ""],
+    input_mode = "argument",
+    output = "fallback.c",
+    path_tools = {"@bsd_sdk//toolchain:sh": "sh", "@bsd_sdk//toolchain:cat": "cat"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:cat_runtime"],
+)
+
+bsd_script_output(
+    name = "nomacros_header",
+    script = "generate-nomacros.sh",
+    src = "//contrib/ncurses:ncurses/base/MKlib_gen.sh",
+    additional_sources = [":curses_header"],
+    input_mode = "argument",
+    output = "nomacros.h",
+    use_cpp = True,
+    cpp_deps = [":generator_headers", "//contrib/ncurses:build_include_headers", "//contrib/ncurses:build_private_headers"],
+    cpp_flags = ["-D_XOPEN_SOURCE_EXTENDED", "-DNDEBUG", "-DHAVE_CONFIG_H", "-DTERMIOS"],
+    compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
+        ("sh", "sh"), ("awk", "awk"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("extra_grep", "grep"), ("extra_head", "head"),
+    ]},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "awk", "cat", "sed", "rm", "extra_grep", "extra_head"]],
+)
+
+load("@rules_cc//cc:defs.bzl", "cc_shared_library")
+load(":abi.bzl", "LIBRARY_ABIS")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+cc_library(
+    name = "public_headers",
+    hdrs = [":curses_header", ":ncurses_dll_header", ":term_header", ":termcap_header", ":unctrl_header"],
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+)
+cc_library(
+    name = "library_generated_headers",
+    visibility = ["//lib/ncurses:__subpackages__", "//usr.bin/ncurses:__pkg__"],
+    hdrs = ["ncurses_cfg.h", ":ncurses_def_header", ":hashsize_header", ":init_keytry_header", ":nomacros_header", ":parametrized_header"],
+    strip_include_prefix = ".",
+)
+cc_library(
+    name = "tinfo",
+    srcs = [
+        "//contrib/ncurses:ncurses/base/define_key.c",
+        "//contrib/ncurses:ncurses/base/key_defined.c",
+        "//contrib/ncurses:ncurses/base/keybound.c",
+        "//contrib/ncurses:ncurses/base/keyok.c",
+        "//contrib/ncurses:ncurses/base/tries.c",
+        "//contrib/ncurses:ncurses/base/version.c",
+        "//contrib/ncurses:ncurses/tinfo/access.c",
+        "//contrib/ncurses:ncurses/tinfo/add_tries.c",
+        "//contrib/ncurses:ncurses/tinfo/alloc_entry.c",
+        "//contrib/ncurses:ncurses/tinfo/alloc_ttype.c",
+        "//contrib/ncurses:ncurses/tinfo/captoinfo.c",
+        "//contrib/ncurses:ncurses/tinfo/comp_error.c",
+        "//contrib/ncurses:ncurses/tinfo/comp_expand.c",
+        "//contrib/ncurses:ncurses/tinfo/comp_hash.c",
+        "//contrib/ncurses:ncurses/tinfo/comp_parse.c",
+        "//contrib/ncurses:ncurses/tinfo/comp_scan.c",
+        "//contrib/ncurses:ncurses/tinfo/db_iterator.c",
+        "//contrib/ncurses:ncurses/tinfo/doalloc.c",
+        "//contrib/ncurses:ncurses/tinfo/entries.c",
+        "//contrib/ncurses:ncurses/tinfo/free_ttype.c",
+        "//contrib/ncurses:ncurses/tinfo/getenv_num.c",
+        "//contrib/ncurses:ncurses/tinfo/hashed_db.c",
+        "//contrib/ncurses:ncurses/tinfo/home_terminfo.c",
+        "//contrib/ncurses:ncurses/tinfo/init_keytry.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_acs.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_baudrate.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_cur_term.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_data.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_has_cap.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_kernel.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_longname.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_napms.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_options.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_raw.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_setup.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_termcap.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_termname.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_tgoto.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_ti.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_tparm.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_tputs.c",
+        "//contrib/ncurses:ncurses/tinfo/lib_ttyflags.c",
+        "//contrib/ncurses:ncurses/tinfo/name_match.c",
+        "//contrib/ncurses:ncurses/tinfo/obsolete.c",
+        "//contrib/ncurses:ncurses/tinfo/parse_entry.c",
+        "//contrib/ncurses:ncurses/tinfo/read_entry.c",
+        "//contrib/ncurses:ncurses/tinfo/read_termcap.c",
+        "//contrib/ncurses:ncurses/tinfo/strings.c",
+        "//contrib/ncurses:ncurses/tinfo/trim_sgr0.c",
+        "//contrib/ncurses:ncurses/tinfo/write_entry.c",
+        "//contrib/ncurses:ncurses/tty/lib_twait.c",
+        "//contrib/ncurses:ncurses/trace/lib_trace.c",
+        "//contrib/ncurses:ncurses/trace/visbuf.c",
+        ":names_source",
+        ":codes_source",
+        ":keyname_source",
+        ":unctrl_source",
+        ":fallback_source",
+        ":captab_source",
+        ":userdefs_source"
+],
+    deps = [":public_headers"],
+    implementation_deps = [":library_generated_headers", "//contrib/ncurses:library_include_headers", "//contrib/ncurses:library_private_headers"],
+    local_defines = ["_XOPEN_SOURCE_EXTENDED", "NDEBUG", "HAVE_CONFIG_H", "TERMIOS"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+cc_shared_library(
+    name = "tinfo_shared",
+    deps = [":tinfo"],
+    shared_lib_name = "libtinfow.so." + str(LIBRARY_ABIS["tinfow"]),
+    user_link_flags = ["-Wl,-soname,libtinfow.so." + str(LIBRARY_ABIS["tinfow"]), "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"],
+)
+bsd_component_archive(name = "static_archive", groups = [":tinfo"], visibility = ["//visibility:public"])
+
+load(":manuals.bzl", "MANUAL_SOURCES")
+
+# Restrict substitutions to the maintained MANFILTER contract. Other template
+# markers in prose remain unchanged, even when they are known header settings.
+[bsd_awk_output(
+    name = "manual_" + manual.replace(".", "_"),
+    script = "configure-header.awk",
+    srcs = ["header-policy.conf", "//contrib/ncurses:dist.mk", source],
+    variables = {"substitution_names": "TERMINFO,DATADIR,NCURSES_OSPEED,NCURSES_MAJOR,NCURSES_MINOR,NCURSES_PATCH,TPUT,TSET,RESET,CLEAR,TABS,TIC,TOE,INFOCMP,CAPTOINFO,INFOTOCAP"},
+    output = "manuals/" + manual,
+    awk = "@bsd_sdk//toolchain:awk",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:awk_runtime"],
+) for manual, source in MANUAL_SOURCES.items()]
+
+bsd_script_output(
+    name = "terminfo_manual_source",
+    script = "generate-terminfo.sh",
+    src = "//contrib/ncurses:man/MKterminfo.sh",
+    additional_sources = ["//contrib/ncurses:man/terminfo.head", "//contrib/ncurses:include/Caps", "//contrib/ncurses:man/terminfo.tail"],
+    input_mode = "argument",
+    output = "terminfo.5",
+    path_tools = {"@bsd_sdk//toolchain:" + tool: name for tool, name in [
+        ("sh", "sh"), ("cat", "cat"), ("sed", "sed"), ("rm", "rm"), ("extra_sort", "sort"), ("extra_tr", "tr"), ("extra_mktemp", "mktemp"),
+    ]} | {"//bin/mkdir:mkdir": "mkdir"},
+    shell = "@bsd_sdk//toolchain:sh",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:" + name + "_runtime" for name in ["sh", "cat", "sed", "rm", "extra_sort", "extra_tr", "extra_mktemp"]],
+    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+)
+
+load(":installation.bzl", "library_manual_installation")
+library_manual_installation(name = "library_manual_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(
+    name = "library_manual_archive",
+    manifests = [":library_manual_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+load(":pkgconfig.bzl", "ncurses_pkgconfig")
+[ncurses_pkgconfig(
+    name = "pkgconfig_" + module,
+    module = module,
+    abi = LIBRARY_ABIS[module],
+    description = "terminal interface library" if module == "tinfow" else ("library" if module == "ncursesw" else "add-on library"),
+    requires = "" if module in ["ncursesw", "tinfow"] else "ncursesw",
+    libraries = [module] + (["tinfow"] if module == "ncursesw" else []),
+    template = "pkgconfig.pc.in",
+    version = "//contrib/ncurses:dist.mk",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+) for module in ["ncursesw", "tinfow", "formw", "menuw", "panelw"]]
+
+load(":installation.bzl", "pkgconfig_installation")
+pkgconfig_installation(name = "pkgconfig_manifest")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":library_manual_manifest", ":pkgconfig_manifest"],
+    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ncurses","dbg"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)
+
+exports_files(["configure-header.awk", "header-policy.conf"], visibility = ["//lib/ncurses:__subpackages__", "//usr.bin/ncurses:__pkg__"])

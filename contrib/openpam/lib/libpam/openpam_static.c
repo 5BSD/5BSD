@@ -45,7 +45,8 @@
 
 #ifdef OPENPAM_STATIC_MODULES
 
-SET_DECLARE(openpam_static_modules, pam_module_t);
+/* Match PAM_MODULE_ENTRY, including existing statically built modules. */
+SET_DECLARE(_openpam_static_modules, pam_module_t);
 
 /*
  * OpenPAM internal
@@ -58,7 +59,7 @@ openpam_static(const char *path)
 {
 	pam_module_t **module;
 
-	SET_FOREACH(module, openpam_static_modules) {
+	SET_FOREACH(module, _openpam_static_modules) {
 		if (strcmp((*module)->path, path) == 0)
 			return (*module);
 	}

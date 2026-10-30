@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Unchanged maintained regression inputs and output references.
+[bsd_compare_test(
+    name = case, program = "//usr.bin/m4:m4",
+    file_arguments = [case + ".m4"], expected = "regress." + case + ".out",
+    runtime_lib = ["//lib/msun:m_shared"],
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small",
+) for case in ["args", "args2", "comments", "defn", "eval", "translit"]]

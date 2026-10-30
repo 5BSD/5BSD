@@ -113,6 +113,12 @@ capimage_check(struct ucred *cred, struct vnode *vp, off_t size,
 		error = reader.error != 0 ? reader.error : EAUTH;
 		goto out;
 	}
+	/* Every kernel verification consumer relies on a stable text image,
+	 * including ordinary exec and mappings promotable to executable. */
+	if (!vn_text_pin_supported(vp)) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
 	if (vp->v_writecount > 0) {
 		error = ETXTBSY;
 		goto out;
@@ -390,21 +396,6 @@ out:
 	return (error);
 }
 
-/* Only audited vnode text/write exclusion backends are eligible. Tmpfs
- * writable shared mappings use swp.writemappings, not v_writecount, so its
- * VOP_SET_TEXT does not exclude an existing mutable mapping. Keep it disabled
- * until a filesystem-specific pin protects the entire handle lifetime.
- * Stacked, remote and userspace backends also need a separate audit. */
-static bool
-capimage_handle_backend(struct vnode *vp)
-{
-	const char *name;
-
-	if (vp->v_mount == NULL)
-		return (false);
-	name = vp->v_mount->mnt_vfc->vfc_name;
-	return (strcmp(name, "ufs") == 0 || strcmp(name, "zfs") == 0);
-}
 
 int
 mac_veriexec_capimage_prepare(struct thread *td, void *arg)
@@ -460,7 +451,7 @@ mac_veriexec_capimage_prepare(struct thread *td, void *arg)
 		td->td_retval[0] = 0;
 		goto unlock;
 	}
-	if (!capimage_handle_backend(vp)) {
+	if (!vn_text_pin_supported(vp)) {
 		error = EOPNOTSUPP;
 		goto unlock;
 	}

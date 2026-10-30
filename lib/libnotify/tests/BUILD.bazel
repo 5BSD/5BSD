@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+[cc_binary(name = name, srcs = (["notify_test.c", "//lib/libnotify:notify.c", "//lib/libnotify:notify_legacy.c"] if name == "notify_test" else
+        ["client_lifecycle_test.c", "notify_client_impl.c", "fake_service.c", "fake_service.h"]),
+    deps = ["//lib/libnotify:test_headers", "//lib/libnotify:notify", "//lib/libfidl:fidl", "//lib/libchannel:channel", "//lib/libthr:thr"] +
+        (["//lib/libservice:service"] if name == "notify_test" else []) + ["//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+ for name in ["notify_test", "client_lifecycle_test"]]
+# The maintained watch test includes the actual implementation for exhaustion tests.
+cc_binary(name = "watch_test", srcs = ["watch_test.c"],
+    deps = ["//lib/libnotify:test_headers", "//lib/libthr:thr", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+[bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
+    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    case_timeout = 120 if name == "client_lifecycle_test" else 60,
+    test_metadata = '{"required_user":"root"}' if name == "client_lifecycle_test" else '{}',
+    tags = ["manual", "requires-matching-kernel"] if name == "client_lifecycle_test" else [],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "medium", visibility = ["//visibility:public"])
+ for name in ["notify_test", "client_lifecycle_test", "watch_test"]]
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+[utility_installation(name = "install_" + name, program = name, manual = "",
+    package = "libnotify-tests", bindir = "/usr/tests/lib/libnotify")
+ for name in ["client_lifecycle_test", "notify_test", "watch_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["client_lifecycle_test", "notify_test", "watch_test"],
+    interfaces = {n: "atf" for n in ["client_lifecycle_test", "notify_test", "watch_test"]},
+    metadata = {"client_lifecycle_test": '{"required_user":"root","timeout":"120"}'})
+[bsd_install_file(name = name, src = src, destination = dest, owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=libnotify-tests"])
+ for name, src, dest in [
+    ("install_kyuafile", ":kyuafile", "/usr/tests/lib/libnotify/Kyuafile"),
+    ("install_license", "//contrib/fuchsia:LICENSE", "/usr/share/licenses/libnotify-tests/fuchsia/LICENSE"),
+    ("install_patents", "//contrib/fuchsia:PATENTS", "/usr/share/licenses/libnotify-tests/fuchsia/PATENTS"),
+ ]]
+bsd_install_manifest(name = "install_extra", entries = [":install_kyuafile", ":install_license", ":install_patents"],
+    visibility = ["//lib/libnotify:__pkg__"])

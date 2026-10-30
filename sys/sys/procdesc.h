@@ -196,9 +196,10 @@ struct pd_reaper_exit {
 #define	PD_CLOEXEC	0x00000002	/* Close file descriptor on exec. */
 #define	PD_NOWAITPID	0x00000004	/* Reap without waitpid(). */
 #define	PD_PTRACE_CAP	0x00000008	/* Allow PT_PROCDESC in cap mode. */
+#define	PD_PROTECTED	0x00000010	/* No ambient process control from birth. */
 
 #define	PD_ALLOWED_AT_FORK	\
-    (PD_DAEMON | PD_CLOEXEC | PD_NOWAITPID | PD_PTRACE_CAP)
+    (PD_DAEMON | PD_CLOEXEC | PD_NOWAITPID | PD_PTRACE_CAP | PD_PROTECTED)
 #define	PD_ALLOWED_AT_OPENPID	(PD_DAEMON | PD_CLOEXEC | PD_PTRACE_CAP)
 
 #endif /* !_SYS_PROCDESC_H_ */

@@ -144,7 +144,30 @@ policies.
 System service and module authors should reference the
 .%T "FreeBSD Architecture Handbook"
 for information on the MAC Framework APIs.
+.Ss Anonymous mount admission
+The
+.Dv mpo_mount_check_mount_anon
+policy entry point receives the original authorizing caller's credentials,
+an allocated but unmounted
+.Vt struct mount ,
+and its MAC label.
+The mount's options and flags have been assigned, but
+.Dv VFS_MOUNT
+has not run and no mount handle or namespace attachment has been published.
+Policies must not invoke filesystem operations that require a mounted filesystem
+from this hook.
+An error rejects creation and destroys the unpublished mount.
+.Pp
+This check is separate from named-mount admission because an anonymous mount
+has no covered vnode.
+Capability-backed filesystem code may temporarily substitute kernel credentials
+for filesystem-specific checks; it must pass the original caller credentials
+to anonymous-mount admission.
+Mount ownership credentials and admission credentials can therefore differ.
+The hook supplies an enforcement point and does not itself assign storage
+policy or grant authority.
 .Sh SEE ALSO
+
 .Xr acl 3 ,
 .Xr mac 3 ,
 .Xr posix1e 3 ,

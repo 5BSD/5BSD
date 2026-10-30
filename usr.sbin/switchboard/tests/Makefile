@@ -7,6 +7,38 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/switchboard
 .PATH: ${SRCTOP}/lib/libservice/tests
 .PATH: ${SRCTOP}/usr.sbin/switchboard
 
+.PATH: ${SRCTOP}/usr.sbin/switchboard/nss-helper
+ATF_TESTS_C+= nss_integration_test
+SRCS.nss_integration_test= nss_integration_test.c nss_exchange.c nss_child.c nss_protocol.c
+PROGS+= nss_isolation_probe
+SRCS.nss_isolation_probe= nss_isolation_probe.c nss_main.c nss_protocol.c
+BINDIR.nss_isolation_probe= ${TESTSDIR}
+MAN.nss_isolation_probe=
+CFLAGS+= -I${SRCTOP}/usr.sbin/switchboard/nss-helper
+
+ATF_TESTS_C+= account_nss_test
+SRCS.account_nss_test= account_nss_test.c nss_protocol.c
+
+ATF_TESTS_C+= nss_exchange_test
+SRCS.nss_exchange_test= nss_exchange_test.c nss_protocol.c
+CFLAGS.nss_exchange_test+= -I${SRCTOP}/sys -I${SRCTOP}/usr.sbin/switchboard
+
+ATF_TESTS_C+= nss_child_test
+CFLAGS.nss_child_test+= -I${SRCTOP}/sys
+
+ATF_TESTS_C+= nss_helper_test
+SRCS.nss_helper_test= nss_helper_test.c nss_protocol.c
+CFLAGS.nss_helper_test+= -I${SRCTOP}/usr.sbin/switchboard
+
+
+
+ATF_TESTS_C+= run_container_directory_test
+CFLAGS.run_container_directory_test.c+= -I${SRCTOP}/usr.sbin/switchboard
+
+ATF_TESTS_C+= run_container_identity_test
+CFLAGS.run_container_identity_test.c+= -I${SRCTOP}/usr.sbin/switchboard
+LIBADD.run_container_identity_test+= md
+
 ATF_TESTS_SH+=	switchboard_naming_test
 ATF_TESTS_SH+=	switchboard_svc_test
 ATF_TESTS_SH+=	launch_policy_test
@@ -16,8 +48,6 @@ ATF_TESTS_SH+=	bundle_integration_test
 ATF_TESTS_SH+=	helper_integration_test
 ATF_TESTS_SH+=	service_reachability_test
 ATF_TESTS_SH+=	shipped_manifest_policy_test
-ATF_TESTS_SH_SED_bundle_integration_test+= \
-	-e 's,@OBJTOP@,${OBJTOP},g'
 
 # A test-local Capsule claims /dev/mac_capability through
 # mac_capability_isolation, which hides the node from every other process,
@@ -65,7 +95,9 @@ PROGS+=		capd_protocol_fixture
 PROGS+=		service_probe
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
+SRCS.domain_test= domain_test.c
 ATF_TESTS_C+=	anoint_test
+SRCS.anoint_test= anoint_test.c
 ATF_TESTS_C+=	reclaim_publish_test
 LIBADD.reclaim_publish_test+= md
 ATF_TESTS_C+=	on_demand_test
@@ -130,13 +162,16 @@ CFLAGS+=	-I${SRCTOP}/sys
 # over-approximate, which only ever costs a rebuild.
 SWITCHBOARD_SHARED_HDRS= \
 	${SRCTOP}/usr.sbin/switchboard/*.h \
+	${SRCTOP}/usr.sbin/switchboard/nss-helper/*.h \
 	${SRCTOP}/lib/libcapbundle/*.h \
 	${SRCTOP}/lib/libcapsulert/*.h
 
 rc_ingest.o rc_ingest.pieo \
 management.o management.pieo \
 bundle_selection.o bundle_selection.pieo \
-activation_calendar.o activation_calendar.pieo: ${SWITCHBOARD_SHARED_HDRS}
+activation_calendar.o activation_calendar.pieo \
+account_nss.o account_nss.pieo nss_exchange.o nss_exchange.pieo \
+nss_child.o nss_child.pieo nss_protocol.o nss_protocol.pieo: ${SWITCHBOARD_SHARED_HDRS}
 
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
 # rc_ingest.c comes from the switchboard source dir via .PATH above; referencing
@@ -228,7 +263,7 @@ CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.activation_test+=	-I${SRCTOP}/sys
 CFLAGS.activation_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.activation_test+=	-Wl,--gc-sections
-LIBADD.activation_test+=	capbundle
+LIBADD.activation_test+=	capbundle ucl
 NO_SHARED.activation_test=	yes
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libchannel
@@ -240,7 +275,7 @@ CFLAGS.domain_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.domain_test+=		-Wl,--gc-sections
 # domain.c/naming.c reach libchannel; the minted-channel case drives the
 # switchboard side from a helper thread and plays the client with libservice.
-LIBADD.domain_test+=		channel service pthread
+LIBADD.domain_test+=		channel service pthread capsulert
 # anoint_test.c #includes ../anoint.c, ../domain.c and ../naming.c inline (the
 # same trick as domain_test) to drive the IPC-anointment match, the session-set
 # plumbing and the grant identity without a live switchboard.  USE_BSM_AUDIT is
@@ -255,7 +290,7 @@ CFLAGS.anoint_test+=		-I${SRCTOP}/sys
 CFLAGS.anoint_test+=		-DUSE_BSM_AUDIT
 CFLAGS.anoint_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.anoint_test+=		-Wl,--gc-sections
-LIBADD.anoint_test+=		channel service pthread
+LIBADD.anoint_test+=		channel service pthread capsulert
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapability
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
@@ -344,6 +379,7 @@ ATF_TESTS_C+= launch_gate_test
 CFLAGS.launch_gate_test+= -I${SRCTOP}/sys -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libcapability -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libservice -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
 LDFLAGS.launch_gate_test+= -Wl,--gc-sections
 NO_SHARED.launch_gate_test= yes
+LIBADD.launch_gate_test+= md
 
 # UID namespace regressions use real private registry/runtime functions.
 PLAIN_TESTS_C+= scope_registry_test scope_runtime_test scope_identity_contract_test scope_storage_test scope_cli_test
@@ -374,5 +410,42 @@ CFLAGS.verified_handle_consumer_test+= -DCAPIMAGE_EXPERIMENTAL_CONSUMER \
 LDFLAGS.verified_handle_consumer_test+= -Wl,--gc-sections \
     -Wl,--wrap=mac_syscall -Wl,--wrap=syscall
 LIBADD.verified_handle_consumer_test= crypto md ucl
+
+
+# Shared test objects use common flags.
+CFLAGS+= -I${SRCTOP}/contrib/libucl/include -ffunction-sections -fdata-sections
+
+# Control start can resolve dormant units through the bundle catalogue.
+.for test in scope_runtime_test cleanup_status_test
+CFLAGS.${test}+= -I${SRCTOP}/lib/libcapbundle
+LIBADD.${test}+= capbundle ucl
+NO_SHARED.${test}= yes
+
+.endfor
+
+ATF_TESTS_C+= boot_storage_test
+CFLAGS.boot_storage_test+= -I${SRCTOP}/usr.sbin/switchboard -I${SRCTOP}/lib/libcapbundle
+NO_SHARED.boot_storage_test= yes
+
+
+# Exercise actual worker-record ownership using real descriptors; kernel
+# admission and lifecycle semantics remain covered by separate VM gates.
+ATF_TESTS_C+= worker_cleanup_test
+CFLAGS.worker_cleanup_test+= -I${SRCTOP}/usr.sbin/switchboard \
+    -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcapsulert \
+    -I${SRCTOP}/lib/libcapbundle -I${SRCTOP}/lib/libservice \
+    -I${SRCTOP}/contrib/libucl/include -I${SRCTOP}/sys \
+    -ffunction-sections -fdata-sections
+LDFLAGS.worker_cleanup_test+= -Wl,--gc-sections
+LIBADD.worker_cleanup_test= channel capsulert
+NO_SHARED.worker_cleanup_test= yes
+
+
+# Account resolution now shares the isolated NSS backend. Keep full link
+# dependencies for tests that compile identity/management source directly.
+SRCS.scope_runtime_test= scope_runtime_test.c
+.for test in activation_test management_enforce_test sctl_gate_test scope_runtime_test
+SRCS.${test}+= account_nss.c nss_exchange.c nss_child.c nss_protocol.c
+.endfor
 
 .include <bsd.test.mk>

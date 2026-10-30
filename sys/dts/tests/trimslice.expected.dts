@@ -1,0 +1,125 @@
+/dts-v1/;
+
+/  {
+
+	model = "CompuLab TrimSlice";
+	compatible = "compulab,trimslice", "nvidia,tegra20";
+	#address-cells = <0x1>;
+	#size-cells = <0x1>;
+	interrupt-parent = <0x2>;
+	freebsd,dts-version = "7.1";
+	aliases {
+
+		serial0 = "/tegra20@0/serial@70006000";
+		soc = "/tegra20@0";
+	};
+	memory {
+
+		device_type = "memory";
+		reg = <0x0 0x40000000>;
+	};
+	tegra20@0 {
+
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		compatible = "simple-bus";
+		ranges;
+		bus-frequency = <0x0>;
+		phandle = <0x1>;
+		interrupt-controller@50041000 {
+
+			compatible = "arm,gic";
+			interrupt-controller;
+			#address-cells = <0x0>;
+			#interrupt-cells = <0x1>;
+			reg = <0x50041000 0x1000 0x50040100 0x100>;
+			phandle = <0x2>;
+		};
+		mp_tmr@50040200 {
+
+			compatible = "arm,mpcore-timers";
+			clock-frequency = <0x2fb8d88>;
+			#address-cells = <0x1>;
+			#size-cells = <0x0>;
+			reg = <0x50040200 0x100 0x50040600 0x100>;
+			interrupts = <0x1b 0x1d>;
+			interrupt-parent = <0x2>;
+		};
+		tmr1@60005000 {
+
+			compatible = "nvidia,tegra2-timer";
+			reg = <0x60005000 0x8>;
+			interrupts = <0x20>;
+			interrupt-parent = <0x2>;
+		};
+		tmr2@60005008 {
+
+			compatible = "nvidia,tegra2-timer";
+			reg = <0x60005008 0x8>;
+			interrupts = <0x21>;
+			interrupt-parent = <0x2>;
+		};
+		tmrus@60005010 {
+
+			compatible = "nvidia,tegra2-timestamp";
+			reg = <0x60005010 0x8>;
+		};
+		tmr3@60005050 {
+
+			compatible = "nvidia,tegra2-timer";
+			reg = <0x60005050 0x8>;
+			interrupts = <0x49>;
+			interrupt-parent = <0x2>;
+		};
+		tmr4@60005058 {
+
+			compatible = "nvidia,tegra2-timer";
+			reg = <0x60005058 0x8>;
+			interrupts = <0x4a>;
+			interrupt-parent = <0x2>;
+		};
+		serial@70006000 {
+
+			compatible = "ns16550";
+			reg = <0x70006000 0x40>;
+			reg-shift = <0x2>;
+			interrupts = <0x44>;
+			interrupt-parent = <0x2>;
+			clock-frequency = <0xcdaa000>;
+			phandle = <0x3>;
+		};
+		serial@70006040 {
+
+			compatible = "ns16550";
+			reg = <0x70006040 0x40>;
+			reg-shift = <0x2>;
+			interrupts = <0x45>;
+			interrupt-parent = <0x2>;
+			clock-frequency = <0xcdaa000>;
+			phandle = <0x4>;
+		};
+		serial@70006200 {
+
+			compatible = "ns16550";
+			reg = <0x70006200 0x100>;
+			reg-shift = <0x2>;
+			interrupts = <0x4e>;
+			interrupt-parent = <0x2>;
+			clock-frequency = <0xcdaa000>;
+			phandle = <0x5>;
+		};
+	};
+	chosen {
+
+		stdin = "serial0";
+		stdout = "serial0";
+	};
+	__symbols__ {
+
+		serial2 = "/tegra20@0/serial@70006200";
+		serial1 = "/tegra20@0/serial@70006040";
+		serial0 = "/tegra20@0/serial@70006000";
+		GIC = "/tegra20@0/interrupt-controller@50041000";
+		SOC = "/tegra20@0";
+	};
+};

@@ -60,10 +60,21 @@
 static size_t	 topreclen;	/* toprec length */
 static char	*toprec;	/* Additional record specified by cgetset() */
 static int	 gottoprec;	/* Flag indicating retrieval of toprecord */
+static int	 usedb = 1;	/* Prefer compiled databases for ordinary readers. */
 
 static int	cdbget(DB *, char **, const char *);
 static int 	getent(char **, u_int *, char **, int, const char *, int, char *);
 static int	nfcmp(char *, char *);
+
+/* Select text-only input for database construction; return the old setting. */
+int
+cgetusedb(int new_usedb)
+{
+	int old_usedb = usedb;
+
+	usedb = new_usedb;
+	return (old_usedb);
+}
 
 /*
  * Cgetset() allows the addition of a user specified buffer to be added
@@ -237,7 +248,7 @@ getent(char **cap, u_int *len, char **db_array, int fd, const char *name,
 			myfd = 0;
 		} else {
 			(void)snprintf(pbuf, sizeof(pbuf), "%s.db", *db_p);
-			if ((capdbp = dbopen(pbuf, O_RDONLY, 0, DB_HASH, 0))
+			if (usedb && (capdbp = dbopen(pbuf, O_RDONLY, 0, DB_HASH, 0))
 			     != NULL) {
 				free(record);
 				retval = cdbget(capdbp, &record, name);
@@ -709,6 +720,15 @@ cgetnext(char **bp, char **db_array)
 		np = nbuf;
 		for (;;) {
 			for (cp = line; *cp != '\0'; cp++) {
+				/*
+				 * Reserve room for the terminating NUL, including
+				 * names continued across physical lines.
+				 */
+				if (np >= nbuf + sizeof(nbuf) - 1) {
+					(void)cgetclose();
+					errno = EOVERFLOW;
+					return (-1);
+				}
 				if (*cp == ':') {
 					*np++ = ':';
 					done = 1;

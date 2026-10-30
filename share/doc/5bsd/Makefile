@@ -33,8 +33,11 @@ BOOK_CAPABILITY=	${BOOKSRC}/capability/authority-model.md \
 		${BOOKSRC}/capability/mac-abac.md \
 		${BOOKSRC}/capability/mac-capability.md \
 		${BOOKSRC}/capability/oes.md \
+		${BOOKSRC}/capability/persistent-state-contract.md \
 		${BOOKSRC}/capability/policy-points.md \
 		${BOOKSRC}/capability/system-gates.md \
+		${BOOKSRC}/capability/system-security-compatibility.md \
+		${BOOKSRC}/capability/system-security.md \
 		${BOOKSRC}/capability/veriexec.md
 BOOK_CAPABILITYDIR=	${BOOKDEST}/capability
 

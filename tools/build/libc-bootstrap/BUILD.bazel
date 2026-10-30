@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "namespace_headers", hdrs = ["namespace.h", "un-namespace.h"],
+    strip_include_prefix = ".", visibility = ["//usr.bin/cap_mkdb:__pkg__"])

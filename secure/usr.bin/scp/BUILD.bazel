@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "scp", srcs = ['//crypto/openssh:scp.c', '//crypto/openssh:progressmeter.c', '//crypto/openssh:sftp-common.c', '//crypto/openssh:sftp-client.c', '//crypto/openssh:sftp-glob.c', '//crypto/openssh:ssherr-nolibcrypto.c'])

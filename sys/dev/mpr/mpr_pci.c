@@ -172,7 +172,7 @@ struct mpr_ident {
 };
 
 DRIVER_MODULE(mpr, pci, mpr_pci_driver, 0, 0);
-MODULE_PNP_INFO("U16:vendor;U16:device;U16:subvendor;U16:subdevice;D:#", pci,
+MODULE_PNP_INFO("U16:vendor;U16:device;U16:subvendor;U16:subdevice;U32:#;D:#", pci,
     mpr, mpr_identifiers, nitems(mpr_identifiers) - 1);
 
 MODULE_DEPEND(mpr, cam, 1, 1, 1);

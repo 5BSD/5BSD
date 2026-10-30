@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["ldns-host.c", "ldns-host.1"], visibility = ["//usr.bin/host:__pkg__"])

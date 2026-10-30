@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(['sha256c.c', 'sha512c.c'], visibility = ["//lib/libmd:__pkg__"])
+cc_library(
+    name = "headers",
+    hdrs = ['sha224.h', 'sha256.h', 'sha384.h', 'sha512.h', 'sha512t.h', 'sha256c_impl.h', 'sha512c_impl.h'],
+    strip_include_prefix = "/sys/crypto/sha2",
+    visibility = ["//lib/libmd:__pkg__"],
+)
+
+exports_files(['sha224.h', 'sha256.h', 'sha384.h', 'sha512.h', 'sha512t.h'], visibility = ["//lib/libmd:__pkg__"])
+
+cc_library(name = "kernel_headers", hdrs = ["sha256.h", "sha512.h"], strip_include_prefix = "/sys", visibility = ["//sys/geom/eli:__pkg__", "//sys/libkern:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(
+    name = "module_headers",
+    hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h", "sha512t.h", "sha256c_impl.h", "sha512c_impl.h"],
+    includes = ["../.."],
+    visibility = ["//sys/security/mac_veriexec:__pkg__", "//sys/security/mac_veriexec_parser:__pkg__"],
+)
+amd64_generic_module_objects(name = "sha256_module", srcs = ["sha256c.c"], deps = [":module_headers"])
+amd64_generic_module_objects(name = "sha512_module", srcs = ["sha512c.c"], deps = [":module_headers"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+amd64_generic_kernel_objects(name = "generic_builtin", srcs = ["sha256c.c", "sha512c.c"], deps = [":module_headers"])

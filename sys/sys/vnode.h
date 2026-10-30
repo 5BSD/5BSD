@@ -299,9 +299,19 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
  * Vnode attributes.  A field value of VNOVAL represents a field whose value
  * is unavailable (getattr) or which is not to be changed (setattr).
  */
+/* Operation guards belong to the enclosing file operation, including all I/O
+ * fault retries. The owner must keep its release callback resident until called.
+ * Release runs once, after the context is removed from the current thread. */
+struct vn_io_guard {
+	struct vn_io_guard *next;
+	void (*release)(struct vn_io_guard *);
+};
+
 /* Stack-scoped identity for vnode operations reached through an open file. */
 struct vn_file_context {
 	struct vn_file_context *previous;
+	struct vn_io_guard *io_guards;
+	bool synchronous_io; /* fo_read/fo_write completion, not deferred sendfile */
 	struct file *fp;
 	struct file *fp2;
 	int openflags;
@@ -673,6 +683,7 @@ void vn_file_context_enter(struct vn_file_context *, struct file *,
     struct file *, int);
 void vn_file_context_leave(struct vn_file_context *);
 struct vn_file_context *vn_file_context_current(void);
+void vn_file_context_guard(struct vn_file_context *, struct vn_io_guard *);
 void vn_openfile_init(struct file *, int, bool, bool);
 void vn_openfile_stream_init(struct file *, int, bool);
 int vn_file_close_fd(struct file *, struct thread *);
@@ -814,6 +825,7 @@ int	vn_generic_copy_file_range(struct vnode *invp, off_t *inoffp,
 int	vn_need_pageq_flush(struct vnode *vp);
 bool	vn_isdisk_error(struct vnode *vp, int *errp);
 bool	vn_isdisk(struct vnode *vp);
+bool	vn_text_pin_supported(struct vnode *vp);
 int	_vn_lock(struct vnode *vp, int flags, const char *file, int line);
 #define vn_lock(vp, flags) _vn_lock(vp, flags, __FILE__, __LINE__)
 int	vn_lock_pair(struct vnode *vp1, bool vp1_locked, int lkflags1,

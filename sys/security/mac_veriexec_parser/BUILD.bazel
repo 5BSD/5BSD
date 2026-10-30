@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+amd64_generic_kernel_objects(name = "generic_builtin", srcs = ["mac_veriexec_parser.c"],
+    deps = ["//sys/security/mac_veriexec:internal_headers", "//sys/crypto/sha2:module_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])

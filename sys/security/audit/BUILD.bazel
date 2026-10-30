@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['audit_syscalls.c'], visibility = ["//usr.sbin/BSDAudit/tests:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["audit.h"], strip_include_prefix = ".",
+    include_prefix = "security/audit", deps = ["//sys/bsm:kernel_headers"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+cc_library(name = "internal_headers", hdrs = ["audit_private.h", "audit_ioctl.h"], includes = ["../.."],
+    deps = [":kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+# GENERIC AUDIT sources. DTAUDIT/DTRACEALL's audit_dtrace.c is a separate configuration.
+amd64_generic_kernel_objects(name = "generic",
+    srcs = ["audit.c", "audit_arg.c", "audit_bsm.c", "audit_bsm_db.c", "audit_bsm_klib.c",
+        "audit_pipe.c", "audit_syscalls.c", "audit_trigger.c", "audit_worker.c",
+        "bsm_domain.c", "bsm_errno.c", "bsm_fcntl.c", "bsm_socket_type.c", "bsm_token.c"],
+    deps = [":internal_headers", "//sys/security/mac:framework_headers", "//sys/netinet:pcb_headers", "//sys/netinet:ipv4_wire_headers"])

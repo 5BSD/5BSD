@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//secure:ssh_program.bzl", "ssh_program")
+ssh_program(name = "ssh-add", srcs = ['//crypto/openssh:ssh-add.c'])

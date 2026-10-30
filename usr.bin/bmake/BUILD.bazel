@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_version_filter.bzl", "bsd_version_filter")
+bsd_version_filter(name = "version_header", template = "//contrib/bmake:VERSION", output = "bmake_version.h",
+    arguments = ["-n", 's/^_MAKE_VERSION=\\([0-9][0-9]*\\)$/#define MAKE_VERSION "\\1"/p'],
+    sed = "@bsd_sdk//toolchain:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+cc_library(name = "configuration", hdrs = ["config.h"], includes = ["."])
+cc_library(name = "version", hdrs = [":version_header"], includes = ["."])
+_DEFINES = ["USE_META", "NO_PWD_OVERRIDE", "HAVE_CONFIG_H", "BMAKE_PATH_MAX=1024", "MAKE_NATIVE", "_PATH_DEFSYSPATH=\\\".../share/mk:/usr/share/mk\\\""]
+_DEPS = [":configuration", "//contrib/bmake:headers"]
+cc_library(name = 'main_objects', srcs = ['//contrib/bmake:main.c'], deps = _DEPS + [':version'], local_defines = _DEFINES + ["MAKE_SAVE_DOLLARS_DEFAULT=\\\"no\\\""], copts = ['-fPIE', '-include', 'bmake_version.h'], linkstatic = True)
+cc_library(name = 'meta_objects', srcs = ['//contrib/bmake:meta.c', '//contrib/bmake:job.c'], deps = _DEPS + [], local_defines = _DEFINES + ["USE_FILEMON", "USE_FILEMON_DEV"], copts = ['-fPIE'], linkstatic = True)
+cc_library(name = 'filemon_objects', srcs = ['//contrib/bmake:filemon/filemon_dev.c'], deps = _DEPS + ['//sys/dev/filemon:user_header'], local_defines = _DEFINES + ["HAVE_FILEMON_H"], copts = ['-fPIE'], linkstatic = True)
+cc_binary(name = "make", srcs = ['//contrib/bmake:arch.c', '//contrib/bmake:buf.c', '//contrib/bmake:compat.c', '//contrib/bmake:cond.c', '//contrib/bmake:dir.c', '//contrib/bmake:for.c', '//contrib/bmake:hash.c', '//contrib/bmake:lst.c', '//contrib/bmake:make.c', '//contrib/bmake:make_malloc.c', '//contrib/bmake:metachar.c', '//contrib/bmake:parse.c', '//contrib/bmake:str.c', '//contrib/bmake:suff.c', '//contrib/bmake:targ.c', '//contrib/bmake:trace.c', '//contrib/bmake:util.c', '//contrib/bmake:var.c', '//contrib/bmake:stresep.c'], deps = _DEPS + [":main_objects", ":meta_objects", ":filemon_objects"],
+    local_defines = _DEFINES, copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "make", manual = "//contrib/bmake:make.1", package = "bmake", aliases = ["bmake"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//usr.bin:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bmake","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

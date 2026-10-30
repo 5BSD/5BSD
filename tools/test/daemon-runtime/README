@@ -12,7 +12,10 @@ own staging tree, with root ownership represented in a makefs METALOG.
 No host root login, install, mount or reboot is needed. It does not write the
 input staging root or attach another VM's writable disk. Compilation uses all
 logical CPUs; this small runtime guest uses four CPUs and 1 GiB RAM by default.
---cpus selects one through four guest CPUs; this task uses four.
+--cpus selects one through four guest CPUs in the default fixture profile.
+An explicit --resource-profile bazel-builder permits up to 8 vCPUs and 24576
+MiB guest RAM; callers must still select --cpus, --memory-mib and the build
+host RSS budget. Default fixture memory/CPU bounds remain unchanged.
 
 The VM has no network. By default it boots a PID 1 fixture with the capability
 plane disabled; --oes-admission enables the additional integration described below.
@@ -21,6 +24,12 @@ plus the BSDFilesystem descriptor-hardening failure regression.
 A skip, missing/duplicate pass marker, timeout, panic, WITNESS reversal or
 unclean shutdown fails the run. inputs.json and result.json retain input hashes
 and the exact QEMU command; serial.log retains output, including failed runs.
+result.json also records vm_elapsed_seconds and a serial_timeline of complete
+construction, case, cleanup and VM markers. Times are host-observed seconds since
+launch and include the one-second poll interval and serial buffering. They are
+diagnostic observations, not guest execution durations or an acceptance oracle.
+Repeated markers remain visible; partial lines are held until complete. These
+records do not change case timeouts or the existing pass/failure checks.
 The default gate does not qualify booted daemons, actual OOM, ACPI suspend, hardware,
 installer behavior, or a complete system image. Never run runtime_init as the
 host's init. Source and object inputs must be coordinated before full acceptance.
@@ -28,7 +37,7 @@ host's init. Source and object inputs must be coordinated before full acceptance
 Use --client-ownership to include the static audit, crypto, trace and log
 client lifecycle suites. Build these libraries/tests first. The runner records
 each binary hash and derives the required cases from its ATF listing; each
-case gets its own directory and 40-second process timeout. No skip is a pass.
+case gets its own directory and declared timeout (40 seconds if omitted). No skip is a pass.
 These suites exercise real descriptor operations with service test doubles;
 they do not replace integrated daemon/provider tests.
 
@@ -84,7 +93,7 @@ Only self-contained tests are suitable: this fixture supplies neither installed
 suite data nor a full service plane. Paths must remain inside objtop. The runner
 records the source, private alias, enumerated cases and stable input hash in its
 provenance. Every selected case must pass; skips and missing results fail the
-run. Each case has the fixture's 40-second deadline. This does not replace full
+run. Each case uses its declared timeout, or 40 seconds if omitted. This does not replace full
 bundle activation, authority admission, production sandbox or hardware tests.
 
 The BSDPower reactor_test runs the production sessions_run loop with three
@@ -203,47 +212,220 @@ acceptance using a private tmpfs bundle. See tools/test/oes-admission/README.
 This keeps fixture compilation from overwriting active world-build objects;
 all staged hashes, kernel checks and pass requirements still apply.
 
-ATF lifecycle contract
-----------------------
-The runner reads each selected binary's ATF listing before boot. Explicit timeout
-and has.cleanup metadata control separate body and cleanup subprocess groups.
-An omitted timeout retains this fixture's documented 40-second default (not
-Kyua's 300-second default). A body must exit successfully with exactly a passed
-result; skips fail qualification. Declared cleanup runs after body failure or
-timeout and must succeed independently. The outer VM budget must cover boot,
-all selected bodies, declared cleanups and shutdown.
+Real ZFS provisioning and ATF cleanup
+------------------------------------
+--zfs adds zfs.ko from the selected kernel build and zpool, zfs, truncate and sh
+from --root. ELF dependencies are resolved within that world, copied and hashed;
+no host libraries or host pools are used. --memory-mib supplies the guest RAM
+(default 1024); the storage qualification uses 2048. Example additions:
+    --zfs --memory-mib 2048 --timeout 360
+    --atf-suite usr.sbin/BSDFilesystem/tests/anchor_test
+The test creates its own sparse file-backed pool inside the disposable guest.
+This is a dataset-capability mechanism test, not BIP bootstrap import, reboot
+persistence, package-derived generation construction or protected upgrades.
 
---atf-case-budget relative/source:case=seconds overrides a selected case's harness
-deadline, retaining declared_timeout and budget_input in inputs.json. Values
-are 1..86400 and must be below the outer VM timeout. The static runtime_init
---describe contract is checked before any VM launch, so stale helpers fail
-preflight. Runtime helper and runner metadata protocol must be updated together.
+The runner reads ATF timeout and has.cleanup metadata, records it in inputs.json,
+and runs declared cleanup even after body failure or timeout. Body and cleanup
+use separate process groups. Both statuses and explicit cleanup markers must
+succeed before the case passes. Skipped bodies remain failures. A failed cleanup
+cannot be hidden by a passed body. Cleanup has the same declared time limit.
 
-runner_probe contains cleanup_pass and deliberate cleanup_fail/body_fail/
-body_timeout negative controls. Listing these cases is a native parser check;
-only executing them in a VM demonstrates PID1 lifecycle behavior. Process-group
-cleanup is not general containment of descendants that start another session.
+Build runner_probe alongside runtime_init to test this reporting contract.
+Select cleanup_pass for a positive control. cleanup_fail, body_fail and
+body_timeout are deliberate negative controls: each must fail qualification;
+body_fail and body_timeout must still emit their cleanup-executed messages.
+They are not product acceptance tests. metadata_test.py checks malformed ATF
+metadata and rejection of missing/duplicate cleanup evidence on the host.
 
-Private disk and resource inputs
+Explicit-device pool import
+---------------------------
+--scratch-disk-mib SIZE requires --zfs and at least 128 MiB. It creates a new
+private scratch.img under the new work directory, attaches it as the guest's
+second virtio disk, and supplies /tests/scratch-device. It never accepts a host
+disk or pool. The disk remains with the result for inspection; no later run
+silently reuses it. The size and QEMU device arguments are recorded.
+Example additions for the production import primitive and recipient checks:
+    --zfs --memory-mib 2048 --scratch-disk-mib 1024 --timeout 360
+    --atf-suite usr.sbin/capsule/tests/storage_test
+    --atf-suite usr.sbin/capsule/tests/import_test
+    --atf-suite usr.sbin/switchboard/tests/boot_storage_test
+The destructive disk case requires that explicit VM role. It creates and exports
+a pool, then calls the production acquisition primitive with the observed GUIDs.
+It tests identity/device rejection, confined derivation and strict cleanup.
+The fixture is not Capsule PID 1 and has BIP disabled; it cannot qualify the
+retained-anchor bootstrap RPC or a protected persistent provider.
+
+Explicit additional fixture data
 -------------------------------
---input-disk requires a regular image and explicit SHA256, is attached read-only,
-and is hashed again after shutdown. --output-disk-mib creates a distinct private
-writable disk; an optional --output-disk-source plus SHA256 seeds an exact-sized
-copy. The source is never attached writable and is checked after shutdown.
---workspace-disk-mib adds a new blank build disk, requires input/output disks and
-an explicit --host-max-rss-mib, and checks host free space against disk capacities
-and --workspace-host-reserve-mib. This observation is not a storage reservation.
-The topology is fixture root vtbd0, input vtbd1, output vtbd2, workspace vtbd3.
+--extra-root adds a caller-supplied fixture tree after runner-owned files are
+staged. Regular files, directories and relative file symlinks within the supplied
+tree are accepted; absolute, escaping, dangling, cyclic and directory aliases are
+rejected before copying. Replacing existing files or symlinks is refused. Common directories retain runner metadata. The
+makefs image uses root ownership and preserves explicit extra-file modes; runner
+files retain mode 0555 and directories retain the existing runner policy.
+File hashes, modes, symlink targets and the source root are retained in
+inputs.json/result.json. METALOG paths and link targets use octal escaping where
+needed, including the installed [ alias.
+An explicit etc/passwd prevents creation of the fallback passwd stub; it does not
+permit replacement of other runner-owned inputs. Generated account databases must
+be staged with their installation modes, not copied from raw Bazel output modes. This is fixture provisioning, not
+a package-derived system inventory or installed-system acceptance.
 
---root-mib sizes the disk-backed fixture root. --extra-root supplies additive
-regular files/directories and cannot replace already-staged files. These are
-trusted test inputs, not authenticated system generations. Default root writes
-are discarded; --retain-disk-writes retains only the private newly-created root.
-Output/workspace disks retain failed/partial state as well as successful output.
+Private artifact output disk
+----------------------------
+--output-disk-mib creates a new mode-0600 output.img under the fresh VM work
+directory. It requires a read-only --input-disk and accepts capacities 16..16384
+MiB. The root disk remains first, input is /dev/vtbd1 and output is /dev/vtbd2;
+/tests/output-device declares the output slot. Output attachment uses structured
+QEMU block options. Existing host disks cannot be selected as the output.
 
-QEMU RSS and CPU observations are retained in host-resources.jsonl, and host-
-observed serial event timing is recorded. Resource observation failures fail
-qualification. Sampling can miss peaks and excludes host page cache; these
-measurements are not guest memory or disk latency qualification.
-Disk probe wrappers exercise actual VM persistence, read-only refusal and output
-writes. Native cache/copy/preflight tests do not prove these VM mechanisms.
+After shutdown the runner records output_disk_sha256, including failed/partial
+runs. A hash is content binding, not acceptance or generation authentication.
+output_disk_test.py uses explicit root/object/fixture/QEMU/input-disk arguments,
+rejects a missing input before staging, and runs both raw input write-refusal and
+output first/last-block write-and-flush probes. Host verification checks the entire
+output hash/size/permissions and unchanged input. output-disk-vm-v2 passed.
+This is an export mechanism test; the output is test bytes, not a bootable OS.
+
+Anonymous mount admission mechanism test
+---------------------------------------
+The anon_mount_test executable and anon-mount-fixture/mac_anon_mount_test.ko
+exercise real ZFS handle mounting with a VM-only rejecting MAC policy. Never
+load this fixture on the host or include it in release images. Build the module
+with KERNBUILDDIR pointing to the selected matching kernel object directory;
+build anon_mount_test through the ordinary buildenv and this Makefile.
+Stage the module under boot/kernel in an explicit --extra-root and select
+--zfs --atf-case tools/test/daemon-runtime/anon_mount_test:admission. The selected
+--root supplies the matching boot kernel and ZFS userland tools; existing runner
+hashing, ABI checks, case accounting, cleanup and shutdown checks apply.
+
+The test creates its own file-backed pool, opens a ZH_MOUNT handle, then loads
+the policy. A child drops to UID 65534. Sixteen rejected creations must expose
+no mount or directory descriptor and must balance mount-label initialization
+and destruction. Admission observes the original UID separately from ZFS's
+kernel credential substitution. A permitted creation must return a usable ZFS
+directory descriptor; final anchor close must balance the seventeenth label
+and restore the mount count. Cleanup destroys the test pool. No pathname or
+UID in this fixture defines production BIP policy. This does not test persistent
+state boundaries, credential changes after admission,
+service operation, Secure Boot, or recovery.
+
+The admission test also denies access through a second handle joining a cached
+mount, then permits a retry without losing the original anchor. It forces a
+last-anchor unmount failure to leave an orphan, denies root-vnode open during
+adoption, then permits recovery and verifies final label and mount cleanup.
+Orphan lookup precedes new creation: no admission error is reinterpreted as
+permission to recover an existing mount. Both cached and adopted mounts use
+current vn_open_vnode policy. This verifies recovery plumbing with a synthetic
+policy, not authenticated BIP provider recovery or persistent-state authority.
+
+The same test rejects a read-only request for a writable orphan and a writable
+request for an existing read-only mount. It verifies EEXIST/EROFS respectively,
+unchanged creation counts on mismatch, actual MNT_RDONLY on the permitted
+read-only descriptor, and final cleanup of all eighteen mount labels. A new
+handle cannot change the mode of a shared mount. These checks do not establish
+that arbitrary dataset replacement or reboot recovery is authenticated.
+
+Runtime container identity regression
+-------------------------------------
+Use --atf-suite usr.sbin/switchboard/tests/run_container_identity_test with
+an explicitly selected matching kernel/root. The three cases cover formerly
+colliding labels, global/personal owner separation, complete long labels,
+repeatability and truncation/empty-input refusal. They exercise the naming
+helper only, not supervisor launches, symlink refusal or persistent authority.
+
+The companion --atf-suite
+usr.sbin/switchboard/tests/run_container_directory_test exercises the actual
+child setup helper. It renames a held directory and replaces its old pathname,
+checks that the working directory still matches the held inode, checks removal
+of CAP_FCHDIR without removal of other rights, and requires missing launch
+rights to fail without changing cwd. This is helper coverage, not a complete
+supervisor launch or a protected-boot replacement attack.
+
+The directory suite also covers fresh_only: successful creation, refusal of
+existing nonempty/empty directories and symlinks, preservation of refused
+contents and metadata, and fresh creation after removal while the old directory
+handle is held. It does not exercise supervisor failure/coalition cleanup.
+
+Use --atf-suite usr.sbin/switchboard/tests/launch_gate_test for real execute.c
+launch-gate faults and abort/container rollback. The latter uses real directory
+operations and a pdfork child: pre-fork abort allows retry; post-fork abort
+preserves storage for the child and refuses reuse until child exit and explicit
+cleanup. Authority and coalition callbacks are stubbed. This does not establish
+whole-supervisor or protected-boot lifecycle acceptance.
+
+--atf-suite usr.sbin/switchboard/tests/session_issuer_test checks the production
+issuer-liveness predicate with a real pdfork child: live before and after
+cap_enter, refused after confirmed exit. Invalid, closed and non-process
+descriptors are refused. Liveness does not enroll an issuer or authenticate a
+user. The complete broker/policy/lease path still requires protected-boot tests.
+
+The anonymous mount admission case also writes and fsyncs an identity marker
+through the real directory descriptor before orphaning the mount, then verifies
+its exact contents after recovery. This proves data continuity for the tested
+recovery path; it does not inject a shortened-fsid collision or qualify BIP.
+
+Select anon_mount_test:identity_collision to exercise wrong-dataset orphan
+lookup. The disposable MAC module's write-only alias_fsid control accepts a
+vnode descriptor plus a replacement fsid and changes only an anonymous ZFS
+mount's lookup identifier. It neither changes the objset identity nor adds a
+production bypass. The case creates two datasets, aliases one mount's fsid to
+the other's, orphans it, and requires ESTALE when the other handle mounts.
+It verifies surviving data, restores the identifier, reopens both datasets,
+and checks separate contents and balanced mount/label cleanup. Never load this
+fault module on the host or stage it in production images.
+
+Runtime helper compatibility
+----------------------------
+Before creating a VM disk, run-vm.py queries the selected static runtime_init
+with --describe and validates its metadata version, cleanup support and maximum
+case timeout. This query performs no guest initialization and is safe outside
+PID 1. Missing or incompatible descriptions require rebuilding the selected
+fixture; the runner does not silently substitute an object-tree binary. The
+accepted contract and helper hash are retained with the run provenance.
+
+Private writable copies of existing offline disks
+-----------------------------------------------
+With --input-disk/--input-disk-sha256 and --output-disk-mib, select
+--output-disk-source and --output-disk-source-sha256 to initialize the private
+output.img from an offline disk. The source must be a regular nonsymlink file
+whose exact size matches the explicit capacity. It is read only by the host
+copy helper, never attached to QEMU. The guest sees only the independent copy
+as /dev/vtbd2; the separate input remains read-only at /dev/vtbd1. This allows
+state-initialization tests to retain original allocation evidence.
+
+Copy creation is exclusive and mode 0600, checks copied bytes and source hashes,
+and fsyncs the copy. Existing outputs and source symlinks/FIFOs are refused.
+The result records the source identity/hash and verifies the source is unchanged
+after shutdown; a changed source fails the run. Output hashes describe even
+failed/partial guest state, not accepted system generations. Select quiescent
+sources in the exclusive trusted builder. Do not use a running VM's disk.
+
+Run python3.12 -B disk_copy_test.py for native source-isolation and refusal
+checks. These checks do not qualify guest initialization, ZFS import/export,
+cold-boot persistence, normal startup or BIP enforcement.
+
+Extra-root hard links are preserved by source device/inode identity, with the
+alias-to-canonical mapping retained in the fixture receipt. Equal file bytes
+alone never create a hard link. Explicitly shared runner files can anchor an
+alias group; incompatible existing shared inodes or modes are rejected before
+copying. This preserves staging identity for makefs, whose directory traversal
+and mtree loader both recognize hard links. Guest inode verification remains
+part of installed-layout qualification, not a consequence of staging tests.
+
+Bazel ATF installed helper paths
+-------------------------------
+The native ATF adapter defaults to its declared runfiles bin directory. An
+installed-image qualification launcher can explicitly invoke:
+
+    /usr/tests/bazel/runner --installed-path /bin:/usr/bin
+
+The argument supplies helper command search directories, not a shell fragment.
+Every entry must be a nonempty existing absolute directory; relative entries,
+empty components and non-directories are rejected before test setup. Inherited
+PATH never selects this mode. ATF harness/data, candidate libraries and configured
+executables still come from the declared runfiles. Accordingly this qualifies
+installed helper behavior with native test artifacts, not an entirely installed
+system or a production boot. The fixture must separately verify the installed
+program/library inventory and dependency closure. Configured executable files
+retain their original basenames under distinct atf-config/<index>/ directories.

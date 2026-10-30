@@ -36,6 +36,10 @@ On installer or live media where the root ZFS pool does not yet exist,
 .Nm
 uses its private switchboard runtime container as an explicitly ephemeral store
 and logs a warning.
+This fallback applies only when the storage backend reports that it is
+unavailable.
+Authorization, quota, I/O, and communication failures remain fatal startup
+errors and do not select a volatile store.
 Installed systems use the persistent, label-scoped
 .Dq state
 claim supplied by

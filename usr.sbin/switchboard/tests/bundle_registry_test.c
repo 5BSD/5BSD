@@ -241,7 +241,14 @@ ATF_TC_BODY(per_user_agent_loads_with_owner, tc)
 	switchboard_bundle_dir_user = "/nonexistent/sb-apps";
 	setenv("SWITCHBOARD_DISABLED_PATH", "/nonexistent/disabled", 1);
 
-	snprintf(usersdir, sizeof(usersdir), "%s/Users", cwd);
+	/* A long parent path must not truncate the bundle's basename. */
+	ATF_REQUIRE(strlcpy(usersdir, cwd, sizeof(usersdir)) < sizeof(usersdir));
+	do {
+		ATF_REQUIRE(strlcat(usersdir, "/parent-directory-for-name-regression",
+		    sizeof(usersdir)) < sizeof(usersdir));
+		ATF_REQUIRE_EQ(0, mkdir(usersdir, 0755));
+	} while (strlen(usersdir) <= NAME_MAX);
+	ATF_REQUIRE(strlcat(usersdir, "/Users", sizeof(usersdir)) < sizeof(usersdir));
 	ATF_REQUIRE_EQ(0, mkdir(usersdir, 0755));
 	snprintf(p, sizeof(p), "%s/%u", usersdir, (unsigned)me);
 	ATF_REQUIRE_EQ(0, mkdir(p, 0755));

@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//lib/libc:nossp.bzl", "LIBC_VARIANT_FEATURES")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+
+# libc owns these objects; the archives below are qualification artifacts.
+cc_library(
+    features = LIBC_VARIANT_FEATURES,
+    name = "xdr_objects",
+    srcs = [
+        "xdr.c",
+        "xdr_array.c",
+        "xdr_float.c",
+        "xdr_mem.c",
+        "xdr_rec.c",
+        "xdr_reference.c",
+        "xdr_sizeof.c",
+        "xdr_stdio.c",
+    ],
+    implementation_deps = [
+        "//lib/libc/include:rt_private_headers",
+        "//lib/libc/rpc:rpc_com_headers",
+    ],
+    local_defines = ["_FORTIFY_SOURCE_read=_read", "NO__SCCSID", "NO__RCSID"] + select({
+        "//tools/build/bazel/config:nls_enabled": ["NLS"],
+        "//conditions:default": [],
+    }),
+    copts = ["-ftls-model=initial-exec"],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//lib/libc:__pkg__"],
+)
+bsd_component_archive(name = "objects_archive", groups = [":xdr_objects"])
+bsd_component_archive(name = "pic_objects_archive", groups = [":xdr_objects"], pic = True, visibility = ["//lib/libc/tests/rpc:__pkg__"])
+exports_files(["Symbol.map", "xdr.3"], visibility = ["//lib/libc:__pkg__"])
+
+# Maintained manual sources consumed by libc installation.
+[filegroup(name = name, srcs = [source], visibility = ["//lib/libc:__pkg__"])
+ for name, source in [
+    ('libc_manual_xdr.3', 'xdr.3'),
+]]

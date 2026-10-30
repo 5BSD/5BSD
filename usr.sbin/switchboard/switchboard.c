@@ -23,15 +23,19 @@
 
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/mount.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
+#include <dev/mac_capability/mac_capability_isolation_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <limits.h>
 #include <pwd.h>
+#include <paths.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +47,16 @@
 #include <capability.h>
 
 #include "switchboard.h"
+#include "account_nss.h"
+#include "nss-helper/nss_protocol.h"
 #include "authority.h"
+
+/* The private helper wire format must accommodate the actual manifest schema.
+ * Fail the build if either side grows without a coordinated protocol review. */
+_Static_assert(SB_NSS_NAME_MAX == sizeof(((struct svc_manifest *)0)->user),
+    "NSS user-name capacity must match the service manifest");
+_Static_assert(SB_NSS_NAME_MAX == sizeof(((struct svc_manifest *)0)->group),
+    "NSS group-name capacity must match the service manifest");
 
 #define AUTHORITY_TIMER_IDENT ((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 6))
 #include "switchboard_audit.h"
@@ -178,8 +191,9 @@ switchboard_dispatch_event(struct kevent *kev)
 	 * Restart, stop-kill, on-demand, launch, and periodic activation timers.
 	 */
 	if (kev->filter == EVFILT_TIMER) {
-		if (kev->ident == AUTHORITY_TIMER_IDENT)
+		if (kev->ident == AUTHORITY_TIMER_IDENT) {
 			svc_authority_collect();
+		}
 		else if (registry_watch_is_timer(kev->ident))
 			registry_watch_timer_fire(switchboard_kq);
 		else if (on_demand_is_timer(kev->ident))
@@ -243,36 +257,34 @@ usage(void)
 /*
  * Validate the pkgbase-installed default identity.  switchboard deliberately
  * never edits passwd or group databases during startup: installation,
- * upgrade, rollback, and immutable-/etc handling belong to pkgbase.
+ * upgrade, and rollback belong to pkgbase.
  */
 static int
 validate_default_identity(void)
 {
-	struct group *group;
-	struct passwd *user;
+	struct service_account_identity identity, *user = &identity;
+	gid_t group;
 
-	group = getgrnam(SWITCHBOARD_DEFAULT_GROUP);
-	user = getpwnam(SWITCHBOARD_DEFAULT_USER);
-	if (group == NULL || user == NULL) {
-		errno = ENOENT;
+	if (account_nss_user(SWITCHBOARD_DEFAULT_USER, user) == -1 ||
+	    account_nss_group(SWITCHBOARD_DEFAULT_GROUP, &group) == -1)
 		goto fail;
-	}
-	if (user->pw_uid == 0 || user->pw_gid != group->gr_gid ||
-	    strcmp(user->pw_dir, "/nonexistent") != 0 ||
-	    strcmp(user->pw_shell, "/usr/sbin/nologin") != 0) {
+
+	if (user->uid == 0 || user->gid != group ||
+	    strcmp(user->home, "/nonexistent") != 0 ||
+	    strcmp(user->shell, "/usr/sbin/nologin") != 0) {
 		errno = EPERM;
 		goto fail;
 	}
 	syslog(LOG_INFO, "default service identity validated: %s:%s "
 	    "uid=%ju gid=%ju",
 	    SWITCHBOARD_DEFAULT_USER, SWITCHBOARD_DEFAULT_GROUP,
-	    (uintmax_t)user->pw_uid, (uintmax_t)group->gr_gid);
+	    (uintmax_t)user->uid, (uintmax_t)group);
 	SWITCHBOARD_PROBE_IDENTITY_VALIDATE(SWITCHBOARD_DEFAULT_USER,
 	    SWITCHBOARD_DEFAULT_GROUP, 0);
 	switchboard_audit(AUE_SWITCHBOARD_SVC_EXEC, getuid(), 0,
 	    "pkgbase default identity validated user=%s group=%s uid=%ju gid=%ju",
 	    SWITCHBOARD_DEFAULT_USER, SWITCHBOARD_DEFAULT_GROUP,
-	    (uintmax_t)user->pw_uid, (uintmax_t)group->gr_gid);
+	    (uintmax_t)user->uid, (uintmax_t)group);
 	return (0);
 
 fail:

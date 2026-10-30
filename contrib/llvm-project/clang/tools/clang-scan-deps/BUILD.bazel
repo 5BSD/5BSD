@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(['ClangScanDeps.cpp', 'Opts.td'], visibility = ["//usr.bin/clang/clang-scan-deps:__pkg__"])

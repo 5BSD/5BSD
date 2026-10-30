@@ -118,6 +118,11 @@ FILESGROUPS+= FIDL_NOTICE
 FIDL_NOTICE= ${SRCTOP}/contrib/fuchsia/LICENSE ${SRCTOP}/contrib/fuchsia/PATENTS
 FIDL_NOTICEDIR= /usr/share/licenses/bsdaudit-tests/fuchsia
 
+# Record the package license ancestor as well as the notice directory.
+DIRS+= FIDL_NOTICEPARENT
+FIDL_NOTICEPARENT= ${FIDL_NOTICEDIR:H}
+FIDL_NOTICEPARENTTAGS= ${FIDL_NOTICEDIRTAGS}
+
 .PATH: ${.CURDIR}/evolution
 
 # Bindings generated at build time (fidl-bindings.mk).

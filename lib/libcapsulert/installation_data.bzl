@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+MANUAL_ALIASES = ['parse_port_range_string', 'parse_port_range_obj', 'parse_address_string', 'parse_net_protocol_string', 'parse_bdaddr_string', 'parse_jail_action_string', 'parse_jail_actions', 'parse_file_action_string', 'parse_file_actions', 'parse_storage_right_string', 'parse_storage_rights', 'parse_storage_lifetime_string', 'ort_net_domain_name', 'ort_net_direction_name', 'ort_net_protocol_name']

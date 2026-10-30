@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_compare_test.bzl", "bsd_compare_test")
+# Direct stdin cases from maintained regress.sh, using its unchanged fixtures.
+# Shell-generated inputs and in-place cases are not represented by this set.
+_CASES = {'G': 'G', 'P': 'P', 'psl': '$!g;P;D', 'c0': 'c\\\nfoo\n', 'c1': '4,$c\\\nfoo\n', 'c2': '3,9c\\\nfoo\n', 'c3': '3,/no such string/c\\\nfoo\n', 'b2a': '2,3b\n1,2d', 'icase1': '/SED/Id', 'icase2': 's/SED/Foo/I', 'icase3': 's/SED/Foo/', 'icase4': 's/SED/Foo/i'}
+[bsd_compare_test(name = "legacy_" + case, program = "//usr.bin/sed:sed",
+    arguments = [script], input = "regress.in", expected = "regress." + case + ".out",
+    runner = "//tools/build/bazel:byte_compare_runner", size = "small")
+ for case, script in _CASES.items()]

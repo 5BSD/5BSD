@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+cc_binary(name = "sysextctl", srcs = ["sysextctl.c"],
+    deps = ["//lib/libcapsulert:headers", '//lib/libextensioncmp:extensioncmp', '//lib/libservice:service'], dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared'],
+    copts = ["-fPIE"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "sysextctl", manual = "sysextctl.8",
+    package = "sysextctl", bindir = "/usr/sbin", man_section = "8")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=sysextctl","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+cc_library(name = "test_source", textual_hdrs = ["sysextctl.c"], visibility = ["//usr.sbin/sysextctl/tests:__pkg__"])
+exports_files(["sysextctl.c"], visibility = ["//usr.sbin/sysextctl/tests:__pkg__"])
+
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/sysextctl/tests:install_helper", "//usr.sbin/sysextctl/tests:install_extra"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=sysextctl","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {'/usr/tests/usr.sbin/sysextctl': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=sysextctl-tests"]}', '/usr/lib/debug/usr': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=sysextctl-tests", "dbg"]}', '/usr/lib/debug/usr/tests': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=sysextctl-tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.sbin': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=sysextctl-tests", "dbg"]}', '/usr/lib/debug/usr/tests/usr.sbin/sysextctl': '{"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=sysextctl-tests", "dbg"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

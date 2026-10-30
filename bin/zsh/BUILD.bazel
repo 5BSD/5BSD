@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# These tables describe the target ABI, never the execution host's signals
+# or errno values. Keep the upstream AWK algorithms and declared preprocessing.
+_TABLES = [
+    ("sig", "signames", "Src", "signal.h", "SIGCOUNT"),
+    ("err", "errnames", "Src/Modules", "errno.h", "ERRCOUNT"),
+]
+[bsd_script_output(
+    name = stem + "_candidates", script = "table-awk.sh",
+    src = "//contrib/zsh:" + directory + "/" + stem + "1.awk",
+    additional_sources = ["//sys/sys:" + header],
+    input_mode = "argument", output = prefix + "tmp.c",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = stem + "_preprocessed", script = "table-cpp.sh",
+    src = ":" + stem + "_candidates", input_mode = "argument", output = prefix + "tmp.out",
+    use_cpp = True, compiler_inputs = "@bsd_sdk//toolchain:compile_inputs",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = stem, script = "table-awk.sh",
+    src = "//contrib/zsh:" + directory + "/" + stem + "2.awk",
+    additional_sources = [":" + stem + "_preprocessed"],
+    input_mode = "argument", output = stem + ".c",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+[bsd_script_output(
+    name = prefix + "count", script = "table-count.sh",
+    src = ":" + stem, arguments = [count],
+    input_mode = "argument", output = prefix + "count.h",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk"},
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:awk_runtime"],
+) for prefix, stem, directory, header, count in _TABLES]
+filegroup(name = "tables", srcs = [":signames", ":errnames", ":sigcount", ":errcount"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_import")
+load(":sources.bzl", "ZSH_SOURCES")
+cc_library(name = "imported_headers", hdrs = glob(["generated/**"]) + ["trace_pressure.h"],
+    includes = [".", "generated/Src", "generated/Src/Zle", "generated/Src/Modules", "generated/Src/Builtins"])
+cc_library(name = "table_headers", hdrs = [":sigcount", ":errcount"], strip_include_prefix = ".")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_DYNAMIC_ROOT = "//tools/build/bazel/config:dynamic_root_enabled"
+bsd_dtrace_header(
+    name = "provider", source = "zsh_provider.d", output = "zsh_provider.h",
+    flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
+    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    drti = "//cddl/lib/drti:drti",
+    runtime_libraries = ['//cddl/lib/libdtrace:dtrace_shared', '//cddl/lib/libctf:ctf_shared', '//lib/libelf:elf_shared', '//lib/libproc:proc_shared', '//cddl/lib/libspl:spl_shared', '//lib/libxo/libxo:xo_shared', '//lib/libutil:util_shared', '//lib/libprocstat:procstat_shared', '//lib/librtld_db:rtld_db_shared', '//lib/libcxxrt:cxxrt_shared', '//lib/libz:z_shared', '//lib/libkvm:kvm_shared'],
+    tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
+        "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
+)
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+
+
+_DEPS = ["//lib/ncurses/ncurses:ncurses", "//lib/ncurses/tinfo:tinfo", "//lib/msun:m"]
+cc_library(name = "objects", srcs = ZSH_SOURCES + [":signames", ":errnames"],
+    deps = _DEPS,
+    implementation_deps = [":imported_headers", ":table_headers", "//contrib/zsh:headers", "//lib/ncurses/tinfo:public_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+    local_defines = ["HAVE_CONFIG_H", "BOOL_DEFINED", "'MACHTYPE=\"amd64\"'", "FIVEBSD_TRACE"] + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
+    copts = ["-std=gnu17"] + select({_DYNAMIC_ROOT: ["-fPIE"], "//conditions:default": []}),
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "zsh_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + _DEPS)
+cc_binary(name = "zsh", deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
+    dynamic_deps = select({_DYNAMIC_ROOT: ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared"], "//conditions:default": []}),
+    features = select({_DYNAMIC_ROOT: [], "//conditions:default": ["fully_static_link"]}),
+    linkopts = select({_DYNAMIC_ROOT: ["-pie"], "//conditions:default": []}), target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_program_test.bzl", "bsd_program_test")
+bsd_program_test(name = "runtime_smoke", program = ":zsh",
+    runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'source \"$$TEST_SRCDIR/$$1\"'", "zsh-smoke", "$(rlocationpath :native-smoke.zsh)"], data = ["native-smoke.zsh"],
+    runtime_lib = select({_DYNAMIC_ROOT: ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], "//conditions:default": []}))
+
+load(":functions.bzl", "ZSH_FUNCTIONS")
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_soelim.bzl", "bsd_soelim")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_MANUALS = ['zsh', 'zshall', 'zshbuiltins', 'zshcalsys', 'zshcompctl', 'zshcompsys', 'zshcompwid', 'zshcontrib', 'zshexpn', 'zshmisc', 'zshmodules', 'zshoptions', 'zshparam', 'zshroadmap', 'zshtcpsys', 'zshzftpsys', 'zshzle']
+bsd_soelim(name = "combined_manual", src = "//contrib/zsh:Doc/zshall.1", output = "zshall.1",
+    includes = {"//contrib/zsh:Doc/" + m + ".1": "man1/" + m + ".1" for m in _MANUALS if m != "zshall"},
+    soelim = "//usr.bin/soelim:soelim", redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_template(name = "run_help", template = "//contrib/zsh:Functions/Misc/run-help", output = "run-help",
+    substitutions = {"@runhelpdir@": "/usr/share/zsh/help"})
+_FUNCTIONS = [f for f in ZSH_FUNCTIONS if f.split("/")[-1] not in ["run-help", "_mdo"]]
+[bsd_install_file(name = "function_" + str(i), src = f, destination = "/usr/share/zsh/functions/" + f.split("/")[-1],
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime"]) for i, f in enumerate(_FUNCTIONS)]
+[bsd_install_file(name = "local_" + n, src = s, destination = d, owner = "root", group = "wheel", mode = mode,
+    install_tags = ["package=runtime"] + (["config"] if config else [])) for n, s, d, mode, config in [
+    ("run_help", ":run_help", "/usr/share/zsh/functions/run-help", "0444", False),
+    ("mdo", "_mdo", "/usr/share/zsh/functions/_mdo", "0444", False),
+    ("license", "//contrib/zsh:LICENCE", "/usr/share/doc/zsh/LICENCE", "0444", False),
+    ("zshrc", "zshrc", "/etc/zshrc", "0644", True),
+    ("root_profile", "//share/skel:dot.zprofile", "/root/.zprofile", "0644", True),
+    ("root_rc", "//share/skel:dot.zshrc", "/root/.zshrc", "0644", True),
+]]
+[bsd_compress(name = "manual_" + m, src = ":combined_manual" if m == "zshall" else "//contrib/zsh:Doc/" + m + ".1",
+    output = m + ".1.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"]) for m in _MANUALS]
+[bsd_install_file(name = "install_manual_" + m, src = ":manual_" + m, destination = "/usr/share/man/man1/" + m + ".1.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]})) for m in _MANUALS]
+utility_installation(name = "install_manifest", program = "zsh", manual = None, package = "runtime", bindir = "/bin",
+    extra_entries = [":function_" + str(i) for i in range(len(_FUNCTIONS))] +
+        [":local_" + n for n in ["run_help", "mdo", "license", "zshrc", "root_profile", "root_rc"]] +
+        [":install_manual_" + m for m in _MANUALS])
+bsd_install_archive(name = "install_archive", visibility = ["//bin:__pkg__"], manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}' for d in ["/etc", "/usr/share/zsh", "/usr/share/zsh/functions", "/usr/share/doc/zsh"]} |
+        {"/root": '{"owner":"root","group":"wheel","mode":"0750","tags":["package=runtime"]}', "/usr/lib/debug/bin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+# Upstream tests intentionally exercise host tools, NSS, locales and PTYs.
+# Do not cache these as hermetic tests or hide upstream skips.
+bsd_program_test(name = "upstream_tests", program = ":zsh",
+    runner = "//tools/build/bazel:program_test_runner",
+    args = ["-f", "-c", "'source \"$$TEST_SRCDIR/$$1\" \"$$TEST_SRCDIR/$$2\" \"$$TEST_SRCDIR/$$3\" \"$$TEST_SRCDIR/$$4\"'", "zsh-upstream",
+        "$(rlocationpath :upstream-tests.zsh)", "$(rlocationpath //contrib/zsh:Test/runtests.zsh)", "$(rlocationpath :generated/config.h)", "$(rlocationpath :modules.conf)"],
+    data = ["upstream-tests.zsh", "generated/config.h", "modules.conf", "//contrib/zsh:Test/runtests.zsh", "//contrib/zsh:upstream_test_data"],
+    runtime_lib = select({_DYNAMIC_ROOT: ["//lib/ncurses/ncurses:ncurses_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"], "//conditions:default": []}),
+    tags = ["local", "external", "no-remote", "no-cache"], timeout = "long")

@@ -513,6 +513,12 @@ child_process(entry *e, user *u)
 			}
 # endif /*DEBUGGING*/
 			CRON_PROBE_JOB_RUN(usernm, e->cmd);
+			/* User jobs inherit only their redirected standard streams.
+			 * PAM and account setup may have opened descriptors after
+			 * the pipe setup; none grants authority to the job shell.
+			 * The session parent retains its own descriptor table.
+			 */
+			closefrom(STDERR + 1);
 			execl(shell, shell, "-c", e->cmd, (char *)NULL);
 			TRACE_CRON_JOB__EXEC__ERROR(errno);
 			warn("execl: couldn't exec `%s'", shell);

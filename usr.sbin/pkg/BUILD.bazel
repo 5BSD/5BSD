@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+cc_binary(name = "pkg", srcs = ["pkg.c", "rsa.c", "dns_utils.c", "config.c", "ecc.c", "hash.c",
+    "pkg.h", "dns_utils.h", "config.h", "hash.h"],
+    deps = ["//lib/libarchive:archive", "//lib/libder:der_pie", "//lib/libfetch:fetch",
+        "//secure/lib/libpkgecc:pkgecc_pie", "//lib/libucl:ucl", "//secure/lib/libcrypto:crypto",
+        "//secure/lib/libssl:ssl", "//lib/libutil:util", "//lib/libmd:md_link"],
+    dynamic_deps = ["//lib/libarchive:archive_shared", "//lib/libfetch:fetch_shared",
+        "//lib/libucl:ucl_shared", "//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared",
+        "//lib/libutil:util_shared", "//lib/libmd:md_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load(":repository.bzl", "default_repository", "repository_install")
+default_repository(name = "default_repository", visibility = ["//visibility:public"])
+repository_install(name = "repository_config", visibility = ["//usr.sbin/pkg/tests:__pkg__"])
+exports_files(["FreeBSD.conf.latest", "FreeBSD.conf.quarterly", "FreeBSD.conf.quarterly-release"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+utility_installation(name = "install_program", program = "pkg", manual = "pkg.7", man_section = "7", package = "pkg-bootstrap", bindir = "/usr/sbin")
+[bsd_install_file(name = "config_" + name, src = source, destination = "/etc/pkg/" + name,
+    owner = "root", group = "wheel", mode = "0644", install_tags = ["package=pkg-bootstrap", "config"])
+ for name, source in [("5BSD.conf", "5BSD.conf.in"), ("5BSD-hardware.conf", "5BSD-hardware.conf"), ("5BSD-ports.conf", "5BSD-ports.conf")]]
+bsd_install_manifest(name = "install_configs", entries = [":repository_config", ":config_5BSD.conf", ":config_5BSD-hardware.conf", ":config_5BSD-ports.conf"])
+bsd_install_archive(name = "install_archive", manifests = [":install_program", ":install_configs"],
+    directories = {"/etc/pkg": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pkg-bootstrap","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_test")
+cc_test(name = "signature_test", srcs = ["//usr.sbin/pkg/tests:signature_test.c", "rsa.c", "ecc.c", "hash.c", "pkg.h", "hash.h", "config.h"],
+    deps = ["//lib/libder:der", "//secure/lib/libpkgecc:pkgecc", "//secure/lib/libcrypto:crypto",
+        "//secure/lib/libssl:ssl", "//lib/libmd:md_link"],
+    dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared", "//lib/libmd:md_shared"],
+    copts = ["-UNDEBUG"], features = ["bsd_test_runtime_paths"], linkstatic = True,
+    size = "small", visibility = ["//visibility:public"])

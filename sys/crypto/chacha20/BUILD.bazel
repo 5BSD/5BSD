@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["chacha.h", "_chacha.h"], includes = ["../.."], visibility = ["//sys/libkern:__pkg__"])
+
+# arc4random embeds chacha.c; expose only that implementation and its headers.
+cc_library(name = "libc_headers", hdrs = ["chacha.h", "_chacha.h"],
+    strip_include_prefix = "/sys", visibility = [":__pkg__"])
+cc_library(name = "libc_embedded", hdrs = ["chacha.c"],
+    strip_include_prefix = ".", deps = [":libc_headers"],
+    visibility = ["//lib/libc/gen:__pkg__"])

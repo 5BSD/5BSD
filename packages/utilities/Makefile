@@ -1,5 +1,9 @@
+.include <src.opts.mk>
+
 WORLDPACKAGE=	utilities
 SUBPACKAGES=	dbg dev man
+SUBPACKAGES.${MK_TESTS}+= tests
+SUBPACKAGES.${MK_TESTS}.${MK_DEBUG_FILES}+= tests-dbg
 COMPAT_PKG=	yes
 COMPAT_PKGS=	dbg dev
 

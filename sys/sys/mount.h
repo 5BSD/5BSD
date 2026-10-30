@@ -471,10 +471,11 @@ struct mntoptnames {
 #define	MNT_EMPTYDIR	0x0000002000000000ULL /* Only mount on empty dir */
 #define	MNT_RECURSE	0x0000100000000000ULL /* recursively unmount uppers */
 #define	MNT_DEFERRED    0x0000200000000000ULL /* unmount in async context */
+#define	MNT_BYCAP	0x0000400000000000ULL /* kernel-only last-anchor release */
 #define	MNT_CMDFLAGS   (MNT_UPDATE	| MNT_DELEXPORT	| MNT_RELOAD	| \
 			MNT_FORCE	| MNT_SNAPSHOT	| MNT_NONBUSY	| \
 			MNT_BYFSID	| MNT_NOCOVER	| MNT_EMPTYDIR	| \
-			MNT_RECURSE	| MNT_DEFERRED)
+			MNT_RECURSE	| MNT_DEFERRED | MNT_BYCAP)
 
 /*
  * Internal filesystem control flags stored in mnt_kern_flag.
@@ -504,7 +505,7 @@ struct mntoptnames {
 					      EFAULT. */
 #define	MNTK_RECURSE		0x00000200 /* pending recursive unmount */
 #define	MNTK_UPPER_WAITER	0x00000400 /* waiting to drain MNTK_UPPER_PENDING */
-/* UNUSED 			0x00000800 */
+#define	MNTK_ANON		0x00000800 /* created by vfs_mount_anon; immutable */
 #define	MNTK_UNLOCKED_INSMNTQUE	0x00001000 /* fs does not lock the vnode for
 					      insmntque */
 #define	MNTK_UNMAPPED_BUFS	0x00002000
@@ -1109,7 +1110,11 @@ void	vfs_mount_set_parent(struct mount *, struct mount *);
  */
 #define	VFS_ANON_FSPATH	"[anon]"
 int	vfs_mount_anon(struct thread *, const char *, struct vfsoptlist *,
-	    uint64_t, struct mount **);
+	    uint64_t, struct ucred *, struct mount **);
+/* Last-capability-anchor release; consumes one reference on every return.
+ * Only a kernel capability implementation may call this after its final
+ * anchor goes away. It cannot unmount a namespace-attached or root mount. */
+int	vfs_unmount_anon(struct mount *, struct thread *);
 struct mount *vfs_mount_alloc(struct vnode *, struct vfsconf *, const char *,
 	    struct ucred *);
 int	vfs_suser(struct mount *, struct thread *);

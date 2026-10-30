@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["rtld_libc.h", "libc_private.h", "namespace.h", "un-namespace.h"],
+    strip_include_prefix = ".", visibility = ["//libexec/rtld-elf:__pkg__"])
+
+load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
+rtld_libc_source_exports('libexec/rtld-elf/rtld-libc')

@@ -12,6 +12,10 @@
 
 #include <sys/stat.h>
 
+#include <sys/types.h>
+#include <sys/capsicum.h>
+#include <fcntl.h>
+
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -192,8 +196,7 @@ ATF_TC_BODY(session_policy_resolution_order, tc)
 
 /*
  * Closed entry schema: an unknown key or a non-boolean value inside default{}
- * or a clients{} entry rejects the whole text, and the parse output falls
- * back to the compiled-in defaults (never a half-applied table).
+ * or a clients{} entry rejects the whole text and clears all normal grants.
  */
 ATF_TC_WITHOUT_HEAD(unknown_or_mistyped_key_rejects_config);
 ATF_TC_BODY(unknown_or_mistyped_key_rejects_config, tc)
@@ -203,16 +206,16 @@ ATF_TC_BODY(unknown_or_mistyped_key_rejects_config, tc)
 	ATF_CHECK_ERRNO(EINVAL, networkcmp_config_parse(
 	    "clients { \"org.test.render\" { conect = false; } }\n",
 	    &config) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 	ATF_CHECK_EQ(0, (int)config.nclients);
 
 	ATF_CHECK_ERRNO(EINVAL, networkcmp_config_parse(
 	    "default { connect = 3; }\n", &config) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 
 	ATF_CHECK_ERRNO(EINVAL, networkcmp_config_parse(
 	    "defaults { connect = true; }\n", &config) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 }
 
 /*
@@ -223,7 +226,7 @@ ATF_TC_BODY(bad_labels_reject_config, tc)
 {
 	struct networkcmp_config config;
 
-	ATF_CHECK_ERRNO(EEXIST, networkcmp_config_parse(
+	ATF_CHECK_ERRNO(EINVAL, networkcmp_config_parse(
 	    "clients { \"org.a\" { connect = false; }\n"
 	    "  \"org.a\" { udp = false; } }\n", &config) == -1);
 	ATF_CHECK_EQ(0, (int)config.nclients);
@@ -235,26 +238,25 @@ ATF_TC_BODY(bad_labels_reject_config, tc)
 }
 
 /*
- * FAIL-SOFT on a malformed FILE (the bsdextension lesson): a file the parser
- * cannot read must leave the compiled-in default policy in place and never
- * brick the provider — the caller logs LOG_WARNING and carries on.
+ * A malformed file must not replace configured restrictions with the compiled
+ * outbound grant. Production startup treats the returned error as fatal.
  */
-ATF_TC_WITHOUT_HEAD(malformed_file_falls_back_to_defaults);
-ATF_TC_BODY(malformed_file_falls_back_to_defaults, tc)
+ATF_TC_WITHOUT_HEAD(malformed_file_revokes_grants);
+ATF_TC_BODY(malformed_file_revokes_grants, tc)
 {
 	struct networkcmp_config config;
 	const char *path;
 
 	path = write_conf("clients { \"org.broken");
 	ATF_CHECK(networkcmp_config_load(&config, path) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 	ATF_CHECK_EQ(0, (int)config.nclients);
 	(void)unlink(path);
 
-	/* A non-object root is malformed; defaults must stand. */
+	/* A non-object root must not restore outbound grants. */
 	path = write_conf("[ 1, 2, 3 ]");
 	ATF_CHECK(networkcmp_config_load(&config, path) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 	(void)unlink(path);
 }
 
@@ -274,10 +276,10 @@ ATF_TC_BODY(missing_file_uses_defaults, tc)
 }
 
 /*
- * A group/other-writable config is untrusted and rejected fail-soft.
+ * A group/other-writable config is untrusted and must not restore grants.
  */
-ATF_TC_WITHOUT_HEAD(writable_file_rejected_keeps_defaults);
-ATF_TC_BODY(writable_file_rejected_keeps_defaults, tc)
+ATF_TC_WITHOUT_HEAD(writable_file_rejected_revokes_grants);
+ATF_TC_BODY(writable_file_rejected_revokes_grants, tc)
 {
 	struct networkcmp_config config;
 	const char *path;
@@ -286,7 +288,7 @@ ATF_TC_BODY(writable_file_rejected_keeps_defaults, tc)
 	ATF_REQUIRE_EQ(0, chmod(path, 0666));
 	ATF_CHECK_ERRNO(EPERM,
 	    networkcmp_config_load(&config, path) == -1);
-	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
 	ATF_CHECK_EQ(0, (int)config.nclients);
 	(void)unlink(path);
 }
@@ -328,8 +330,80 @@ ATF_TC_BODY(arguments, tc)
 	    "org.a", SERVICE_RIGHTS_NONE, NULL, NULL) == -1);
 }
 
+
+ATF_TC_WITHOUT_HEAD(strict_policy_inputs);
+ATF_TC_BODY(strict_policy_inputs, tc)
+{
+	struct networkcmp_config config;
+	const char *bad[] = {
+	    "\"default\\u0000suffix\" { internal = true; };",
+	    "default { \"internal\\u0000suffix\" = true; };",
+	    "clients { \"org.test\\u0000suffix\" { internal = true; }; };",
+	    "default { connect = false; }; unknown = true;",
+	};
+	FILE *file;
+
+	(void)tc;
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		ATF_CHECK_MSG(networkcmp_config_parse(bad[i], &config) == -1,
+		    "accepted malformed input: %s", bad[i]);
+		ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
+		ATF_CHECK_EQ(0, config.nclients);
+	}
+	file = fopen("external.ucl", "w");
+	ATF_REQUIRE(file != NULL);
+	ATF_REQUIRE(fputs("default { internal = true; };", file) >= 0);
+	ATF_REQUIRE_EQ(0, fclose(file));
+	ATF_CHECK_EQ(-1, networkcmp_config_parse(".include \"external.ucl\"\n", &config));
+	ATF_CHECK(!networkcmp_policy_permits_any(&config.default_policy));
+	ATF_REQUIRE_EQ(0, unlink("external.ucl"));
+}
+
+
+ATF_TC_WITHOUT_HEAD(confined_descriptor_policy);
+ATF_TC_BODY(confined_descriptor_policy, tc)
+{
+	struct networkcmp_config config;
+	const char text[] = "default { internal = true; };";
+	char path[] = "confined-policy.XXXXXX";
+	cap_rights_t rights;
+	int fd;
+
+	(void)tc;
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, unlink(path));
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(text) - 1), write(fd, text, sizeof(text) - 1));
+	cap_rights_init(&rights, CAP_PREAD, CAP_FSTAT);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(fd, &rights));
+	ATF_REQUIRE_EQ(0, cap_enter());
+	/* The descriptor is at EOF and has no ordinary namespace authority. */
+	ATF_REQUIRE_EQ(0, networkcmp_config_load_fd(&config, fd));
+	ATF_REQUIRE(config.default_policy.allow_internal);
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+}
+
+ATF_TC_WITHOUT_HEAD(shipped_policy);
+ATF_TC_BODY(shipped_policy, tc)
+{
+	struct networkcmp_config config;
+	char path[4096];
+
+	snprintf(path, sizeof(path),
+	    "%s/srctree/usr.sbin/BSDNetwork/capbundle/bsdnetwork.conf",
+	    atf_tc_get_config_var(tc, "srcdir"));
+	ATF_REQUIRE_EQ(0, access(path, R_OK));
+	ATF_REQUIRE_EQ(0, networkcmp_config_load(&config, path));
+	check_shipped_default(&config.default_policy);
+	ATF_CHECK(!config.default_policy.allow_listen);
+	ATF_CHECK_EQ(0, config.nclients);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, shipped_policy);
+	ATF_TP_ADD_TC(tp, confined_descriptor_policy);
+	ATF_TP_ADD_TC(tp, strict_policy_inputs);
 
 	ATF_TP_ADD_TC(tp, compiled_default_matches_historical_grant);
 	ATF_TP_ADD_TC(tp, client_entry_overrides_and_inherits);
@@ -338,9 +412,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, session_policy_resolution_order);
 	ATF_TP_ADD_TC(tp, unknown_or_mistyped_key_rejects_config);
 	ATF_TP_ADD_TC(tp, bad_labels_reject_config);
-	ATF_TP_ADD_TC(tp, malformed_file_falls_back_to_defaults);
+	ATF_TP_ADD_TC(tp, malformed_file_revokes_grants);
 	ATF_TP_ADD_TC(tp, missing_file_uses_defaults);
-	ATF_TP_ADD_TC(tp, writable_file_rejected_keeps_defaults);
+	ATF_TP_ADD_TC(tp, writable_file_rejected_revokes_grants);
 	ATF_TP_ADD_TC(tp, wellformed_file_loads);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());

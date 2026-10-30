@@ -75,7 +75,7 @@
 #define	BSDFILESYSTEM_OP_ROLLBACK		13	/* roll a claim back to a version */
 #define	BSDFILESYSTEM_OP_OPEN_VERSION		14	/* mount a version read-only */
 #define	BSDFILESYSTEM_OP_TXN_BEGIN		15	/* open a writable staging clone */
-#define	BSDFILESYSTEM_OP_TXN_COMMIT		16	/* atomically swap a txn in */
+#define	BSDFILESYSTEM_OP_TXN_COMMIT		16	/* replace claim with staging clone */
 #define	BSDFILESYSTEM_OP_TXN_ABORT		17	/* discard a txn's staging clone */
 #define	BSDFILESYSTEM_OP_UNMOUNT		18	/* drop the caller's claim mount anchor */
 
@@ -334,7 +334,7 @@ struct bsdfilesystem_stat_reply {
  *   namespace and is reaped when the connection ends, so the caller must have
  *   BEGIN_SESSION'd first (ENXIO otherwise).
  *
- * Atomic multi-file transactions (system.Filesystem #3) reuse the same
+ * Staged multi-file updates (system.Filesystem #3) reuse the same
  * bsdfilesystem_version_request (the txn id travels in .version):
  *
  * BSDFILESYSTEM_OP_TXN_BEGIN
@@ -348,10 +348,13 @@ struct bsdfilesystem_stat_reply {
  * BSDFILESYSTEM_OP_TXN_COMMIT
  *   req:   struct bsdfilesystem_version_request (op, dataset, ..., version = txn id)
  *   reply: struct bsdfilesystem_reply { .status }
- *   Atomically swap the staging clone in as the claim: promote the clone, then
- *   rename it over the claim (whole-subtree, all-or-nothing).  The claim must
- *   not be actively mounted/held by another holder (EBUSY otherwise) -- the
- *   caller RELEASEs its own claim mount before committing.
+ *   Replace the claim through promotion and two separate dataset renames.
+ *   This sequence is not an atomic namespace operation and has no durable
+ *   commit/recovery record. Interruption can leave the original claim under
+ *   a staging name; failure rollback is best-effort. Do not use this API as
+ *   an authenticated system-generation activation or crash-safe commit.
+ *   The claim must not be actively mounted/held by another holder (EBUSY
+ *   otherwise); the caller RELEASEs its own claim mount before committing.
  *
  * BSDFILESYSTEM_OP_TXN_ABORT
  *   req:   struct bsdfilesystem_version_request (op, dataset, ..., version = txn id)

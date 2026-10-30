@@ -243,8 +243,58 @@ ATF_TC_BODY(storage_lifetimes, tc)
 	ATF_CHECK(parse_storage_lifetime_string("forever", &lifetime) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(port_range_grammar);
+ATF_TC_BODY(port_range_grammar, tc)
+{
+	static const char *const bad[] = {
+	    "", "0-", "1-", "-1", "+1", " 1", "1-+2", "1- 2", "<", ".",
+	    "<+2", "< 2", "65536", "1-65536", "2-1", "1-2x", "1-2-3",
+	    "18446744073709551616", "1-18446744073709551616"
+	};
+	uint16_t low, high;
+
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+		ATF_CHECK_MSG(parse_port_range_string(bad[i], &low, &high) == -1,
+		    "accepted malformed port range: %s", bad[i]);
+	ATF_REQUIRE_EQ(0, parse_port_range_string("0-65535", &low, &high));
+	ATF_CHECK_EQ(0, low);
+	ATF_CHECK_EQ(65535, high);
+	ATF_REQUIRE_EQ(0, parse_port_range_string("<65536", &low, &high));
+	ATF_CHECK_EQ(0, low);
+	ATF_CHECK_EQ(65535, high);
+	ATF_REQUIRE_EQ(0, parse_port_range_string(".1", &low, &high));
+	ATF_CHECK_EQ(0, low);
+	ATF_CHECK_EQ(0, high);
+	ATF_REQUIRE_EQ(0, parse_port_range_string("443", &low, &high));
+	ATF_CHECK_EQ(443, low);
+	ATF_CHECK_EQ(443, high);
+}
+
+ATF_TC_WITHOUT_HEAD(address_prefix_grammar);
+ATF_TC_BODY(address_prefix_grammar, tc)
+{
+	static const char *const bad[] = {
+	    "10.0.0.1/", "10.0.0.1/+1", "10.0.0.1/ 1", "10.0.0.1/33",
+	    "::1/", "::1/+1", "::1/ 1", "::1/129", "::1/1x"
+	};
+	uint8_t addr[16], prefix;
+	int domain;
+
+	for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+		ATF_CHECK_MSG(parse_address_string(bad[i], addr, &prefix, &domain) == -1,
+		    "accepted malformed address: %s", bad[i]);
+	ATF_REQUIRE_EQ(0, parse_address_string("10.0.0.1/0", addr, &prefix, &domain));
+	ATF_CHECK_EQ(0, prefix);
+	ATF_CHECK_EQ(AF_INET, domain);
+	ATF_REQUIRE_EQ(0, parse_address_string("::1/128", addr, &prefix, &domain));
+	ATF_CHECK_EQ(128, prefix);
+	ATF_CHECK_EQ(AF_INET6, domain);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, port_range_grammar);
+	ATF_TP_ADD_TC(tp, address_prefix_grammar);
 
 	ATF_TP_ADD_TC(tp, protocol_names);
 	ATF_TP_ADD_TC(tp, bdaddr_wildcard);

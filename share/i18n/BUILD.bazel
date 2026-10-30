@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//share/i18n/csmapper:index_policy.bzl", "MAPPER_FAMILIES")
+load("//share/i18n/esdb:indexes.bzl", "ENCODING_FAMILIES")
+_DIRECTORIES = ["/usr/share/i18n/csmapper", "/usr/share/i18n/esdb"] + [
+    "/usr/share/i18n/csmapper/" + family["name"] for family in MAPPER_FAMILIES
+] + ["/usr/share/i18n/esdb/" + directory for directory, _, _, _ in ENCODING_FAMILIES]
+bsd_install_archive(name = "install_archive",
+    manifests = ["//share/i18n/csmapper:install_manifest", "//share/i18n/esdb:install_manifest"],
+    directories = {path: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}' for path in _DIRECTORIES},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

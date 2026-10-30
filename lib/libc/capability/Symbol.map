@@ -12,3 +12,7 @@ FBSD_1.3 {
 FBSD_1.8 {
 	cap_rights_is_empty;
 };
+
+FBSD_1.9 {
+	cap_rights_intersect;
+};

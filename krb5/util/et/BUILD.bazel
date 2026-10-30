@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_import", "cc_test")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load(":error_table.bzl", "mit_error_table")
+cc_library(name = "com_err", srcs = ["//crypto/krb5/src/util/et:" + f for f in ["com_err.c", "error_message.c", "et_name.c"]],
+    deps = ["//crypto/krb5/src/util/et:headers", "//krb5/util/support:krb5support"],
+    linkstatic = True, visibility = ["//visibility:public"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_archive(name = "static_archive", groups = [":com_err"], visibility = ["//visibility:public"])
+cc_shared_library(name = "com_err_shared", deps = [":com_err"],
+    dynamic_deps = ["//krb5/util/support:krb5support_shared"],
+    shared_lib_name = "libcom_err.so.122", additional_linker_inputs = ["version.map"],
+    user_link_flags = ["-Wl,--version-script=$(location version.map)", "-Wl,-z,defs", "-Wl,-soname,libcom_err.so.122"],
+    visibility = ["//visibility:public"])
+[
+    mit_error_table(name = table, src = "//crypto/krb5/src/util/et:" + table + ".et", basename = table,
+        awk = "@bsd_sdk//toolchain:awk", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+    for table in ["et1", "et2"]
+]
+cc_import(name = "archive_link", static_library = ":static_archive")
+cc_test(name = "error_table_test", srcs = ["//crypto/krb5/src/util/et:t_com_err.c", ":et1", ":et2"],
+    deps = [":archive_link", "//crypto/krb5/src/util/et:headers", "//krb5/util/support:krb5support"],
+    includes = ["."], size = "small")
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    visibility = ["//krb5:__pkg__"],
+    manifests = [":install_manifest"],
+    directories = {
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}',
+        "/usr/lib/debug/usr/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dbg"]}',
+        "/usr/share/et": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=kerberos","dev"]}',
+    },
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

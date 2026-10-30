@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_yacc(name = "parser", src = "parse.y", output = "parse.c", header = "y.tab.h", report = "parse.output", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source", visibility = ["//sbin/hastctl:__pkg__", "//usr.sbin/bsnmpd/modules/snmp_hast:__pkg__"])
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+bsd_lex(name = "lexer", src = "token.l", output = "token.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4", visibility = ["//sbin/hastctl:__pkg__", "//usr.sbin/bsnmpd/modules/snmp_hast:__pkg__"])
+cc_library(name = "headers", hdrs = ['activemap.h', 'control.h', 'ebuf.h', 'event.h', 'hast.h', 'hast_checksum.h', 'hast_compression.h', 'hast_proto.h', 'hastd.h', 'hooks.h', 'lzf.h', 'metadata.h', 'nv.h', 'pjdlog.h', 'proto.h', 'proto_impl.h', 'rangelock.h', 'refcnt.h', 'subr.h', 'synch.h'] + [":parser_header"], strip_include_prefix = ".", visibility = ["//sbin/hastctl:__pkg__", "//usr.sbin/bsnmpd/modules/snmp_hast:__pkg__"])
+exports_files(['activemap.c', 'ebuf.c', 'hast_checksum.c', 'hast_compression.c', 'hast_proto.c', 'lzf.c', 'metadata.c', 'nv.c', 'pjdlog.c', 'proto.c', 'proto_common.c', 'proto_uds.c', 'subr.c'], visibility = ["//sbin/hastctl:__pkg__", "//usr.sbin/bsnmpd/modules/snmp_hast:__pkg__"])
+cc_binary(name = "hastd", srcs = ['activemap.c', 'control.c', 'ebuf.c', 'event.c', 'hast_checksum.c', 'hast_compression.c', 'hast_proto.c', 'hastd.c', 'hooks.c', 'lzf.c', 'metadata.c', 'nv.c', 'secondary.c', 'pjdlog.c', 'primary.c', 'proto.c', 'proto_common.c', 'proto_socketpair.c', 'proto_tcp.c', 'proto_uds.c', 'rangelock.c', 'subr.c', ':parser_source', ':lexer'],
+    deps = ['//lib/libgeom:geom', '//lib/libmd:md_link', '//lib/libutil:util', '//lib/libz:z', '//lib/libthr:thr'] + ["//sbin/hastd:headers"], dynamic_deps = ['//lib/libgeom:geom_shared', '//lib/libmd:md_shared', '//lib/libutil:util_shared', '//lib/libz:z_shared', '//lib/libthr:thr_shared'],
+    local_defines = ['HAVE_CAPSICUM', 'PROTO_TCP_DEFAULT_PORT=8457', 'INET'] + select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "hastd", manual = "hastd.8",
+    package = "hast", bindir = "/sbin", man_section = "8", extra_entries = [":config_manual"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "program_install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=hast","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+bsd_compress(name = "config_manual_gzip", src = "hast.conf.5", output = "hast.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual", src = ":config_manual_gzip", destination = "/usr/share/man/man5/hast.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=hast-man"], "//conditions:default": ["package=hast"]}))
+
+bsd_install_archive(name = "install_archive", visibility = ["//sbin:__pkg__"], manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//sbin/hastd/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=hast","dbg"]}'
+        for d in ["/usr/lib/debug/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/sbin/hastd": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])

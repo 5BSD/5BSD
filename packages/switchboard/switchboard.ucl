@@ -1,41 +1,4 @@
-/*
- * SPDX-License-Identifier: BSD-2-Clause
- *
- * Copyright (c) 2026 Kory Heard
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
-
-comment = "5BSD capability-aware service manager daemon"
-
-desc = <<EOD
-switchboard is the 5BSD capability-aware service manager daemon.  It scans
-/Capabilities/System and /Capabilities for .cap bundles, manages service
-lifecycles, enforces Capsicum capability delegation via mac_capability(4), and
-supports hot-reload.
-
-This package provides the switchboard(8) daemon for managing capability-based
-services on 5BSD systems.
-EOD
+.include(try=false) "${SRCDIR}/common.ucl"
 
 scripts {
   post-install = <<EOD
@@ -49,5 +12,13 @@ rootdir="${PKG_ROOTDIR}"
 /bin/rm -rf "$rootdir/System/Applications" \
     "$rootdir/Capabilities/System/Reboot.cap" \
     "$rootdir/Capabilities/System/Kldmgr.cap"
+EOD
+}
+
+/* Non-secret launch identity inputs are generated before account relocation.
+ * The constructor binds both input files and the exact compiler payload. */
+annotations: {
+    "5bsd.construction" = <<EOD
+{"format":1,"actions":[{"name":"service-identities","argv":["/usr/libexec/switchboard-identity-build","/etc/master.passwd","/etc/group","/Capabilities/Config/switchboard/identities.ucl"],"inputs":["/etc/master.passwd","/etc/group"],"outputs":{"/Capabilities/Config/switchboard/identities.ucl":{"type":"file","uid":0,"gid":0,"mode":292,"flags_set":0,"replace":false}}}]}
 EOD
 }

@@ -146,7 +146,11 @@ pam_sm_open_session(pam_handle_t *pamh, int flags,
 		strncpy(utl.ut_host, rhost, sizeof utl.ut_host);
 	utl.ut_pid = getpid();
 	gettimeofday(&utl.ut_tv, NULL);
-	pututxline(&utl);
+	if (pututxline(&utl) == NULL) {
+		openpam_log(PAM_LOG_ERROR, "Failed to update session accounting: %m");
+		pam_err = PAM_SESSION_ERR;
+		goto err;
+	}
 
 	PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
@@ -180,7 +184,11 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	memcpy(utl.ut_id, id, sizeof utl.ut_id);
 	utl.ut_pid = getpid();
 	gettimeofday(&utl.ut_tv, NULL);
-	pututxline(&utl);
+	if (pututxline(&utl) == NULL) {
+		openpam_log(PAM_LOG_ERROR, "Failed to update session accounting: %m");
+		pam_err = PAM_SESSION_ERR;
+		goto err;
+	}
 
 	PAM_LASTLOG_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 	return (PAM_SUCCESS);

@@ -539,13 +539,16 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 	/* Snapshot before taking fd-table or channel locks. */
 	{
 		struct mac_cap_process_info info;
-		struct cap_authority *bound;
+		struct cap_authority_binding bound;
+		struct cap_authority_lease *lease;
 
 		mtx_lock(&s->ci_mtx);
-		bound = s->ci_authority;
+		bound = s->ci_binding;
+		lease = s->ci_lease;
 		mtx_unlock(&s->ci_mtx);
 		PROC_LOCK(td->td_proc);
-		error = cap_authority_check_locked(td->td_proc, bound);
+		error = cap_authority_lease_valid(lease) ?
+		    cap_authority_binding_check_locked(td->td_proc, &bound) : EPERM;
 		if (error == 0) {
 			mac_capability_process_info(td->td_proc, &info);
 			cap_authority_stamp_locked(td->td_proc, &msg->cm_auth_stamp);
@@ -951,7 +954,15 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 	    sbinuptime() + (sbintime_t)wait_ms * SBT_1MS : 0;
 
 	mtx_lock(&s->ci_mtx);
-	while (STAILQ_EMPTY(&s->ci_txq)) {
+	for (;;) {
+		/* Recheck after every wake and before dequeuing even buffered data. */
+		if (!cap_authority_lease_valid(s->ci_lease)) {
+			mtx_unlock(&s->ci_mtx);
+			error = EPERM;
+			goto out;
+		}
+		if (!STAILQ_EMPTY(&s->ci_txq))
+			break;
 		if (s->ci_flags & MAC_CAPABILITY_SF_REVOKED) {
 			mtx_unlock(&s->ci_mtx);
 			error = ECONNRESET;
@@ -1118,6 +1129,10 @@ mac_capability_instance_do_channel_call(struct mac_capability_instance *s,
 			error = 0;
 			break;
 		}
+		if (!cap_authority_lease_valid(s->ci_lease)) {
+			error = EPERM;
+			break;
+		}
 		if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
 			error = ECONNRESET;
 			break;
@@ -1190,15 +1205,20 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
     struct ucred *active_cred __unused, struct thread *td)
 {
 	struct mac_capability_instance *s;
-	struct cap_authority *bound;
+	struct cap_authority_binding bound;
+	struct cap_authority_lease *lease;
 	int error;
 
 	s = fp->f_data;
 	mtx_lock(&s->ci_mtx);
-	bound = s->ci_authority;
+	bound = s->ci_binding;
+	lease = s->ci_lease;
 	mtx_unlock(&s->ci_mtx);
 	/* Bindings are immutable and live at least as long as this instance. */
-	error = cap_authority_check(td, bound);
+	PROC_LOCK(td->td_proc);
+	error = cap_authority_lease_valid(lease) ?
+	    cap_authority_binding_check_locked(td->td_proc, &bound) : EPERM;
+	PROC_UNLOCK(td->td_proc);
 	if (error != 0)
 		return (error);
 
@@ -1802,7 +1822,8 @@ mac_capability_rkqops_event(struct knote *kn, long hint __unused)
 	s = kn->kn_fp->f_data;
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 
-	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
+	if ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) ||
+	    !cap_authority_lease_valid(s->ci_lease)) {
 		kn->kn_flags |= EV_EOF;
 		return (1);
 	}
@@ -1835,7 +1856,8 @@ mac_capability_wkqops_event(struct knote *kn, long hint __unused)
 	s = kn->kn_fp->f_data;
 	mtx_assert(&s->ci_mtx, MA_OWNED);
 
-	if (s->ci_flags & MAC_CAPABILITY_SF_DEAD) {
+	if ((s->ci_flags & MAC_CAPABILITY_SF_DEAD) ||
+	    !cap_authority_lease_valid(s->ci_lease)) {
 		kn->kn_flags |= EV_EOF;
 		return (1);
 	}
