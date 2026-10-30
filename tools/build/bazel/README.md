@@ -41530,3 +41530,22 @@ bazel-libnetmap-reference-20261029/full-install-audit.json and
 full-payload-audit.json plus saved native test reports/artifacts. capability_openat
 remains explicitly unrun; successful registration, mmap and packet behavior need
 a qualified netmap kernel. No production implementation changes were required.
+
+### Native libmp candidate (2026-10-30)
+
+Added mpasbn.c and public mp.h with native OpenSSL dependency, generated FBSD_1.1
+symbol versions, ordinary archive, shared ABI 7 and installed header/manual/debug
+payloads. Fresh Make reference bazel-libmp-make-20261030 completed; native run
+bazel-libmp-20261030 is pending with retained installation/artifact comparators.
+The maintained legacy_test is a TAP producer and still needs native integration;
+its process exit alone is insufficient because failed comparisons print not-ok
+records. Existing build-bsd/source_graph explicit targets support the candidate
+without frontend changes. No runtime/full-system/performance success is claimed.
+
+Libmp artifact result: bazel-libmp-20261030 passes. Fresh Make comparison matches
+all eight installation destinations with no missing/extra paths or metadata
+differences. Five regular payloads pass archive member order, global/weak symbol
+inventory, ordered dynamic tags, header/manual bytes and debug-link CRC checks.
+Evidence lives under bazel-libmp-reference-20261030 in install-audit.json and
+payload-audit.json. The legacy TAP arithmetic tests and their installation remain
+next work; no arithmetic runtime or full-system qualification is claimed here.

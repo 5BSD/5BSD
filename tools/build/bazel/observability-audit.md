@@ -7350,3 +7350,10 @@ bazel-libnetmap-reference-20261029/full-install-audit.json and
 full-payload-audit.json plus saved native test reports/artifacts. capability_openat
 remains explicitly unrun; successful registration, mmap and packet behavior need
 a qualified netmap kernel. No production implementation changes were required.
+
+### libmp (2026-10-30)
+
+OpenSSL-backed arithmetic implementation is unchanged; native archive/shared and
+installation metadata match Make. No DTrace/audit hooks were introduced. Arithmetic
+correctness requires the maintained TAP suite; process exit zero alone is not
+sufficient because this suite prints comparison failures in TAP records.
