@@ -17324,3 +17324,27 @@ nodtrace-payload-audit.json and nodtrace-dof.json under bazel-bhyve-reference-20
 Snapshot-disabled evidence uses the nosnapshot-* files in that directory.
 No live VM, snapshot/restore or provider-firing result is implied; networking/
 OpenSSL variants and broader system/cache/performance gates remain open.
+
+### Bhyve OpenSSL/netgraph option qualification (2026-10-30)
+
+Separate OpenSSL-disabled Make/native builds both fail: pci_virtio_crypto.c
+unconditionally references OpenSSL despite removal of libcrypto. Corrected both
+source selections so the OpenSSL-dependent device is compiled only with OpenSSL.
+Default object order is preserved using a conditional source slot; no cryptographic
+stub or fallback is introduced. bhyve(8) now states the device availability rule.
+OpenSSL-disabled r2 native/Make builds are pending. Original failures remain.
+Independent netgraph-disabled compilation completes and artifact comparison is
+in progress. Existing typed source settings and maintained build-bsd interfaces
+suffice; no new frontend flag or replacement workflow is required.
+
+Bhyve option results: nonetgraph, corrected noopenssl-r2 and refreshed
+crypto-default runs each match fresh Make at 86 installation destinations,
+81 regular payloads and two debug links. Compared metadata, symbols, ordered
+dynamic linkage, manuals and data all match. Explicit ELF checks confirm
+pci_de_vcrypto registration and direct libcrypto dependency in the default,
+and absence of both when OpenSSL is disabled. Default source order remains
+unchanged. Evidence: nonetgraph-*, noopenssl-*, crypto-default-* audit JSON and
+crypto-selection.json under bazel-bhyve-reference-20261030.
+The nonetgraph evidence predates the manual-only availability sentence; default
+and noopenssl fresh references include it. No network/device runtime or full
+option matrix is claimed. Existing frontend configuration flow remains intact.

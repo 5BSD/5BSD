@@ -8,7 +8,7 @@ exports_files(["config.c"], visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])
 cc_library(name = "config_headers", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/bhyve/slirp:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import")
-load(":sources.bzl", "COMMON_SOURCES", "SNAPSHOT_SOURCES", "AMD64_BEFORE_KERNEMU", "AMD64_AFTER_KERNEMU", "ENGINE_HEADERS")
+load(":sources.bzl", "COMMON_BEFORE_CRYPTO", "COMMON_AFTER_CRYPTO", "SNAPSHOT_SOURCES", "AMD64_BEFORE_KERNEMU", "AMD64_AFTER_KERNEMU", "ENGINE_HEADERS")
 load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_header", "bsd_dtrace_cc_objects")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 bsd_dtrace_header(
@@ -32,7 +32,7 @@ _DYNAMIC = ['//lib/libvmmapi:vmmapi_shared', '//lib/libmd:md_shared', '//lib/lib
 cc_library(name = "engine_headers", hdrs = ENGINE_HEADERS, strip_include_prefix = ".", deps = ['//sys/amd64/include:bhyve_engine_headers', '//sys/amd64/vmm/intel:bhyve_engine_headers', '//:bhyve_engine_headers', '//sys/cam:bhyve_engine_headers', '//sys/dev/mii:bhyve_engine_headers', '//sys/dev/mmc:bhyve_engine_headers', '//sys/dev/nvme:bhyve_engine_headers', '//sys/dev/nvmf:bhyve_engine_headers', '//sys/dev/pci:bhyve_engine_headers', '//sys/dev/usb/controller:bhyve_engine_headers', '//sys/dev/usb:bhyve_engine_headers', '//sys/dev/virtio:bhyve_engine_headers', '//sys/dev/virtio/pci:bhyve_engine_headers', '//sys/dev/vmm:bhyve_engine_headers', '//sys/net:bhyve_engine_headers', '//sys/netgraph:bhyve_engine_headers', '//sys/netinet:bhyve_engine_headers', '//sys/netinet6:bhyve_engine_headers', '//sys/sys:bhyve_engine_headers', '//sys/vm:bhyve_engine_headers', '//sys/x86/include:bhyve_engine_headers', '//:bhyve_e1000_headers', '//sys/dev/mii:bhyve_mii_headers', '//sys/dev/usb/controller:bhyve_xhci_headers', '//contrib/lib9p:headers', '//contrib/libucl:headers'])
 _DEPS = _LIBS + [":engine_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []})
 _DEFINES = ["BHYVE_GDB"] + select({_SNAPSHOT: ["BHYVE_SNAPSHOT"], "//conditions:default": []}) + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}) + select({_OPENSSL: ["OPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": ["NO_OPENSSL"]}) + select({"//tools/build/bazel/config:inet_support_enabled": ["INET"], "//conditions:default": []}) + select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []})
-cc_library(name = "before_kernemu", srcs = COMMON_SOURCES + select({_SNAPSHOT: SNAPSHOT_SOURCES, "//conditions:default": []}) + AMD64_BEFORE_KERNEMU,
+cc_library(name = "before_kernemu", srcs = COMMON_BEFORE_CRYPTO + select({_OPENSSL: ["pci_virtio_crypto.c"], "//conditions:default": []}) + COMMON_AFTER_CRYPTO + select({_SNAPSHOT: SNAPSHOT_SOURCES, "//conditions:default": []}) + AMD64_BEFORE_KERNEMU,
     deps = _DEPS, local_defines = _DEFINES, copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkstatic = True, alwayslink = True)
 cc_library(name = "kernemu", srcs = ["amd64/kernemu_dev.c"], deps = _DEPS + ['//:bhyve_kernemu_headers'], local_defines = _DEFINES, copts = ["-fPIE", "-Wno-thread-safety-analysis"], linkstatic = True, alwayslink = True)
 cc_library(name = "after_kernemu", srcs = AMD64_AFTER_KERNEMU + ["gdb.c"] + select({_NETGRAPH: ["net_backend_netgraph.c"], "//conditions:default": []}),

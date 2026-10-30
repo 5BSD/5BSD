@@ -7455,3 +7455,8 @@ Bhyve option follow-up (2026-10-30): snapshot-disabled Make/native outputs match
 outputs match full subtree artifacts and have no DOF sections. Marked one
 probe-only cleanup local __unused so Make -Werror also builds without tracing;
 cleanup and error semantics are unchanged. No live firing or VM test is claimed.
+
+Bhyve OpenSSL/netgraph follow-up (2026-10-30): corrected source selection so
+virtio-crypto is absent when its OpenSSL backend is disabled. Default retains
+the device and libcrypto; separate noopenssl/nonetgraph artifacts match Make.
+No crypto runtime/device execution or live network/provider firing is claimed.

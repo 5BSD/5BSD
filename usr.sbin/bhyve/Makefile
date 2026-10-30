@@ -17,6 +17,12 @@ BHYVE_SYSDIR?=${SRCTOP}
 	${SRCTOP}/sys/libkern		\
 	${SRCTOP}/sys/cam/ctl
 
+.if ${MK_OPENSSL} != "no"
+_BHYVE_CRYPTO_SOURCE= pci_virtio_crypto.c
+.else
+_BHYVE_CRYPTO_SOURCE=
+.endif
+
 SRCS=	\
 	acpi.c			\
 	acpi_device.c		\
@@ -61,7 +67,7 @@ SRCS=	\
 	pci_virtio_balloon.c	\
 	pci_virtio_block.c	\
 	pci_virtio_console.c	\
-	pci_virtio_crypto.c	\
+	${_BHYVE_CRYPTO_SOURCE}	\
 	pci_virtio_fs.c		\
 	pci_virtio_gpu.c	\
 	pci_virtio_input.c	\
