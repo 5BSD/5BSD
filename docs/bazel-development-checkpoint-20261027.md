@@ -17793,3 +17793,23 @@ Frontend review: existing explicit target selection and typed feature options
 support this baseline candidate. No new signing/staging/publication contract is
 introduced. Custom Sendmail compiler-option mapping remains a tracked gap and
 must be completed before declaring full configuration parity.
+
+### Sendmail support feature configurations (2026-10-30)
+
+Fresh Make/native comparison also passes with OpenSSL and INET6_SUPPORT disabled.
+Libmilter retains eight installation destinations, five regular payloads and one
+debug link; libsmutil's ordinary/PIE archives retain six members and 68 symbol
+entries each. Evidence: install-audit.json/payload-audit.json under
+bazel-libmilter-minimal-reference-20261030 and archive-audit.json under
+bazel-libsmutil-minimal-reference-20261030, with corresponding minimal native
+frontend runs. No package installation occurred.
+
+Execution-log checks verify all 24 libmilter compile actions use STARTTLS and
+NETINET6 in the default build and omit both in the disabled build. All 12
+libsmutil compile actions similarly toggle STARTTLS; its Make definition does
+not select NETINET6. feature-actions.json in each reference directory records
+these checks. This qualifies the two tested configurations, not every combination
+or custom SENDMAIL_CFLAGS. The latter remains a configuration implementation gap.
+Existing build-bsd typed OpenSSL/IPv6 inputs function without frontend changes;
+no staging, signing or publication changes are introduced. Runtime Sendmail
+sessions and system-wide/cache/performance qualification remain open.
