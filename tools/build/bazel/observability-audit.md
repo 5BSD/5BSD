@@ -7865,3 +7865,15 @@ create/destroy and packet exchange, permissions and disconnect cleanup. The
 shared test emulator is declared as a source input, not replaced or duplicated.
 No daemon control request or virtual-controller operation was executed; runtime
 audit coverage and end-to-end Bluetooth behavior remain unproven.
+
+
+### meshd (2026-10-30)
+
+Native build preserves MESHD_DTRACE_PROBES selection and maintained provider
+instrumentation around application connections/events, bearer queues/failures
+and persistence. Native/Make providers and 13 probe schemas match; both binaries
+pass amd64 checks for 13 ordinary sites and zero enabled-check sites. Evidence:
+bazel-meshd-reference-20261030/native-dof.json and make-dof.json. No live probe
+firing is established. Qualify disabled-DTrace build, live event/error probes,
+control authorization, malformed PDUs, provisioning/persistence/restart and
+bearer backpressure with isolated fixtures. No daemon or network operation ran.

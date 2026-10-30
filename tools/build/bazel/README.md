@@ -43067,3 +43067,10 @@ match five Make install records and three regular payloads. vhcitool reuses the
 existing test emulator via explicit source/header dependencies. Evidence:
 /usr/obj/usr/src/bazel-bt-modern-tools-reference-20261030. Live control and
 virtual-controller qualification remain pending.
+
+
+Mesh daemon coverage (2026-10-30): meshd native DTrace-enabled build matches seven
+Make install records and four regular payloads. Providers/13 probe schemas match
+and both binaries pass 13 probe-site instruction/range checks. Evidence:
+/usr/obj/usr/src/bazel-meshd-reference-20261030. Disabled-DTrace compilation,
+live firing and daemon/runtime qualification remain open.

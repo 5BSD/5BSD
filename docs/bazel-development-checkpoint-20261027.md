@@ -18739,3 +18739,26 @@ Bluetooth tests, but this build result does not qualify those tests. Existing
 build-bsd targets/SDK inputs cover the additions; no frontend/backend/signing/
 publication contract changed. Full system/bootstrap/pkgbase/performance remain
 open; Make remains production/default.
+
+### Bluetooth mesh daemon (2026-10-30)
+
+Added native meshd with all ten maintained C sources, explicit local and shared
+BLE protocol headers, native mesh/Bluetooth/crypto linkage, conditional native
+DTrace header/object/provider generation and sample configuration installation.
+No daemon source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-meshd-20261030; fresh Make reference:
+bazel-meshd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-meshd-reference-20261030. Seven installation records and
+four regular payloads match Make, including symbol/dynamic dependency inventories,
+manual/sample bytes and debuglink CRC. Both builds completed. Saved native-dof.json
+and make-dof.json match providers and 13 probe schemas; both pass amd64 instruction
+and function-range checks for 13 ordinary sites (zero enabled-check sites).
+This is metadata/site evidence, not live probe firing.
+
+DTrace-disabled compilation, daemon/control behavior, provisioning, mesh traffic,
+persistent state/restart, malformed input and live probes remain qualification
+gates. No daemon was executed. Existing build-bsd typed DTrace and explicit target/
+SDK inputs cover the addition; no frontend/backend/signing/publication contract
+changed. Full world/kernel/bootstrap/pkgbase/performance remain open; Make remains
+the production/default backend.
