@@ -7467,3 +7467,11 @@ Native candidates preserve maintained secure sources. Make declares no DTrace
 provider; stack failure reporting/runtime termination remains separate runtime
 qualification. Explicit no-SSP policy on the shared implementation avoids
 recursive guard instrumentation. No failure path is executed on the host.
+
+### libgcc_eh (2026-10-30)
+
+Native amd64 static unwind archive and five installed headers match fresh Make
+artifact/install comparisons. No new tracing or audit hooks were introduced.
+The migration preserves the unwind implementation and per-source frame-API
+define; archive parity does not prove live exception propagation, stack walks,
+signal-frame behavior or sanitizer interaction. Those runtime checks remain open.

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+# Native amd64 Makefile.inc policy; C and C++ visibility flags differ.
+_COMMON = ["-fvisibility=hidden", "-D_LIBUNWIND_IS_NATIVE_ONLY", "-D_LIBUNWIND_USE_FRAME_HEADER_CACHE"]
+_DEPS = ["//contrib/llvm-project/compiler-rt/lib/builtins:headers", "//contrib/llvm-project/libunwind/include:headers", "//contrib/llvm-project/libunwind/src:headers"]
+cc_library(name = 'builtins', srcs = ['//contrib/llvm-project/compiler-rt/lib/builtins:int_util.c', '//contrib/llvm-project/compiler-rt/lib/builtins:gcc_personality_v0.c'], copts = _COMMON + ['-fpic', '-DVISIBILITY_HIDDEN', '-fno-exceptions', '-funwind-tables'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'ehabi', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-EHABI.cpp'], copts = _COMMON + ['-fPIC', '-fno-rtti', '-fno-exceptions', '-funwind-tables'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'sjlj', srcs = ['//contrib/llvm-project/libunwind/src:Unwind-sjlj.c'], copts = _COMMON + ['-fpic', '-DVISIBILITY_HIDDEN', '-fno-exceptions', '-funwind-tables'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'frame', srcs = ['//contrib/llvm-project/libunwind/src:UnwindLevel1-gcc-ext.c'], copts = _COMMON + ['-fpic', '-DVISIBILITY_HIDDEN', '-fno-exceptions', '-funwind-tables', '-D_LIBUNWIND_SUPPORT_FRAME_APIS'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'level1', srcs = ['//contrib/llvm-project/libunwind/src:UnwindLevel1.c'], copts = _COMMON + ['-fpic', '-DVISIBILITY_HIDDEN', '-fno-exceptions', '-funwind-tables'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'registers', srcs = ['//contrib/llvm-project/libunwind/src:UnwindRegistersRestore.S', '//contrib/llvm-project/libunwind/src:UnwindRegistersSave.S'], copts = _COMMON + ['-fpic', '-DVISIBILITY_HIDDEN'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+cc_library(name = 'unwind', srcs = ['//contrib/llvm-project/libunwind/src:libunwind.cpp'], copts = _COMMON + ['-fPIC', '-fno-rtti', '-fno-exceptions', '-funwind-tables'], deps = _DEPS, features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = ["@platforms//cpu:x86_64"])
+bsd_component_archive(name = "static_archive", groups = [':builtins', ':ehabi', ':sjlj', ':frame', ':level1', ':registers', ':unwind'], visibility = ["//visibility:public"])
+bsd_install_file(name = "install_library", src = ":static_archive", destination = "/usr/lib/libgcc_eh.a", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_file(name = "header_0", src = "//contrib/llvm-project/libunwind/include:__libunwind_config.h", destination = "/usr/include/__libunwind_config.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_file(name = "header_1", src = "//contrib/llvm-project/libunwind/include:libunwind.h", destination = "/usr/include/libunwind.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_file(name = "header_2", src = "//contrib/llvm-project/libunwind/include:unwind.h", destination = "/usr/include/unwind.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_file(name = "header_3", src = "//contrib/llvm-project/libunwind/include:unwind_arm_ehabi.h", destination = "/usr/include/unwind_arm_ehabi.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_file(name = "header_4", src = "//contrib/llvm-project/libunwind/include:unwind_itanium.h", destination = "/usr/include/unwind_itanium.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=clibs", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [':install_library', ':header_0', ':header_1', ':header_2', ':header_3', ':header_4'])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

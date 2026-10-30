@@ -41989,3 +41989,24 @@ sources and explicit -fPIC on libssp_nonshared. Evidence: per-library install/
 payload-audit.json under bazel-libssp{,_nonshared}-reference-20261030 and
 compile-policy.json under the libssp reference, bound to execution.json's hash.
 No failure-path runtime or full bootstrap/system qualification is claimed.
+
+### Native libgcc_eh candidate (2026-10-30)
+
+Fresh Make build/install completes for the nine-object static unwind archive
+and five public headers. Native declarations preserve per-source frame API,
+C/C++ visibility, PIC, unwind-table and disabled stack-protector settings.
+Initial BUILD analysis failures were corrected; sandbox compilation then exposed
+the required compact-unwind header, now explicitly declared. Native r4 is pending.
+Evidence is under bazel-libgcc_eh-reference-20261030 and the corresponding Make/
+native run directories in /usr/obj/usr/src. Existing build-bsd explicit targets
+and toolchain features suffice; no frontend input or backend contract changes
+are needed. No runtime exception-unwinding, independent bootstrap or system
+qualification is claimed.
+
+Libgcc_eh r4 result: native compilation and installation pass. Fresh Make
+comparison matches all six destinations and regular payloads: five byte-identical
+headers and the static archive's global/weak symbols and member order. No extra,
+missing or mismatched installation metadata. Evidence: install-audit.json and
+payload-audit.json under bazel-libgcc_eh-reference-20261030, with native artifacts
+from bazel-libgcc_eh-20261030-r4. Runtime exception propagation/unwinding, sanitizer
+configurations, other architectures and independent bootstrap remain unqualified.
