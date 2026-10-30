@@ -43249,3 +43249,35 @@ Frontend review: existing build-bsd explicit target, typed tests option and SDK
 inputs cover the additions; no frontend/backend/signing/publication contract
 changed. This does not establish signing, verified boot, live authorization or
 whole-system/bootstrap/pkgbase/performance qualification. Make remains default.
+
+
+### policyctl native Bazel tests: host ABI blocker (2026-10-30)
+
+Added five bsd_atf_test cases and a public test suite for policyctl. Each uses the
+unchanged maintained shell body, native production policyctl mapped to its local
+policyctl_test_bin fixture name, declared ATF/shell/file tools and native runtime
+libraries (SDK libgcc_s remains declared). No host policyctl substitution or test
+body weakening was introduced. Installed test files are unchanged.
+
+Inputs: /usr/obj/usr/src/bazel-policyctl-tests-reference-20261030/inputs.json.
+Run bazel-policyctl-tests-20261030-r2 built targets but all five tests failed
+before test bodies: ATF's dirname call invokes caph_limit_stdio, which asserts
+in cap_rights_intersect on the rights returned by the host. Diagnostic r3 with
+explicit SDK libc/libsys failed identically. Final rules retain native libc/libsys;
+the SDK diagnostic was not retained as a fallback. The initial invocation was
+rejected because tests were not also selected build targets; inputs now explicitly
+select all five tests and the installation archive.
+
+Read-only host probe and capsicum-abi.json in the reference directory establish:
+host word 1 = 0x040000006fffffff; source CAP_ALL1 = 0x05fc000001ffffff;
+host bits rejected by the source mask = 0x6e000000. Source and staged SDK headers
+allocate 5BSD rights differently from the running host. This is concrete runtime
+ABI incompatibility, not a policyctl test-body result. Logs/failure reports remain
+in r2/r3. No assertion disabling, rights changes or kernel installation was done.
+Run these tests against a kernel matching the source ABI; source/host compatibility
+and upgrade implications remain open. No test case is claimed passed or skipped.
+
+Frontend review: existing explicit test targets and declared runtime graph work
+through build-bsd; no frontend/backend/signing/publication contract changed.
+Whole-system/runtime/bootstrap/pkgbase/performance gates remain open, and Make
+remains production/default.

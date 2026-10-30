@@ -7979,3 +7979,12 @@ artifacts and installed tests match Make; test enumeration succeeds. Test bodies
 for roundtrip policy, empty attributes, rejected inputs, providers and invalid
 bundles still need execution with the native binary and declared runtime. No
 policy activation, installed-system changes or signing operations were performed.
+
+
+### policyctl test execution prerequisite (2026-10-30)
+
+Five native Bazel cases now exist, but all failed in ATF startup at dirname's
+caph_limit_stdio assertion, before policyctl bodies. Read-only host rights probe
+confirms rights bits outside source CAP_ALL1. SDK libc diagnostic reproduces it;
+no fallback retained. Matching-kernel tests and upgrade ABI review are needed.
+Evidence: /usr/obj/usr/src/bazel-policyctl-tests-reference-20261030/capsicum-abi.json.
