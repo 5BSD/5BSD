@@ -3,6 +3,7 @@
 # WARNS 1, CXXSTD c++20, YFLAGS -d, LIBADD ctf elf proc pthread rtld_db
 # crypto xo).  amd64 only; MK_CTF, DTRACE_OPTIMIZED, DTRACE_ASAN and
 # DTRACE_BENCHMARKS are "no" in this configuration (dtrace-probe.py checks).
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_cflags", "bsd_cxxflags")
 load("//toolchain:bsd_generate.bzl", "bsd_generate", "bsd_lex", "bsd_mixed_shared_library", "bsd_yacc")
 

@@ -42845,16 +42845,104 @@ not rerun against `/usr/src`; the probe was run with the exact arguments
 
 ### Not qualified
 
-- Matching-system VM runtime, Bazel9/Bzlmod, cross builds, installation,
-  METALOG/package parity, ATF shell tests (bsdinstruments_test.sh,
-  otelconf/otelpfd/otelauditd shell tests and the rc.d tests are not compiled
-  targets), hwstat's own ATF tests, man pages, FILESGROUPS/CONFGROUPS
-  installation (profile catalog, golden files, otel.conf and its defaults)
-  and performance.
+- Cross builds of the Bazel targets, installation, METALOG/package parity,
+  bsdinstruments_test.sh and the rc.d tests, hwstat's own ATF tests, man
+  pages, FILESGROUPS/CONFGROUPS installation (profile catalog, golden files,
+  otel.conf and its defaults) and performance.  Bazel 9/Bzlmod and a
+  matching-system VM runtime were added on 2026-10-30 (next section).
 - The `bazel-otel-r3` SDK was built from `/usr/src`; the integrated runs use
   an SDK from this tree. When sources change, update the `*_SRCS` lists in
   `targets/`; the SRCS check fails until they match the Makefiles, and new
   `LIBADD`/`_DP_*` entries must be mirrored in `linkopts`.
+
+### Bazel 9.3.1 with Bzlmod and VM runtime (2026-10-30)
+
+The four probes (`declared-probe.py`, `otel-probe.py`, `dtrace-probe.py`,
+`protobuf-probe.py`) now also run under Bazel 9.3.1 with Bzlmod and rules_cc.
+WORKSPACE mode (Bazel 5) stays the default and is what `bazel-test` and
+`qualify.py` run; `--bzlmod-inputs FILE` selects the Bzlmod mode:
+
+- `bsd_toolchain.py` writes `MODULE.bazel` (`bazel_dep` rules_cc and
+  platforms at the versions the inputs file pins, `register_toolchains`) and
+  copies the pinned `MODULE.bazel.lock`; the staged toolchain package gains a
+  platform `//toolchain:native` (FreeBSD, the CPU, and a private SDK
+  constraint) and a `toolchain()` instead of `cc_toolchain_suite`.  Flags:
+  `--platforms`/`--host_platform`/`--extra_execution_platforms`,
+  `--lockfile_mode=error`, `--repository_cache`, every distdir,
+  `--repository_disable_download` and `--materialize_param_files`; `query`
+  gets the same module flags.  JAVA_HOME comes from the inputs file and
+  `BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1` is set.
+- `cc_compat.bzl` (native rules) and `cc_compat_bzlmod.bzl` (rules_cc) are
+  staged as `//toolchain:cc_compat.bzl`; every probe `.bzl` and `targets/`
+  BUILD file loads the C/C++ symbols (`cc_library`, `cc_binary`, `cc_common`,
+  `CcInfo`, toolchain lookup and attributes) from it under `bsd_*` names, so
+  one set of rules serves both modes.  Rules declare the toolchain type
+  (`use_cc_toolchain()`) in Bzlmod mode.
+- Bazel 9 differences handled: empty globs are errors (the shared root
+  bundles in `targets/BUILD.bazel` set `allow_empty`); rules_cc passes
+  `includes` as `-I` (Bazel 5: `-isystem`), with the same `bazel-out` twin,
+  which the comparison drops; short archive commands have no params file, so
+  `otel-probe.py` reads link/archive arguments from `aquery
+  --include_param_files`; the output directory is `bazel-out/freebsd-opt`.
+- `bazel mod deps` cannot run offline (rules_python's pip extension needs a
+  Python 3.11 toolchain), so the lockfile is not regenerated; builds use it in
+  error mode and only evaluate the extensions their targets need.  Each
+  result records `bazel_mode` and whether the lockfile stayed unchanged.
+
+Inputs (all pre-existing, nothing fetched): the Bazel 9.3.1 executable of
+`/usr/obj/usr/src/bazel931-native-comparison-20261024` (sha256
+`ea06c3dc5f8f885a30932f123a78c183fdea88717fd70b3a45b00e784fe667ed`, the hash
+the libmd Bazel 9 run recorded), the staged OpenJDK 21, and the repository
+cache, 47 distdirs and lockfile of the libmd Bazel 9 qualification
+(`/usr/obj/5BSD-otel-validation/hk-bazel9-inputs.json`).
+
+```
+python3.12 -B tools/build/bazel/otel-probe.py ... --bazel $BAZEL9 \
+  --bzlmod-inputs /usr/obj/5BSD-otel-validation/hk-bazel9-inputs.json \
+  --output /usr/obj/5BSD-otel-validation/hk-bazel9-otel-NEW
+```
+
+Results (source build/housekeeping, SDK `merge2-obj/.../amd64.amd64/tmp`):
+
+- Declared pilot (`hk-declared-bazel9-r2`): passed; all nine outputs are
+  byte-identical to the Bazel 5 run `bazel-declared-pilot-r1`.  The
+  refactored probe under Bazel 5 (`hk-declared-bazel5-r1`) also reproduces
+  them.
+- `hk-bazel9-otel-r5`, `hk-bazel9-dtrace-r5`, `hk-bazel9-protobuf-r5`:
+  passed, with every check of the Bazel 5 runs (SRCS, ordered compile/link
+  policy, per-object non-debug sections with explained `__FILE__`
+  differences, ELF/archive comparison, negative dependency suites, restored
+  outputs, generated-file parity, host runtime) and the lockfile unchanged.
+  protobuf: 765 objects with the same 467 explained differences as the
+  Bazel 5 run, 48 generated upb files byte-identical.
+
+VM runtime (`/usr/obj/5BSD-otel-validation/hk-rt-receipt.json`, VM
+`hk-rt-vm1`, harness `hk-rt-work/`): the Bazel-built and Make-built programs
+of the r5 runs (48 files, no RPATH/RUNPATH; dtrace(1) and protoc with their
+own build's libdtrace.so.2 / libprivateprotobuf / libprivateabsl) ran side by
+side on merge3-stage, the stage of the same build as the SDK (all 18 SDK
+providers byte-identical), in QEMU (TCG, 2048 MiB, 2 vCPUs, no network, clean
+poweroff).  29 of 30 comparisons are identical; the remaining one is
+protoc's usage line, which prints argv[0].
+
+- ATF C under kyua: libotelexport 98, libdtotel 49, bsdinstruments unit 12,
+  otelpfd 4, otelauditd 6 cases, all passing for both builds.
+- ATF shell suites of otelpfd, otelauditd, otelconf and the emitters with the
+  program under test overridden: 35 of 37 pass for both; the two
+  `device_access` cases need an unprivileged user, which the harness (root,
+  outside kyua) does not provide, and fail identically.
+- `dtrace -x otel=otlp` with real syscall/tick probes, a fault and exit to
+  the otel.conf file target: OTLP JSON accepted by otlp_validate, the same
+  metric names, events and point kinds for both builds.
+- protoc with the three upb plugins over the OTLP protos: 48 files,
+  identical between builds and to the build-time bindings of the Make build.
+- Usage and deterministic output of hwstat, bsdinstruments, otelconf,
+  otelpfd, otelauditd: identical.
+
+Not established: Bazel 9 as a build backend, cross builds of Bazel targets,
+installation and package parity, live OTLP network transports from the
+Bazel binaries in the VM, performance.  build-bsd's `bazel-test` continues to
+run the WORKSPACE mode; Make remains the production backend.
 
 dtrace(1) and libdtrace under Bazel: design
 -------------------------------------------

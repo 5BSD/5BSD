@@ -9,7 +9,7 @@ directory, redirections go through the stdout_redirect helper, and the
 generated files are compared with Make's object directory by the probe.
 """
 
-load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
+load(":cc_compat.bzl", "BSD_CC_TOOLCHAINS", "BSD_CC_TOOLCHAIN_ATTRS", CcInfo = "bsd_CcInfo", cc_common = "bsd_cc_common", find_cpp_toolchain = "bsd_find_cc_toolchain")
 
 def _tool_path_env(ctx):
     # Generator scripts call sed/nawk/awk/cat through PATH; only the staged
@@ -184,7 +184,7 @@ bsd_mixed_shared_library = rule(
     CFLAGS and .cc with CXXFLAGS, so this rule compiles them in two groups
     and links the .pico-equivalent objects in Make's SRCS order (`order`).
     """,
-    attrs = {
+    attrs = dict({
         "srcs": attr.label_list(allow_files = [".c", ".cc", ".h", ".hh"]),
         "private_hdrs": attr.label_list(allow_files = True),
         "order": attr.string_list(mandatory = True),
@@ -193,7 +193,7 @@ bsd_mixed_shared_library = rule(
         "cxxopts": attr.string_list(),
         "linkopts": attr.string_list(),
         "soname": attr.string(mandatory = True),
-        "_cc_toolchain": attr.label(default = Label("@bazel_tools//tools/cpp:current_cc_toolchain")),
-    },
+    }, **BSD_CC_TOOLCHAIN_ATTRS),
     fragments = ["cpp"],
+    toolchains = BSD_CC_TOOLCHAINS,
 )

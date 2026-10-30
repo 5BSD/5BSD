@@ -2,6 +2,7 @@
 # Make reference: cddl/usr.sbin/bsdinstruments/Makefile (PROG, WARNS 3).
 # libdtrace and its dependency closure are linked from the staged SDK by name,
 # exactly like Make's LIBADD; their headers come from declared source trees.
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_program")
 
 package(default_visibility = ["//visibility:public"])

@@ -2,6 +2,7 @@
 # Make reference: lib/libotelexport/tests/Makefile (ATF_TESTS_C otelexport_test,
 # sysconf_test, sysconf_oom_test; PROGS otlp_validate, otlp_collector;
 # CFLAGS+=-I${.CURDIR:H}; WARNS default 6).
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_atf_test_c", "bsd_program")
 
 package(default_visibility = ["//visibility:public"])

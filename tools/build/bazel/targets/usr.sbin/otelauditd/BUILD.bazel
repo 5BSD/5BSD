@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Make reference: usr.sbin/otelauditd/Makefile (PROG, WARNS 6,
 # LIBADD otelexport bsm).
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_program")
 
 package(default_visibility = ["//visibility:public"])

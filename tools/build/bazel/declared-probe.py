@@ -27,7 +27,10 @@ def main():
     for name in ('target', 'cpu', 'clang-version'):
         p.add_argument('--' + name, required=True)
     p.add_argument('--jobs', type=int, default=os.cpu_count())
+    bsd_toolchain.add_bazel_mode_arguments(p)
     a = p.parse_args()
+    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
+    bsd_toolchain.apply_bazel_environment(bzlmod)
     if a.jobs < 1:
         p.error('--jobs must be positive')
     if not a.target.startswith('x86_64-'):
@@ -40,8 +43,8 @@ def main():
     workspace.mkdir()
     tc = workspace / 'toolchain'
     bsd_toolchain.stage_toolchain(tc, sysroot, objdump, a.awk.resolve(strict=True),
-                                  a.target, a.cpu, a.clang_version)
-    (workspace / 'WORKSPACE').write_text('workspace(name="bsd_declared_pilot")\n')
+                                  a.target, a.cpu, a.clang_version, bzlmod)
+    bsd_toolchain.write_workspace(workspace, 'bsd_declared_pilot', bzlmod)
     (workspace / 'BUILD.bazel').write_text(
         'load(":version_map.bzl", "bsd_version_map")\n'
         'load("//toolchain:cc_toolchain_config.bzl", "bsd_static_binary", "bsd_static_library", "bsd_shared_library", "bsd_dynamic_binary")\n'
@@ -84,7 +87,7 @@ def main():
     records = []
     prefix = [str(bazel), '--batch', '--output_user_root=' + str(root / 'cache'),
               '--ignore_all_rc_files']
-    build = prefix + ['build'] + bsd_toolchain.build_flags(a.cpu, a.jobs) + [
+    build = prefix + ['build'] + bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + [
                       '//:echo', '//:cpp_runtime', '//:archive_runtime', '//:libbsd_samples.so.1', '//:shared_runtime', '//:sbuf_runtime', '//:libsbuf.so.6']
 
     def run(argv, expect_success=True):
@@ -197,6 +200,7 @@ def main():
     version_result['make_map_sha256'] = sha(a.make_sbuf_map)
     (root / 'libsbuf-versioned.json').write_text(json.dumps(version_result, indent=2) + '\n')
     result = {'scope': 'native-amd64-archive-assembly-shared-pilot', 'bazel_version': version,
+              'bazel_mode': bsd_toolchain.mode_record(bzlmod),
               'bazel_sha256': sha(bazel), 'jobs': a.jobs, 'target': a.target,
               'inputs_sha256': sha(root / 'inputs.json'),
               'source_root': str(src), 'sysroot': str(sysroot), 'objdump': str(objdump),

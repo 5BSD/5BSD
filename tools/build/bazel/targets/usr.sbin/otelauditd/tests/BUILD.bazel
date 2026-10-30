@@ -2,6 +2,7 @@
 # Make reference: usr.sbin/otelauditd/tests/Makefile (ATF_TESTS_C
 # auditrec_test, PROGS mkaudittrail; .PATH ..;
 # CFLAGS+=-I.. -I. -I${SRCTOP}/lib/libotelexport).
+load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 load("//toolchain:bsd_component.bzl", "bsd_atf_test_c", "bsd_program")
 
 cc_library(

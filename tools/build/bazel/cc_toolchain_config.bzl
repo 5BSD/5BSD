@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@bazel_tools//tools/cpp:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set", "tool_path")
+load(":cc_compat.bzl", "bsd_cc_binary", "bsd_cc_library", CcToolchainConfigInfo = "bsd_CcToolchainConfigInfo", cc_common = "bsd_cc_common", feature = "bsd_feature", flag_group = "bsd_flag_group", flag_set = "bsd_flag_set", tool_path = "bsd_tool_path")
 
 _COMPILE = ["c-compile", "c++-compile", "assemble", "preprocess-assemble", "c++-header-parsing", "c++-module-compile", "c++-module-codegen"]
 _LINK = ["c++-link-executable", "c++-link-dynamic-library", "c++-link-nodeps-dynamic-library"]
@@ -73,21 +73,21 @@ bsd_cc_config = rule(
 def bsd_static_binary(name, srcs, linkopts = [], linkshared = False, deps = [], copts = []):
     if linkshared:
         fail("BSD pilot supports static executables only")
-    native.cc_binary(name = name, srcs = srcs, linkopts = linkopts, linkstatic = True, deps = deps, copts = copts, features = ["fully_static_link"])
+    bsd_cc_binary(name = name, srcs = srcs, linkopts = linkopts, linkstatic = True, deps = deps, copts = copts, features = ["fully_static_link"])
 
 def bsd_static_library(name, srcs, hdrs = [], deps = [], copts = []):
-    native.cc_library(name = name, srcs = srcs, hdrs = hdrs, deps = deps, copts = copts, linkstatic = True)
+    bsd_cc_library(name = name, srcs = srcs, hdrs = hdrs, deps = deps, copts = copts, linkstatic = True)
 
 def bsd_shared_library(name, soname, srcs, deps = [], copts = [], version_script = None):
     if not soname or "/" in soname or "," in soname:
         fail("explicit library basename required for SONAME")
     version_inputs = [version_script] if version_script else []
     version_flags = ["-Wl,--version-script=$(location " + version_script + "),--no-undefined-version"] if version_script else []
-    native.cc_binary(name = name, srcs = srcs, deps = deps, copts = copts,
-                     linkshared = True, linkstatic = True,
-                     additional_linker_inputs = version_inputs,
-                     linkopts = ["-Wl,-soname," + soname, "-Wl,--fatal-warnings,--warn-shared-textrel"] + version_flags)
+    bsd_cc_binary(name = name, srcs = srcs, deps = deps, copts = copts,
+                  linkshared = True, linkstatic = True,
+                  additional_linker_inputs = version_inputs,
+                  linkopts = ["-Wl,-soname," + soname, "-Wl,--fatal-warnings,--warn-shared-textrel"] + version_flags)
 
 def bsd_dynamic_binary(name, srcs, deps = [], copts = [], linkopts = []):
-    native.cc_binary(name = name, srcs = srcs, deps = deps, linkstatic = False,
-                     copts = copts + ["-fPIE"], linkopts = linkopts + ["-pie"])
+    bsd_cc_binary(name = name, srcs = srcs, deps = deps, linkstatic = False,
+                  copts = copts + ["-fPIE"], linkopts = linkopts + ["-pie"])
