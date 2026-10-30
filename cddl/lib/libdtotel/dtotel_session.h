@@ -28,13 +28,14 @@ struct dtotel_options {
 	uint64_t	 rotate_size;	/* file formats with an output file */
 	time_t		 rotate_interval;
 	unsigned	 rotate_keep;
+	int		 profiles;	/* -x otelprofiles (experimental) */
 };
 
 /*
  * Parse one "-x name=value" option.  Returns 1 when it was an
  * OpenTelemetry option (otel, otelendpoint, otelprotocol, otelspool,
- * otelspoolmax,
- * otelrotatesize, otelrotatetime, otelrotatekeep), 0 when the name
+ * otelspoolmax, otelrotatesize, otelrotatetime, otelrotatekeep,
+ * otelprofiles), 0 when the name
  * does not start with "otel", and -1 with a message in err.
  */
 int	 dtotel_option(struct dtotel_options *, const char *name,

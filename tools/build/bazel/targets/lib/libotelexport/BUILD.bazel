@@ -22,6 +22,8 @@ OTELEXPORT_SRCS = [
     "oe_collapsed.c",
     "oe_http.c",
     "oe_otlpenc.c",
+    "oe_otlpprof.c",
+    "oe_profdict.c",
     "oe_otlp.c",
     "oe_otlpfile.c",
     "oe_sysconf.c",
@@ -38,9 +40,11 @@ OTLP_PROTOS = [
     "opentelemetry/proto/logs/v1/logs.proto",
     "opentelemetry/proto/metrics/v1/metrics.proto",
     "opentelemetry/proto/trace/v1/trace.proto",
+    "opentelemetry/proto/profiles/v1development/profiles.proto",
     "opentelemetry/proto/collector/logs/v1/logs_service.proto",
     "opentelemetry/proto/collector/metrics/v1/metrics_service.proto",
     "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+    "opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
 ]
 
 # protoc-gen.mk: the mini-tables of every file, then the definitions.
@@ -77,6 +81,7 @@ filegroup(
 OTELEXPORT_PRIVATE_HDRS = [
     "oe_otlpenc.h",
     "oe_otlppb.h",
+    "oe_profdict.h",
 ]
 
 # Makefile INCS plus the headers base-system consumers include through

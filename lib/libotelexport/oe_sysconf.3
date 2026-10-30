@@ -88,6 +88,29 @@ and
 .Va sc->export_dir
 holds
 .Ic export.directory .
+The signal blocks
+.Ic logs ,
+.Ic metrics ,
+.Ic traces
+and
+.Ic profiles
+fill
+.Va sc->signals ,
+indexed by
+.Vt enum oe_signal ;
+each
+.Vt struct oe_sysconf_signal
+holds the block's
+.Va endpoint ,
+.Va protocol ,
+.Va compression
+.Pq Dv NULL when unset ,
+.Va timeout_ms
+.Pq 0 when unset
+and
+.Va headers_file ,
+whose credentials are loaded into its
+.Va headers .
 .Pp
 .Fn oe_headers_file_load
 reads a credentials file
@@ -117,6 +140,15 @@ is unset and leaves
 Headers from the system credentials file are added only if the
 resolved endpoint equals a non-empty
 .Va sc->endpoint .
+It also resolves every signal's settings into
+.Va env->signals
+.Pq see Sx Configuration layers in Xr libotelexport 3 :
+.Fa cli_endpoint ,
+the signal's variable, the general variable, the signal's block and the
+general keys, in that order, with the credentials of a block's headers
+file only for that block's endpoint; the command line protocol and the
+default endpoints are applied by
+.Xr oe_config_load 3 .
 Strings in
 .Fa env
 may point into

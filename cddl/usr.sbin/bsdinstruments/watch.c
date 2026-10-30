@@ -210,6 +210,8 @@ make_exporter(const struct profile *p, const struct watch_opts *wo,
 	 */
 	memset(&ocfg, 0, sizeof(ocfg));
 	oe_otlp_config_env(&ocfg, env);
+	/* --profiles refuses http/json for the profiles signal up front. */
+	ocfg.profiles = wo->profiles;
 	ocfg.profile = p->name;
 	ocfg.resource = resource;
 	ocfg.max_retries = -1;
@@ -328,6 +330,7 @@ watch_run(const struct profile *p, const char *rendered,
 		dcfg.exporter = exporter;
 		dcfg.profile = p->name;
 		dcfg.source = rendered;
+		dcfg.profiles = wo->profiles;
 		if ((dt = dtotel_open(&dcfg)) == NULL) {
 			fprintf(stderr, "bsdinstruments: out of memory\n");
 			goto out;

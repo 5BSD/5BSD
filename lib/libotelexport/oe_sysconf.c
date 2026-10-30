@@ -144,6 +144,16 @@ oe_sysconf_free(struct oe_sysconf *sc)
 	oe_attrs_free(sc->resource_attrs, sc->nresource_attrs);
 	free(sc->spool_dir);
 	free(sc->export_dir);
+	for (int i = 0; i < OE_NSIGNALS; i++) {
+		struct oe_sysconf_signal *ss = &sc->signals[i];
+
+		free(ss->endpoint);
+		free(ss->protocol);
+		free(ss->compression);
+		free(ss->headers_file);
+		oe_attrs_free(ss->headers, ss->nheaders);
+		memset(ss, 0, sizeof(*ss));
+	}
 	sc->endpoint = sc->protocol = sc->compression = NULL;
 	sc->headers_file = sc->host_id_file = sc->spool_dir = NULL;
 	sc->export_dir = NULL;
@@ -657,12 +667,66 @@ parse_export(struct oe_sysconf *sc, const char *file,
 	return (0);
 }
 
+static const char *const protocols[] = { "http/protobuf", "grpc",
+    "http/json", NULL };
+static const char *const compressions[] = { "gzip", "none", NULL };
+
+/*
+ * A signal block: logs, metrics, traces or profiles { endpoint;
+ * protocol; compression; timeout_ms; headers_file; }.  Its endpoint is
+ * the signal's URL, used as-is.
+ */
+static int
+parse_signal(struct oe_sysconf *sc, const char *file, int sig,
+    const ucl_object_t *obj)
+{
+	struct oe_sysconf_signal *ss = &sc->signals[sig];
+	const ucl_object_t *cur;
+	ucl_object_iter_t it;
+	const char *key, *name;
+	char full[64];
+	int64_t v;
+
+	name = oe_signal_name((enum oe_signal)sig);
+	if (ucl_object_type(obj) != UCL_OBJECT) {
+		sc_error(sc, "%s: %s must be an object", file, name);
+		return (-1);
+	}
+	it = NULL;
+	while ((cur = ucl_object_iterate(obj, &it, true)) != NULL) {
+		key = ucl_object_key(cur);
+		snprintf(full, sizeof(full), "%s.%s", name, key);
+		if (strcmp(key, "endpoint") == 0) {
+			if (get_url(sc, file, full, cur, &ss->endpoint) != 0)
+				return (-1);
+		} else if (strcmp(key, "protocol") == 0) {
+			if (get_enum(sc, file, full, cur, protocols,
+			    &ss->protocol) != 0)
+				return (-1);
+		} else if (strcmp(key, "compression") == 0) {
+			if (get_enum(sc, file, full, cur, compressions,
+			    &ss->compression) != 0)
+				return (-1);
+		} else if (strcmp(key, "timeout_ms") == 0) {
+			if (get_int(sc, file, full, cur, 1,
+			    OE_SYSCONF_TIMEOUT_MAX_MS, &v) != 0)
+				return (-1);
+			ss->timeout_ms = (int)v;
+		} else if (strcmp(key, "headers_file") == 0) {
+			if (get_path(sc, file, full, cur,
+			    &ss->headers_file) != 0)
+				return (-1);
+		} else {
+			sc_error(sc, "%s: unknown key %s", file, full);
+			return (-1);
+		}
+	}
+	return (0);
+}
+
 static int
 parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 {
-	static const char *const protocols[] = { "http/protobuf", "grpc",
-	    "http/json", NULL };
-	static const char *const compressions[] = { "gzip", "none", NULL };
 	const ucl_object_t *cur;
 	ucl_object_iter_t it;
 	const char *key;
@@ -706,6 +770,15 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 				return (-1);
 		} else if (strcmp(key, "export") == 0) {
 			if (parse_export(sc, file, cur) != 0)
+				return (-1);
+		} else if (strcmp(key, "logs") == 0 ||
+		    strcmp(key, "metrics") == 0 ||
+		    strcmp(key, "traces") == 0 ||
+		    strcmp(key, "profiles") == 0) {
+			if (parse_signal(sc, file, key[0] == 'l' ?
+			    OE_SIGNAL_LOGS : key[0] == 'm' ? OE_SIGNAL_METRICS :
+			    key[0] == 't' ? OE_SIGNAL_TRACES :
+			    OE_SIGNAL_PROFILES, cur) != 0)
 				return (-1);
 		} else {
 			sc_error(sc, "%s: unknown key %s", file, key);
@@ -838,6 +911,14 @@ oe_sysconf_load(struct oe_sysconf *sc, const char *defaults_path,
 	    oe_headers_file_load(sc->headers_file, &sc->headers,
 	    &sc->nheaders, sc->error, sizeof(sc->error)) != 0)
 		goto fail;
+	for (int i = 0; i < OE_NSIGNALS; i++) {
+		struct oe_sysconf_signal *ss = &sc->signals[i];
+
+		if (ss->headers_file != NULL && ss->headers_file[0] != '\0' &&
+		    oe_headers_file_load(ss->headers_file, &ss->headers,
+		    &ss->nheaders, sc->error, sizeof(sc->error)) != 0)
+			goto fail;
+	}
 	return (0);
 fail:
 	memcpy(saved, sc->error, sizeof(saved));
@@ -884,16 +965,123 @@ merge_missing(struct oe_attr **dstp, size_t *ndstp,
 	return (0);
 }
 
+static int	merge_system(struct oe_env *, const struct oe_sysconf *);
+
+/*
+ * Resolve one signal's settings, each from the first layer that sets
+ * it: the command line (general endpoint), OTEL_EXPORTER_OTLP_<SIGNAL>_*,
+ * OTEL_EXPORTER_OTLP_*, the otel.conf signal block, the general otel.conf
+ * keys.  Endpoints from a signal's own setting are signal URLs, used
+ * as-is.  Headers: the signal's variable replaces the general one; the
+ * credentials of an otel.conf headers file are added only for its own
+ * endpoint (the signal block's file, else the general one, for a signal
+ * endpoint of the block; the general file for the general system
+ * endpoint).  An endpoint still unset gets the default in
+ * oe_config_load().  "raw" holds the environment-only general values.
+ */
+static int
+resolve_signal(struct oe_env *env, const struct oe_sysconf *sc,
+    const char *cli_endpoint, const struct oe_env *raw, size_t nrawheaders,
+    int sig)
+{
+	struct oe_env_signal *es = &env->signals[sig];
+	const struct oe_sysconf_signal *ss;
+	const struct oe_attr *creds;
+	size_t ncreds;
+	int sysblock;
+
+	ss = sc != NULL && sc->enable ? &sc->signals[sig] : NULL;
+	sysblock = 0;
+	if (cli_endpoint != NULL) {
+		es->endpoint = cli_endpoint;
+		es->endpoint_exact = 0;
+	} else if (es->endpoint != NULL)
+		es->endpoint_exact = 1;
+	else if (raw->endpoint != NULL) {
+		es->endpoint = raw->endpoint;
+		es->endpoint_exact = 0;
+	} else if (ss != NULL && !sc->export_file && ss->endpoint != NULL &&
+	    ss->endpoint[0] != '\0') {
+		es->endpoint = ss->endpoint;
+		es->endpoint_exact = 1;
+		sysblock = 1;
+	} else {
+		/* The general system endpoint, or unset (the default). */
+		es->endpoint = env->endpoint;
+		es->endpoint_exact = 0;
+	}
+	if (es->protocol == NULL)
+		es->protocol = raw->protocol != NULL ? raw->protocol :
+		    ss != NULL && ss->protocol != NULL ? ss->protocol :
+		    env->protocol;
+	if (es->compression == NULL)
+		es->compression = raw->compression != NULL ? raw->compression :
+		    ss != NULL && ss->compression != NULL ? ss->compression :
+		    env->compression;
+	if (es->timeout_ms < 0)
+		es->timeout_ms = raw->timeout_ms >= 0 ? raw->timeout_ms :
+		    ss != NULL && ss->timeout_ms > 0 ? ss->timeout_ms :
+		    env->timeout_ms;
+	if (!env->signal_headers_set[sig]) {
+		/* The general variable's headers (not system credentials). */
+		oe_attrs_free(es->headers, es->nheaders);
+		es->headers = NULL;
+		es->nheaders = 0;
+		if (merge_missing(&es->headers, &es->nheaders, env->headers,
+		    nrawheaders) != 0)
+			return (-1);
+	}
+	creds = NULL;
+	ncreds = 0;
+	if (sysblock) {
+		creds = ss->headers_file != NULL && ss->headers_file[0] !=
+		    '\0' ? ss->headers : sc->headers;
+		ncreds = ss->headers_file != NULL && ss->headers_file[0] !=
+		    '\0' ? ss->nheaders : sc->nheaders;
+	} else if (sc != NULL && sc->enable && es->endpoint != NULL &&
+	    sc->endpoint[0] != '\0' && strcmp(es->endpoint,
+	    sc->endpoint) == 0) {
+		creds = sc->headers;
+		ncreds = sc->nheaders;
+	}
+	if (ncreds > 0 && merge_missing(&es->headers, &es->nheaders, creds,
+	    ncreds) != 0)
+		return (-1);
+	return (0);
+}
+
 int
 oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
     const char *cli_endpoint)
 {
+	struct oe_env raw;
+	size_t nrawheaders;
+	int sig;
 
 	oe_env_load(env);
+	/* The environment's own general settings, before other layers. */
+	raw.endpoint = env->endpoint;
+	raw.protocol = env->protocol;
+	raw.compression = env->compression;
+	raw.timeout_ms = env->timeout_ms;
+	nrawheaders = env->nheaders;
 	if (cli_endpoint != NULL)
 		env->endpoint = cli_endpoint;
-	if (sc == NULL || !sc->enable)
-		return (0);
+	if (sc != NULL && sc->enable && merge_system(env, sc) != 0)
+		return (-1);
+	for (sig = 0; sig < OE_NSIGNALS; sig++)
+		if (resolve_signal(env, sc, cli_endpoint, &raw, nrawheaders,
+		    sig) != 0)
+			return (-1);
+	env->signals_resolved = 1;
+	return (0);
+}
+
+/* The system layer under the general settings. */
+static int
+merge_system(struct oe_env *env, const struct oe_sysconf *sc)
+{
+
 	/*
 	 * An empty system endpoint is unset (the built-in default
 	 * applies), and with the file target the endpoint is not used.
@@ -919,6 +1107,31 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 }
 
 /*
+ * The command line protocol and the default endpoints, once the
+ * general settings are final (oe_config_load()).
+ */
+static void
+finish_signals(struct oe_env *env, const struct oe_config_request *req)
+{
+	struct oe_env_signal *es;
+	int sig;
+
+	for (sig = 0; sig < OE_NSIGNALS; sig++) {
+		es = &env->signals[sig];
+		if (req->protocol != NULL)
+			es->protocol = req->protocol;
+		if (es->protocol == NULL)
+			es->protocol = env->protocol;
+		if (es->endpoint == NULL) {
+			/* gRPC collectors listen on 4317, OTLP/HTTP on 4318. */
+			es->endpoint = strcmp(es->protocol, "grpc") == 0 ?
+			    OE_DEFAULT_GRPC_ENDPOINT : OE_DEFAULT_ENDPOINT;
+			es->endpoint_exact = 0;
+		}
+	}
+}
+
+/*
  * The one configuration path of every exporting tool; see
  * oe_config_load(3) in libotelexport.3.
  */
@@ -929,7 +1142,7 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 	struct oe_sysconf *sc;
 	const char *dir;
 	size_t len;
-	int r;
+	int r, sig, exact;
 
 	sc = NULL;
 	if (req->system) {
@@ -971,7 +1184,12 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 		env->protocol = OE_DEFAULT_PROTOCOL;
 	if (sc != NULL && !sc->enable)
 		sc = NULL;
-	if (env->endpoint == NULL && sc != NULL && sc->export_file) {
+	/* A signal endpoint (from the environment) is an export target. */
+	exact = 0;
+	for (sig = 0; sig < OE_NSIGNALS; sig++)
+		if (env->signals[sig].endpoint_exact)
+			exact = 1;
+	if (env->endpoint == NULL && !exact && sc != NULL && sc->export_file) {
 		/*
 		 * The file target: no endpoint from the command line or
 		 * the environment.  One file per tool; no spool (the file
@@ -985,14 +1203,17 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 		    req->scope);
 		env->file_path = env->file_buf;
 		env->endpoint = OE_DEFAULT_ENDPOINT;	/* unused */
+		finish_signals(env, req);
 		return (0);
 	}
 	if (env->endpoint == NULL) {
 		/* OTLP/gRPC collectors listen on 4317, OTLP/HTTP on 4318. */
 		env->endpoint = strcmp(env->protocol, "grpc") == 0 ?
 		    OE_DEFAULT_GRPC_ENDPOINT : OE_DEFAULT_ENDPOINT;
-		env->endpoint_default = 1;
+		/* Unless a signal endpoint names a target. */
+		env->endpoint_default = !exact;
 	}
+	finish_signals(env, req);
 	if (req->spool != NULL) {
 		/* A command line spool takes its bound from the layers. */
 		env->spool_path = req->spool;

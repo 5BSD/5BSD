@@ -5,6 +5,7 @@ INTERNALLIB=
 
 SRCS=		dtotel.c \
 		dtotel_agg.c \
+		dtotel_prof.c \
 		dtotel_session.c
 
 WARNS?=		3

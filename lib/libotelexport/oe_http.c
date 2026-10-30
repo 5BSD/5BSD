@@ -89,9 +89,12 @@ oe_url_parse(const char *url, struct oe_url *u)
 	memcpy(u->host, hoststart, len);
 	u->host[len] = '\0';
 
-	if (pathstart == NULL)
+	if (pathstart == NULL) {
 		strlcpy(u->basepath, "", sizeof(u->basepath));
-	else {
+		strlcpy(u->rawpath, "/", sizeof(u->rawpath));
+	} else {
+		/* basepath has the same size: it cannot overflow first. */
+		(void)strlcpy(u->rawpath, pathstart, sizeof(u->rawpath));
 		/* A truncated path would POST to the wrong URL. */
 		if (strlcpy(u->basepath, pathstart,
 		    sizeof(u->basepath)) >= sizeof(u->basepath))
@@ -346,7 +349,11 @@ oe_http_post_type(const struct oe_url *u, const char *path,
 		return (-1);
 
 	oe_buf_init(&req);
-	oe_buf_appendf(&req, "POST %s/%s HTTP/1.1\r\n", u->basepath, path);
+	if (path == NULL)
+		oe_buf_appendf(&req, "POST %s HTTP/1.1\r\n", u->rawpath);
+	else
+		oe_buf_appendf(&req, "POST %s/%s HTTP/1.1\r\n", u->basepath,
+		    path);
 	oe_buf_appendf(&req, "Host: %s:%d\r\n", u->host, u->port);
 	oe_buf_appendf(&req, "User-Agent: %s\r\n", user_agent);
 	oe_buf_appendf(&req, "Content-Type: %s\r\n", content_type);

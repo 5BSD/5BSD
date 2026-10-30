@@ -11,6 +11,8 @@ SRCS=		oe_util.c \
 		oe_collapsed.c \
 		oe_http.c \
 		oe_otlpenc.c \
+		oe_otlpprof.c \
+		oe_profdict.c \
 		oe_otlp.c \
 		oe_otlpfile.c \
 		oe_sysconf.c \
@@ -65,6 +67,9 @@ MLINKS+=	libotelexport.3 oe_resource_init.3
 MLINKS+=	libotelexport.3 oe_otlp_config_env.3
 MLINKS+=	libotelexport.3 oe_severity_text.3
 MLINKS+=	libotelexport.3 oe_span.3
+MLINKS+=	libotelexport.3 oe_profile.3
+MLINKS+=	libotelexport.3 oe_signal_name.3
+MLINKS+=	libotelexport.3 oe_otlp_config_signals.3
 MLINKS+=	libotelexport.3 oe_host_detect.3
 MLINKS+=	libotelexport.3 oe_host_arch_semconv.3
 MLINKS+=	libotelexport.3 oe_resource_host.3
@@ -106,9 +111,11 @@ PROTO_FILES.otlp= \
 		opentelemetry/proto/logs/v1/logs.proto \
 		opentelemetry/proto/metrics/v1/metrics.proto \
 		opentelemetry/proto/trace/v1/trace.proto \
+		opentelemetry/proto/profiles/v1development/profiles.proto \
 		opentelemetry/proto/collector/logs/v1/logs_service.proto \
 		opentelemetry/proto/collector/metrics/v1/metrics_service.proto \
-		opentelemetry/proto/collector/trace/v1/trace_service.proto
+		opentelemetry/proto/collector/trace/v1/trace_service.proto \
+		opentelemetry/proto/collector/profiles/v1development/profiles_service.proto
 .include "${SRCTOP}/lib/protobuf/protoc-gen.mk"
 
 # The OTLP definitions (Apache-2.0) are compiled into every program that

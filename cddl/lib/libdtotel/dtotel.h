@@ -15,7 +15,14 @@
  *    records (clock anchors, spans, context, trace context) rather
  *    than log lines; span records become OTLP spans;
  *  - drops, runtime errors, exit() and HyperTrace guest lifetimes
- *    become counters and named log events.
+ *    become counters and named log events;
+ *  - with "profiles" (experimental), stack-only probe firings
+ *    (profile-N, tick-N or any probe that prints only stack()/ustack())
+ *    and stack-keyed count()/sum() aggregations become OTLP profiles
+ *    (oe_profile()) instead of stack-only events and metrics;
+ *  - "\037otel.exemplar" records attach exemplars (a measurement and
+ *    its trace) to the data point of the aggregation series they
+ *    name, exported with the next snapshot.
  *
  * Probe time.  libdtrace hands every record the probe's high
  * resolution timestamp (the D "timestamp" clock), not wall time.  The
@@ -67,6 +74,8 @@ struct dtotel_config {
 	/* NULL: guest records go to the host exporter. */
 	dtotel_guest_exporter_f *guest_exporter;
 	void		*guest_arg;
+	/* Export profiles (experimental OTLP profiles signal). */
+	int		 profiles;
 };
 
 struct dtotel	*dtotel_open(const struct dtotel_config *);

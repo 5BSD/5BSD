@@ -30,7 +30,8 @@ FILESGROUPS+=	GOLDEN
 GOLDEN=		golden/otlpjson-basic.jsonl \
 		golden/otlpjson-spans.jsonl \
 		golden/otlpjson-semconv.jsonl \
-		golden/otlpjson-native.jsonl
+		golden/otlpjson-native.jsonl \
+		golden/otlpjson-profiles.jsonl
 GOLDENDIR=	${TESTSDIR}/golden
 GOLDENPACKAGE=	${PACKAGE}
 
@@ -55,6 +56,21 @@ CFLAGS.grpc_testsrv.c+=	-I${SRCTOP}/contrib/nghttp2/lib/includes \
 			-I${SRCTOP}/lib/libnghttp2
 SUBDIR+=	pbcpp
 ATF_TESTS_SH+=	otlppb_oracle_test
+
+# The experimental profiles signal (dictionary builder, encoder, the
+# exporters) and metric exemplars, checked by the C++ oracle and the JSON
+# validator.
+ATF_TESTS_C+=	otlpprof_test
+SRCS.otlpprof_test=	otlpprof_test.c grpc_testsrv.c otel_testutil.c \
+			otlp_validate.c
+LDFLAGS.otlpprof_test+=	${WRAP_ALLOC}
+LIBADD.otlpprof_test+=	otelexport nghttp2 z ssl crypto pthread
+
+# Per-signal endpoints, protocols, headers, timeouts and compression.
+ATF_TESTS_C+=	signals_test
+SRCS.signals_test=	signals_test.c grpc_testsrv.c otel_testutil.c
+LDFLAGS.signals_test+=	${WRAP_ALLOC}
+LIBADD.signals_test+=	otelexport nghttp2 z ssl crypto pthread
 
 # Loopback OTLP/HTTP and OTLP/gRPC receiver for the system tests.
 PROGS+=		otlp_pb_receiver

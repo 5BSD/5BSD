@@ -28,6 +28,7 @@
 .Nm oe_event ,
 .Nm oe_snapshot ,
 .Nm oe_span ,
+.Nm oe_profile ,
 .Nm oe_flush ,
 .Nm oe_shutdown ,
 .Nm oe_exporter_free ,
@@ -37,6 +38,8 @@
 .Nm oe_config_load ,
 .Nm oe_resource_init ,
 .Nm oe_otlp_config_env ,
+.Nm oe_otlp_config_signals ,
+.Nm oe_signal_name ,
 .Nm oe_severity_text ,
 .Nm oe_host_detect ,
 .Nm oe_host_arch_semconv ,
@@ -120,6 +123,8 @@ It is not installed as a shared library.
 .Ft int
 .Fn oe_span "struct oe_exporter *e" "const struct oe_span *sp"
 .Ft int
+.Fn oe_profile "struct oe_exporter *e" "const struct oe_profile *pr"
+.Ft int
 .Fn oe_flush "struct oe_exporter *e"
 .Ft int
 .Fn oe_shutdown "struct oe_exporter *e"
@@ -147,6 +152,10 @@ It is not installed as a shared library.
 .Fc
 .Ft void
 .Fn oe_otlp_config_env "struct oe_otlp_config *cfg" "const struct oe_env *env"
+.Ft void
+.Fn oe_otlp_config_signals "struct oe_otlp_config *cfg" "const struct oe_env *env"
+.Ft "const char *"
+.Fn oe_signal_name "enum oe_signal sig"
 .Ft "const char *"
 .Fn oe_severity_text "int severity" "char *buf" "size_t len"
 .Ft void
@@ -222,6 +231,8 @@ struct oe_exporter_ops {
 	int	(*shutdown)(struct oe_exporter *);
 	void	(*free)(struct oe_exporter *);
 	int	(*span)(struct oe_exporter *, const struct oe_span *);
+	int	(*profile)(struct oe_exporter *,
+		    const struct oe_profile *);
 };
 .Ed
 .Pp
@@ -233,6 +244,7 @@ Callers never invoke the table directly; the macros
 .Fn oe_event ,
 .Fn oe_snapshot ,
 .Fn oe_span ,
+.Fn oe_profile ,
 .Fn oe_flush ,
 .Fn oe_shutdown
 and
@@ -240,7 +252,10 @@ and
 dispatch through it.
 An exporter whose table has no
 .Va span
-method accepts and ignores spans.
+method accepts and ignores spans, and one without a
+.Va profile
+method accepts and ignores profiles; only the OTLP exporter and the OTLP
+JSON Lines exporter export profiles.
 The intended life cycle is: construct, call
 .Fn oe_start
 once, deliver any number of events and snapshots, optionally call
@@ -418,6 +433,28 @@ and
 fill the Metric fields of the same names.
 Snapshots with zero points are ignored.
 .Pp
+A data point's
+.Va exemplars
+.Pq Va nexemplars of them
+become its OTLP
+.Ql exemplars ,
+on every kind of point
+.Pq sum, gauge, histogram and exponential histogram :
+.Bd -literal -offset indent
+struct oe_exemplar {
+	struct timespec	 ts;		/* timeUnixNano */
+	int		 is_double;	/* dvalue, else ivalue */
+	int64_t		 ivalue;
+	double		 dvalue;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];	/* zero: none */
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	const struct oe_kv *attrs;	/* filteredAttributes */
+	size_t		 nattrs;
+};
+.Ed
+.Pp
+The OTLP exporters write them; the other exporters ignore them.
+.Pp
 .Fn oe_span
 delivers one finished span:
 .Bd -literal -offset indent
@@ -491,6 +528,74 @@ struct oe_kv {
 .Ed
 .Pp
 Like events, spans are borrowed for the duration of the call.
+.Pp
+.Fn oe_profile
+delivers one profile of the
+.Em experimental
+OTLP profiles signal of
+.Pa opentelemetry-proto
+1.10
+.Pq package Ql opentelemetry.proto.profiles.v1development ,
+whose schema and Collector support are still in development:
+.Bd -literal -offset indent
+struct oe_profile_sample {
+	const struct oe_frame *stack;	/* kernel frames, leaf first */
+	size_t		 nstack;
+	const struct oe_frame *ustack;	/* then user frames, leaf first */
+	size_t		 nustack;
+	int		 has_value;	/* value, else each timestamp */
+	int64_t		 value;		/*   is one observation */
+	const struct timespec *timestamps;
+	size_t		 ntimestamps;
+	pid_t		 pid;
+	const char	*execname;
+	struct oe_context ctx;
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];	/* zero: no link */
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+};
+struct oe_profile {
+	const char	*profile;
+	const char	*sample_type, *sample_unit;	/* "samples", "count" */
+	const char	*period_type, *period_unit;	/* NULL: no period */
+	int64_t		 period;
+	struct timespec	 start, end;	/* time_unix_nano, duration */
+	const struct oe_profile_sample *samples;
+	size_t		 nsamples;
+	const struct oe_kv *attrs;	/* profile attributes */
+	size_t		 nattrs;
+};
+.Ed
+.Pp
+The encoder builds the request-wide
+.Vt ProfilesDictionary :
+strings, mappings
+.Pq the frame's module, for example Ql kernel , Ql libc.so.7 or a guest's Ql guest[<vmid>] ,
+functions, locations, stacks, links and attributes, each table starting
+with its zero value and holding no duplicates.
+Locations are per function: a frame's offset is not part of it, and a
+frame whose symbol is an address
+.Pq Ql 0x...
+is a location with that address and no line.
+Samples of the same stack, attribute set, link and shape merge: value
+samples add their values, timestamped samples append their observations.
+The context attributes
+.Pq Sx Semantic conventions
+and
+.Va attrs
+become sample attributes, a later key replacing an earlier one.
+Each table holds at most 262144 entries; samples beyond are dropped and
+reported on standard error.
+The profile's
+.Ql <scope>.profile
+attribute names it, and the instrumentation scope carries the attributes
+.Ql otlp.profiles.package
+and
+.Ql otlp.proto.version
+.Pq Ql 1.10.0
+so consumers can tell which draft of the signal they receive.
+A profile with no samples is not exported.
 .Ss Semantic conventions
 Both
 .Vt struct oe_event
@@ -665,9 +770,14 @@ sets
 .Va env->file_path
 to
 .Pa <export.directory>/<scope>.jsonl
-instead of resolving a spool, unless the command line or
+instead of resolving a spool, unless the command line,
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT
-names an endpoint.
+or a signal's
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ENDPOINT
+names an endpoint; the endpoints of the signal blocks of
+.Xr otel.conf 5
+are not used with the file target.
+The file target writes profiles too.
 .Fn oe_env_sink_open
 opens that file as a durable, following sink with mode
 .Dv OE_FILE_TARGET_MODE
@@ -939,6 +1049,20 @@ to the same paths as
 .Ql http/protobuf .
 .El
 .Pp
+Profiles are sent by the protobuf transports only, each as one
+.Vt ExportProfilesServiceRequest
+with its own dictionary: POSTed to
+.Pa /v1development/profiles ,
+or the
+.Ql Export
+method of
+.Ql opentelemetry.proto.collector.profiles.v1development.ProfilesService .
+Over
+.Ql http/json
+they are dropped with one warning, and with
+.Va profiles
+set in the configuration construction fails instead.
+.Pp
 All three carry the same requests: the protobuf transports transcode the
 JSON request the exporter batches and spools
 .Pq the format Fn oe_otlpjson_new writes
@@ -966,6 +1090,8 @@ struct oe_otlp_config {
 	const char	*scope_name;
 	int		 spool_optional;
 	const char	*protocol;
+	struct oe_otlp_signal_config signals[OE_NSIGNALS];
+	int		 profiles;
 };
 .Ed
 .Bl -tag -width "flush_interval"
@@ -1104,6 +1230,44 @@ failing construction.
 .Fn oe_config_load
 sets it for the system spool of
 .Xr otel.conf 5 .
+.It Va signals
+Per-signal settings, indexed by
+.Vt enum oe_signal
+.Pq Dv OE_SIGNAL_LOGS , OE_SIGNAL_METRICS , OE_SIGNAL_TRACES , OE_SIGNAL_PROFILES ; Dv OE_NSIGNALS of them ,
+each overriding the exporter's setting for that signal:
+.Bd -literal -offset indent
+struct oe_otlp_signal_config {
+	const char	*endpoint;	/* signal URL, used as-is */
+	const char	*protocol;
+	const struct oe_attr *headers;	/* replace the exporter's */
+	size_t		 nheaders;
+	int		 has_headers;
+	double		 timeout;	/* seconds; 0 inherits */
+	const char	*compression;
+};
+.Ed
+.Pp
+.Dv NULL
+members
+.Pq and a zero Va has_headers
+inherit.
+A signal endpoint is the signal's full URL: requests go to its path
+exactly as given, with nothing appended
+.Pq for OTLP/gRPC only its host and port are used .
+Each signal may thus use its own collector and transport; signals with
+identical settings share one connection setup.
+An invalid signal endpoint or protocol fails construction.
+.Fn oe_signal_name
+returns
+.Ql logs ,
+.Ql metrics ,
+.Ql traces
+or
+.Ql profiles .
+.It Va profiles
+The caller exports profiles: construction fails when the profiles signal
+resolves to
+.Ql http/json .
 .El
 .Pp
 .Fn oe_start
@@ -1252,6 +1416,14 @@ A request that would push the spool past
 is dropped; the number of batches dropped is reported once the spool
 drains.
 Requests rejected with a non-retryable status are never spooled.
+.Pp
+.Fn oe_otlpjson_new
+writes each profile at once as one line holding a whole
+.Vt ExportProfilesServiceRequest .
+The JSON mapping of the profiles signal is at Development maturity in
+.Pa opentelemetry-proto
+1.10, like the signal itself, so this line format may change with the
+protocol.
 .Ss Drop accounting
 Records a producer lost
 .Pq DTrace buffer drops, audit pipe overflows
@@ -1399,7 +1571,62 @@ and the remaining resource attributes as custom attributes.
 copies the resolved endpoint, protocol, timeout, headers, compression and
 spool settings into a
 .Vt struct oe_otlp_config ,
-leaving its other members alone.
+leaving its other members alone, and then calls
+.Fn oe_otlp_config_signals ,
+which copies only the per-signal settings into
+.Va cfg->signals .
+.Pp
+Every signal's settings are resolved too, into
+.Va env->signals ,
+indexed by
+.Vt enum oe_signal :
+.Bd -literal -offset indent
+struct oe_env_signal {
+	const char	*endpoint;
+	int		 endpoint_exact;	/* a signal URL, as-is */
+	const char	*protocol;
+	const char	*compression;	/* NULL: exporter default */
+	int		 timeout_ms;	/* -1: exporter default */
+	struct oe_attr	*headers;	/* owned */
+	size_t		 nheaders;
+};
+.Ed
+.Pp
+Each setting comes from the first layer that has it: the command line
+.Pq a general endpoint or protocol, for every signal ,
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING ,
+.Ev OTEL_EXPORTER_OTLP_ Ns Ar SETTING ,
+the signal's block of
+.Xr otel.conf 5 ,
+its general keys, and the default
+.Po
+.Dv OE_DEFAULT_GRPC_ENDPOINT
+for a signal using
+.Ql grpc ,
+else
+.Dv OE_DEFAULT_ENDPOINT
+.Pc .
+An endpoint from a signal's own setting is a signal URL
+.Pq Va endpoint_exact ;
+a general one is a base URL.
+A signal's header variable replaces the general one
+.Pq set but empty, it removes them .
+Credentials of an
+.Xr otel.conf 5
+headers file are added only for their own endpoint: a signal block's
+file for that block's endpoint
+.Pq the general file when the block has none ,
+the general file for the general system endpoint.
+A signal endpoint from the environment is an export target, so it also
+disables the file target.
+.Fn oe_env_load
+alone leaves
+.Va signals
+unresolved
+.Pq Va signals_resolved is 0 ,
+and
+.Fn oe_otlp_config_signals
+then lets every signal inherit.
 .Ss Host detection
 .Fn oe_host_detect
 fills a
@@ -1629,6 +1856,24 @@ and
 parsed from a comma-separated
 .Ql key=value
 list; empty if unset.
+.It Ev OTEL_EXPORTER_OTLP_ Ns Ar SIGNAL Ns Ev _ Ns Ar SETTING
+.Ar SIGNAL
+is
+.Ev LOGS , METRICS , TRACES
+or
+.Ev PROFILES
+and
+.Ar SETTING
+one of
+.Ev ENDPOINT , PROTOCOL , HEADERS , TIMEOUT , COMPRESSION :
+the setting of one signal, validated as the general variable of the
+same setting, in
+.Va signals Ns Bq Ar sig ;
+.Va signal_headers_set Ns Bq Ar sig
+records a well-formed
+.Ev _HEADERS
+variable.
+The endpoint is the signal's full URL, used as-is.
 .El
 .Sh EXAMPLES
 Build an OTLP exporter from the environment, as the tools do:

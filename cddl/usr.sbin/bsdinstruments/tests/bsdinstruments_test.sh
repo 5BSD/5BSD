@@ -640,6 +640,43 @@ watch_usage_errors_body()
 	    bsdinstruments generate -f x.d --rotate-keep 2
 	atf_check -s exit:2 -e match:usage \
 	    bsdinstruments generate -f x.d --spool-max 1k
+	atf_check -s exit:2 -e match:'--profiles needs --format otel or otlp-json' \
+	    bsdinstruments watch -f x.d --format json --profiles
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --profiles
+}
+
+atf_test_case watch_profiles
+watch_profiles_head()
+{
+	atf_set descr "--profiles: stack-only firings become an OTLP profile"
+	atf_set require.progs cc
+}
+watch_profiles_body()
+{
+	mock_setup
+	anchored_script
+	v=$(validator)
+	cat >> script <<'EOF'
+chunk 0 11000 3               kernel`spin+0x1\n
+chunk 0 12000 3               kernel`spin+0x2\n
+chunk 1 13000 3               kernel`other+0x2\n
+work
+EOF
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --profiles --output out.jsonl
+	atf_check -o match:'profiles=1 samples=2' "$v" out.jsonl
+	atf_check -o match:'"stringValue":"syscall:freebsd:read:entry"' \
+	    grep resourceProfiles out.jsonl
+	# Without --profiles the same firings are no profile.
+	atf_check -s exit:0 -o empty -e empty bsdinstruments watch mock-prof \
+	    --format otlp-json --output plain.jsonl
+	atf_check -s exit:1 grep -q resourceProfiles plain.jsonl
+	# Profiles are never sent over http/json.
+	atf_check -s not-exit:0 \
+	    -e match:'profiles are sent with the http/protobuf or grpc protocol only' \
+	    bsdinstruments watch mock-prof --format otel --profiles \
+	    --endpoint http://127.0.0.1:9 --protocol http/json
 }
 
 atf_test_case watch_libdtrace_failures
@@ -1294,6 +1331,7 @@ atf_init_test_cases()
 	atf_add_test_case watch_interval
 	atf_add_test_case watch_output_errors
 	atf_add_test_case watch_usage_errors
+	atf_add_test_case watch_profiles
 	atf_add_test_case watch_libdtrace_failures
 	atf_add_test_case watch_drops_and_signals
 	atf_add_test_case probes_mock

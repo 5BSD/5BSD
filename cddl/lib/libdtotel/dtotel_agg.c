@@ -29,11 +29,26 @@
  * remembers its value from one snapshot to the next, so a reset
  * (clear(), or trunc() removing a key that later returns) moves the
  * series' start time; see dtotel_series below.
+ *
+ * Exemplars.  DTrace aggregations keep no per-sample context, so no
+ * data point can name the trace of a measurement by itself.  A D program
+ * that knows the trace (a traceparent it copied in) prints an
+ * "\037otel.exemplar" record in the same firing as the aggregation
+ * update; see dtotel.c.  Each names its series (aggregation name and
+ * keys) and value; the exemplars wait here and go out on that series'
+ * data point with the next snapshot, then are cleared.  Every data point
+ * kind can carry them (sums, gauges and histograms).  Bounds: the
+ * DTOTEL_EX_PER_SERIES most recent exemplars per series and
+ * DTOTEL_EX_MAX_SERIES series per snapshot; records beyond the series
+ * bound are dropped and reported once.  An exemplar whose series is not
+ * in the snapshot (a mistyped key, or a trunc()) is dropped with a
+ * warning.  Stack-keyed aggregations exported as profiles carry none.
  */
 
 #include <sys/param.h>
 
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,6 +230,262 @@ dtotel_free_keynames(struct dtotel_keynames *head)
 }
 
 /* ---------------------------------------------------------------- */
+/* Exemplars								*/
+
+#define	DTOTEL_EX_PER_SERIES	4
+#define	DTOTEL_EX_MAX_SERIES	1024
+#define	DTOTEL_EX_MAX_ATTRS	8
+#define	EX_HASH			256
+
+struct dtotel_ex {
+	struct oe_exemplar ex;
+	struct oe_kv	 kv[DTOTEL_EX_MAX_ATTRS];
+	char		*str[2 * DTOTEL_EX_MAX_ATTRS];	/* owned */
+};
+
+struct dtotel_exseries {
+	char		*key;		/* name\037vmid\037key0\037key1... */
+	struct dtotel_ex ring[DTOTEL_EX_PER_SERIES];
+	size_t		 n, next;	/* stored; next slot to fill */
+	int		 matched;
+	struct dtotel_exseries *hnext;
+};
+
+static unsigned
+ex_hash(const char *s)
+{
+	unsigned h = 5381;
+
+	while (*s != '\0')
+		h = h * 33 + (unsigned char)*s++;
+	return (h % EX_HASH);
+}
+
+static void
+ex_slot_clear(struct dtotel_ex *x)
+{
+	size_t i;
+
+	for (i = 0; i < 2 * DTOTEL_EX_MAX_ATTRS; i++) {
+		free(x->str[i]);
+		x->str[i] = NULL;
+	}
+	memset(&x->ex, 0, sizeof(x->ex));
+}
+
+void
+dtotel_exemplars_free(struct dtotel *d)
+{
+	struct dtotel_exseries *s, *next;
+	size_t i, j;
+
+	d->ex_last = NULL;
+	if (d->exseries == NULL)
+		return;
+	for (i = 0; i < EX_HASH; i++)
+		for (s = d->exseries[i]; s != NULL; s = next) {
+			next = s->hnext;
+			for (j = 0; j < DTOTEL_EX_PER_SERIES; j++)
+				ex_slot_clear(&s->ring[j]);
+			free(s->key);
+			free(s);
+		}
+	free(d->exseries);
+	d->exseries = NULL;
+	d->nexseries = 0;
+}
+
+static struct dtotel_exseries *
+ex_find(struct dtotel *d, const char *key)
+{
+	struct dtotel_exseries *s;
+
+	if (d->exseries == NULL)
+		return (NULL);
+	for (s = d->exseries[ex_hash(key)]; s != NULL; s = s->hnext)
+		if (strcmp(s->key, key) == 0)
+			return (s);
+	return (NULL);
+}
+
+static void
+ex_warn(struct dtotel *d, const char *why)
+{
+
+	if (!d->warned_exemplar++)
+		fprintf(stderr, "dtotel: exemplar record ignored (%s)\n", why);
+}
+
+/*
+ * An exemplar record (see dtotel.c).  "rec" is a private copy: fields
+ * are split in place at the separators.
+ */
+void
+dtotel_exemplar_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
+    const struct dtotel_firing *firing, const struct timespec *observed)
+{
+	struct dtotel_exseries *s;
+	struct dtotel_ex *x;
+	struct oe_buf kb;
+	const char *agg, *tp, *target;
+	char *field, *next, *eq, *end;
+	const char *keys[DTOTEL_MAX_AGG_KEYS];
+	char *akey[DTOTEL_EX_MAX_ATTRS], *aval[DTOTEL_EX_MAX_ATTRS];
+	int aint[DTOTEL_EX_MAX_ATTRS];
+	int64_t value;
+	uint8_t tid[OE_TRACE_ID_LEN], sid[OE_SPAN_ID_LEN], flags;
+	size_t nkeys, nattrs, i;
+	int have_value;
+	uint16_t vmid;
+	unsigned h;
+
+	agg = tp = NULL;
+	nkeys = nattrs = 0;
+	have_value = 0;
+	value = 0;
+	for (field = strchr(rec + strlen(DTOTEL_RECORD_PREFIX), '\037');
+	    field != NULL; field = next) {
+		*field++ = '\0';
+		next = strchr(field, '\037');
+		if (next != NULL)
+			*next = '\0';
+		if ((eq = strchr(field, '=')) == NULL) {
+			ex_warn(d, "a field without '='");
+			return;
+		}
+		*eq++ = '\0';
+		if (strcmp(field, "agg") == 0)
+			agg = eq;
+		else if (strcmp(field, "key") == 0) {
+			if (nkeys < DTOTEL_MAX_AGG_KEYS)
+				keys[nkeys++] = eq;
+		} else if (strcmp(field, "traceparent") == 0)
+			tp = eq;
+		else if (strcmp(field, "value") == 0) {
+			errno = 0;
+			value = strtoll(eq, &end, 10);
+			if (*eq == '\0' || *end != '\0' || errno != 0) {
+				ex_warn(d, "value is not an integer");
+				return;
+			}
+			have_value = 1;
+		} else if ((strncmp(field, "a.s.", 4) == 0 ||
+		    strncmp(field, "a.i.", 4) == 0) && field[4] != '\0') {
+			if (field[2] == 'i') {
+				errno = 0;
+				(void)strtoll(eq, &end, 10);
+				if (*eq == '\0' || *end != '\0' || errno != 0) {
+					ex_warn(d, "a.i. attribute is not an "
+					    "integer");
+					return;
+				}
+			}
+			if (nattrs < DTOTEL_EX_MAX_ATTRS) {
+				akey[nattrs] = field + 4;
+				aval[nattrs] = eq;
+				aint[nattrs++] = field[2] == 'i';
+			}
+		}
+		/* Other fields (newer producers) are ignored. */
+	}
+	if (agg == NULL || !have_value) {
+		ex_warn(d, "needs agg= and value=");
+		return;
+	}
+	memset(tid, 0, sizeof(tid));
+	memset(sid, 0, sizeof(sid));
+	if (tp != NULL && oe_traceparent_parse(tp, strlen(tp), tid, sid,
+	    &flags) != 0) {
+		ex_warn(d, "malformed traceparent");
+		return;
+	}
+	vmid = dtotel_record_vmid(bd, &target);
+	oe_buf_init(&kb);
+	oe_buf_appendf(&kb, "%s\037%u", agg, (unsigned)vmid);
+	for (i = 0; i < nkeys; i++)
+		oe_buf_appendf(&kb, "\037%s", keys[i]);
+	if (kb.error) {
+		oe_buf_free(&kb);
+		return;
+	}
+	if ((s = ex_find(d, kb.data)) == NULL) {
+		if (d->nexseries >= DTOTEL_EX_MAX_SERIES) {
+			oe_buf_free(&kb);
+			if (d->exdropped++ == 0)
+				fprintf(stderr, "dtotel: %d exemplar series "
+				    "before the next snapshot; dropping "
+				    "exemplars of further series\n",
+				    DTOTEL_EX_MAX_SERIES);
+			return;
+		}
+		if ((d->exseries == NULL && (d->exseries = calloc(EX_HASH,
+		    sizeof(*d->exseries))) == NULL) ||
+		    (s = calloc(1, sizeof(*s))) == NULL) {
+			oe_buf_free(&kb);
+			return;
+		}
+		s->key = kb.data;
+		h = ex_hash(s->key);
+		s->hnext = d->exseries[h];
+		d->exseries[h] = s;
+		d->nexseries++;
+	} else
+		oe_buf_free(&kb);
+	/* The most recent DTOTEL_EX_PER_SERIES are kept. */
+	x = &s->ring[s->next];
+	s->next = (s->next + 1) % DTOTEL_EX_PER_SERIES;
+	if (s->n < DTOTEL_EX_PER_SERIES)
+		s->n++;
+	ex_slot_clear(x);
+	dtotel_probe_walltime(d, firing, observed, &x->ex.ts);
+	x->ex.ivalue = value;
+	for (i = 0; i < nattrs; i++) {
+		x->str[2 * i] = strdup(akey[i]);
+		x->str[2 * i + 1] = strdup(aval[i]);
+		if (x->str[2 * i] == NULL || x->str[2 * i + 1] == NULL)
+			break;
+		x->kv[i].key = x->str[2 * i];
+		if (aint[i]) {
+			x->kv[i].type = OE_VAL_INT;
+			x->kv[i].i = strtoll(aval[i], NULL, 10);
+		} else {
+			x->kv[i].type = OE_VAL_STRING;
+			x->kv[i].s = x->str[2 * i + 1];
+		}
+	}
+	x->ex.attrs = x->kv;
+	x->ex.nattrs = i;
+	/*
+	 * The trace: inline, else the trace record of this firing (seen
+	 * already, held for a line or taken by it), else one that follows.
+	 */
+	if (tp == NULL && dtotel_same_firing(firing, &d->tp_firing)) {
+		memcpy(tid, d->tp_trace, sizeof(tid));
+		memcpy(sid, d->tp_span, sizeof(sid));
+	} else if (tp == NULL && d->body != NULL &&
+	    dtotel_same_firing(firing, &d->body_firing)) {
+		memcpy(tid, d->body_trace, sizeof(tid));
+		memcpy(sid, d->body_span, sizeof(sid));
+	}
+	memcpy(x->ex.trace_id, tid, sizeof(tid));
+	memcpy(x->ex.span_id, sid, sizeof(sid));
+	d->ex_last = &x->ex;
+	d->ex_firing = *firing;
+}
+
+void
+dtotel_exemplar_trace(struct dtotel *d, const struct dtotel_firing *firing,
+    const uint8_t *trace, const uint8_t *span)
+{
+
+	if (d->ex_last == NULL || !dtotel_same_firing(firing, &d->ex_firing) ||
+	    !oe_id_is_zero(d->ex_last->trace_id, OE_TRACE_ID_LEN))
+		return;
+	memcpy(d->ex_last->trace_id, trace, OE_TRACE_ID_LEN);
+	memcpy(d->ex_last->span_id, span, OE_SPAN_ID_LEN);
+}
+
+/* ---------------------------------------------------------------- */
 /* Typed aggregation walk						*/
 
 struct snap_point {
@@ -233,6 +504,8 @@ struct snap_point {
 	int		 is_double;
 	double		 dvalue;
 	struct timespec	 start;		/* set by the series bookkeeping */
+	struct oe_exemplar *exemplars;	/* owned array, borrowed contents */
+	size_t		 nexemplars;
 };
 
 struct snap_accum {
@@ -390,6 +663,73 @@ key_to_buf(dtrace_hdl_t *dtp, const dtrace_recdesc_t *rec, caddr_t base,
 hexdump:
 	for (i = 0; i < rec->dtrd_size; i++)
 		oe_buf_appendf(b, "%02x", (unsigned char)addr[i]);
+}
+
+void
+dtotel_key_string(struct dtotel *d, const dtrace_recdesc_t *rec, caddr_t base,
+    struct oe_buf *b)
+{
+
+	key_to_buf(d->dtp, rec, base, b);
+}
+
+/*
+ * The exemplars recorded for a point's series (aggregation, guest and
+ * key values in order), oldest first; they stay owned by the series
+ * until the snapshot is out.
+ */
+static void
+attach_exemplars(struct dtotel *d, const char *aggname, uint16_t vmid,
+    struct snap_point *pt)
+{
+	struct dtotel_exseries *s;
+	struct oe_buf kb;
+	size_t i, slot;
+
+	if (d->exseries == NULL)
+		return;
+	oe_buf_init(&kb);
+	oe_buf_appendf(&kb, "%s\037%u", aggname, (unsigned)vmid);
+	for (i = 0; i < pt->nattrs; i++)
+		oe_buf_appendf(&kb, "\037%s", pt->attrs[i].value);
+	s = kb.error ? NULL : ex_find(d, kb.data);
+	oe_buf_free(&kb);
+	/* A series holds at least the exemplar that created it. */
+	if (s == NULL ||
+	    (pt->exemplars = calloc(s->n, sizeof(*pt->exemplars))) == NULL)
+		return;
+	/* The oldest is at "next" once the ring is full. */
+	slot = s->n < DTOTEL_EX_PER_SERIES ? 0 : s->next;
+	for (i = 0; i < s->n; i++)
+		pt->exemplars[i] = s->ring[(slot + i) %
+		    DTOTEL_EX_PER_SERIES].ex;
+	pt->nexemplars = s->n;
+	s->matched = 1;
+}
+
+/* Exemplars whose series was not in the snapshot are dropped. */
+static void
+exemplars_done(struct dtotel *d)
+{
+	struct dtotel_exseries *s;
+	size_t i, unmatched;
+
+	unmatched = 0;
+	if (d->exseries != NULL)
+		for (i = 0; i < EX_HASH; i++)
+			for (s = d->exseries[i]; s != NULL; s = s->hnext)
+				if (!s->matched)
+					unmatched++;
+	if (unmatched > 0 && !d->warned_exemplar++)
+		fprintf(stderr, "dtotel: exemplars of %zu series matched no "
+		    "data point (agg= and key= must name the aggregation and "
+		    "its keys as %%d/%%s print them)\n", unmatched);
+	dtotel_exemplars_free(d);
+	if (d->exdropped > 0) {
+		fprintf(stderr, "dtotel: %ju exemplars dropped since the last "
+		    "snapshot\n", (uintmax_t)d->exdropped);
+		d->exdropped = 0;
+	}
 }
 
 static struct snap_accum *
@@ -684,6 +1024,17 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 
 	/* A guest's aggregation data belongs to the guest's resource. */
 	vmid = agg->dtada_edesc != NULL ? agg->dtada_edesc->dtepd_vmid : 0;
+	for (ak = ctx->keynames; ak != NULL; ak = ak->next)
+		if (strcmp(ak->aggname, aggname) == 0)
+			break;
+	/* Stack-keyed count()/sum() aggregations are profiles. */
+	if (ctx->d->profiles && (kind == OE_AGG_COUNT || kind == OE_AGG_SUM) &&
+	    vrec->dtrd_size >= sizeof(int64_t)) {
+		memcpy(&v[0], base + vrec->dtrd_offset, sizeof(int64_t));
+		if (dtotel_prof_agg(ctx->d, agg, aggname, ak,
+		    kind == OE_AGG_SUM, v[0]))
+			return (DTRACE_AGGWALK_NEXT);
+	}
 	sa = accum_for(ctx, aggname, kind, vmid);
 	if (sa == NULL)
 		return (DTRACE_AGGWALK_NEXT);
@@ -695,9 +1046,6 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 		return (DTRACE_AGGWALK_NEXT);
 
 	/* Keys: records 1 .. nrecs-2 (record 0 is the varid). */
-	for (ak = ctx->keynames; ak != NULL; ak = ak->next)
-		if (strcmp(ak->aggname, aggname) == 0)
-			break;
 	nkeys = desc->dtagd_nrecs - 2;
 	if (nkeys > 0) {
 		pt->attrs = calloc((size_t)nkeys, sizeof(*pt->attrs));
@@ -716,7 +1064,9 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 				    "key.%d", i);
 				pt->attrs[i].name = strdup(attrname);
 			}
-			pt->attrs[i].value = kb.error ? NULL : strdup(kb.data);
+			/* An empty key (a stack() without frames) is "". */
+			pt->attrs[i].value = kb.error ? NULL :
+			    strdup(kb.data != NULL ? kb.data : "");
 			oe_buf_free(&kb);
 			if (pt->attrs[i].name == NULL ||
 			    pt->attrs[i].value == NULL) {
@@ -728,6 +1078,8 @@ agg_walk(const dtrace_aggdata_t *agg, void *arg)
 			pt->nattrs = (size_t)(i + 1);
 		}
 	}
+
+	attach_exemplars(ctx->d, aggname, vmid, pt);
 
 	switch (kind) {
 	case OE_AGG_COUNT:
@@ -1025,6 +1377,8 @@ emit_and_free_accums(struct dtotel *d, struct snap_accum *accums)
 				dps[i].is_double = pt->is_double;
 				dps[i].dvalue = pt->dvalue;
 				dps[i].start = pt->start;
+				dps[i].exemplars = pt->exemplars;
+				dps[i].nexemplars = pt->nexemplars;
 			}
 			memset(&sn, 0, sizeof(sn));
 			sn.ts = now;
@@ -1059,6 +1413,7 @@ emit_and_free_accums(struct dtotel *d, struct snap_accum *accums)
 			free(__DECONST(struct oe_bucket *, pt->buckets));
 			free(pt->pos);
 			free(pt->neg);
+			free(pt->exemplars);
 		}
 		free(sa->points);
 		free(sa->name);
@@ -1087,6 +1442,10 @@ dtotel_aggregate(struct dtotel *d)
 		ret = -1;
 	}
 	emit_and_free_accums(d, actx.accums);
+	exemplars_done(d);
+	/* Profiles: the stack-keyed aggregations and the firings so far. */
+	if (d->profiles)
+		dtotel_prof_emit(d, 1);
 	/* The drop and error counters go out with every snapshot. */
 	dtotel_report(d, 1);
 	return (ret);

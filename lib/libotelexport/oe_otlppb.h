@@ -42,10 +42,13 @@ const char *oe_otlp_protocol_name(enum oe_otlp_protocol);
 struct upb_DefPool;
 struct upb_MessageDef;
 
+#define	OE_NSIGNALS_PB	4	/* OE_NSIGNALS, without otelexport.h */
+
 struct oe_otlppb_defs {
 	struct upb_DefPool	*pool;
-	const struct upb_MessageDef *request[3];	/* by enum oe_signal */
-	const struct upb_MessageDef *response[3];
+	/* By enum oe_signal. */
+	const struct upb_MessageDef *request[OE_NSIGNALS_PB];
+	const struct upb_MessageDef *response[OE_NSIGNALS_PB];
 };
 
 int	 oe_otlppb_defs_init(struct oe_otlppb_defs *);
@@ -159,7 +162,7 @@ struct oe_otlppb;
  * URL, headers and user agent are borrowed.  Returns 0, or -1 with a
  * message on stderr for an unknown protocol or allocation failure.
  */
-int	 oe_otlppb_open(const char *protocol, const struct oe_url *,
+int	 oe_otlppb_open(const char *protocol, const struct oe_url *, int exact,
 	    const struct oe_attr *headers, size_t nheaders,
 	    const char *user_agent, int timeout_ms, int max_retries, int gzip,
 	    struct oe_otlppb **pbp);

@@ -140,6 +140,25 @@ EOF
 	atf_check -o match:"^export.target = file$" \
 	    -o match:"^export.directory = /srv/o$" ${OC} show
 	atf_check -o empty ${OC} get resource
+	# Signal blocks: set keys print their values, unset ones empty.
+	printf '%s\n' 'host_id_file = "";' \
+	    'traces { endpoint = "http://t:1/x"; protocol = "grpc"; }' \
+	    'metrics { timeout_ms = 7; compression = "none"; }' > local.conf
+	atf_check -o inline:"http://t:1/x\n" ${OC} get traces.endpoint
+	atf_check -o inline:"grpc\n" ${OC} get traces.protocol
+	atf_check -o inline:"\n" ${OC} get traces.timeout_ms
+	atf_check -o inline:"7\n" ${OC} get metrics.timeout_ms
+	atf_check -o inline:"none\n" ${OC} get metrics.compression
+	atf_check -o inline:"\n" ${OC} get logs.endpoint
+	atf_check -o inline:"\n" ${OC} get profiles.headers_file
+	atf_check -o match:"^traces.endpoint = http://t:1/x$" \
+	    -o match:"^metrics.timeout_ms = 7$" -o not-match:"^logs\." ${OC} show
+	# A signal endpoint is an export target.
+	atf_check -o inline:"otel.conf: OK\n" ${OC} check -t
+	atf_check -s exit:2 -e match:"unknown key: traces.nope" \
+	    ${OC} get traces.nope
+	atf_check -s exit:2 -e match:"unknown key: spans.endpoint" \
+	    ${OC} get spans.endpoint
 	atf_check -s exit:2 -e match:"unknown key: agent.upstream" \
 	    ${OC} get agent.upstream
 	atf_check -s exit:2 -e match:"unknown key: nope" ${OC} get nope

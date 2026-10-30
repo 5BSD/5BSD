@@ -353,62 +353,98 @@ oe_parse_kvlist(const char *var, int is_header, struct oe_attr **attrsp,
 	*nattrsp = n;
 }
 
+/*
+ * The exporter variables of one signal ("" for the general ones,
+ * "TRACES_" and so on for a signal's), validated: a malformed value is
+ * reported and left unset.  An empty endpoint is unset.
+ */
+static void
+env_exporter_vars(const char *sig, const char **endpoint,
+    const char **protocol, const char **compression, int *timeout_ms,
+    struct oe_attr **headers, size_t *nheaders, int *headers_set)
+{
+	char var[64];
+	const char *v;
+	char *end;
+	long ms;
+
+	snprintf(var, sizeof(var), "OTEL_EXPORTER_OTLP_%sENDPOINT", sig);
+	*endpoint = getenv(var);
+	if (*endpoint != NULL && (*endpoint)[0] == '\0')
+		*endpoint = NULL;
+	snprintf(var, sizeof(var), "OTEL_EXPORTER_OTLP_%sCOMPRESSION", sig);
+	*compression = getenv(var);
+	if (*compression != NULL && strcasecmp(*compression, "gzip") != 0 &&
+	    strcasecmp(*compression, "none") != 0) {
+		fprintf(stderr, "otelexport: ignoring %s=%s: expected gzip or "
+		    "none\n", var, *compression);
+		*compression = NULL;
+	}
+	snprintf(var, sizeof(var), "OTEL_EXPORTER_OTLP_%sPROTOCOL", sig);
+	*protocol = getenv(var);
+	if (*protocol != NULL && strcmp(*protocol, "grpc") != 0 &&
+	    strcmp(*protocol, "http/protobuf") != 0 &&
+	    strcmp(*protocol, "http/json") != 0) {
+		fprintf(stderr, "otelexport: ignoring %s=%s: expected grpc, "
+		    "http/protobuf or http/json\n", var, *protocol);
+		*protocol = NULL;
+	}
+	*timeout_ms = -1;
+	snprintf(var, sizeof(var), "OTEL_EXPORTER_OTLP_%sTIMEOUT", sig);
+	if ((v = getenv(var)) != NULL) {
+		errno = 0;
+		ms = strtol(v, &end, 10);
+		if (end == v || *end != '\0' || errno != 0 || ms < 0 ||
+		    ms > INT_MAX)
+			fprintf(stderr, "otelexport: ignoring %s=%s: expected "
+			    "milliseconds\n", var, v);
+		else
+			*timeout_ms = (int)ms;
+	}
+	snprintf(var, sizeof(var), "OTEL_EXPORTER_OTLP_%sHEADERS", sig);
+	oe_parse_kvlist(var, 1, headers, nheaders);
+	/* Set and well-formed: it replaces the general headers. */
+	v = getenv(var);
+	*headers_set = v != NULL && v[0] != '\0' && (*nheaders > 0 ||
+	    strspn(v, " \t,") == strlen(v));
+}
+
 void
 oe_env_load(struct oe_env *env)
 {
-	const char *timeout;
-	char *end;
-	long ms;
+	static const char *const sigvars[OE_NSIGNALS] = {
+		"LOGS_", "METRICS_", "TRACES_", "PROFILES_"
+	};
+	struct oe_env_signal *es;
+	int sig, headers_set;
 
 	memset(env, 0, sizeof(*env));
 	env->service_name = getenv("OTEL_SERVICE_NAME");
 	if (env->service_name != NULL && env->service_name[0] == '\0')
 		env->service_name = NULL;
-	env->endpoint = getenv("OTEL_EXPORTER_OTLP_ENDPOINT");
-	if (env->endpoint != NULL && env->endpoint[0] == '\0')
-		env->endpoint = NULL;
-	env->compression = getenv("OTEL_EXPORTER_OTLP_COMPRESSION");
-	if (env->compression != NULL &&
-	    strcasecmp(env->compression, "gzip") != 0 &&
-	    strcasecmp(env->compression, "none") != 0) {
-		fprintf(stderr, "otelexport: ignoring "
-		    "OTEL_EXPORTER_OTLP_COMPRESSION=%s: expected gzip or "
-		    "none\n", env->compression);
-		env->compression = NULL;
-	}
-	env->protocol = getenv("OTEL_EXPORTER_OTLP_PROTOCOL");
-	if (env->protocol != NULL &&
-	    strcmp(env->protocol, "grpc") != 0 &&
-	    strcmp(env->protocol, "http/protobuf") != 0 &&
-	    strcmp(env->protocol, "http/json") != 0) {
-		fprintf(stderr, "otelexport: ignoring "
-		    "OTEL_EXPORTER_OTLP_PROTOCOL=%s: expected grpc, "
-		    "http/protobuf or http/json\n", env->protocol);
-		env->protocol = NULL;
-	}
-	env->timeout_ms = -1;
-	timeout = getenv("OTEL_EXPORTER_OTLP_TIMEOUT");
-	if (timeout != NULL) {
-		errno = 0;
-		ms = strtol(timeout, &end, 10);
-		if (end == timeout || *end != '\0' || errno != 0 || ms < 0 ||
-		    ms > INT_MAX)
-			fprintf(stderr, "otelexport: ignoring "
-			    "OTEL_EXPORTER_OTLP_TIMEOUT=%s: expected "
-			    "milliseconds\n", timeout);
-		else
-			env->timeout_ms = (int)ms;
-	}
+	env_exporter_vars("", &env->endpoint, &env->protocol,
+	    &env->compression, &env->timeout_ms, &env->headers,
+	    &env->nheaders, &headers_set);
 	oe_parse_kvlist("OTEL_RESOURCE_ATTRIBUTES", 0, &env->resource_attrs,
 	    &env->nresource_attrs);
-	oe_parse_kvlist("OTEL_EXPORTER_OTLP_HEADERS", 1, &env->headers,
-	    &env->nheaders);
+	/* OTEL_EXPORTER_OTLP_{LOGS,METRICS,TRACES,PROFILES}_*. */
+	for (sig = 0; sig < OE_NSIGNALS; sig++) {
+		es = &env->signals[sig];
+		env_exporter_vars(sigvars[sig], &es->endpoint, &es->protocol,
+		    &es->compression, &es->timeout_ms, &es->headers,
+		    &es->nheaders, &env->signal_headers_set[sig]);
+		es->endpoint_exact = es->endpoint != NULL;
+	}
 }
 
 void
 oe_env_free(struct oe_env *env)
 {
+	int sig;
 
+	for (sig = 0; sig < OE_NSIGNALS; sig++)
+		free_kvlist(env->signals[sig].headers,
+		    env->signals[sig].nheaders);
 	free_kvlist(env->resource_attrs, env->nresource_attrs);
 	free_kvlist(env->headers, env->nheaders);
 	if (env->sysconf != NULL) {
@@ -456,6 +492,36 @@ oe_otlp_config_env(struct oe_otlp_config *cfg, const struct oe_env *env)
 	cfg->spool_path = env->spool_path;
 	cfg->spool_max = env->spool_max;
 	cfg->spool_optional = env->spool_optional;
+	oe_otlp_config_signals(cfg, env);
+}
+
+void
+oe_otlp_config_signals(struct oe_otlp_config *cfg, const struct oe_env *env)
+{
+	const struct oe_env_signal *es;
+	struct oe_otlp_signal_config *sc;
+	int sig;
+
+	/*
+	 * Only the settings resolved by oe_config_load() apply; a plain
+	 * oe_env_load() leaves them unresolved.
+	 */
+	for (sig = 0; sig < OE_NSIGNALS; sig++) {
+		es = &env->signals[sig];
+		sc = &cfg->signals[sig];
+		memset(sc, 0, sizeof(*sc));
+		if (!env->signals_resolved)
+			continue;
+		/* A base URL is the general endpoint (cfg->endpoint). */
+		sc->endpoint = es->endpoint_exact ? es->endpoint : NULL;
+		sc->protocol = es->protocol;
+		sc->headers = es->headers;
+		sc->nheaders = es->nheaders;
+		sc->has_headers = 1;
+		sc->timeout = es->timeout_ms > 0 ?
+		    (double)es->timeout_ms / 1000.0 : 0;
+		sc->compression = es->compression;
+	}
 }
 
 const char *

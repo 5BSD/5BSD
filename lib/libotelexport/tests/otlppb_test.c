@@ -1720,19 +1720,19 @@ ATF_TC_BODY(open_protocols, tc)
 	char *err;
 
 	ATF_REQUIRE_EQ(0, oe_url_parse("http://127.0.0.1:4318", &u));
-	ATF_CHECK_EQ(0, oe_otlppb_open(NULL, &u, NULL, 0, "ua", 1000, 0, 0,
+	ATF_CHECK_EQ(0, oe_otlppb_open(NULL, &u, 0, NULL, 0, "ua", 1000, 0, 0,
 	    &pb));
 	ATF_CHECK(pb == NULL);
-	ATF_CHECK_EQ(0, oe_otlppb_open("http/json", &u, NULL, 0, "ua", 1000,
+	ATF_CHECK_EQ(0, oe_otlppb_open("http/json", &u, 0, NULL, 0, "ua", 1000,
 	    0, 0, &pb));
 	ATF_CHECK(pb == NULL);
-	ATF_REQUIRE_EQ(0, oe_otlppb_open("grpc", &u, NULL, 0, "ua", 1000, 0,
+	ATF_REQUIRE_EQ(0, oe_otlppb_open("grpc", &u, 0, NULL, 0, "ua", 1000, 0,
 	    0, &pb));
 	ATF_CHECK(pb != NULL);
 	oe_otlppb_free(pb);
 	oe_otlppb_free(NULL);
 	capture_start();
-	ATF_CHECK_EQ(-1, oe_otlppb_open("thrift", &u, NULL, 0, "ua", 1000, 0,
+	ATF_CHECK_EQ(-1, oe_otlppb_open("thrift", &u, 0, NULL, 0, "ua", 1000, 0,
 	    0, &pb));
 	ATF_CHECK(exporter("http/xml", "http://127.0.0.1:1", NULL, 0, NULL) ==
 	    NULL);
@@ -2040,7 +2040,7 @@ oom_open(void)
 	struct oe_url u;
 
 	oe_url_parse("http://127.0.0.1:1", &u);
-	if (oe_otlppb_open("grpc", &u, NULL, 0, "ua", 1000, 0, 0, &pb) != 0)
+	if (oe_otlppb_open("grpc", &u, 0, NULL, 0, "ua", 1000, 0, 0, &pb) != 0)
 		return (-1);
 	oe_otlppb_free(pb);
 	return (0);
@@ -2128,13 +2128,13 @@ ATF_TC_BODY(oom, tc)
 		struct oe_url u;
 
 		url_of(&u, 0, s.port);
-		ATF_REQUIRE_EQ(0, oe_otlppb_open("grpc", &u, NULL, 0, "ua",
+		ATF_REQUIRE_EQ(0, oe_otlppb_open("grpc", &u, 0, NULL, 0, "ua",
 		    5000, 0, 1, &oom_pb));
 		OOM_SWEEP((gsrv_script(&s, &rep, 1), oom_post()), 0);
 		oe_otlppb_free(oom_pb);
 		ATF_REQUIRE_EQ(0, coll_start(&co, 0, 0, NULL));
 		url_of(&u, 0, co.port);
-		ATF_REQUIRE_EQ(0, oe_otlppb_open("http/protobuf", &u, NULL, 0,
+		ATF_REQUIRE_EQ(0, oe_otlppb_open("http/protobuf", &u, 0, NULL, 0,
 		    "ua", 5000, 0, 1, &oom_pb));
 		OOM_SWEEP(oom_post(), 0);
 		oe_otlppb_free(oom_pb);

@@ -24,6 +24,9 @@ bsd_atf_test_c(
     deps = [
         "//:dtrace_userland_headers",
         "//lib/libotelexport:headers",
+        # CFLAGS+=-I${SRCTOP}/lib/libotelexport: the private headers too
+        # (dtotel_test.c uses oe_otlpenc.h).
+        "//lib/libotelexport:private_headers",
         "//lib/libotelexport/tests:test_headers",
         "//cddl/lib/libdtotel:headers",
         "//cddl/lib/libdtotel:dtotel_pie",

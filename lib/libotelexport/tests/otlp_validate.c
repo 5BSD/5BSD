@@ -610,7 +610,8 @@ static const struct msgdesc LogsReq = { "ExportLogsServiceRequest",
 static const struct fielddesc ndp_fields[] = {
 	REPMSG("attributes", KeyValue), FLD("startTimeUnixNano", F_U64),
 	FLD("timeUnixNano", F_U64), ONEOF("asDouble", F_DOUBLE, "value"),
-	ONEOF("asInt", F_I64, "value"), FLD("flags", F_U32), END };
+	ONEOF("asInt", F_I64, "value"), FLD("flags", F_U32),
+	REPMSG("exemplars", Exemplar), END };
 static const struct msgdesc NumberDP = { "NumberDataPoint", ndp_fields,
     check_numberdp };
 
@@ -1248,11 +1249,276 @@ check_span(const struct jv *v, const char *path, struct otlp_counts *c,
 	return (check_attr_holder(v, path, c, err, errlen));
 }
 
+/* ---------------------------------------------------------------- */
+/* Profiles (experimental, opentelemetry-proto 1.10 v1development)	*/
+
+static int check_profiles_req(const struct jv *, const char *,
+    struct otlp_counts *, char *, size_t);
+
+static const struct fielddesc vt_fields[] = {
+	FLD("typeStrindex", F_I32), FLD("unitStrindex", F_I32), END };
+static const struct msgdesc ValueType = { "ValueType", vt_fields, NULL };
+
+static const struct fielddesc psample_fields[] = {
+	FLD("stackIndex", F_I32), REP("attributeIndices", F_I32),
+	FLD("linkIndex", F_I32), REP("values", F_I64),
+	REP("timestampsUnixNano", F_U64), END };
+static const struct msgdesc PSample = { "Sample", psample_fields, NULL };
+
+static const struct fielddesc profile_fields[] = {
+	MSG("sampleType", ValueType), REPMSG("samples", PSample),
+	FLD("timeUnixNano", F_U64), FLD("durationNano", F_U64),
+	MSG("periodType", ValueType), FLD("period", F_I64),
+	FLD("profileId", F_BYTES), FLD("droppedAttributesCount", F_U32),
+	FLD("originalPayloadFormat", F_STRING),
+	FLD("originalPayload", F_BYTES), REP("attributeIndices", F_I32),
+	END };
+static const struct msgdesc Profile = { "Profile", profile_fields, NULL };
+
+static const struct fielddesc sprof_fields[] = {
+	MSG("scope", Scope), REPMSG("profiles", Profile),
+	FLD("schemaUrl", F_STRING), END };
+static const struct msgdesc ScopeProfiles = { "ScopeProfiles",
+    sprof_fields, NULL };
+
+static const struct fielddesc rprof_fields[] = {
+	MSG("resource", Resource), REPMSG("scopeProfiles", ScopeProfiles),
+	FLD("schemaUrl", F_STRING), END };
+static const struct msgdesc ResourceProfiles = { "ResourceProfiles",
+    rprof_fields, NULL };
+
+static const struct fielddesc pmap_fields[] = {
+	FLD("memoryStart", F_U64), FLD("memoryLimit", F_U64),
+	FLD("fileOffset", F_U64), FLD("filenameStrindex", F_I32),
+	REP("attributeIndices", F_I32), END };
+static const struct msgdesc PMapping = { "Mapping", pmap_fields, NULL };
+
+static const struct fielddesc pline_fields[] = {
+	FLD("functionIndex", F_I32), FLD("line", F_I64), FLD("column", F_I64),
+	END };
+static const struct msgdesc PLine = { "Line", pline_fields, NULL };
+
+static const struct fielddesc ploc_fields[] = {
+	FLD("mappingIndex", F_I32), FLD("address", F_U64),
+	REPMSG("lines", PLine), REP("attributeIndices", F_I32), END };
+static const struct msgdesc PLocation = { "Location", ploc_fields, NULL };
+
+static const struct fielddesc pfun_fields[] = {
+	FLD("nameStrindex", F_I32), FLD("systemNameStrindex", F_I32),
+	FLD("filenameStrindex", F_I32), FLD("startLine", F_I64), END };
+static const struct msgdesc PFunction = { "Function", pfun_fields, NULL };
+
+static const struct fielddesc plink_fields[] = {
+	FLD("traceId", F_TRACEID), FLD("spanId", F_SPANID), END };
+static const struct msgdesc PLink = { "Link", plink_fields, NULL };
+
+static const struct fielddesc pstack_fields[] = {
+	REP("locationIndices", F_I32), END };
+static const struct msgdesc PStack = { "Stack", pstack_fields, NULL };
+
+static const struct fielddesc pkvu_fields[] = {
+	FLD("keyStrindex", F_I32), FLD("value", F_ANY),
+	FLD("unitStrindex", F_I32), END };
+static const struct msgdesc PKeyValueAndUnit = { "KeyValueAndUnit",
+    pkvu_fields, NULL };
+
+static const struct fielddesc pdict_fields[] = {
+	REPMSG("mappingTable", PMapping), REPMSG("locationTable", PLocation),
+	REPMSG("functionTable", PFunction), REPMSG("linkTable", PLink),
+	REP("stringTable", F_STRING),
+	REPMSG("attributeTable", PKeyValueAndUnit),
+	REPMSG("stackTable", PStack), END };
+static const struct msgdesc PDictionary = { "ProfilesDictionary",
+    pdict_fields, NULL };
+
+static const struct fielddesc profreq_fields[] = {
+	REPMSG("resourceProfiles", ResourceProfiles),
+	MSG("dictionary", PDictionary), END };
+static const struct msgdesc ProfilesReq = { "ExportProfilesServiceRequest",
+    profreq_fields, check_profiles_req };
+
+/* The length of a repeated field, 0 when absent. */
+static size_t
+arr_len(const struct jv *obj, const char *key)
+{
+	const struct jv *a = jv_get(obj, key);
+
+	return (a != NULL && a->type == JV_ARR ? a->n : 0);
+}
+
+/* An int32 field's value, 0 when absent (validate_msg typed it). */
+static long
+int_field(const struct jv *obj, const char *key)
+{
+	const struct jv *v = jv_get(obj, key);
+
+	return (v != NULL ? strtol(v->s, NULL, 10) : 0);
+}
+
+/* Every element of an index array is in [0, n). */
+static int
+check_indices(const struct jv *obj, const char *key, size_t n,
+    const char *path, char *err, size_t errlen)
+{
+	const struct jv *a = jv_get(obj, key);
+	size_t i;
+	long v;
+
+	for (i = 0; a != NULL && i < a->n; i++) {
+		v = strtol(a->items[i]->s, NULL, 10);
+		if (v < 0 || (size_t)v >= n)
+			return (verr(err, errlen, path, "%s[%zu] = %ld is "
+			    "outside the table (%zu entries)", key, i, v, n));
+	}
+	return (0);
+}
+
+static int
+check_index(const struct jv *obj, const char *key, size_t n,
+    const char *path, char *err, size_t errlen)
+{
+	long v = int_field(obj, key);
+
+	if (v < 0 || (size_t)v >= n)
+		return (verr(err, errlen, path, "%s = %ld is outside the "
+		    "table (%zu entries)", key, v, n));
+	return (0);
+}
+
+/*
+ * The dictionary rules of profiles.proto: every table present with its
+ * zero value first, and every index in range; every sample has values
+ * or timestamps (the same number of each when both).
+ */
+static int
+check_profiles_req(const struct jv *v, const char *path,
+    struct otlp_counts *c, char *err, size_t errlen)
+{
+	static const char *const tables[] = { "mappingTable",
+	    "locationTable", "functionTable", "linkTable", "attributeTable",
+	    "stackTable" };
+	const struct jv *d, *t, *rps, *sps, *ps, *ss, *s;
+	size_t nstr, nmap, nloc, nfun, nlink, nattr, nstack, i, j, k, l, m;
+
+	if ((d = jv_get(v, "dictionary")) == NULL)
+		return (verr(err, errlen, path, "a profiles request needs its "
+		    "dictionary"));
+	for (i = 0; i < nitems(tables); i++) {
+		t = jv_get(d, tables[i]);
+		if (t == NULL || t->n == 0)
+			return (verr(err, errlen, path, "dictionary.%s lacks "
+			    "its zero value", tables[i]));
+		if (t->items[0]->n != 0)
+			return (verr(err, errlen, path, "dictionary.%s[0] is "
+			    "not the zero value", tables[i]));
+	}
+	t = jv_get(d, "stringTable");
+	if (t == NULL || t->n == 0 || t->items[0]->s[0] != '\0')
+		return (verr(err, errlen, path, "dictionary.stringTable[0] "
+		    "must be \"\""));
+	nstr = t->n;
+	nmap = arr_len(d, "mappingTable");
+	nloc = arr_len(d, "locationTable");
+	nfun = arr_len(d, "functionTable");
+	nlink = arr_len(d, "linkTable");
+	nattr = arr_len(d, "attributeTable");
+	nstack = arr_len(d, "stackTable");
+	t = jv_get(d, "mappingTable");
+	for (i = 0; i < nmap; i++)
+		if (check_index(t->items[i], "filenameStrindex", nstr, path,
+		    err, errlen) != 0 || check_indices(t->items[i],
+		    "attributeIndices", nattr, path, err, errlen) != 0)
+			return (-1);
+	t = jv_get(d, "locationTable");
+	for (i = 0; i < nloc; i++) {
+		const struct jv *lines = jv_get(t->items[i], "lines");
+
+		if (check_index(t->items[i], "mappingIndex", nmap, path, err,
+		    errlen) != 0 || check_indices(t->items[i],
+		    "attributeIndices", nattr, path, err, errlen) != 0)
+			return (-1);
+		for (j = 0; lines != NULL && j < lines->n; j++)
+			if (check_index(lines->items[j], "functionIndex", nfun,
+			    path, err, errlen) != 0)
+				return (-1);
+	}
+	t = jv_get(d, "functionTable");
+	for (i = 0; i < nfun; i++)
+		if (check_index(t->items[i], "nameStrindex", nstr, path, err,
+		    errlen) != 0 || check_index(t->items[i],
+		    "systemNameStrindex", nstr, path, err, errlen) != 0 ||
+		    check_index(t->items[i], "filenameStrindex", nstr, path,
+		    err, errlen) != 0)
+			return (-1);
+	t = jv_get(d, "attributeTable");
+	for (i = 0; i < nattr; i++)
+		if (check_index(t->items[i], "keyStrindex", nstr, path, err,
+		    errlen) != 0 || check_index(t->items[i], "unitStrindex",
+		    nstr, path, err, errlen) != 0)
+			return (-1);
+	t = jv_get(d, "stackTable");
+	for (i = 0; i < nstack; i++)
+		if (check_indices(t->items[i], "locationIndices", nloc, path,
+		    err, errlen) != 0)
+			return (-1);
+	rps = jv_get(v, "resourceProfiles");
+	for (i = 0; rps != NULL && i < rps->n; i++) {
+		sps = jv_get(rps->items[i], "scopeProfiles");
+		for (j = 0; sps != NULL && j < sps->n; j++) {
+			ps = jv_get(sps->items[j], "profiles");
+			for (k = 0; ps != NULL && k < ps->n; k++) {
+				if (c != NULL)
+					c->profiles++;
+				if (check_indices(ps->items[k],
+				    "attributeIndices", nattr, path, err,
+				    errlen) != 0)
+					return (-1);
+				ss = jv_get(ps->items[k], "samples");
+				for (l = 0; ss != NULL && l < ss->n; l++) {
+					s = ss->items[l];
+					m = arr_len(s, "values");
+					if (m == 0 &&
+					    arr_len(s, "timestampsUnixNano") == 0)
+						return (verr(err, errlen, path,
+						    "a sample has no values or "
+						    "timestamps"));
+					if (m > 0 && arr_len(s,
+					    "timestampsUnixNano") > 0 &&
+					    m != arr_len(s,
+					    "timestampsUnixNano"))
+						return (verr(err, errlen, path,
+						    "a sample's values and "
+						    "timestamps differ in "
+						    "number"));
+					if (check_index(s, "stackIndex", nstack,
+					    path, err, errlen) != 0 ||
+					    check_index(s, "linkIndex", nlink,
+					    path, err, errlen) != 0 ||
+					    check_indices(s,
+					    "attributeIndices", nattr, path,
+					    err, errlen) != 0)
+						return (-1);
+					if (c != NULL)
+						c->samples++;
+				}
+			}
+		}
+	}
+	return (0);
+}
+
 int
 otlp_validate_request(const struct jv *v, struct otlp_counts *c, char *err,
     size_t errlen)
 {
 
+	/* A profiles request also carries its dictionary. */
+	if (v->type == JV_OBJ && v->n == 2 && jv_get(v, "resourceProfiles") !=
+	    NULL && jv_get(v, "dictionary") != NULL) {
+		if (c != NULL)
+			c->requests++;
+		return (validate_msg(v, &ProfilesReq, "$", c, err, errlen));
+	}
 	if (v->type != JV_OBJ || v->n != 1)
 		return (verr(err, errlen, "$", "a request has exactly one "
 		    "top-level field"));

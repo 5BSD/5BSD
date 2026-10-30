@@ -50,7 +50,20 @@
  *		firing (before or after it): its trace and span id become
  *		the record's traceId and spanId, so DTrace output joins
  *		the application's trace (copyinstr() of a USDT argument
- *		that carries the application's traceparent).
+ *		that carries the application's traceparent).  It also
+ *		gives an exemplar record of the same firing its trace, and
+ *		a stack-only firing's profile sample its link.
+ *
+ *	\037otel.exemplar\037agg=<name>\037value=<integer>[\037key=<k>...]
+ *		an exemplar of the aggregation series @<name>[<k>, ...]
+ *		(the keys in order, printed as %d/%s print them), exported
+ *		on that series' data point with the next snapshot: the
+ *		firing's wall time, the value, the trace of an inline
+ *		traceparent= or of the firing's trace record, and the
+ *		filtered attributes a.i.<key>=<integer>, a.s.<key>=<string>.
+ *		DTrace aggregations keep no per-sample context, so the D
+ *		program prints this record in the firing that updates the
+ *		aggregation; see dtotel_agg.c for the bounds.
  *
  * Span records also take traceparent= (the span joins that trace: its
  * trace id, and without parent= the remote span as its parent),
@@ -136,6 +149,8 @@ dtotel_open(const struct dtotel_config *cfg)
 		d->keynames = dtotel_parse_keynames(cfg->source);
 	clock_gettime(CLOCK_REALTIME, &d->start);
 	arc4random_buf(d->salt, sizeof(d->salt));
+	d->profiles = cfg->profiles;
+	d->prof_interval = DTOTEL_PROF_INTERVAL;
 	return (d);
 }
 
@@ -170,6 +185,8 @@ dtotel_close(struct dtotel *d)
 	for (i = 0; i < d->njails; i++)
 		free(d->jails[i].name);
 	(void)dtotel_shutdown(d);
+	dtotel_prof_free(d);
+	dtotel_exemplars_free(d);
 	dtotel_series_free(d);
 	body_kv_free(d);
 	free(d->profile);
@@ -273,6 +290,9 @@ dtotel_report(struct dtotel *d, int force)
 {
 	struct timespec now;
 
+	/* Firing profiles go out on their own interval. */
+	if (d->profiles)
+		dtotel_prof_tick(d);
 	if (!d->counters_seen || (!force && !d->counters_dirty))
 		return;
 	clock_gettime(CLOCK_REALTIME, &now);
@@ -395,8 +415,8 @@ dtotel_error(const struct dtotel *d)
  *   symbol+0xoffset
  *   0xdeadbeef
  */
-static void
-parse_stack_frame(const char *line, struct oe_frame *f)
+void
+dtotel_parse_frame(const char *line, struct oe_frame *f)
 {
 	const char *bt, *plus;
 
@@ -435,7 +455,7 @@ frames_push(struct dtotel_frames *fa, const char *line)
 		fa->frames = np;
 		fa->cap = newcap;
 	}
-	parse_stack_frame(line, &fa->frames[fa->n]);
+	dtotel_parse_frame(line, &fa->frames[fa->n]);
 	fa->n++;
 }
 
@@ -508,6 +528,9 @@ dtotel_flush(struct dtotel *d)
 
 	if (d->body == NULL)
 		return;
+	/* A stack-only firing is a profile sample too. */
+	if (d->profiles && d->body[0] == '\0' && d->kstack.n + d->ustack.n > 0)
+		dtotel_prof_firing(d);
 	memset(&ev, 0, sizeof(ev));
 	if (d->body_exec != NULL) {
 		/* A context record says exactly who fired. */
@@ -985,6 +1008,8 @@ handle_trace(struct dtotel *d, const char *rec,
 		fprintf(stderr, "dtotel: malformed trace record ignored\n");
 		return;
 	}
+	/* An exemplar this firing recorded first takes its trace. */
+	dtotel_exemplar_trace(d, firing, tid, sid);
 	if (d->body != NULL && same_firing(firing, &d->body_firing)) {
 		memcpy(d->body_trace, tid, sizeof(tid));
 		memcpy(d->body_span, sid, sizeof(sid));
@@ -1449,6 +1474,9 @@ dtotel_shutdown(struct dtotel *d)
 	int ret = 0;
 
 	dtotel_flush(d);
+	/* Profiles still accumulated, while the guest exporters exist. */
+	if (d->profiles)
+		dtotel_prof_emit(d, 0);
 	for (g = d->guests; g != NULL; g = next) {
 		next = g->next;
 		if (guest_retire(d, g) != 0)
@@ -1525,6 +1553,8 @@ handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		handle_resource(d, rec, bd);
 	else if (strncmp(kind, "trace\037", 6) == 0)
 		handle_trace(d, rec, firing);
+	else if (strncmp(kind, "exemplar\037", 9) == 0)
+		dtotel_exemplar_record(d, rec, bd, firing, observed);
 	else
 		fprintf(stderr, "dtotel: unknown structured record \"%.*s\" "
 		    "ignored\n", (int)strcspn(kind, "\037\n"), kind);
@@ -1667,7 +1697,7 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 	const char *chunk, *line, *nl, *trimmed;
 	char *linebuf, *rec;
 	size_t linelen, tlen;
-	int is_stack_frame;
+	int is_stack_frame, ustack_rec;
 
 	if (bufdata->dtbda_flags & (DTRACE_BUFDATA_AGGKEY |
 	    DTRACE_BUFDATA_AGGVAL | DTRACE_BUFDATA_AGGFORMAT |
@@ -1680,6 +1710,9 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 	firing_of(bufdata, &firing);
 	clock_gettime(CLOCK_REALTIME, &observed);
 	d->out_firing = firing;
+	ustack_rec = bufdata->dtbda_recdesc != NULL &&
+	    (bufdata->dtbda_recdesc->dtrd_action == DTRACEACT_USTACK ||
+	    bufdata->dtbda_recdesc->dtrd_action == DTRACEACT_JSTACK);
 
 	if (strncmp(chunk, DTOTEL_RECORD_PREFIX,
 	    sizeof(DTOTEL_RECORD_PREFIX) - 1) == 0) {
@@ -1752,8 +1785,12 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 				tlen = sizeof(frameline) - 1;
 			memcpy(frameline, trimmed, tlen);
 			frameline[tlen] = '\0';
-			frames_push(d->in_ustack ? &d->ustack : &d->kstack,
-			    frameline);
+			/*
+			 * User frames: after bsdinstruments' marker, or
+			 * the output of a ustack()/jstack() record.
+			 */
+			frames_push(d->in_ustack || ustack_rec ? &d->ustack :
+			    &d->kstack, frameline);
 		} else if (tlen == strlen(USTACK_MARKER) &&
 		    strncmp(trimmed, USTACK_MARKER, tlen) == 0) {
 			/* Marker between stack() and ustack() output. */
@@ -1774,4 +1811,30 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 
 	d->line_open = chunk[0] != '\0' && chunk[strlen(chunk) - 1] != '\n';
 	return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);
+}
+
+/* ---------------------------------------------------------------- */
+/* Helpers shared with dtotel_agg.c and dtotel_prof.c			*/
+
+int
+dtotel_same_firing(const struct dtotel_firing *a,
+    const struct dtotel_firing *b)
+{
+
+	return (same_firing(a, b));
+}
+
+uint16_t
+dtotel_record_vmid(const dtrace_bufdata_t *bd, const char **target)
+{
+
+	return (record_vmid(bd, target));
+}
+
+void
+dtotel_probe_walltime(const struct dtotel *d, const struct dtotel_firing *f,
+    const struct timespec *observed, struct timespec *ts)
+{
+
+	probe_walltime(d, f, observed, ts);
 }

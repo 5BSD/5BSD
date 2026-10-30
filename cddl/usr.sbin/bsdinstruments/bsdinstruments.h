@@ -116,6 +116,7 @@ struct watch_opts {
 	const char	*spool;		/* otel: spool file or NULL */
 	uint64_t	 spool_max;	/* bytes; 0: library default */
 	time_t		 interval;	/* aggregation snapshots; 0: at exit */
+	int		 profiles;	/* --profiles (experimental) */
 };
 
 int	 watch_run(const struct profile *, const char *rendered,

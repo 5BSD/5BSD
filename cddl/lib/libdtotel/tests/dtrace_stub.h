@@ -23,6 +23,7 @@ struct stub_state {
 	int		 fail_compile;
 	int		 fail_exec;
 	int		 compiled;
+	int		 uaddr_lookups;
 };
 
 char	*jail_getname(int);
@@ -32,5 +33,9 @@ extern struct stub_state stub;
 /* Symbols: [0x1000, 0x2000) resolve to kernel`fn<N> with N = pc >> 8. */
 #define	STUB_SYM_LO	0x1000
 #define	STUB_SYM_HI	0x2000
+#define	STUB_USYM_LO	0x400000
+#define	STUB_USYM_HI	0x401000
+#define	STUB_UOBJ_LO	0x800000
+#define	STUB_UOBJ_HI	0x801000
 
 #endif /* !_DTRACE_STUB_H_ */

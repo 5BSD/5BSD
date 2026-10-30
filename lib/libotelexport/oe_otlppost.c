@@ -40,6 +40,7 @@
 struct oe_otlppb_config {
 	enum oe_otlp_protocol	 protocol;
 	const struct oe_url	*url;
+	int			 exact;	/* post to the URL's own path */
 	const struct oe_attr	*headers;
 	size_t			 nheaders;
 	const char		*user_agent;
@@ -58,7 +59,11 @@ static const char *const grpc_methods[] = {
 	"/opentelemetry.proto.collector.logs.v1.LogsService/Export",
 	"/opentelemetry.proto.collector.metrics.v1.MetricsService/Export",
 	"/opentelemetry.proto.collector.trace.v1.TraceService/Export",
+	("/opentelemetry.proto.collector.profiles.v1development."
+	    "ProfilesService/Export"),
 };
+_Static_assert(nitems(grpc_methods) == OE_NSIGNALS,
+    "a gRPC method per signal");
 
 /*
  * zlib allocates through the library's allocator, like everything else
@@ -156,7 +161,7 @@ oe_gunzip(const void *data, size_t len, size_t limit, size_t *outlenp)
 }
 
 int
-oe_otlppb_open(const char *protocol, const struct oe_url *url,
+oe_otlppb_open(const char *protocol, const struct oe_url *url, int exact,
     const struct oe_attr *headers, size_t nheaders, const char *user_agent,
     int timeout_ms, int max_retries, int gzip, struct oe_otlppb **pbp)
 {
@@ -181,6 +186,7 @@ oe_otlppb_open(const char *protocol, const struct oe_url *url,
 	}
 	p->cfg.protocol = (enum oe_otlp_protocol)proto;
 	p->cfg.url = url;
+	p->cfg.exact = exact;
 	p->cfg.headers = headers;
 	p->cfg.nheaders = nheaders;
 	p->cfg.user_agent = user_agent;
@@ -225,6 +231,17 @@ backoff(int attempt, double server_delay)
 	sleep_seconds(server_delay);
 }
 
+/*
+ * The request path as messages show it, after a "/": the signal's
+ * path, or a signal endpoint's own path without its leading slash.
+ */
+static const char *
+shown_path(const struct oe_otlppb *p, enum oe_signal sig)
+{
+
+	return (p->cfg.exact ? p->cfg.url->rawpath + 1 : oe_enc_path(sig));
+}
+
 static void
 report_partial(struct oe_otlppb *p, enum oe_signal sig, const void *body,
     size_t len)
@@ -235,13 +252,13 @@ report_partial(struct oe_otlppb *p, enum oe_signal sig, const void *body,
 	if (oe_otlppb_partial(&p->defs, sig, body, len, &rejected, msg,
 	    sizeof(msg)) != 0) {
 		fprintf(stderr, "otlp: /%s: malformed %s response (ignored)\n",
-		    oe_enc_path(sig), oe_otlp_protocol_name(p->cfg.protocol));
+		    shown_path(p, sig), oe_otlp_protocol_name(p->cfg.protocol));
 		return;
 	}
 	/* The specification asks to report a rejection or a warning. */
 	if (rejected > 0 || msg[0] != '\0')
 		fprintf(stderr, "otlp: /%s partial success: %jd records "
-		    "rejected%s%s\n", oe_enc_path(sig), (intmax_t)rejected,
+		    "rejected%s%s\n", shown_path(p, sig), (intmax_t)rejected,
 		    msg[0] != '\0' ? ": " : "", msg);
 }
 
@@ -262,9 +279,10 @@ attempt_http(struct oe_otlppb *p, enum oe_signal sig, const void *payload,
 	struct oe_rpc_status st;
 	const char *path;
 
-	path = oe_enc_path(sig);
+	path = shown_path(p, sig);
 	*delay = -1;
-	if (oe_http_post_type(p->cfg.url, path, "application/x-protobuf",
+	if (oe_http_post_type(p->cfg.url, p->cfg.exact ? NULL : path,
+	    "application/x-protobuf",
 	    p->cfg.headers, p->cfg.nheaders, p->cfg.user_agent, payload,
 	    paylen, gzipped, p->cfg.timeout_ms, &resp) != 0) {
 		if (last)
@@ -367,7 +385,7 @@ oe_otlppb_post(struct oe_otlppb *p, enum oe_signal sig, const char *json,
 	    sizeof(err)) != 0) {
 		/* Resending cannot make the request valid. */
 		fprintf(stderr, "otlp: /%s batch dropped: %s\n",
-		    oe_enc_path(sig), err);
+		    shown_path(p, sig), err);
 		return (OE_OTLPPB_REJECTED);
 	}
 	/* gRPC compresses per message (oe_grpc.c); HTTP per body. */

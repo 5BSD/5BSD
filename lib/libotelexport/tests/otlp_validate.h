@@ -37,10 +37,12 @@ const struct jv *jv_get(const struct jv *obj, const char *key);
 struct otlp_counts {
 	size_t		 requests;
 	size_t		 logs, metrics, datapoints, spans;
+	size_t		 profiles, samples;	/* experimental profiles */
 };
 
 /*
- * Validate one Export{Logs,Metrics,Trace}ServiceRequest.  Returns 0,
+ * Validate one Export{Logs,Metrics,Trace,Profiles}ServiceRequest (the
+ * profiles one with its dictionary rules).  Returns 0,
  * or -1 with the first violation (and its JSON path) in err.
  */
 int	 otlp_validate_request(const struct jv *, struct otlp_counts *,
