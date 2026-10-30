@@ -7383,3 +7383,10 @@ Native candidate carries the maintained four vendor sources and three coefficien
 tables without production changes. No new probes are introduced. Audio conversion
 correctness, throughput and numerical-quality qualification are still outstanding;
 archive/install comparison alone cannot establish those properties.
+
+### virtual_oss null/OSS backends (2026-10-30)
+
+Native candidates preserve the existing backend source; no production edits or
+new probes. These two backends have no Make DTrace generator. The Bluetooth
+backend's btaudio_provider.d must be carried forward in its subsequent migration.
+Module loading, CUSE/device runtime and audio performance remain unqualified.

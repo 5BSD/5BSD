@@ -41651,3 +41651,23 @@ bazel-libsamplerate-reference-20261030, plus saved native artifacts and receipt.
 No audio runtime or performance result is claimed. virtual_oss backend and daemon
 consumers remain migration work; their Makefiles distinguish header-only uses
 from actual samplerate linkage, which native dependencies must preserve.
+
+### Native virtual_oss null/OSS backend candidates (2026-10-30)
+
+Added native loadable backend graphs and private installation/debug manifests for
+null and oss. Explicit backend header dependencies use libcuse and samplerate
+header-only targets, preserving Make's absence of those dynamic dependencies.
+Fresh Make reference builds complete; native combined run
+bazel-voss-backends-20261030 is pending through build-bsd with 16 jobs.
+Existing explicit target interfaces suffice without frontend/backend changes.
+No module load, audio device, CUSE or end-to-end daemon runtime is qualified yet.
+Bluetooth/DTrace backend and daemon/command consumers remain migration work.
+
+Virtual_oss backend artifact result: bazel-voss-backends-20261030 passes both
+null and oss installation targets. Each matches its independent fresh Make
+reference at five destinations, with zero missing/extra paths or metadata
+mismatches. Two regular payloads per backend pass symbol inventories, ordered
+dynamic metadata and one debug-link CRC. Evidence lives in install-audit.json
+and payload-audit.json under bazel-voss-{null,oss}-reference-20261030.
+The run has no runtime tests; successful compilation/install comparison is not
+module loading or audio qualification. Bluetooth with DTrace remains next.

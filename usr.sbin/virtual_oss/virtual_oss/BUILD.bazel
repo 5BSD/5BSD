@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(
+    name = "backend_headers",
+    hdrs = ["backend.h", "int.h"],
+    strip_include_prefix = ".",
+    deps = ["//lib/libcuse:headers", "//lib/libsamplerate:headers"],
+    visibility = ["//lib/virtual_oss:__subpackages__"],
+)

@@ -7,3 +7,5 @@ cc_library(
     strip_include_prefix = ".",
     visibility = ["//lib/libsamplerate:__pkg__"],
 )
+
+cc_library(name = "public_headers", hdrs = ["samplerate.h"], strip_include_prefix = ".", visibility = ["//lib/libsamplerate:__pkg__"])

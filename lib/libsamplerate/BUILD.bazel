@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+# Header-only consumers (including virtual_oss backends) must not link samplerate.
+cc_library(name = "headers", deps = ["//contrib/libsamplerate:public_headers"], visibility = ["//visibility:public"])
 cc_library(
     name = "samplerate",
     srcs = ["//contrib/libsamplerate:" + f for f in ["samplerate.c", "src_linear.c", "src_sinc.c", "src_zoh.c"]],
