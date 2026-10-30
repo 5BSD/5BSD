@@ -19536,3 +19536,31 @@ performance qualification. Make remains production/default.
   AML load/interpretation, region simulation, debugger commands and thread
   behavior remain runtime qualification work. iasl still needs migration;
   complete ACPI/world/bootstrap/runtime/performance completion is not claimed.
+
+### 2026-10-30: native iasl generation and complete ACPI archive selection
+
+- Added iasl with 200 contributed C sources, four lexer/four parser actions,
+  explicit m4 grammar fragments and generated-header aliases. Native lex/m4/yacc
+  execution tools own generation; generated C/header files are not checked in.
+  aslsupport.l is a declared textual include of the generated lexer. Existing
+  source/header exports were extended narrowly for shared ACPICA inputs.
+- Actual Make compile-command audit matches all 208 native C inputs with no
+  missing/extra/duplicate sources. Both builds report the maintained grammar's
+  134 shift/reduce conflicts. Five changed installation records and three regular
+  payloads match Make metadata/manual bytes/ELF symbols/dependencies/debug CRC.
+- Offline runtime comparison passed on host loader/libc for both captured
+  binaries: include/macro preprocessing, ASL compile, AML disassembly, recompilation
+  to byte-identical AML, checksum verification, and malformed-ASL rejection with
+  no AML output. Native and Make AML bytes match. This is a bounded compiler
+  runtime check, not Bazel test execution or firmware/kernel AML execution.
+- Added `//usr.sbin/acpi:installation_archives`. Evaluated Make SUBDIR matches
+  acpiconf/acpidb/acpidump/einj/iasl in order; captured aggregate contains exactly
+  five archives with verified hashes. All five now have individual artifact
+  parity evidence. This does not qualify every runtime behavior of those tools.
+- Evidence under `/usr/obj/usr/src`: `bazel-iasl-reference-20261030` (source,
+  install/payload, runtime and subtree/aggregate audits), `bazel-iasl-20261030`,
+  `bazel-iasl-make-20261030`, `bazel-acpi-aggregate-20261030`.
+- Frontend review: maintained Bazel-built build-bsd bazel-test handled component
+  and aggregate explicit targets with 16 jobs; no frontend C/backend/staging,
+  signing or publication change required. Complete world/kernel/pkgbase,
+  reproducible bootstrap, Bazel runtime tests and performance gates remain open.

@@ -8170,3 +8170,13 @@ mechanism. Thread instrumentation belongs to libthr and is not a new acpidb
 provider. Runtime review should cover AML loading, interpreter exceptions,
 simulated region I/O and debugger/thread shutdown. None was exercised here;
 no host firmware execution or system-state change was performed.
+
+### 2026-10-30: iasl
+
+Preserved ACPICA ASL compiler defines and its existing diagnostics. No local
+DTrace provider or direct audit-library integration is declared. Offline runtime
+checks exercise preprocessing, compilation, disassembly and parser rejection;
+these do not establish broad diagnostics coverage or live system observability.
+No AML was loaded into firmware/kernel or executed by an interpreter. Audit
+requirements for deployment of compiled tables belong to the loader/deployment
+path and are not inferred from successful offline compilation.

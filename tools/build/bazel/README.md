@@ -43678,3 +43678,21 @@ Evidence: `/usr/obj/usr/src/bazel-acpidb-reference-20261030`, captured native
 artifacts `bazel-acpidb-20261030`. Maintained build-bsd drove the build with 16 jobs.
 AML interpretation, simulated region behavior, debugger interaction and thread
 runtime are not qualified by this artifact comparison. iasl remains pending.
+
+### iasl and ACPI archive selection (2026-10-30)
+
+`//usr.sbin/acpi/iasl:install_archive` owns 200 contributed C inputs plus eight
+native lexer/parser outputs. Declared m4 fragments and generated header aliases
+preserve the maintained generator pipeline. Actual Make compile commands match
+all 208 inputs. Five installation records/three payloads pass metadata, manual,
+ELF and debug parity; the maintained grammar reports 134 conflicts in both builds.
+
+Offline host execution of captured Make/native compilers passes preprocessing,
+compile/disassemble/recompile with identical AML and malformed-input rejection.
+This is not a Bazel test or hardware/AML execution qualification. Evidence:
+`/usr/obj/usr/src/bazel-iasl-reference-20261030`.
+
+`//usr.sbin/acpi:installation_archives` now selects all five programs from the
+maintained subtree. Evaluated Make SUBDIR agrees; the captured aggregate has
+exactly five archives with verified hashes. Maintained build-bsd drove component
+and aggregate captures with 16 jobs. Full-system qualification remains separate.
