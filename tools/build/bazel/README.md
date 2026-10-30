@@ -44515,3 +44515,23 @@ for the completed checks. This qualifies the reference fixture correction, not
 the still-pending Bazel fixture graph or full installer runtime.
 Frontend review: build-bsd and backend packaging use the maintained test Makefile;
 no new frontend option or staging override is required by this correction.
+
+### Native book installation (2026-10-30)
+
+Added //docs/book native source ownership and //share/doc/5bsd:install_archive.
+The reviewed 81-file source inventory is reusable by installer test fixtures;
+package evaluation rejects missing or unlisted files against a native glob.
+Metadata resides outside docs/book/src, so it is not accidentally installed as
+book content. Installation derives directory paths from chapter paths and uses
+runtime package ownership, with declared mtree/account policy for ancestors.
+
+Fresh Make build/install/installconfig and native build through build-bsd match
+all 91 installation records (including directory package tags) and all 81
+regular payloads byte for byte. Evidence: /usr/obj/usr/src/bazel-book-reference-
+20261030/book/{install-audit.json,payload-audit.json}, native capture
+/usr/obj/usr/src/bazel-book-20261030, Make stage
+/usr/obj/usr/src/bazel-book-make-20261030. No generated manual/sysctl test
+inventories or installed installer tests are claimed migrated by this change.
+The full installer tests=true restriction remains until its graph is complete.
+Frontend review: existing format-5 explicit targets support the new archive;
+no frontend/backend option change is required. The manual documents its scope.

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//docs/book:sources.bzl", "BOOK_FILES")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+[bsd_install_file(
+    name = "chapter_" + path.replace("/", "_"),
+    src = "//docs/book:src/" + path,
+    destination = "/usr/share/doc/5bsd/" + path,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime"],
+) for path in BOOK_FILES]
+bsd_install_manifest(name = "install_manifest",
+    entries = [":chapter_" + path.replace("/", "_") for path in BOOK_FILES],
+    visibility = ["//visibility:public"])
+
+_DIRECTORIES = {"/usr/share/doc/5bsd": True} | {
+    "/usr/share/doc/5bsd/" + "/".join(path.split("/")[:i]): True
+    for path in BOOK_FILES for i in range(1, len(path.split("/")))
+}
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}' for d in _DIRECTORIES},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

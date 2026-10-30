@@ -4397,3 +4397,10 @@ Its installed test fixture mapping remains unfinished, so the target rejects
 .Cm //tools/build/bazel/config:tests=true
 instead of silently dropping the requested test subtree.
 Artifact comparison does not qualify a disk installation or an upgrade.
+
+.Ss Native book installation candidate
+.Cm //share/doc/5bsd:install_archive
+installs the native Markdown book as runtime-package content.
+Its explicit chapter inventory rejects missing or unlisted source files and
+is shared with native source ownership for installer test fixtures.
+This target does not assemble the installer test package or run its checks.
