@@ -84,7 +84,23 @@ drop_handler(const dtrace_dropdata_t *drop, void *arg)
 	fprintf(stderr, "bsdinstruments: dropped %ju record(s) (%s)\n",
 	    (uintmax_t)drop->dtdda_drops, drop->dtdda_msg);
 	if (d != NULL)
-		dtotel_drops(d, drop->dtdda_drops);
+		dtotel_drops(d, drop->dtdda_kind, drop->dtdda_drops);
+	return (DTRACE_HANDLE_OK);
+}
+
+/*
+ * A runtime error (bad address, division by zero, ...): reported as
+ * dtrace(1) does, and in structured formats also an ERROR log record
+ * and the errors counter.
+ */
+static int
+err_handler(const dtrace_errdata_t *e, void *arg)
+{
+	struct dtotel *d = arg;
+
+	fprintf(stderr, "bsdinstruments: %s", e->dteda_msg);
+	if (d != NULL)
+		dtotel_error_record(d, e);
 	return (DTRACE_HANDLE_OK);
 }
 
@@ -99,14 +115,21 @@ chew(const dtrace_probedata_t *data __unused, void *arg __unused)
 }
 
 static int
-chewrec(const dtrace_probedata_t *data __unused,
-    const dtrace_recdesc_t *rec, void *arg __unused)
+chewrec(const dtrace_probedata_t *data, const dtrace_recdesc_t *rec,
+    void *arg)
 {
+	uint32_t status;
 
 	if (rec == NULL)
 		return (DTRACE_CONSUME_NEXT);
-	if (rec->dtrd_action == DTRACEACT_EXIT)
+	if (rec->dtrd_action == DTRACEACT_EXIT) {
+		/* exit(n): a named event in structured formats. */
+		if (arg != NULL) {
+			memcpy(&status, data->dtpda_data, sizeof(status));
+			dtotel_exit(arg, (int)status);
+		}
 		return (DTRACE_CONSUME_NEXT);
+	}
 	return (DTRACE_CONSUME_THIS);
 }
 
@@ -310,7 +333,8 @@ watch_run(const struct profile *p, const char *rendered,
 		if (dtotel_handle(dt) != 0)
 			goto out;
 	}
-	if (dtrace_handle_drop(dtp, drop_handler, dt) != 0) {
+	if (dtrace_handle_drop(dtp, drop_handler, dt) != 0 ||
+	    dtrace_handle_err(dtp, err_handler, dt) != 0) {
 		fprintf(stderr, "bsdinstruments: failed to install drop "
 		    "handler: %s\n", dtrace_errmsg(dtp, dtrace_errno(dtp)));
 		goto out;
@@ -370,7 +394,7 @@ watch_run(const struct profile *p, const char *rendered,
 	while (!done && !got_signal) {
 		dtrace_sleep(dtp);
 		out = is_text ? oe_sink_stream(sink) : NULL;
-		status = dtrace_work(dtp, out, chew, chewrec, NULL);
+		status = dtrace_work(dtp, out, chew, chewrec, dt);
 		switch (status) {
 		case DTRACE_WORKSTATUS_OKAY:
 			break;
@@ -398,6 +422,7 @@ watch_run(const struct profile *p, const char *rendered,
 			/* The pending record is complete between passes. */
 			if (dt != NULL) {
 				dtotel_flush(dt);
+				dtotel_report(dt, 0);
 				if (dtotel_error(dt))
 					break;
 			}
@@ -434,7 +459,7 @@ watch_run(const struct profile *p, const char *rendered,
 	 */
 	out = is_text ? oe_sink_stream(sink) : NULL;
 	if (!is_text || out != NULL)
-		(void)dtrace_work(dtp, out, chew, chewrec, NULL);
+		(void)dtrace_work(dtp, out, chew, chewrec, dt);
 
 	/* Flush any pending structured event. */
 	if (dt != NULL)

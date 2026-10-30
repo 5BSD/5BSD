@@ -280,7 +280,7 @@ oe_enc_context(struct oe_buf *b, pid_t pid, const char *execname,
 
 char *
 oe_enc_request(const struct oe_otlpenc *enc, enum oe_signal sig,
-    char **frags, size_t nfrags, uint64_t drops, size_t *lenp)
+    char **frags, size_t nfrags, size_t *lenp)
 {
 	static const char *const outer[] = {
 		"resourceLogs", "resourceMetrics", "resourceSpans" };
@@ -289,7 +289,7 @@ oe_enc_request(const struct oe_otlpenc *enc, enum oe_signal sig,
 	static const char *const inner[] = {
 		"logRecords", "metrics", "spans" };
 	struct oe_buf b;
-	size_t i, reclen;
+	size_t i;
 
 	oe_buf_init(&b);
 	oe_buf_appendf(&b, "{\"%s\":[{\"resource\":{\"attributes\":[",
@@ -303,21 +303,7 @@ oe_enc_request(const struct oe_otlpenc *enc, enum oe_signal sig,
 	for (i = 0; i < nfrags; i++) {
 		if (i > 0)
 			oe_buf_appendstr(&b, ",");
-		if (i == 0 && drops > 0 && sig == OE_SIGNAL_LOGS) {
-			/*
-			 * Splice a drop-counter attribute into the first
-			 * record.  Every log record fragment ends with
-			 * "]}" closing its attribute array.
-			 */
-			reclen = strlen(frags[i]);
-			oe_buf_append(&b, frags[i], reclen - 2);
-			oe_buf_appendstr(&b, ",{\"key\":\"");
-			oe_buf_appendjson(&b, enc->scope);
-			oe_buf_appendf(&b,
-			    ".drops\",\"value\":{\"intValue\":\"%ju\"}}]}",
-			    (uintmax_t)drops);
-		} else
-			oe_buf_appendstr(&b, frags[i]);
+		oe_buf_appendstr(&b, frags[i]);
 	}
 	oe_buf_appendstr(&b, "]}]}]}");
 	if (b.error) {
@@ -331,6 +317,30 @@ oe_enc_request(const struct oe_otlpenc *enc, enum oe_signal sig,
 /* ---------------------------------------------------------------- */
 /* Log records							 	*/
 
+/* Frames as "<scope>.<key>": an array of formatted frame strings. */
+static void
+enc_frames(struct oe_buf *b, const char *scope, const char *key,
+    const struct oe_frame *frames, size_t n)
+{
+	char frame[256];
+	size_t i;
+
+	if (n == 0)
+		return;
+	oe_buf_appendstr(b, ",{\"key\":\"");
+	oe_buf_appendjson(b, scope);
+	oe_buf_appendf(b, ".%s\",\"value\":{\"arrayValue\":{\"values\":[",
+	    key);
+	for (i = 0; i < n; i++) {
+		oe_frame_format(&frames[i], frame, sizeof(frame));
+		oe_buf_appendstr(b, i > 0 ? ",{\"stringValue\":\"" :
+		    "{\"stringValue\":\"");
+		oe_buf_appendjson(b, frame);
+		oe_buf_appendstr(b, "\"}");
+	}
+	oe_buf_appendstr(b, "]}}}");
+}
+
 char *
 oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 {
@@ -338,7 +348,8 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	struct timespec now;
 	uint64_t tnano, onano;
 	size_t i;
-	char sevtext[16];
+	char sevtext[16], tid[2 * OE_TRACE_ID_LEN + 1],
+	    sid[2 * OE_SPAN_ID_LEN + 1];
 	int first, sev;
 
 	tnano = ts_unix_nano(&ev->ts);
@@ -371,7 +382,27 @@ oe_enc_log_record(const struct oe_otlpenc *enc, const struct oe_event *ev)
 	oe_enc_context(&b, ev->pid, ev->execname, &ev->ctx, &first);
 	for (i = 0; i < ev->nattrs; i++)
 		oe_enc_kv(&b, &ev->attrs[i], &first);
-	oe_buf_appendstr(&b, "]}");
+	/* Stack frames as arrays of strings, innermost frame first. */
+	enc_frames(&b, enc->scope, "stack", ev->stack, ev->nstack);
+	enc_frames(&b, enc->scope, "ustack", ev->ustack, ev->nustack);
+	oe_buf_appendstr(&b, "]");
+	if (!oe_id_is_zero(ev->trace_id, OE_TRACE_ID_LEN)) {
+		oe_id_hex(ev->trace_id, OE_TRACE_ID_LEN, tid);
+		oe_buf_appendf(&b, ",\"traceId\":\"%s\"", tid);
+		if (!oe_id_is_zero(ev->span_id, OE_SPAN_ID_LEN)) {
+			oe_id_hex(ev->span_id, OE_SPAN_ID_LEN, sid);
+			oe_buf_appendf(&b, ",\"spanId\":\"%s\"", sid);
+		}
+		if (ev->trace_flags != 0)
+			oe_buf_appendf(&b, ",\"flags\":%u",
+			    (unsigned)ev->trace_flags);
+	}
+	if (ev->event_name != NULL) {
+		oe_buf_appendstr(&b, ",\"eventName\":\"");
+		oe_buf_appendjson(&b, ev->event_name);
+		oe_buf_appendstr(&b, "\"");
+	}
+	oe_buf_appendstr(&b, "}");
 	if (b.error) {
 		oe_buf_free(&b);
 		return (NULL);
@@ -420,7 +451,59 @@ oe_enc_span(const struct oe_otlpenc *enc, const struct oe_span *sp)
 	oe_enc_context(&b, sp->pid, sp->execname, &sp->ctx, &first);
 	for (i = 0; i < sp->nattrs; i++)
 		oe_enc_kv(&b, &sp->attrs[i], &first);
-	oe_buf_appendf(&b, "],\"status\":{\"code\":%d", (int)sp->status);
+	oe_buf_appendstr(&b, "]");
+	if (sp->flags != 0)
+		oe_buf_appendf(&b, ",\"flags\":%u", (unsigned)sp->flags);
+	if (sp->trace_state != NULL) {
+		oe_buf_appendstr(&b, ",\"traceState\":\"");
+		oe_buf_appendjson(&b, sp->trace_state);
+		oe_buf_appendstr(&b, "\"");
+	}
+	if (sp->nevents > 0) {
+		oe_buf_appendstr(&b, ",\"events\":[");
+		for (i = 0; i < sp->nevents; i++) {
+			const struct oe_span_event *ev = &sp->events[i];
+			size_t j;
+			int f = 1;
+
+			oe_buf_appendf(&b, "%s{\"timeUnixNano\":\"%ju\","
+			    "\"name\":\"", i > 0 ? "," : "",
+			    (uintmax_t)ts_unix_nano(&ev->ts));
+			oe_buf_appendjson(&b, ev->name);
+			oe_buf_appendstr(&b, "\",\"attributes\":[");
+			for (j = 0; j < ev->nattrs; j++)
+				oe_enc_kv(&b, &ev->attrs[j], &f);
+			oe_buf_appendstr(&b, "]}");
+		}
+		oe_buf_appendstr(&b, "]");
+	}
+	if (sp->nlinks > 0) {
+		oe_buf_appendstr(&b, ",\"links\":[");
+		for (i = 0; i < sp->nlinks; i++) {
+			const struct oe_span_link *ln = &sp->links[i];
+			size_t j;
+			int f = 1;
+
+			oe_id_hex(ln->trace_id, OE_TRACE_ID_LEN, tid);
+			oe_id_hex(ln->span_id, OE_SPAN_ID_LEN, pid);
+			oe_buf_appendf(&b, "%s{\"traceId\":\"%s\","
+			    "\"spanId\":\"%s\"", i > 0 ? "," : "", tid, pid);
+			if (ln->trace_state != NULL) {
+				oe_buf_appendstr(&b, ",\"traceState\":\"");
+				oe_buf_appendjson(&b, ln->trace_state);
+				oe_buf_appendstr(&b, "\"");
+			}
+			if (ln->flags != 0)
+				oe_buf_appendf(&b, ",\"flags\":%u",
+				    (unsigned)ln->flags);
+			oe_buf_appendstr(&b, ",\"attributes\":[");
+			for (j = 0; j < ln->nattrs; j++)
+				oe_enc_kv(&b, &ln->attrs[j], &f);
+			oe_buf_appendstr(&b, "]}");
+		}
+		oe_buf_appendstr(&b, "]");
+	}
+	oe_buf_appendf(&b, ",\"status\":{\"code\":%d", (int)sp->status);
 	if (sp->status_message != NULL) {
 		oe_buf_appendstr(&b, ",\"message\":\"");
 		oe_buf_appendjson(&b, sp->status_message);
@@ -493,11 +576,128 @@ bucket_cmp(const void *a, const void *b)
 	return (ba->upper > bb->upper);
 }
 
+/* A JSON number for a double (proto3 JSON spells the non-finite ones). */
+static void
+enc_double(struct oe_buf *b, double d)
+{
+
+	if (d != d)
+		oe_buf_appendstr(b, "\"NaN\"");
+	else if (d > 1.7976931348623157e308 || d < -1.7976931348623157e308)
+		oe_buf_appendf(b, "\"%sInfinity\"", d < 0 ? "-" : "");
+	else
+		oe_buf_appendf(b, "%.17g", d);
+}
+
+/* "startTimeUnixNano":..., for a point: its own start, else the snapshot's. */
+static void
+enc_start(struct oe_buf *b, const struct oe_snapshot *sn,
+    const struct oe_datapoint *dp)
+{
+	const struct timespec *st;
+
+	st = dp->start.tv_sec > 0 ? &dp->start : &sn->start;
+	if (st->tv_sec > 0)
+		oe_buf_appendf(b, "\"startTimeUnixNano\":\"%ju\",",
+		    (uintmax_t)ts_unix_nano(st));
+}
+
+static void
+enc_expbuckets(struct oe_buf *b, const char *key,
+    const struct oe_expbuckets *eb)
+{
+	size_t i;
+
+	if (eb->n == 0)
+		return;
+	oe_buf_appendf(b, ",\"%s\":{\"offset\":%d,\"bucketCounts\":[", key,
+	    (int)eb->offset);
+	for (i = 0; i < eb->n; i++)
+		oe_buf_appendf(b, "%s\"%ju\"", i > 0 ? "," : "",
+		    (uintmax_t)eb->counts[i]);
+	oe_buf_appendstr(b, "]}");
+}
+
+/* Explicit-bounds buckets (and count/sum) of one histogram point. */
+static int
+enc_explicit(struct oe_buf *b, const struct oe_datapoint *dp)
+{
+	struct oe_bucket *sorted;
+	uint64_t total;
+	size_t j;
+
+	sorted = malloc(dp->nbuckets * sizeof(*sorted));
+	if (sorted == NULL)
+		return (-1);
+	memcpy(sorted, dp->buckets, dp->nbuckets * sizeof(*sorted));
+	qsort(sorted, dp->nbuckets, sizeof(*sorted), bucket_cmp);
+	total = 0;
+	for (j = 0; j < dp->nbuckets; j++)
+		total += (uint64_t)sorted[j].count;
+	oe_buf_appendf(b, "\"count\":\"%ju\",", (uintmax_t)total);
+	if (dp->has_stats) {
+		oe_buf_appendstr(b, "\"sum\":");
+		enc_double(b, dp->sum);
+		oe_buf_appendstr(b, ",");
+	}
+	/*
+	 * Bucket i holds (bounds[i-1], bounds[i]]: the inclusive upper
+	 * bound of every bucket but the last, which is unbounded.
+	 */
+	oe_buf_appendstr(b, "\"explicitBounds\":[");
+	for (j = 0; j + 1 < dp->nbuckets; j++)
+		oe_buf_appendf(b, "%s%jd", j > 0 ? "," : "",
+		    (intmax_t)sorted[j].upper);
+	oe_buf_appendstr(b, "],\"bucketCounts\":[");
+	for (j = 0; j < dp->nbuckets; j++)
+		oe_buf_appendf(b, "%s\"%jd\"", j > 0 ? "," : "",
+		    (intmax_t)sorted[j].count);
+	oe_buf_appendstr(b, "],");
+	free(sorted);
+	return (0);
+}
+
 /*
- * Build one snapshot's metric JSON fragment.  count/sum become a
- * monotonic Sum, min/max/avg/stddev a Gauge, quantize variants a
- * Histogram (sum omitted — power-of-2 bucket bounds can't recover
- * the true sum of observations).
+ * The data of a snapshot: "exponentialHistogram" when its points carry
+ * exponential buckets, "histogram" for explicit buckets or count/sum
+ * only, "sum" for count and sum aggregations, else "gauge".
+ */
+enum enc_shape { SHAPE_GAUGE, SHAPE_SUM, SHAPE_HIST, SHAPE_EXPHIST };
+
+static enum enc_shape
+snapshot_shape(const struct oe_snapshot *sn)
+{
+	size_t i;
+
+	switch (sn->kind) {
+	case OE_AGG_COUNT:
+	case OE_AGG_SUM:
+		return (SHAPE_SUM);
+	case OE_AGG_QUANTIZE:
+	case OE_AGG_LQUANTIZE:
+	case OE_AGG_LLQUANTIZE:
+		for (i = 0; i < sn->npoints; i++)
+			if (sn->points[i].exp != NULL)
+				return (SHAPE_EXPHIST);
+		return (SHAPE_HIST);
+	default:
+		/* avg/stddev with count and sum: a bucket-less histogram. */
+		for (i = 0; i < sn->npoints; i++)
+			if (sn->points[i].has_stats)
+				return (SHAPE_HIST);
+		return (SHAPE_GAUGE);
+	}
+}
+
+/*
+ * Build one snapshot's metric JSON fragment.  count becomes a
+ * monotonic cumulative Sum, sum a cumulative Sum (monotonic unless the
+ * snapshot says it can decrease), min/max (and avg/stddev values
+ * without count and sum) a Gauge, avg/stddev with count and sum a
+ * Histogram without buckets, quantize with exponential buckets an
+ * ExponentialHistogram, and the other quantize forms a Histogram with
+ * explicit bounds.  DTrace keeps no sum of a quantize, so none is
+ * exported for it.
  */
 char *
 oe_enc_metric(const struct oe_otlpenc *enc, const struct oe_snapshot *sn)
@@ -507,114 +707,156 @@ oe_enc_metric(const struct oe_otlpenc *enc, const struct oe_snapshot *sn)
 		"quantize", "lquantize", "llquantize"
 	};
 	struct oe_buf b;
-	struct oe_bucket *sorted;
 	const struct oe_datapoint *dp;
-	char startbuf[64];
-	uint64_t tnano;
-	int64_t total;
+	enum enc_shape shape;
+	uint64_t tnano, total;
 	size_t i, j;
-	int firstdp;
+	int firstdp, first;
 
 	oe_buf_init(&b);
 	tnano = ts_unix_nano(&sn->ts);
-	startbuf[0] = '\0';
-	if (sn->start.tv_sec > 0)
-		snprintf(startbuf, sizeof(startbuf),
-		    "\"startTimeUnixNano\":\"%ju\",",
-		    (uintmax_t)ts_unix_nano(&sn->start));
+	shape = snapshot_shape(sn);
 
 	oe_buf_appendstr(&b, "{\"name\":\"");
 	oe_buf_appendjson(&b, enc->scope);
 	oe_buf_appendstr(&b, ".");
-	oe_buf_appendjson(&b, sn->profile);
-	oe_buf_appendstr(&b, ".");
+	if (!sn->scope_metric) {
+		oe_buf_appendjson(&b, sn->profile);
+		oe_buf_appendstr(&b, ".");
+	}
 	if (sn->name != NULL && sn->name[0] != '\0')
 		oe_buf_appendjson(&b, sn->name);
 	else
 		oe_buf_appendstr(&b, kindnames[sn->kind]);
 	oe_buf_appendstr(&b, "\",");
-
-	switch (sn->kind) {
-	case OE_AGG_COUNT:
-	case OE_AGG_SUM:
-	case OE_AGG_MIN:
-	case OE_AGG_MAX:
-	case OE_AGG_AVG:
-	case OE_AGG_STDDEV:
-		oe_buf_appendstr(&b, sn->kind == OE_AGG_COUNT ||
-		    sn->kind == OE_AGG_SUM ?
-		    "\"sum\":{\"dataPoints\":[" :
-		    "\"gauge\":{\"dataPoints\":[");
-		firstdp = 1;
-		for (i = 0; i < sn->npoints; i++) {
-			dp = &sn->points[i];
+	if (sn->description != NULL) {
+		oe_buf_appendstr(&b, "\"description\":\"");
+		oe_buf_appendjson(&b, sn->description);
+		oe_buf_appendstr(&b, "\",");
+	}
+	if (sn->unit != NULL) {
+		oe_buf_appendstr(&b, "\"unit\":\"");
+		oe_buf_appendjson(&b, sn->unit);
+		oe_buf_appendstr(&b, "\",");
+	}
+	if (sn->nmetadata > 0) {
+		oe_buf_appendstr(&b, "\"metadata\":[");
+		first = 1;
+		for (i = 0; i < sn->nmetadata; i++)
+			append_kv_string(&b, sn->metadata[i].name,
+			    sn->metadata[i].value, &first);
+		oe_buf_appendstr(&b, "],");
+	}
+	switch (shape) {
+	case SHAPE_GAUGE:
+		oe_buf_appendstr(&b, "\"gauge\":{\"dataPoints\":[");
+		break;
+	case SHAPE_SUM:
+		oe_buf_appendstr(&b, "\"sum\":{\"dataPoints\":[");
+		break;
+	case SHAPE_HIST:
+		oe_buf_appendstr(&b, "\"histogram\":{\"dataPoints\":[");
+		break;
+	case SHAPE_EXPHIST:
+		oe_buf_appendstr(&b,
+		    "\"exponentialHistogram\":{\"dataPoints\":[");
+		break;
+	}
+	firstdp = 1;
+	for (i = 0; i < sn->npoints; i++) {
+		dp = &sn->points[i];
+		switch (shape) {
+		case SHAPE_GAUGE:
+		case SHAPE_SUM:
 			if (dp->is_histogram)
 				continue;
-			if (!firstdp)
-				oe_buf_appendstr(&b, ",");
-			firstdp = 0;
+			oe_buf_appendstr(&b, firstdp ? "{" : ",{");
 			/* Gauges carry no start time. */
-			oe_buf_appendf(&b,
-			    "{%s\"timeUnixNano\":\"%ju\",\"asInt\":\"%jd\","
-			    "\"attributes\":[", sn->kind == OE_AGG_COUNT ||
-			    sn->kind == OE_AGG_SUM ? startbuf : "",
-			    (uintmax_t)tnano, (intmax_t)dp->scalar);
-			build_dimension_attrs(&b, dp);
-			oe_buf_appendstr(&b, "]}");
-		}
-		if (sn->kind == OE_AGG_COUNT || sn->kind == OE_AGG_SUM)
-			oe_buf_appendstr(&b, "],\"aggregationTemporality\":2,"
-			    "\"isMonotonic\":true}}");
-		else
-			oe_buf_appendstr(&b, "]}}");
-		break;
-
-	case OE_AGG_QUANTIZE:
-	case OE_AGG_LQUANTIZE:
-	case OE_AGG_LLQUANTIZE:
-		oe_buf_appendstr(&b, "\"histogram\":{\"dataPoints\":[");
-		firstdp = 1;
-		for (i = 0; i < sn->npoints; i++) {
-			dp = &sn->points[i];
-			/*
-			 * A histogram with zero buckets would emit
-			 * bucketCounts=[] with explicitBounds=[],
-			 * violating len(counts) == len(bounds)+1.
-			 */
-			if (!dp->is_histogram || dp->nbuckets == 0)
-				continue;
-			sorted = malloc(dp->nbuckets * sizeof(*sorted));
-			if (sorted == NULL) {
-				b.error = 1;
-				break;
-			}
-			memcpy(sorted, dp->buckets,
-			    dp->nbuckets * sizeof(*sorted));
-			qsort(sorted, dp->nbuckets, sizeof(*sorted),
-			    bucket_cmp);
-			total = 0;
-			for (j = 0; j < dp->nbuckets; j++)
-				total += sorted[j].count;
-			if (!firstdp)
+			if (shape == SHAPE_SUM)
+				enc_start(&b, sn, dp);
+			oe_buf_appendf(&b, "\"timeUnixNano\":\"%ju\",",
+			    (uintmax_t)tnano);
+			if (dp->is_double) {
+				oe_buf_appendstr(&b, "\"asDouble\":");
+				enc_double(&b, dp->dvalue);
 				oe_buf_appendstr(&b, ",");
-			firstdp = 0;
-			oe_buf_appendf(&b,
-			    "{%s\"timeUnixNano\":\"%ju\",\"count\":\"%jd\","
-			    "\"explicitBounds\":[", startbuf, (uintmax_t)tnano,
-			    (intmax_t)total);
-			for (j = 0; j + 1 < dp->nbuckets; j++)
-				oe_buf_appendf(&b, "%s%jd", j > 0 ? "," : "",
-				    (intmax_t)sorted[j].upper);
-			oe_buf_appendstr(&b, "],\"bucketCounts\":[");
-			for (j = 0; j < dp->nbuckets; j++)
-				oe_buf_appendf(&b, "%s\"%jd\"",
-				    j > 0 ? "," : "",
-				    (intmax_t)sorted[j].count);
-			oe_buf_appendstr(&b, "],\"attributes\":[");
-			build_dimension_attrs(&b, dp);
-			oe_buf_appendstr(&b, "]}");
-			free(sorted);
+			} else
+				oe_buf_appendf(&b, "\"asInt\":\"%jd\",",
+				    (intmax_t)dp->scalar);
+			break;
+		case SHAPE_HIST:
+			if (dp->is_histogram && dp->nbuckets > 0) {
+				oe_buf_appendstr(&b, firstdp ? "{" : ",{");
+				enc_start(&b, sn, dp);
+				oe_buf_appendf(&b, "\"timeUnixNano\":\"%ju\",",
+				    (uintmax_t)tnano);
+				if (enc_explicit(&b, dp) != 0)
+					b.error = 1;
+			} else if (dp->has_stats && !dp->is_histogram) {
+				/*
+				 * Count and sum without buckets, which the
+				 * data model allows (no bounds, no counts).
+				 */
+				oe_buf_appendstr(&b, firstdp ? "{" : ",{");
+				enc_start(&b, sn, dp);
+				oe_buf_appendf(&b, "\"timeUnixNano\":\"%ju\","
+				    "\"count\":\"%ju\",\"sum\":",
+				    (uintmax_t)tnano, (uintmax_t)dp->count);
+				enc_double(&b, dp->sum);
+				oe_buf_appendstr(&b, ",");
+			} else
+				/*
+				 * Zero buckets would mean bucketCounts=[]
+				 * with a count: skip such a point.
+				 */
+				continue;
+			break;
+		case SHAPE_EXPHIST:
+			if (dp->exp == NULL)
+				continue;
+			total = dp->exp->zero_count;
+			for (j = 0; j < dp->exp->positive.n; j++)
+				total += dp->exp->positive.counts[j];
+			for (j = 0; j < dp->exp->negative.n; j++)
+				total += dp->exp->negative.counts[j];
+			oe_buf_appendstr(&b, firstdp ? "{" : ",{");
+			enc_start(&b, sn, dp);
+			oe_buf_appendf(&b, "\"timeUnixNano\":\"%ju\","
+			    "\"count\":\"%ju\",", (uintmax_t)tnano,
+			    (uintmax_t)total);
+			if (dp->has_stats) {
+				oe_buf_appendstr(&b, "\"sum\":");
+				enc_double(&b, dp->sum);
+				oe_buf_appendstr(&b, ",");
+			}
+			oe_buf_appendf(&b, "\"scale\":%d,\"zeroCount\":\"%ju\"",
+			    (int)dp->exp->scale,
+			    (uintmax_t)dp->exp->zero_count);
+			if (dp->exp->zero_threshold != 0) {
+				oe_buf_appendstr(&b, ",\"zeroThreshold\":");
+				enc_double(&b, dp->exp->zero_threshold);
+			}
+			enc_expbuckets(&b, "positive", &dp->exp->positive);
+			enc_expbuckets(&b, "negative", &dp->exp->negative);
+			oe_buf_appendstr(&b, ",");
+			break;
 		}
+		firstdp = 0;
+		oe_buf_appendstr(&b, "\"attributes\":[");
+		build_dimension_attrs(&b, dp);
+		oe_buf_appendstr(&b, "]}");
+	}
+	switch (shape) {
+	case SHAPE_GAUGE:
+		oe_buf_appendstr(&b, "]}}");
+		break;
+	case SHAPE_SUM:
+		oe_buf_appendf(&b, "],\"aggregationTemporality\":2,"
+		    "\"isMonotonic\":%s}}", sn->kind == OE_AGG_COUNT ||
+		    !sn->non_monotonic ? "true" : "false");
+		break;
+	case SHAPE_HIST:
+	case SHAPE_EXPHIST:
 		oe_buf_appendstr(&b, "],\"aggregationTemporality\":2}}");
 		break;
 	}

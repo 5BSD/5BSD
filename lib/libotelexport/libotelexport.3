@@ -31,7 +31,7 @@
 .Nm oe_flush ,
 .Nm oe_shutdown ,
 .Nm oe_exporter_free ,
-.Nm oe_report_drops ,
+.Nm oe_traceparent_parse ,
 .Nm oe_env_load ,
 .Nm oe_env_free ,
 .Nm oe_config_load ,
@@ -125,8 +125,11 @@ It is not installed as a shared library.
 .Fn oe_shutdown "struct oe_exporter *e"
 .Ft void
 .Fn oe_exporter_free "struct oe_exporter *e"
-.Ft void
-.Fn oe_report_drops "struct oe_exporter *e" "uint64_t count"
+.Ft int
+.Fo oe_traceparent_parse
+.Fa "const char *s" "size_t len" "uint8_t trace_id[16]"
+.Fa "uint8_t span_id[8]" "uint8_t *flags"
+.Fc
 .Ft void
 .Fn oe_env_load "struct oe_env *env"
 .Ft void
@@ -294,6 +297,27 @@ and out-of-range values export as INFO.
 and
 .Va nattrs
 add typed log record attributes after the context attributes.
+A non-zero
+.Va trace_id
+.Pq with Va span_id and the W3C Va trace_flags
+puts the record into a trace: it becomes the log record's
+.Ql traceId ,
+.Ql spanId
+and
+.Ql flags .
+.Va event_name ,
+when not
+.Dv NULL ,
+is the record's
+.Ql eventName :
+it is a named event of the log data model.
+Stack frames
+.Pq Va stack , ustack
+are exported as the attributes
+.Ql <scope>.stack
+and
+.Ql <scope>.ustack ,
+arrays of formatted frames, innermost first.
 Both are used by the OTLP exporters; JSONL lines carry the attributes
 in their
 .Va attributes
@@ -325,16 +349,73 @@ or
 .Dv OE_AGG_LLQUANTIZE ,
 and each
 .Vt struct oe_datapoint
-carries either a scalar or, when
-.Va is_histogram
-is set, an array of
+carries one of:
+.Bl -bullet -compact
+.It
+a scalar, or with
+.Va is_double
+the floating-point
+.Va dvalue ;
+.It
+with
+.Va is_histogram ,
+an array of
 .Vt struct oe_bucket
-with inclusive upper bounds.
+with inclusive upper bounds
+.Pq an explicit-bounds histogram ;
+.It
+with
+.Va is_histogram
+and
+.Va exp ,
+a base-2 exponential histogram:
+.Bd -literal -offset indent
+struct oe_expbuckets {
+	int32_t		 offset;
+	const uint64_t	*counts;	/* counts[i]: base^(offset+i) < |v| */
+	size_t		 n;		/*   <= base^(offset+i+1) */
+};
+struct oe_exphist {
+	int32_t		 scale;		/* base = 2^(2^-scale) */
+	uint64_t	 zero_count;
+	double		 zero_threshold;
+	struct oe_expbuckets positive, negative;
+};
+.Ed
+.It
+with
+.Va has_stats
+and no buckets, just the
+.Va count
+and
+.Va sum
+of the observations.
+.El
+.Va has_stats
+also adds the
+.Va sum
+to a histogram.
 A non-zero
 .Va start
-is the start of the accumulation window and becomes the
+of the snapshot is the start of the accumulation window and becomes the
 .Ql startTimeUnixNano
-of cumulative sums and histograms.
+of cumulative sums and histograms; a point's own non-zero
+.Va start
+replaces it for that series
+.Pq one that was reset or appeared later .
+.Va scope_metric
+names the metric
+.Ql <scope>.<name>
+instead of
+.Ql <scope>.<profile>.<name>
+.Pq tool-level metrics such as drop counters ;
+.Va non_monotonic
+marks a sum that may decrease;
+.Va unit ,
+.Va description
+and
+.Va metadata
+fill the Metric fields of the same names.
 Snapshots with zero points are ignored.
 .Pp
 .Fn oe_span
@@ -355,12 +436,42 @@ struct oe_span {
 	const char	*execname;
 	const struct oe_kv *attrs;
 	size_t		 nattrs;
+	struct oe_context ctx;
+	uint32_t	 flags;
+	const char	*trace_state;
+	const struct oe_span_event *events;	/* time, name, attrs */
+	size_t		 nevents;
+	const struct oe_span_link *links;	/* trace/span id, state, */
+	size_t		 nlinks;		/* flags, attrs */
 };
 .Ed
 .Pp
 Times are wall clock; an all-zero
 .Va parent_span_id
 marks a root span.
+.Va flags
+holds the W3C trace flags in its low byte and
+.Dv OE_SPAN_FLAGS_HAS_IS_REMOTE
+and
+.Dv OE_SPAN_FLAGS_IS_REMOTE
+as in OTLP
+.Pq a parent in another process ;
+.Va trace_state
+is the W3C
+.Ql tracestate .
+.Va events
+and
+.Va links
+become the span's events and links.
+.Fn oe_traceparent_parse
+reads a W3C
+.Ql traceparent
+value
+.Pq Li 00-<trace id>-<parent id>-<flags> ;
+a later version is read as version 00
+and may carry more fields
+into the ids and flags; it returns 0, or \-1 for anything else,
+including all-zero ids and version ff.
 .Va kind
 .Pq Dv OE_SPAN_INTERNAL , OE_SPAN_SERVER , OE_SPAN_CLIENT , OE_SPAN_PRODUCER , OE_SPAN_CONSUMER
 and
@@ -687,16 +798,36 @@ and a
 array whose entries hold the key dimensions in
 .Va attributes
 .Pq string values
-and either a
-.Va value
-or, for the quantize family, a
+and a
+.Va value ,
+a
+.Va count
+and
+.Va sum ,
+an
+.Va exponential
+object
+.Pq Va scale , zero_count , No and Va positive No and Va negative No with Va offset No and Va counts ,
+or a
 .Va buckets
 array of
 .Va le
 .Pq inclusive upper bound
 and
 .Va count
-pairs; snapshots without data points are skipped.
+pairs, and a
+.Va start
+of its own when the series was reset; snapshots without data points are
+skipped.
+Events carry
+.Va event ,
+.Va trace_id
+and
+.Va span_id
+when set, spans their
+.Va events
+and
+.Va links .
 .Fn oe_jsonl_resource_new
 also names a resource in every line: a
 .Va resource
@@ -932,17 +1063,40 @@ appends a record to the current batch; when the batch reaches
 the envelope is built and queued for the sender.
 .Fn oe_snapshot
 appends a metric fragment which rides the next time-based flush.
-Count and sum aggregations become monotonic cumulative
+Count aggregations become monotonic cumulative
 .Vt Sum
-metrics, min/max/avg/stddev become
+metrics and sum aggregations cumulative
+.Vt Sum
+metrics, monotonic unless
+.Va non_monotonic
+is set; min/max become
 .Vt Gauge
-metrics, and the quantize family become cumulative
+metrics, as do avg/stddev points that carry only a value
+.Pq Va scalar No or Va dvalue ;
+avg/stddev points with
+.Va has_stats
+become cumulative
 .Vt Histogram
-metrics whose bucket bounds are sorted ascending; histogram sums are
-omitted because power-of-two bucket bounds cannot recover them.
+points with only a count and a sum, which the data model allows;
+quantize points with
+.Va exp
+become a cumulative
+.Vt ExponentialHistogram ,
+and the other quantize points cumulative
+.Vt Histogram
+metrics whose bucket bounds are sorted ascending.
+A histogram carries a sum only with
+.Va has_stats .
 Metric names are
 .Ql <scope>.<profile>.<name> ,
+or
+.Ql <scope>.<name>
+with
+.Va scope_metric ,
 falling back to the aggregation kind when the snapshot is anonymous.
+The OTLP JSON writers
+.Pq oe_otlpenc.c
+turn this encoding-independent data model into proto3 JSON.
 Log records carry
 .Ql <scope>.profile
 and
@@ -1010,22 +1164,21 @@ is dropped; the number of batches dropped is reported once the spool
 drains.
 Requests rejected with a non-retryable status are never spooled.
 .Ss Drop accounting
-.Fn oe_report_drops
-adds
-.Fa count
-kernel-side record drops
-.Pq for example DTrace buffer drops
-to a pending counter on an OTLP exporter.
-The accumulated value is spliced into the first log record of the next
-batch as an integer attribute named
-.Ql <scope>.drops
-and the counter is reset.
-If a flush finds no log records to carry the attribute
-.Pq for example an aggregation-only profile
-the drops are re-credited and ride a later batch rather than being lost.
-The function is a no-op for the standard-output exporters and for a
-.Dv NULL
-exporter.
+Records a producer lost
+.Pq DTrace buffer drops, audit pipe overflows
+are exported by the producer as a cumulative monotonic
+.Vt Sum
+snapshot with
+.Va scope_metric
+set, for example
+.Ql dtrace.drops
+with a
+.Ql dtrace.drop.kind
+attribute
+.Pq see Xr dtrace 1
+or
+.Ql otelauditd.drops .
+The library has no separate drop channel.
 .Ss Environment
 .Fn oe_env_load
 fills a
@@ -1292,10 +1445,7 @@ the form OTLP JSON uses for ids, and
 tests for the invalid id.
 .Ss Thread safety
 The OTLP exporter serializes its batch state with an internal mutex and
-may be fed from multiple threads;
-.Fn oe_report_drops
-is likewise safe to call from any thread, including a DTrace drop
-handler running concurrently with the consumer loop.
+may be fed from multiple threads.
 .Fn oe_start ,
 .Fn oe_shutdown
 and

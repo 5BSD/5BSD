@@ -20,7 +20,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt DTRACE 1
 .Os
 .Sh NAME
@@ -1347,22 +1347,122 @@ records of one firing form one line, as
 prints them, and without
 .Fl q
 a firing that records nothing yields a record naming its probe.
-.Fn stack
-and
+.Fn stack ,
 .Fn ustack
-frames attach to the line of their firing.
+and
+.Fn jstack
+frames attach to the line of their firing as the array attributes
+.Ql dtrace.stack
+and
+.Ql dtrace.ustack .
+The action behind a line is its
+.Ql dtrace.action
+attribute
+.Pq Cm printf , trace , print , tracemem , printm , system , freopen , stack , sym , mod , usym , umod , uaddr ;
+a typed
+.Fn print
+is one record however many lines it prints, with its type as
+.Ql dtrace.print.type
+and its members as
+.Ql dtrace.print. Ns Ar member Ns Op . Ns Ar member
+string attributes
+.Pq best effort: libdtrace's text of each value, nested members joined with dots, at most 32 .
+.Pp
 Aggregations become metrics when tracing ends and on
-.Dv SIGINFO :
-.Fn count
+.Dv SIGINFO ,
+with the keys as attributes and cumulative temporality from the start of
+tracing:
+.Bl -tag -width "lquantize, llquantize" -compact
+.It Fn count
+a monotonic sum.
+.It Fn sum
+a sum that is not monotonic
+.Pq it adds signed values .
+.It Fn min , Fn max
+gauges.
+.It Fn avg
+a histogram without buckets carrying the count and sum of the values,
+from which a back end derives the mean without rounding.
+.It Fn stddev
+the same, plus the gauge
+.Ql Ar name Ns .stddev ,
+the population standard deviation computed exactly from DTrace's
+128-bit sum of squares.
+.It Fn quantize
+an exponential histogram at scale 0 (base 2): the bucket
+.Bq 2^k, 2^(k+1)
+is index
+.Ar k ,
+negative values mirror it and the zero bucket is the zero count.
+DTrace closes its buckets at the lower end and OpenTelemetry at the
+upper, so a value exactly at a power of two belongs, by OpenTelemetry's
+convention, one bucket lower than it is reported.
+.It Fn lquantize , Fn llquantize
+histograms with explicit bounds, every bucket of the layout included and
+bounded by its inclusive integer upper bound.
+.Fn llquantize
+does not map exactly onto exponential buckets: its steps within an
+order of magnitude are linear and its underflow and overflow buckets span
+many exponential buckets.
+.El
+.Fn normalize
+is not applied: the values are the aggregation's own, and the factor is
+the metric metadata
+.Ql dtrace.normalization .
+A series whose count went down since the previous snapshot
+.Pq Fn clear ,
+or that was absent from it
+.Pq new, or removed by Fn trunc and back ,
+starts at the previous snapshot, so consumers see the reset; a series
+cleared and grown past its earlier count between two snapshots is not
+noticed, as DTrace does not tell the consumer about
+.Fn clear .
+.Pp
+Drops of every kind are counted in the monotonic sum
+.Ql dtrace.drops
+with the attribute
+.Ql dtrace.drop.kind
+.Pq Cm principal , aggregation , dynamic , dynamic_rinse , dynamic_dirty , speculation , speculation_busy , speculation_unavailable , stack_string_overflow , error_in_error_probe ;
+HyperTrace guests' records are dropped in the host's buffers and are
+counted there, not per guest.
+Runtime errors are ERROR log records with the event name
+.Ql dtrace.error ,
+the probe, and the attributes
+.Ql dtrace.fault ,
+.Ql dtrace.fault.code ,
+.Ql dtrace.fault.address
+.Pq for address faults ,
+.Ql dtrace.action.index
+.Pq 0 is the predicate ,
+.Ql dtrace.difo.offset
 and
-.Fn sum
-as cumulative sums,
-.Fn min ,
-.Fn max ,
-.Fn avg
+.Ql dtrace.epid ,
+and are counted in
+.Ql dtrace.errors
+by
+.Ql dtrace.fault .
+The drop and error counters are exported once a second when they change
+and with every aggregation snapshot.
+.Fn exit
+is the log event
+.Ql dtrace.exit
+with the attribute
+.Ql dtrace.exit.status .
+With
+.Fl E ,
+a guest's registration, a new lifetime of its VMID and a rename are the
+log events
+.Ql hypertrace.vm.registered ,
+.Ql hypertrace.vm.restarted
 and
-.Fn stddev
-as gauges, the quantize family as histograms, with the keys as attributes.
+.Ql hypertrace.vm.renamed
+on the host's resource, with
+.Ql hypertrace.vm.name ,
+.Ql hypertrace.vm.id
+and
+.Ql hypertrace.vm.epoch .
+Committed speculations are exported as the records they hold, with
+their original probe times; discarded ones are not exported.
 A record printed by
 .Fn printf
 whose text starts with the unit separator
@@ -1398,12 +1498,21 @@ a child names its parent's key with
 and
 .Cm trace
 defaults to the parent's key or the span's own ,
-and attributes
+attributes
 .Cm a.i.\& Ns Ar key
 .Pq integer
 and
 .Cm a.s.\& Ns Ar key
-.Pq string .
+.Pq string ,
+.Cm traceparent
+.Pq a W3C traceparent: the span joins that trace, and without Cm parent the application's span is its remote parent ,
+.Cm tracestate ,
+.Cm event Ns = Ns Ar timestamp : Ns Ar name
+.Pq a span event
+and
+.Cm link Ns = Ns Ar traceparent
+.Pq a link to another span ,
+each of the last two up to eight times.
 For example:
 .Bd -literal -offset indent
 syscall::read:return /self->ts/ {
@@ -1426,6 +1535,19 @@ who fired the probe:
 and
 .Cm execname ,
 all required; attached to the log line of the same firing.
+.It Li otel.trace
+.Cm traceparent ,
+a W3C traceparent: the log line of the same firing joins that trace
+.Pq its traceId and spanId .
+With a USDT probe whose argument carries the application's
+traceparent, DTrace output joins the application's own trace:
+.Bd -literal -offset indent
+myapp*:::request-start {
+	printf("\e037otel.trace\e037traceparent=%s\en",
+	    copyinstr(arg0));
+	printf("request %s\en", copyinstr(arg1));
+}
+.Ed
 .It Li otel.resource
 resource attributes of a HyperTrace guest, such as
 .Cm host.name ,

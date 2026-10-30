@@ -2211,6 +2211,8 @@ chewrec(const dtrace_probedata_t *data, const dtrace_recdesc_t *rec, void *arg)
 
 	if (act == DTRACEACT_EXIT) {
 		g_status = *((uint32_t *)addr);
+		if (g_otel != NULL)
+			dtotel_exit(dtotel_session_bridge(g_otel), g_status);
 		return (DTRACE_CONSUME_NEXT);
 	}
 
@@ -3853,6 +3855,9 @@ static int
 errhandler(const dtrace_errdata_t *data, void *arg)
 {
 	error(data->dteda_msg);
+	/* OpenTelemetry: an ERROR log record and the errors counter. */
+	if (g_otel != NULL)
+		dtotel_error_record(dtotel_session_bridge(g_otel), data);
 	return (DTRACE_HANDLE_OK);
 }
 
@@ -3864,7 +3869,8 @@ drophandler(const dtrace_dropdata_t *data, void *arg)
 		error(data->dtdda_msg);
 	}
 	if (g_otel != NULL)
-		dtotel_drops(dtotel_session_bridge(g_otel), data->dtdda_drops);
+		dtotel_drops(dtotel_session_bridge(g_otel), data->dtdda_kind,
+		    data->dtdda_drops);
 
 	return (DTRACE_HANDLE_OK);
 }

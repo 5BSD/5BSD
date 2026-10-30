@@ -51,7 +51,7 @@ otlpfile_write(struct oe_otlpfile *f, enum oe_signal sig)
 
 	if (f->nfrags[sig] == 0)
 		return (0);
-	req = oe_enc_request(&f->enc, sig, f->frags[sig], f->nfrags[sig], 0,
+	req = oe_enc_request(&f->enc, sig, f->frags[sig], f->nfrags[sig],
 	    &len);
 	oe_frags_free(f->frags[sig], f->nfrags[sig]);
 	f->frags[sig] = NULL;

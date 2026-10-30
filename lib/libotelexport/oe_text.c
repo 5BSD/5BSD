@@ -128,7 +128,25 @@ text_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 		for (j = 0; j < dp->nattrs; j++)
 			oe_buf_appendf(&b, "%s%s", j > 0 ? ", " : "",
 			    dp->attrs[j].value);
-		if (dp->is_histogram) {
+		if (dp->is_histogram && dp->exp != NULL) {
+			/* Power-of-two buckets: (-2^(k+1), -2^k], 0, [2^k, 2^(k+1)). */
+			oe_buf_appendstr(&b, "]\n");
+			for (j = dp->exp->negative.n; j > 0; j--)
+				if (dp->exp->negative.counts[j - 1] != 0)
+					oe_buf_appendf(&b, "    -2^%d: %ju\n",
+					    (int)(dp->exp->negative.offset +
+					    (int32_t)j - 1),
+					    (uintmax_t)dp->exp->negative.counts[j - 1]);
+			if (dp->exp->zero_count != 0)
+				oe_buf_appendf(&b, "    0: %ju\n",
+				    (uintmax_t)dp->exp->zero_count);
+			for (j = 0; j < dp->exp->positive.n; j++)
+				if (dp->exp->positive.counts[j] != 0)
+					oe_buf_appendf(&b, "    2^%d: %ju\n",
+					    (int)(dp->exp->positive.offset +
+					    (int32_t)j),
+					    (uintmax_t)dp->exp->positive.counts[j]);
+		} else if (dp->is_histogram) {
 			oe_buf_appendstr(&b, "]\n");
 			for (j = 0; j < dp->nbuckets; j++) {
 				if (dp->buckets[j].count == 0)
@@ -137,7 +155,12 @@ text_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 				    (intmax_t)dp->buckets[j].upper,
 				    (intmax_t)dp->buckets[j].count);
 			}
-		} else
+		} else if (dp->is_double)
+			oe_buf_appendf(&b, "] %.6g\n", dp->dvalue);
+		else if (dp->has_stats)
+			oe_buf_appendf(&b, "] count=%ju sum=%.17g\n",
+			    (uintmax_t)dp->count, dp->sum);
+		else
 			oe_buf_appendf(&b, "] %jd\n", (intmax_t)dp->scalar);
 	}
 	oe_buf_appendstr(&b, "\n");

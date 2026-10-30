@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "otelexport.h"
@@ -59,6 +60,38 @@ usage(void)
 	fprintf(stderr, "usage: otelauditd [-c count] [-e endpoint] "
 	    "[-f trail | -F flags] [-u user]\n");
 	exit(2);
+}
+
+/*
+ * Records the audit pipe dropped (its queue was full) since it was
+ * opened: the cumulative monotonic Sum "otelauditd.drops".
+ */
+static void
+emit_drops(struct oe_service *svc, uint64_t total, const struct timespec *start)
+{
+	struct oe_snapshot sn;
+	struct oe_datapoint dp;
+	struct oe_attr attr;
+
+	attr.name = "otelauditd.drop.kind";
+	attr.value = "auditpipe";
+	memset(&dp, 0, sizeof(dp));
+	dp.attrs = &attr;
+	dp.nattrs = 1;
+	dp.scalar = (int64_t)total;
+	memset(&sn, 0, sizeof(sn));
+	clock_gettime(CLOCK_REALTIME, &sn.ts);
+	sn.start = *start;
+	sn.profile = AUDITREC_PROFILE;
+	sn.name = "drops";
+	sn.kind = OE_AGG_COUNT;
+	sn.points = &dp;
+	sn.npoints = 1;
+	sn.scope_metric = 1;
+	sn.unit = "{record}";
+	sn.description = "Audit records the audit pipe dropped";
+	if (oe_snapshot(svc->exporter, &sn) != 0)
+		warnx("cannot queue the drop count");
 }
 
 /* Open and configure the audit pipe as root. */
@@ -96,6 +129,7 @@ int
 main(int argc, char **argv)
 {
 	struct oe_service svc;
+	struct timespec started;
 	struct pollfd pfd;
 	struct auditrec_events events;
 	struct sigaction sa;
@@ -175,6 +209,7 @@ main(int argc, char **argv)
 	if (trail == NULL && pipebuf == NULL)
 		err(1, "malloc");
 	lastdrops = 0;
+	clock_gettime(CLOCK_REALTIME, &started);
 	pipeoff = pipelen = 0;
 	for (n = 0; !done && (count == 0 || n < count);) {
 		if (trail != NULL) {
@@ -223,8 +258,7 @@ main(int argc, char **argv)
 				pipelen = (int)r;
 				if (ioctl(fd, AUDITPIPE_GET_DROPS, &drops) == 0 &&
 				    drops > lastdrops) {
-					oe_report_drops(svc.exporter,
-					    drops - lastdrops);
+					emit_drops(&svc, drops, &started);
 					lastdrops = drops;
 				}
 			}

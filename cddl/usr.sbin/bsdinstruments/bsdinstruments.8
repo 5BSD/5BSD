@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 26, 2026
+.Dd October 29, 2026
 .Dt BSDINSTRUMENTS 8
 .Os
 .Sh NAME
@@ -226,15 +226,40 @@ One JSON object per output line, pipe-friendly for
 .Xr jq 1 ,
 Loki, or Vector; aggregations become
 .Ql \&"type\&":\&"metric\&"
-objects with their key dimensions and values or histogram buckets.
+objects with their key dimensions and values, count and sum, or
+histogram buckets
+.Pq Ql \&"exponential\&" No for quantize .
 .It Cm otel
 Batch events as OTLP LogRecords POSTed to the collector's
 .Pa /v1/logs
 endpoint; DTrace aggregations become typed metrics on
 .Pa /v1/metrics
-(count/sum as monotonic Sums, min/max/avg as Gauges, quantize
-variants as Histograms); spans go to
+and spans go to
 .Pa /v1/traces .
+The mapping is the one of
+.Xr dtrace 1
+.Fl x Cm otel
+.Pq see its Sx OPENTELEMETRY OUTPUT :
+count as a monotonic Sum, sum as a Sum that may decrease, min/max as
+Gauges, avg and stddev as count-and-sum Histograms (stddev also as the
+.Ql Ar name Ns .stddev
+Gauge), quantize as a base-2 ExponentialHistogram, lquantize and
+llquantize as explicit-bounds Histograms with their whole layout;
+drops by kind and runtime errors by fault as the counters
+.Ql bsdinstruments.drops
+and
+.Ql bsdinstruments.errors ;
+runtime errors and
+.Fn exit
+also as the log events
+.Ql dtrace.error
+.Pq severity ERROR
+and
+.Ql dtrace.exit ;
+.Li \e037otel.trace
+records and span
+.Cm traceparent
+fields join the application's W3C trace.
 .It Cm otlp-json
 The same OTLP requests written as JSON Lines, one request per line: the
 format of the OpenTelemetry Collector's file exporter, readable by its

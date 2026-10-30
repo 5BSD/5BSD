@@ -12,8 +12,10 @@
  *    probe firing;
  *  - aggregations become metric snapshots;
  *  - records whose text starts with "\037otel." are structured
- *    records (clock anchors, spans, context) rather than log lines;
- *    span records become OTLP spans.
+ *    records (clock anchors, spans, context, trace context) rather
+ *    than log lines; span records become OTLP spans;
+ *  - drops, runtime errors, exit() and HyperTrace guest lifetimes
+ *    become counters and named log events.
  *
  * Probe time.  libdtrace hands every record the probe's high
  * resolution timestamp (the D "timestamp" clock), not wall time.  The
@@ -94,11 +96,36 @@ void		 dtotel_flush(struct dtotel *);
 void		 dtotel_firing_end(struct dtotel *, const dtrace_probedata_t *,
 		    int quiet);
 
-/* Snapshot and walk the aggregations, emitting metric snapshots. */
+/*
+ * Snapshot and walk the aggregations, emitting metric snapshots (and
+ * the drop and error counters, see dtotel_report()).
+ */
 int		 dtotel_aggregate(struct dtotel *);
 
-/* Forward kernel drop counts to the exporter. */
-void		 dtotel_drops(struct dtotel *, uint64_t);
+/*
+ * Count drops of a kind (dtrace_dropkind_t, from a drop handler).  They
+ * are exported by dtotel_report() as the cumulative monotonic Sum
+ * "<scope>.drops" with the attribute dtrace.drop.kind.
+ */
+void		 dtotel_drops(struct dtotel *, int kind, uint64_t n);
+
+/*
+ * A DTrace runtime error (from an error handler): an ERROR log record
+ * with event name "dtrace.error" and the probe, fault, address, action
+ * and DIF offset as attributes, counted in "<scope>.errors" with the
+ * attribute dtrace.fault.
+ */
+void		 dtotel_error_record(struct dtotel *, const dtrace_errdata_t *);
+
+/* The D program called exit(status): a "dtrace.exit" log record. */
+void		 dtotel_exit(struct dtotel *, int status);
+
+/*
+ * Emit the drop and error counters when they changed since the last
+ * report, or with "force" whenever any was ever counted.  Consumers
+ * call it about once a second; dtotel_aggregate() forces it.
+ */
+void		 dtotel_report(struct dtotel *, int force);
 
 /*
  * Record (or refresh) a guest's identity as the consumer learns it,

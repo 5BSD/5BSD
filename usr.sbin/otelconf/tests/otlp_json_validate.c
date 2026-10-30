@@ -16,9 +16,12 @@
  *
  *	resource <key>=<value>
  *	scope <name>
- *	metric <name> <gauge|sum|histogram> monotonic=<0|1>
- *	point <metric> [k=v,...] <value | count=N buckets=a/b/c>
+ *	metric <name> <gauge|sum|histogram|exponential_histogram> monotonic=<0|1>
+ *	point <metric> [k=v,...] <value | count=N buckets=a/b/c |
+ *	    count=N sum=S | count=N scale=S zero=Z pos=O:a/b neg=O:a/b>
  *	log <severity> [k=v,...] <body>
+ *	event <name>			(a log record's eventName)
+ *	trace <trace id> <span id>	(a log record's trace context)
  */
 
 #include <err.h>
@@ -256,11 +259,19 @@ number_points(const char *name, const ucl_object_t *data)
 			n++;
 		}
 		if ((v = ucl_object_lookup(dp, "asDouble")) != NULL) {
-			if (ucl_object_type(v) != UCL_FLOAT &&
+			/* proto3 JSON spells the non-finite doubles. */
+			if (ucl_object_type(v) == UCL_STRING &&
+			    (strcmp(ucl_object_tostring(v), "NaN") == 0 ||
+			    strcmp(ucl_object_tostring(v), "Infinity") == 0 ||
+			    strcmp(ucl_object_tostring(v), "-Infinity") == 0))
+				out("point %s [%s] %s\n", name, attrs,
+				    ucl_object_tostring(v));
+			else if (ucl_object_type(v) != UCL_FLOAT &&
 			    ucl_object_type(v) != UCL_INT)
 				fail("asDouble must be a number");
-			out("point %s [%s] %g\n", name, attrs,
-			    ucl_object_todouble(v));
+			else
+				out("point %s [%s] %g\n", name, attrs,
+				    ucl_object_todouble(v));
 			n++;
 		}
 		if (n != 1)
@@ -298,6 +309,26 @@ histogram_points(const char *name, const ucl_object_t *data)
 		    sizeof(attrs));
 		count = int64_field(need(dp, "count", UCL_STRING), "count",
 		    false);
+		/*
+		 * A point without buckets (no bounds, no counts) is allowed:
+		 * the count and sum of the observations only.
+		 */
+		if (ucl_object_lookup(dp, "bucketCounts") == NULL &&
+		    ucl_object_lookup(dp, "explicitBounds") == NULL) {
+			b = ucl_object_lookup(dp, "sum");
+			if (b == NULL || (ucl_object_type(b) != UCL_FLOAT &&
+			    ucl_object_type(b) != UCL_INT &&
+			    ucl_object_type(b) != UCL_STRING))
+				fail("%s: a point without buckets needs a sum",
+				    name);
+			if (ucl_object_type(b) == UCL_STRING)
+				out("point %s [%s] count=%" PRId64 " sum=%s\n",
+				    name, attrs, count, ucl_object_tostring(b));
+			else
+				out("point %s [%s] count=%" PRId64 " sum=%g\n",
+				    name, attrs, count, ucl_object_todouble(b));
+			continue;
+		}
 		nb = 0;
 		prev = 0;
 		bit = NULL;
@@ -336,6 +367,81 @@ histogram_points(const char *name, const ucl_object_t *data)
 			    PRId64, name, sum, count);
 		out("point %s [%s] count=%" PRId64 " buckets=%s\n", name,
 		    attrs, count, buckets);
+	}
+}
+
+/* One sign's buckets: "O:a/b"; returns their total. */
+static int64_t
+exp_buckets(const char *name, const ucl_object_t *b, char *buf, size_t len)
+{
+	const ucl_object_t *c, *off;
+	ucl_object_iter_t it;
+	int64_t total, o;
+	size_t used;
+
+	buf[0] = '\0';
+	if (b == NULL)
+		return (0);
+	off = ucl_object_lookup(b, "offset");
+	if (off != NULL && ucl_object_type(off) != UCL_INT)
+		fail("%s: bucket offset must be an integer", name);
+	o = off != NULL ? ucl_object_toint(off) : 0;
+	if (o < INT32_MIN || o > INT32_MAX)
+		fail("%s: bucket offset out of range", name);
+	used = snprintf(buf, len, "%" PRId64 ":", o);
+	total = 0;
+	it = NULL;
+	while ((c = ucl_object_iterate(maybe(b, "bucketCounts", UCL_ARRAY),
+	    &it, true)) != NULL) {
+		int64_t v = int64_field(c, "bucketCounts", false);
+
+		used += snprintf(buf + used, used < len ? len - used : 0,
+		    "%s%" PRId64, buf[used - 1] == ':' ? "" : "/", v);
+		total += v;
+	}
+	return (total);
+}
+
+static void
+exphistogram_points(const char *name, const ucl_object_t *data)
+{
+	const ucl_object_t *dp, *sc;
+	ucl_object_iter_t it;
+	char attrs[1024], pos[1024], neg[1024];
+	int64_t count, zero, total, scale;
+
+	temporality(data);
+	it = NULL;
+	while ((dp = ucl_object_iterate(need(data, "dataPoints", UCL_ARRAY),
+	    &it, true)) != NULL) {
+		check_time(dp, "timeUnixNano", true);
+		check_time(dp, "startTimeUnixNano", false);
+		attributes(ucl_object_lookup(dp, "attributes"), attrs,
+		    sizeof(attrs));
+		count = int64_field(need(dp, "count", UCL_STRING), "count",
+		    false);
+		zero = 0;
+		if (ucl_object_lookup(dp, "zeroCount") != NULL)
+			zero = int64_field(ucl_object_lookup(dp, "zeroCount"),
+			    "zeroCount", false);
+		sc = ucl_object_lookup(dp, "scale");
+		if (sc != NULL && ucl_object_type(sc) != UCL_INT)
+			fail("%s: scale must be an integer", name);
+		scale = sc != NULL ? ucl_object_toint(sc) : 0;
+		if (scale < -10 || scale > 20)
+			fail("%s: scale %" PRId64 " outside -10..20", name,
+			    scale);
+		total = zero;
+		total += exp_buckets(name, maybe(dp, "positive", UCL_OBJECT),
+		    pos, sizeof(pos));
+		total += exp_buckets(name, maybe(dp, "negative", UCL_OBJECT),
+		    neg, sizeof(neg));
+		if (total != count)
+			fail("%s: zeroCount + bucket counts %" PRId64
+			    " != count %" PRId64, name, total, count);
+		out("point %s [%s] count=%" PRId64 " scale=%" PRId64
+		    " zero=%" PRId64 " pos=%s neg=%s\n", name, attrs, count,
+		    scale, zero, pos, neg);
 	}
 }
 
@@ -391,9 +497,14 @@ metrics_doc(const ucl_object_t *root)
 					    "monotonic=0\n", name);
 					histogram_points(name, data);
 				}
-				if (maybe(m, "exponentialHistogram",
-				    UCL_OBJECT) != NULL ||
-				    maybe(m, "summary", UCL_OBJECT) != NULL)
+				if ((data = maybe(m, "exponentialHistogram",
+				    UCL_OBJECT)) != NULL) {
+					kinds++;
+					out("metric %s exponential_histogram "
+					    "monotonic=0\n", name);
+					exphistogram_points(name, data);
+				}
+				if (maybe(m, "summary", UCL_OBJECT) != NULL)
 					kinds++;
 				if (kinds != 1)
 					fail("metric needs exactly one data "
@@ -411,7 +522,7 @@ metrics_doc(const ucl_object_t *root)
 static void
 logs_doc(const ucl_object_t *root)
 {
-	const ucl_object_t *rl, *sl, *lr, *sev;
+	const ucl_object_t *rl, *sl, *lr, *sev, *ev, *tid, *sid;
 	ucl_object_iter_t i1, i2, i3;
 	char attrs[2048], body[2048];
 	int64_t s;
@@ -454,6 +565,18 @@ logs_doc(const ucl_object_t *root)
 				    "attributes"), attrs, sizeof(attrs));
 				out("log %" PRId64 " [%s] %s\n", s, attrs,
 				    body);
+				if ((ev = maybe(lr, "eventName",
+				    UCL_STRING)) != NULL)
+					out("event %s\n",
+					    ucl_object_tostring(ev));
+				if ((tid = maybe(lr, "traceId",
+				    UCL_STRING)) != NULL) {
+					sid = maybe(lr, "spanId", UCL_STRING);
+					out("trace %s %s\n",
+					    ucl_object_tostring(tid),
+					    sid != NULL ?
+					    ucl_object_tostring(sid) : "-");
+				}
 				nlogs++;
 			}
 		}

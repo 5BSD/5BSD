@@ -221,7 +221,9 @@ dtrace_system_metrics_body()
 {
 	[ -x "${BSDINSTRUMENTS}" ] || atf_skip "bsdinstruments is not installed"
 	kldstat -q -m dtrace || atf_skip "DTrace is not loaded"
-	receiver_start -n 1 -t 120
+	# Any number of requests: the metrics, and log records of runtime
+	# errors (dtrace.error) when a probe faults.
+	receiver_start -n 0 -t 300
 	config
 	"${BSDINSTRUMENTS}" watch system-metrics --format otel --duration 15 \
 	    > bi.out 2>&1 &
@@ -254,10 +256,16 @@ dtrace_system_metrics_body()
 	done
 	rm -f "$tmp"
 	wait $pid || { cat bi.out; atf_fail "bsdinstruments failed"; }
-	receiver_wait
+	sleep 2
+	kill "$(cat receiver.pid)" 2>/dev/null
+	wait "$(cat receiver.pid)" 2>/dev/null
 	atf_check -o match:"^Authorization: Bearer from-otel-conf" \
 	    cat out/0000.hdr
-	atf_check -o save:summary ${VALIDATE} out/0000.json
+	: > summary
+	for f in out/*.json; do
+		atf_check -o save:one ${VALIDATE} "$f"
+		cat one >> summary
+	done
 	atf_check -o match:"^resource service.namespace=emitters$" \
 	    -o match:"^metric bsdinstruments.system-metrics.exec sum monotonic=1$" \
 	    -o match:"^metric bsdinstruments.system-metrics.exits sum" \
@@ -284,6 +292,17 @@ validate_lines()
 	[ $n -gt 0 ] || atf_fail "$1: no lines"
 }
 
+# Wait (up to a minute, for slow or loaded hosts) for a file to have data.
+wait_nonempty()
+{
+	i=0
+	while [ ! -s "$1" ] && [ $i -lt 600 ]; do
+		sleep 0.1
+		i=$((i + 1))
+	done
+	[ -s "$1" ] || atf_fail "$1 stayed empty"
+}
+
 # What newsyslog(8) does: rename away, put a new file in place, signal.
 newsyslog_like()
 {
@@ -304,18 +323,19 @@ hwstat_file_target_body()
 	mkdir logs
 	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
 	umask 022
-	"${HWSTAT}" watch --format otel --interval 0.5 --duration 6 \
+	"${HWSTAT}" watch --format otel --interval 0.5 --duration 120 \
 	    > hw.out 2> hw.err &
 	pid=$!
-	sleep 2
-	atf_check test -s logs/hwstat.jsonl
+	wait_nonempty logs/hwstat.jsonl
 	atf_check -o inline:"640\n" stat -f %Lp logs/hwstat.jsonl
 	# Rotation with the signal (the rc.d service under newsyslog).
 	newsyslog_like logs/hwstat.jsonl $pid
-	sleep 1.5
+	wait_nonempty logs/hwstat.jsonl
 	# And without it: noticed at the next once-a-sample flush.
 	mv logs/hwstat.jsonl.0 logs/hwstat.jsonl.1
 	newsyslog_like logs/hwstat.jsonl
+	wait_nonempty logs/hwstat.jsonl
+	kill -TERM $pid
 	wait $pid || atf_fail "hwstat failed: $(cat hw.err)"
 	atf_check -o match:"Exporting to $(pwd)/logs/hwstat.jsonl" cat hw.err
 	for f in logs/hwstat.jsonl.1 logs/hwstat.jsonl.0 logs/hwstat.jsonl; do

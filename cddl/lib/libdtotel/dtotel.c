@@ -45,6 +45,19 @@
  *		the guest's resource.  Ignored for host probes, whose
  *		resource the consumer fixes.
  *
+ *	\037otel.trace\037traceparent=<W3C traceparent>
+ *		the trace context of the log record printed by the same
+ *		firing (before or after it): its trace and span id become
+ *		the record's traceId and spanId, so DTrace output joins
+ *		the application's trace (copyinstr() of a USDT argument
+ *		that carries the application's traceparent).
+ *
+ * Span records also take traceparent= (the span joins that trace: its
+ * trace id, and without parent= the remote span as its parent),
+ * tracestate=, event=<timestamp>:<name> (a span event at a D
+ * "timestamp" value) and link=<traceparent> (a link to another span),
+ * each of the last two up to eight times.
+ *
  * Span identity.  Ids are derived from integer keys the D program
  * already has, hashed with a per-session secret salt
  * (oe_id_derive()), so a child can name its parent without shared
@@ -85,6 +98,8 @@ static const char clock_program[] =
     "\tprintf(\"\\037otel.clock\\037wall=%d\\037ts=%u\\n\",\n"
     "\t    walltimestamp, timestamp);\n"
     "}\n";
+
+static void body_kv_free(struct dtotel *);
 
 const char *
 dtotel_clock_program(void)
@@ -155,6 +170,8 @@ dtotel_close(struct dtotel *d)
 	for (i = 0; i < d->njails; i++)
 		free(d->jails[i].name);
 	(void)dtotel_shutdown(d);
+	dtotel_series_free(d);
+	body_kv_free(d);
 	free(d->profile);
 	free(d);
 }
@@ -179,10 +196,187 @@ dtotel_started(struct dtotel *d)
 }
 
 void
-dtotel_drops(struct dtotel *d, uint64_t n)
+dtotel_drops(struct dtotel *d, int kind, uint64_t n)
 {
 
-	oe_report_drops(d->exporter, n);
+	if (n == 0)
+		return;
+	if ((unsigned)kind >= DTOTEL_NDROPKINDS)
+		kind = 0;	/* not expected: count as principal */
+	d->drops[kind] += n;
+	d->counters_dirty = d->counters_seen = 1;
+}
+
+static const char *const drop_kind_names[DTOTEL_NDROPKINDS] = {
+	"principal", "aggregation", "dynamic", "dynamic_rinse",
+	"dynamic_dirty", "speculation", "speculation_busy",
+	"speculation_unavailable", "stack_string_overflow",
+	"error_in_error_probe"
+};
+
+static const char *const fault_names[DTOTEL_NFAULTS] = {
+	"unknown", "badaddr", "badalign", "illop", "divzero", "noscratch",
+	"kpriv", "upriv", "tupoflow", "badstack", "library", "other"
+};
+
+static int
+fault_index(int fault)
+{
+
+	if (fault >= DTRACEFLT_UNKNOWN && fault <= DTRACEFLT_BADSTACK)
+		return (fault);
+	return (fault >= DTRACEFLT_LIBRARY ? 10 : 11);
+}
+
+/* One counter snapshot: a point per kind that was ever counted. */
+static void
+report_counter(struct dtotel *d, const char *name, const char *unit,
+    const char *desc, const char *attr, const char *const *kinds,
+    const uint64_t *totals, size_t nkinds, const struct timespec *now)
+{
+	struct oe_datapoint dps[DTOTEL_NFAULTS];
+	struct oe_attr attrs[DTOTEL_NFAULTS];
+	struct oe_snapshot sn;
+	size_t i, n;
+
+	n = 0;
+	for (i = 0; i < nkinds; i++) {
+		if (totals[i] == 0)
+			continue;
+		attrs[n].name = attr;
+		attrs[n].value = kinds[i];
+		memset(&dps[n], 0, sizeof(dps[n]));
+		dps[n].attrs = &attrs[n];
+		dps[n].nattrs = 1;
+		dps[n].scalar = (int64_t)totals[i];
+		n++;
+	}
+	if (n == 0)
+		return;
+	memset(&sn, 0, sizeof(sn));
+	sn.ts = *now;
+	sn.start = d->start;
+	sn.profile = d->profile;
+	sn.name = name;
+	sn.kind = OE_AGG_COUNT;
+	sn.points = dps;
+	sn.npoints = n;
+	sn.scope_metric = 1;
+	sn.unit = unit;
+	sn.description = desc;
+	if (oe_snapshot(d->exporter, &sn) != 0)
+		d->error = 1;
+}
+
+void
+dtotel_report(struct dtotel *d, int force)
+{
+	struct timespec now;
+
+	if (!d->counters_seen || (!force && !d->counters_dirty))
+		return;
+	clock_gettime(CLOCK_REALTIME, &now);
+	/*
+	 * Drops are not attributed to HyperTrace guests: the kernel counts
+	 * them per buffer, not per VM, so they belong to the host.
+	 */
+	report_counter(d, "drops", "{record}", "Records DTrace dropped, by "
+	    "kind", "dtrace.drop.kind", drop_kind_names, d->drops,
+	    DTOTEL_NDROPKINDS, &now);
+	report_counter(d, "errors", "{error}", "DTrace runtime errors, by "
+	    "fault", "dtrace.fault", fault_names, d->faults, DTOTEL_NFAULTS,
+	    &now);
+	d->counters_dirty = 0;
+}
+
+void
+dtotel_error_record(struct dtotel *d, const dtrace_errdata_t *e)
+{
+	struct oe_event ev;
+	struct oe_kv kv[6];
+	char probe[DTRACE_FULLNAMELEN];
+	int fi;
+	size_t n;
+
+	dtotel_flush(d);
+	fi = fault_index(e->dteda_fault);
+	d->faults[fi]++;
+	d->counters_dirty = d->counters_seen = 1;
+	memset(&ev, 0, sizeof(ev));
+	clock_gettime(CLOCK_REALTIME, &ev.ts);
+	ev.observed = ev.ts;
+	ev.profile = d->profile;
+	probe[0] = '\0';
+	if (e->dteda_pdesc != NULL)
+		snprintf(probe, sizeof(probe), "%s:%s:%s:%s",
+		    e->dteda_pdesc->dtpd_provider, e->dteda_pdesc->dtpd_mod,
+		    e->dteda_pdesc->dtpd_func, e->dteda_pdesc->dtpd_name);
+	ev.probe = probe;
+	ev.execname = "";
+	ev.body = e->dteda_msg != NULL ? e->dteda_msg : "DTrace error";
+	ev.severity = OE_SEV_ERROR;
+	ev.event_name = "dtrace.error";
+	ev.ctx.flags = OE_CTX_CPU;
+	ev.ctx.cpu = e->dteda_cpu;
+	n = 0;
+	kv[n].key = "dtrace.fault";
+	kv[n].type = OE_VAL_STRING;
+	kv[n++].s = fault_names[fi];
+	kv[n].key = "dtrace.fault.code";
+	kv[n].type = OE_VAL_INT;
+	kv[n++].i = e->dteda_fault;
+	/* Faults with an address: bad address/alignment, privilege. */
+	if (e->dteda_fault == DTRACEFLT_BADADDR ||
+	    e->dteda_fault == DTRACEFLT_BADALIGN ||
+	    e->dteda_fault == DTRACEFLT_KPRIV ||
+	    e->dteda_fault == DTRACEFLT_UPRIV) {
+		kv[n].key = "dtrace.fault.address";
+		kv[n].type = OE_VAL_INT;
+		kv[n++].i = (int64_t)e->dteda_addr;
+	}
+	/* The action number within the clause; 0 is the predicate. */
+	kv[n].key = "dtrace.action.index";
+	kv[n].type = OE_VAL_INT;
+	kv[n++].i = e->dteda_action;
+	kv[n].key = "dtrace.difo.offset";
+	kv[n].type = OE_VAL_INT;
+	kv[n++].i = e->dteda_offset;
+	if (e->dteda_edesc != NULL) {
+		kv[n].key = "dtrace.epid";
+		kv[n].type = OE_VAL_INT;
+		kv[n++].i = e->dteda_edesc->dtepd_epid;
+	}
+	ev.attrs = kv;
+	ev.nattrs = n;
+	if (oe_event(dtotel_exporter_for(d, e->dteda_edesc != NULL ?
+	    e->dteda_edesc->dtepd_vmid : 0, NULL), &ev) != 0)
+		d->error = 1;
+}
+
+void
+dtotel_exit(struct dtotel *d, int status)
+{
+	struct oe_event ev;
+	struct oe_kv kv;
+	char body[32];
+
+	dtotel_flush(d);
+	memset(&ev, 0, sizeof(ev));
+	clock_gettime(CLOCK_REALTIME, &ev.ts);
+	ev.observed = ev.ts;
+	ev.profile = d->profile;
+	ev.probe = "";
+	ev.execname = "";
+	snprintf(body, sizeof(body), "exit(%d)", status);
+	ev.body = body;
+	ev.event_name = "dtrace.exit";
+	kv.key = "dtrace.exit.status";
+	kv.type = OE_VAL_INT;
+	kv.i = status;
+	ev.attrs = &kv;
+	ev.nattrs = 1;
+	if (oe_event(d->exporter, &ev) != 0)
+		d->error = 1;
 }
 
 int
@@ -271,12 +465,46 @@ parse_body_metadata(const char *body, char *execname, size_t execlen,
 		*pid = *pid * 10 + (*p - '0');
 }
 
+/* Release the pending record's typed attributes. */
+static void
+body_kv_free(struct dtotel *d)
+{
+	size_t i;
+
+	for (i = 0; i < 2 * DTOTEL_BODY_KV; i++) {
+		free(d->body_kvstr[i]);
+		d->body_kvstr[i] = NULL;
+	}
+	d->body_nkv = 0;
+}
+
+/* Add an owned key=value string attribute to the pending record. */
+static void
+body_kv_add(struct dtotel *d, char *key, char *value)
+{
+	size_t n = d->body_nkv;
+
+	if (key == NULL || value == NULL || n >= DTOTEL_BODY_KV) {
+		free(key);
+		free(value);
+		return;
+	}
+	d->body_kvstr[2 * n] = key;
+	d->body_kvstr[2 * n + 1] = value;
+	d->body_kv[n].key = key;
+	d->body_kv[n].type = OE_VAL_STRING;
+	d->body_kv[n].s = value;
+	d->body_nkv = n + 1;
+}
+
 void
 dtotel_flush(struct dtotel *d)
 {
+	struct oe_kv kv[DTOTEL_BODY_KV + 1];
 	struct oe_event ev;
 	char execname[MAXCOMLEN + 1];
 	pid_t pid;
+	size_t nkv;
 
 	if (d->body == NULL)
 		return;
@@ -303,8 +531,27 @@ dtotel_flush(struct dtotel *d)
 	ev.nstack = d->kstack.n;
 	ev.ustack = d->ustack.frames;
 	ev.nustack = d->ustack.n;
+	/* The action that printed the line, then typed print() members. */
+	nkv = 0;
+	if (d->body_action != NULL) {
+		kv[nkv].key = "dtrace.action";
+		kv[nkv].type = OE_VAL_STRING;
+		kv[nkv++].s = d->body_action;
+	}
+	memcpy(&kv[nkv], d->body_kv, d->body_nkv * sizeof(kv[0]));
+	nkv += d->body_nkv;
+	ev.attrs = kv;
+	ev.nattrs = nkv;
+	memcpy(ev.trace_id, d->body_trace, OE_TRACE_ID_LEN);
+	memcpy(ev.span_id, d->body_span, OE_SPAN_ID_LEN);
+	ev.trace_flags = d->body_tflags;
 	if (oe_event(dtotel_exporter_for(d, d->body_vmid, NULL), &ev) != 0)
 		d->error = 1;
+	body_kv_free(d);
+	d->body_action = NULL;
+	memset(d->body_trace, 0, OE_TRACE_ID_LEN);
+	memset(d->body_span, 0, OE_SPAN_ID_LEN);
+	d->body_tflags = 0;
 	free(d->body);
 	d->body = NULL;
 	free(d->probe);
@@ -373,6 +620,36 @@ probe_walltime(const struct dtotel *d, const struct dtotel_firing *f,
 	ns = (int64_t)f->hrtime + d->clock_offset;
 	ts->tv_sec = (time_t)(ns / 1000000000);
 	ts->tv_nsec = (long)(ns % 1000000000);
+}
+
+/* The D action behind a record, as dtrace.action names it. */
+static const char *
+action_name(const dtrace_bufdata_t *bd)
+{
+	const dtrace_recdesc_t *rec = bd->dtbda_recdesc;
+
+	if (rec == NULL)
+		return (NULL);
+	switch (rec->dtrd_action) {
+	case DTRACEACT_PRINTF:		return ("printf");
+	case DTRACEACT_DIFEXPR:
+		/* print() carries its type; trace() does not. */
+		return (rec->dtrd_format != 0 ? "print" : "trace");
+	case DTRACEACT_TRACEMEM:
+	case DTRACEACT_TRACEMEM_DYNSIZE: return ("tracemem");
+	case DTRACEACT_PRINTM:		return ("printm");
+	case DTRACEACT_SYSTEM:		return ("system");
+	case DTRACEACT_FREOPEN:		return ("freopen");
+	case DTRACEACT_STACK:		return ("stack");
+	case DTRACEACT_USTACK:		return ("ustack");
+	case DTRACEACT_JSTACK:		return ("jstack");
+	case DTRACEACT_SYM:		return ("sym");
+	case DTRACEACT_MOD:		return ("mod");
+	case DTRACEACT_USYM:		return ("usym");
+	case DTRACEACT_UMOD:		return ("umod");
+	case DTRACEACT_UADDR:		return ("uaddr");
+	default:			return (NULL);
+	}
 }
 
 static char *
@@ -449,7 +726,15 @@ start_event(struct dtotel *d, const dtrace_bufdata_t *bd,
 		(void)dtotel_exporter_for(d, d->body_vmid, target);
 	d->body_firing = *firing;
 	d->body_observed = *observed;
+	d->body_action = action_name(bd);
 	probe_walltime(d, firing, observed, &d->body_ts);
+	/* Adopt a trace record this firing printed first. */
+	if (same_firing(firing, &d->tp_firing)) {
+		memcpy(d->body_trace, d->tp_trace, OE_TRACE_ID_LEN);
+		memcpy(d->body_span, d->tp_span, OE_SPAN_ID_LEN);
+		d->body_tflags = d->tp_flags;
+		d->tp_firing.valid = 0;
+	}
 	if (firing->valid) {
 		d->body_ctx.flags = OE_CTX_CPU;
 		d->body_ctx.cpu = firing->cpu;
@@ -682,7 +967,39 @@ bad:
 	fprintf(stderr, "dtotel: malformed context record ignored\n");
 }
 
+/*
+ * A trace record: the W3C trace context of the line the same firing
+ * prints (before or after this record).
+ */
+static void
+handle_trace(struct dtotel *d, const char *rec,
+    const struct dtotel_firing *firing)
+{
+	uint8_t tid[OE_TRACE_ID_LEN], sid[OE_SPAN_ID_LEN], flags;
+	const char *tp;
+	size_t len;
+
+	tp = rec_field(rec, "traceparent", &len);
+	if (tp == NULL || oe_traceparent_parse(tp, len, tid, sid,
+	    &flags) != 0) {
+		fprintf(stderr, "dtotel: malformed trace record ignored\n");
+		return;
+	}
+	if (d->body != NULL && same_firing(firing, &d->body_firing)) {
+		memcpy(d->body_trace, tid, sizeof(tid));
+		memcpy(d->body_span, sid, sizeof(sid));
+		d->body_tflags = flags;
+		return;
+	}
+	memcpy(d->tp_trace, tid, sizeof(tid));
+	memcpy(d->tp_span, sid, sizeof(sid));
+	d->tp_flags = flags;
+	d->tp_firing = *firing;
+}
+
 #define	SPAN_MAX_ATTRS	16
+#define	SPAN_MAX_EVENTS	8
+#define	SPAN_MAX_LINKS	8
 
 static enum oe_span_kind
 span_kind(const char *s)
@@ -716,16 +1033,22 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
     const struct timespec *observed)
 {
 	struct oe_kv attrs[SPAN_MAX_ATTRS];
+	struct oe_span_event events[SPAN_MAX_EVENTS];
+	struct oe_span_link links[SPAN_MAX_LINKS];
+	int64_t evts[SPAN_MAX_EVENTS];
 	struct oe_span sp;
-	const char *name, *kind, *execname;
-	char *field, *next, *eq, msg[48], *probe;
+	const char *name, *kind, *execname, *tp, *tstate;
+	char *field, *next, *eq, msg[48], *probe, *colon;
 	struct oe_context ctx;
+	uint8_t tptrace[OE_TRACE_ID_LEN], tpspan[OE_SPAN_ID_LEN], tpflags;
 	int64_t start, end, thread, spankey, parent, trace, err, pid, v,
 	    key[2], seen;
 	int have_start, have_end, have_span, have_parent, have_trace, rc,
 	    have_pid, have_thread;
-	size_t nattrs;
+	size_t nattrs, nevents, nlinks, i;
 
+	tp = tstate = NULL;
+	nevents = nlinks = 0;
 	name = kind = execname = NULL;
 	start = end = thread = spankey = parent = trace = err = pid = 0;
 	have_start = have_end = have_span = have_parent = have_trace = 0;
@@ -746,7 +1069,34 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		*eq++ = '\0';
 		if (strcmp(field, "name") == 0)
 			name = eq;
-		else if (strcmp(field, "kind") == 0)
+		else if (strcmp(field, "traceparent") == 0)
+			tp = eq;
+		else if (strcmp(field, "tracestate") == 0)
+			tstate = eq;
+		else if (strcmp(field, "event") == 0) {
+			/* <D timestamp>:<name> */
+			colon = strchr(eq, ':');
+			if (colon == NULL || colon[1] == '\0')
+				goto bad;
+			*colon = '\0';
+			if (parse_int(eq, &v) != 0)
+				goto bad;
+			if (nevents < SPAN_MAX_EVENTS) {
+				memset(&events[nevents], 0,
+				    sizeof(events[0]));
+				events[nevents].name = colon + 1;
+				evts[nevents++] = v;
+			}
+		} else if (strcmp(field, "link") == 0) {
+			if (nlinks < SPAN_MAX_LINKS) {
+				memset(&links[nlinks], 0, sizeof(links[0]));
+				if (oe_traceparent_parse(eq, strlen(eq),
+				    links[nlinks].trace_id,
+				    links[nlinks].span_id, &tpflags) != 0)
+					goto bad;
+				links[nlinks++].flags = tpflags;
+			}
+		} else if (strcmp(field, "kind") == 0)
 			kind = eq;
 		else if (strcmp(field, "execname") == 0)
 			execname = eq;
@@ -820,6 +1170,14 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		ns_to_ts((int64_t)observed->tv_sec * 1000000000 +
 		    observed->tv_nsec - (end - start), &sp.start);
 	}
+	/* Event times move onto the wall clock as the span's do. */
+	for (i = 0; i < nevents; i++) {
+		if (d->anchored)
+			ns_to_ts(evts[i] + d->clock_offset, &events[i].ts);
+		else
+			ns_to_ts((int64_t)sp.end.tv_sec * 1000000000 +
+			    sp.end.tv_nsec - (end - evts[i]), &events[i].ts);
+	}
 	if (!have_span)
 		spankey = start;
 	key[0] = thread;
@@ -833,6 +1191,29 @@ handle_span(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 	key[1] = have_trace ? trace : have_parent ? parent : spankey;
 	oe_id_derive(d->salt, "trace", key, 2, sp.trace_id,
 	    OE_TRACE_ID_LEN);
+	/*
+	 * A W3C traceparent (from the application, e.g. a USDT argument)
+	 * puts the span into the application's trace; without a local
+	 * parent= the application's span is its (remote) parent.
+	 */
+	if (tp != NULL) {
+		if (oe_traceparent_parse(tp, strlen(tp), tptrace, tpspan,
+		    &tpflags) != 0)
+			goto bad;
+		memcpy(sp.trace_id, tptrace, OE_TRACE_ID_LEN);
+		sp.flags = tpflags;
+		if (!have_parent) {
+			memcpy(sp.parent_span_id, tpspan, OE_SPAN_ID_LEN);
+			sp.flags |= OE_SPAN_FLAGS_HAS_IS_REMOTE |
+			    OE_SPAN_FLAGS_IS_REMOTE;
+		} else
+			sp.flags |= OE_SPAN_FLAGS_HAS_IS_REMOTE;
+	}
+	sp.trace_state = tstate;
+	sp.events = events;
+	sp.nevents = nevents;
+	sp.links = links;
+	sp.nlinks = nlinks;
 	sp.kind = kind != NULL ? span_kind(kind) : OE_SPAN_INTERNAL;
 	if (err != 0) {
 		sp.status = OE_STATUS_ERROR;
@@ -943,23 +1324,67 @@ guest_free(struct dtotel_guest_state *g)
 	free(g);
 }
 
+/*
+ * A HyperTrace guest session event on the host's resource: a named log
+ * record ("hypertrace.vm.registered", ".restarted" for a new lifetime of
+ * the VMID, ".renamed") with the VM's identity as attributes.
+ */
+static void
+guest_event(struct dtotel *d, const char *event, const char *what,
+    const struct dtotel_guest_state *g)
+{
+	struct oe_event ev;
+	struct oe_kv kv[3];
+	char body[256];
+
+	dtotel_flush(d);
+	memset(&ev, 0, sizeof(ev));
+	clock_gettime(CLOCK_REALTIME, &ev.ts);
+	ev.observed = ev.ts;
+	ev.profile = d->profile;
+	ev.probe = "";
+	ev.execname = "";
+	snprintf(body, sizeof(body), "HyperTrace VM %s (id %u, epoch %ju) %s",
+	    g->name, (unsigned)g->vmid, (uintmax_t)g->epoch, what);
+	ev.body = body;
+	ev.event_name = event;
+	kv[0].key = "hypertrace.vm.name";
+	kv[0].type = OE_VAL_STRING;
+	kv[0].s = g->name;
+	kv[1].key = "hypertrace.vm.id";
+	kv[1].type = OE_VAL_INT;
+	kv[1].i = g->vmid;
+	kv[2].key = "hypertrace.vm.epoch";
+	kv[2].type = OE_VAL_INT;
+	kv[2].i = (int64_t)g->epoch;
+	ev.attrs = kv;
+	ev.nattrs = 3;
+	if (oe_event(d->exporter, &ev) != 0)
+		d->error = 1;
+}
+
 int
 dtotel_guest(struct dtotel *d, uint16_t vmid, uint64_t epoch,
     const char *name)
 {
 	struct dtotel_guest_state *g;
 	char *copy;
-	int ret = 0;
+	int ret = 0, restarted;
 
 	if (vmid == 0)
 		return (0);
 	g = guest_find(d, vmid);
-	if (g == NULL)
-		return (guest_add(d, vmid, epoch, name) != NULL ? 0 : -1);
+	if (g == NULL) {
+		if ((g = guest_add(d, vmid, epoch, name)) == NULL)
+			return (-1);
+		guest_event(d, "hypertrace.vm.registered", "registered", g);
+		return (0);
+	}
 	/* Same lifetime, and the same (or no news of the) name. */
 	if (g->epoch == epoch && (name == NULL || strcmp(g->name, name) == 0))
 		return (0);
 	/* A new lifetime (or name) of the VMID: a new resource. */
+	restarted = g->epoch != epoch;
 	ret = guest_retire(d, g);
 	g->epoch = epoch;
 	if (name != NULL) {
@@ -968,6 +1393,8 @@ dtotel_guest(struct dtotel *d, uint16_t vmid, uint64_t epoch,
 		free(g->name);
 		g->name = copy;
 	}
+	guest_event(d, restarted ? "hypertrace.vm.restarted" :
+	    "hypertrace.vm.renamed", restarted ? "restarted" : "renamed", g);
 	return (ret);
 }
 
@@ -1096,9 +1523,136 @@ handle_record(struct dtotel *d, char *rec, const dtrace_bufdata_t *bd,
 		handle_ctx(d, rec, firing);
 	else if (strncmp(kind, "resource\037", 9) == 0)
 		handle_resource(d, rec, bd);
+	else if (strncmp(kind, "trace\037", 6) == 0)
+		handle_trace(d, rec, firing);
 	else
 		fprintf(stderr, "dtotel: unknown structured record \"%.*s\" "
 		    "ignored\n", (int)strcspn(kind, "\037\n"), kind);
+}
+
+/* ---------------------------------------------------------------- */
+/* Typed print()							*/
+
+#define	PRINT_MAX_DEPTH	8
+
+static char *
+xstrndup_trim(const char *p, size_t n)
+{
+
+	while (n > 0 && isspace((unsigned char)*p)) {
+		p++;
+		n--;
+	}
+	while (n > 0 && isspace((unsigned char)p[n - 1]))
+		n--;
+	return (strndup(p, n));
+}
+
+/*
+ * Structured attributes from libdtrace's rendering of a typed value
+ * (dtrace_print()): the first line names the type ("struct timespec {"
+ * or "int 0x5"), member lines read "<type> <name> = <value>" (a nested
+ * aggregate opens with "= {" and closes with "}").  Members become
+ * dtrace.print.<name>[.<name>...] string attributes, the type
+ * dtrace.print.type and a scalar's value dtrace.print.value.  Best
+ * effort: values stay libdtrace's text, arrays one string, and at most
+ * DTOTEL_BODY_KV attributes are kept.
+ */
+static void
+parse_print(struct dtotel *d, const char *text)
+{
+	const char *line, *nl, *eq, *nm;
+	char *path[PRINT_MAX_DEPTH], *key, *value;
+	size_t len, depth, lost, i;
+	struct oe_buf kb;
+
+	depth = lost = 0;
+	nl = strchr(text, '\n');
+	len = nl != NULL ? (size_t)(nl - text) : strlen(text);
+	while (len > 0 && isspace((unsigned char)text[len - 1]))
+		len--;
+	if (len > 0 && text[len - 1] == '{')
+		body_kv_add(d, strdup("dtrace.print.type"),
+		    xstrndup_trim(text, len - 1));
+	else {
+		for (i = len; i > 0 && text[i - 1] != ' '; i--)
+			;
+		if (i > 0) {
+			body_kv_add(d, strdup("dtrace.print.type"),
+			    xstrndup_trim(text, i - 1));
+			body_kv_add(d, strdup("dtrace.print.value"),
+			    xstrndup_trim(text + i, len - i));
+		}
+		return;
+	}
+	for (line = nl; line != NULL; line = nl) {
+		line++;
+		nl = strchr(line, '\n');
+		len = nl != NULL ? (size_t)(nl - line) : strlen(line);
+		while (len > 0 && isspace((unsigned char)*line)) {
+			line++;
+			len--;
+		}
+		if (len == 0)
+			continue;
+		if (*line == '}') {
+			/* Levels too deep (or without memory) were not kept. */
+			if (lost > 0)
+				lost--;
+			else if (depth > 0)
+				free(path[--depth]);
+			continue;
+		}
+		eq = memmem(line, len, " = ", 3);
+		if (eq == NULL)
+			continue;
+		/* The member name: the word before " = " (or " :bits"). */
+		nm = memmem(line, (size_t)(eq - line), " :", 2);
+		if (nm == NULL)
+			nm = eq;
+		for (i = (size_t)(nm - line); i > 0 && line[i - 1] != ' ' &&
+		    line[i - 1] != '*'; i--)
+			;
+		oe_buf_init(&kb);
+		oe_buf_appendstr(&kb, "dtrace.print");
+		for (size_t k = 0; k < depth; k++)
+			oe_buf_appendf(&kb, ".%s", path[k]);
+		oe_buf_appendf(&kb, ".%.*s", (int)((size_t)(nm - line) - i),
+		    line + i);
+		value = xstrndup_trim(eq + 3, len - (size_t)(eq + 3 - line));
+		if (value != NULL && strcmp(value, "{") == 0) {
+			free(value);
+			if (lost == 0 && depth < PRINT_MAX_DEPTH &&
+			    (path[depth] = strndup(line + i,
+			    (size_t)(nm - line) - i)) != NULL)
+				depth++;
+			else
+				lost++;
+			oe_buf_free(&kb);
+			continue;
+		}
+		key = kb.error ? NULL : strdup(kb.data);
+		oe_buf_free(&kb);
+		body_kv_add(d, key, value);
+	}
+	while (depth > 0)
+		free(path[--depth]);
+}
+
+/* A typed print() record: one log record however many lines it has. */
+static void
+handle_print(struct dtotel *d, const dtrace_bufdata_t *bd,
+    const struct dtotel_firing *firing, const struct timespec *observed,
+    const char *chunk)
+{
+	size_t len;
+
+	len = strlen(chunk);
+	while (len > 0 && chunk[len - 1] == '\n')
+		len--;
+	start_event(d, bd, firing, observed, chunk, len);
+	if (d->body != NULL)
+		parse_print(d, d->body);
 }
 
 /* ---------------------------------------------------------------- */
@@ -1141,6 +1695,15 @@ dtotel_buffered(const dtrace_bufdata_t *bufdata, void *arg)
 			handle_record(d, rec, bufdata, &firing, &observed);
 			free(rec);
 		}
+		return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);
+	}
+
+	if (bufdata->dtbda_recdesc != NULL &&
+	    bufdata->dtbda_recdesc->dtrd_action == DTRACEACT_DIFEXPR &&
+	    bufdata->dtbda_recdesc->dtrd_format != 0 &&
+	    strchr(chunk, '\n') != NULL) {
+		handle_print(d, bufdata, &firing, &observed, chunk);
+		d->line_open = 0;
 		return (d->error ? DTRACE_HANDLE_ABORT : DTRACE_HANDLE_OK);
 	}
 

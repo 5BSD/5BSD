@@ -154,6 +154,21 @@ jsonl_event(struct oe_exporter *e, const struct oe_event *ev)
 		oe_buf_appendf(&b, ",\"severity\":\"%s\"",
 		    oe_severity_text(ev->severity, sev, sizeof(sev)));
 	}
+	if (ev->event_name != NULL) {
+		oe_buf_appendstr(&b, ",\"event\":\"");
+		oe_buf_appendjson(&b, ev->event_name);
+		oe_buf_appendstr(&b, "\"");
+	}
+	if (!oe_id_is_zero(ev->trace_id, OE_TRACE_ID_LEN)) {
+		char hex[2 * OE_TRACE_ID_LEN + 1];
+
+		oe_id_hex(ev->trace_id, OE_TRACE_ID_LEN, hex);
+		oe_buf_appendf(&b, ",\"trace_id\":\"%s\"", hex);
+		if (!oe_id_is_zero(ev->span_id, OE_SPAN_ID_LEN)) {
+			oe_id_hex(ev->span_id, OE_SPAN_ID_LEN, hex);
+			oe_buf_appendf(&b, ",\"span_id\":\"%s\"", hex);
+		}
+	}
 	jsonl_stack_array(&b, "stack", ev->stack, ev->nstack);
 	jsonl_stack_array(&b, "ustack", ev->ustack, ev->nustack);
 	jsonl_context(&b, ev->pid, ev->execname, &ev->ctx, ev->attrs,
@@ -211,6 +226,34 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 		oe_buf_appendjson(&b, sp->probe);
 		oe_buf_appendstr(&b, "\"");
 	}
+	if (sp->nevents > 0) {
+		size_t i;
+
+		oe_buf_appendstr(&b, ",\"events\":[");
+		for (i = 0; i < sp->nevents; i++) {
+			oe_iso8601(&sp->events[i].ts, start, sizeof(start));
+			oe_buf_appendstr(&b, i > 0 ? ",{\"time\":\"" :
+			    "{\"time\":\"");
+			oe_buf_appendjson(&b, start);
+			oe_buf_appendstr(&b, "\",\"name\":\"");
+			oe_buf_appendjson(&b, sp->events[i].name);
+			oe_buf_appendstr(&b, "\"}");
+		}
+		oe_buf_appendstr(&b, "]");
+	}
+	if (sp->nlinks > 0) {
+		size_t i;
+
+		oe_buf_appendstr(&b, ",\"links\":[");
+		for (i = 0; i < sp->nlinks; i++) {
+			oe_id_hex(sp->links[i].trace_id, OE_TRACE_ID_LEN, hex);
+			oe_buf_appendf(&b, "%s{\"trace_id\":\"%s\"",
+			    i > 0 ? "," : "", hex);
+			oe_id_hex(sp->links[i].span_id, OE_SPAN_ID_LEN, hex);
+			oe_buf_appendf(&b, ",\"span_id\":\"%s\"}", hex);
+		}
+		oe_buf_appendstr(&b, "]");
+	}
 	jsonl_context(&b, sp->pid, sp->execname, &sp->ctx, sp->attrs,
 	    sp->nattrs);
 	if (j->resource != NULL)
@@ -219,6 +262,22 @@ jsonl_span(struct oe_exporter *e, const struct oe_span *sp)
 	ret = b.error ? -1 : oe_sink_write(j->sink, b.data, b.len);
 	oe_buf_free(&b);
 	return (ret);
+}
+
+static void
+jsonl_expbuckets(struct oe_buf *b, const char *key,
+    const struct oe_expbuckets *eb)
+{
+	size_t i;
+
+	if (eb->n == 0)
+		return;
+	oe_buf_appendf(b, ",\"%s\":{\"offset\":%d,\"counts\":[", key,
+	    (int)eb->offset);
+	for (i = 0; i < eb->n; i++)
+		oe_buf_appendf(b, "%s%ju", i > 0 ? "," : "",
+		    (uintmax_t)eb->counts[i]);
+	oe_buf_appendstr(b, "]}");
 }
 
 /*
@@ -271,7 +330,24 @@ jsonl_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 			oe_buf_appendstr(&b, "\"");
 		}
 		oe_buf_appendstr(&b, "}");
-		if (dp->is_histogram) {
+		if (dp->start.tv_sec != 0) {
+			oe_iso8601(&dp->start, ts, sizeof(ts));
+			oe_buf_appendstr(&b, ",\"start\":\"");
+			oe_buf_appendjson(&b, ts);
+			oe_buf_appendstr(&b, "\"");
+		}
+		if (dp->has_stats)
+			/* %.17g of a finite sum; DTrace sums are integers. */
+			oe_buf_appendf(&b, ",\"count\":%ju,\"sum\":%.17g",
+			    (uintmax_t)dp->count, dp->sum);
+		if (dp->is_histogram && dp->exp != NULL) {
+			oe_buf_appendf(&b, ",\"exponential\":{\"scale\":%d,"
+			    "\"zero_count\":%ju", (int)dp->exp->scale,
+			    (uintmax_t)dp->exp->zero_count);
+			jsonl_expbuckets(&b, "positive", &dp->exp->positive);
+			jsonl_expbuckets(&b, "negative", &dp->exp->negative);
+			oe_buf_appendstr(&b, "}}");
+		} else if (dp->is_histogram) {
 			oe_buf_appendstr(&b, ",\"buckets\":[");
 			for (k = 0; k < dp->nbuckets; k++)
 				oe_buf_appendf(&b, "%s{\"le\":%jd,\"count\":%jd}",
@@ -279,7 +355,11 @@ jsonl_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 				    (intmax_t)dp->buckets[k].upper,
 				    (intmax_t)dp->buckets[k].count);
 			oe_buf_appendstr(&b, "]}");
-		} else
+		} else if (dp->is_double)
+			oe_buf_appendf(&b, ",\"value\":%.17g}", dp->dvalue);
+		else if (dp->has_stats)
+			oe_buf_appendstr(&b, "}");
+		else
 			oe_buf_appendf(&b, ",\"value\":%jd}",
 			    (intmax_t)dp->scalar);
 	}

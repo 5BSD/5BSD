@@ -95,3 +95,60 @@ oe_id_hex(const uint8_t *id, size_t len, char *buf)
 	}
 	buf[2 * len] = '\0';
 }
+
+/* Two lowercase hex digits; -1 otherwise. */
+static int
+hexbyte(const char *p)
+{
+	int i, v, d;
+
+	v = 0;
+	for (i = 0; i < 2; i++) {
+		if (p[i] >= '0' && p[i] <= '9')
+			d = p[i] - '0';
+		else if (p[i] >= 'a' && p[i] <= 'f')
+			d = p[i] - 'a' + 10;
+		else
+			return (-1);
+		v = v * 16 + d;
+	}
+	return (v);
+}
+
+/*
+ * W3C Trace Context traceparent: version "-" trace-id "-" parent-id
+ * "-" trace-flags, lowercase hex.  Version ff is invalid; a later
+ * version than 00 may carry more fields after the flags, separated
+ * by "-", and is read as 00.
+ */
+int
+oe_traceparent_parse(const char *s, size_t len,
+    uint8_t trace_id[OE_TRACE_ID_LEN], uint8_t span_id[OE_SPAN_ID_LEN],
+    uint8_t *flags)
+{
+	size_t i;
+	int v, ver;
+
+	if (len < 55 || s[2] != '-' || s[35] != '-' || s[52] != '-')
+		return (-1);
+	if ((ver = hexbyte(s)) < 0 || ver == 0xff ||
+	    (ver == 0 && len != 55) || (ver > 0 && len > 55 && s[55] != '-'))
+		return (-1);
+	for (i = 0; i < OE_TRACE_ID_LEN; i++) {
+		if ((v = hexbyte(s + 3 + 2 * i)) < 0)
+			return (-1);
+		trace_id[i] = (uint8_t)v;
+	}
+	for (i = 0; i < OE_SPAN_ID_LEN; i++) {
+		if ((v = hexbyte(s + 36 + 2 * i)) < 0)
+			return (-1);
+		span_id[i] = (uint8_t)v;
+	}
+	if ((v = hexbyte(s + 53)) < 0)
+		return (-1);
+	*flags = (uint8_t)v;
+	if (oe_id_is_zero(trace_id, OE_TRACE_ID_LEN) ||
+	    oe_id_is_zero(span_id, OE_SPAN_ID_LEN))
+		return (-1);
+	return (0);
+}

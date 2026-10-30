@@ -496,7 +496,7 @@ jv_get(const struct jv *obj, const char *key)
 
 enum fkind {
 	F_STRING, F_BOOL, F_U32, F_ENUM, F_I64, F_U64, F_DOUBLE,
-	F_TRACEID, F_SPANID, F_BYTES, F_MSG, F_ANY
+	F_TRACEID, F_SPANID, F_BYTES, F_MSG, F_ANY, F_I32
 };
 
 struct msgdesc;
@@ -530,7 +530,8 @@ static const struct msgdesc KeyValue, AnyArray, KeyValueList, Resource,
     Scope, LogRecord, ScopeLogs, ResourceLogs, LogsReq, NumberDP, HistDP,
     Gauge, Sum, Histogram, Metric, ScopeMetrics, ResourceMetrics,
     MetricsReq, SpanEvent, SpanLink, Status, Span, ScopeSpans,
-    ResourceSpans, TracesReq, EntityRef;
+    ResourceSpans, TracesReq, EntityRef, ExpBuckets, ExpHistDP, ExpHist,
+    Exemplar;
 
 static int check_keyvalue_list(const struct jv *, const char *, char *,
     size_t);
@@ -539,6 +540,8 @@ static int check_metric(const struct jv *, const char *,
 static int check_histdp(const struct jv *, const char *,
     struct otlp_counts *, char *, size_t);
 static int check_numberdp(const struct jv *, const char *,
+    struct otlp_counts *, char *, size_t);
+static int check_exphistdp(const struct jv *, const char *,
     struct otlp_counts *, char *, size_t);
 static int check_span(const struct jv *, const char *,
     struct otlp_counts *, char *, size_t);
@@ -611,14 +614,44 @@ static const struct fielddesc ndp_fields[] = {
 static const struct msgdesc NumberDP = { "NumberDataPoint", ndp_fields,
     check_numberdp };
 
+static const struct fielddesc exemplar_fields[] = {
+	REPMSG("filteredAttributes", KeyValue), FLD("timeUnixNano", F_U64),
+	ONEOF("asDouble", F_DOUBLE, "value"), ONEOF("asInt", F_I64, "value"),
+	FLD("spanId", F_SPANID), FLD("traceId", F_TRACEID), END };
+static const struct msgdesc Exemplar = { "Exemplar", exemplar_fields,
+    NULL };
+
 static const struct fielddesc hdp_fields[] = {
 	REPMSG("attributes", KeyValue), FLD("startTimeUnixNano", F_U64),
 	FLD("timeUnixNano", F_U64), FLD("count", F_U64),
 	FLD("sum", F_DOUBLE), REP("bucketCounts", F_U64),
 	REP("explicitBounds", F_DOUBLE), FLD("flags", F_U32),
-	FLD("min", F_DOUBLE), FLD("max", F_DOUBLE), END };
+	FLD("min", F_DOUBLE), FLD("max", F_DOUBLE),
+	REPMSG("exemplars", Exemplar), END };
 static const struct msgdesc HistDP = { "HistogramDataPoint", hdp_fields,
     check_histdp };
+
+static const struct fielddesc expb_fields[] = {
+	FLD("offset", F_I32), REP("bucketCounts", F_U64), END };
+static const struct msgdesc ExpBuckets = { "ExponentialHistogramDataPoint."
+    "Buckets", expb_fields, NULL };
+
+static const struct fielddesc ehdp_fields[] = {
+	REPMSG("attributes", KeyValue), FLD("startTimeUnixNano", F_U64),
+	FLD("timeUnixNano", F_U64), FLD("count", F_U64),
+	FLD("sum", F_DOUBLE), FLD("scale", F_I32), FLD("zeroCount", F_U64),
+	MSG("positive", ExpBuckets), MSG("negative", ExpBuckets),
+	FLD("flags", F_U32), REPMSG("exemplars", Exemplar),
+	FLD("min", F_DOUBLE), FLD("max", F_DOUBLE),
+	FLD("zeroThreshold", F_DOUBLE), END };
+static const struct msgdesc ExpHistDP = { "ExponentialHistogramDataPoint",
+    ehdp_fields, check_exphistdp };
+
+static const struct fielddesc ehist_fields[] = {
+	REPMSG("dataPoints", ExpHistDP), ENUMF("aggregationTemporality", 2),
+	END };
+static const struct msgdesc ExpHist = { "ExponentialHistogram",
+    ehist_fields, NULL };
 
 static const struct fielddesc gauge_fields[] = {
 	REPMSG("dataPoints", NumberDP), END };
@@ -638,7 +671,8 @@ static const struct fielddesc metric_fields[] = {
 	FLD("name", F_STRING), FLD("description", F_STRING),
 	FLD("unit", F_STRING), REPMSG("metadata", KeyValue),
 	ONEOFMSG("gauge", Gauge, "data"), ONEOFMSG("sum", Sum, "data"),
-	ONEOFMSG("histogram", Histogram, "data"), END };
+	ONEOFMSG("histogram", Histogram, "data"),
+	ONEOFMSG("exponentialHistogram", ExpHist, "data"), END };
 static const struct msgdesc Metric = { "Metric", metric_fields,
     check_metric };
 
@@ -869,6 +903,17 @@ validate_scalar(const struct jv *x, const struct fielddesc *f,
 			return (verr(err, errlen, path, "value %s out of "
 			    "range", x->s));
 		return (0);
+	case F_I32:
+		/* sint32: a JSON number, an integer in range. */
+		if (x->type != JV_NUM || strpbrk(x->s, ".eE") != NULL)
+			return (verr(err, errlen, path,
+			    "expected an integer number"));
+		errno = 0;
+		n = strtoll(x->s, &end, 10);
+		if (errno != 0 || n < INT32_MIN || n > INT32_MAX)
+			return (verr(err, errlen, path, "value %s out of "
+			    "range", x->s));
+		return (0);
 	case F_I64:
 	case F_U64:
 		if (x->type != JV_STR || !int_string_ok(x->s,
@@ -1059,6 +1104,58 @@ check_histdp(const struct jv *v, const char *path, struct otlp_counts *c,
 	return (check_attr_holder(v, path, c, err, errlen));
 }
 
+/* The sum of one Buckets message's counts (absent: 0). */
+static unsigned long long
+expbucket_total(const struct jv *b)
+{
+	const struct jv *counts;
+	unsigned long long total;
+	size_t i;
+
+	total = 0;
+	counts = jv_get(b, "bucketCounts");
+	for (i = 0; counts != NULL && i < counts->n; i++)
+		total += strtoull(counts->items[i]->s, NULL, 10);
+	return (total);
+}
+
+/*
+ * ExponentialHistogram data point: the scale is within the range the
+ * data model allows, the zero threshold is not negative, and the count
+ * equals the zero count plus every bucket count.
+ */
+static int
+check_exphistdp(const struct jv *v, const char *path, struct otlp_counts *c,
+    char *err, size_t errlen)
+{
+	const struct jv *count, *scale, *zero, *zt;
+	unsigned long long total;
+	long long sc;
+
+	count = jv_get(v, "count");
+	scale = jv_get(v, "scale");
+	zero = jv_get(v, "zeroCount");
+	zt = jv_get(v, "zeroThreshold");
+	if (jv_get(v, "timeUnixNano") == NULL)
+		return (verr(err, errlen, path, "data point has no time"));
+	sc = scale != NULL ? strtoll(scale->s, NULL, 10) : 0;
+	if (sc < -10 || sc > 20)
+		return (verr(err, errlen, path, "scale %lld outside "
+		    "-10..20", sc));
+	if (zt != NULL && zt->type == JV_NUM && strtod(zt->s, NULL) < 0)
+		return (verr(err, errlen, path, "negative zeroThreshold"));
+	total = zero != NULL ? strtoull(zero->s, NULL, 10) : 0;
+	total += expbucket_total(jv_get(v, "positive"));
+	total += expbucket_total(jv_get(v, "negative"));
+	if ((count != NULL ? strtoull(count->s, NULL, 10) : 0) != total)
+		return (verr(err, errlen, path, "count %s != zeroCount + "
+		    "bucket counts %llu", count != NULL ? count->s : "(none)",
+		    total));
+	if (c != NULL)
+		c->datapoints++;
+	return (check_attr_holder(v, path, c, err, errlen));
+}
+
 static int
 check_metric(const struct jv *v, const char *path, struct otlp_counts *c,
     char *err, size_t errlen)
@@ -1069,7 +1166,8 @@ check_metric(const struct jv *v, const char *path, struct otlp_counts *c,
 	if (name == NULL || name->s[0] == '\0')
 		return (verr(err, errlen, path, "metric has no name"));
 	if (jv_get(v, "gauge") == NULL && jv_get(v, "sum") == NULL &&
-	    jv_get(v, "histogram") == NULL)
+	    jv_get(v, "histogram") == NULL &&
+	    jv_get(v, "exponentialHistogram") == NULL)
 		return (verr(err, errlen, path, "metric \"%s\" has no data",
 		    name->s));
 	if (c != NULL)
@@ -1085,6 +1183,8 @@ metric_type(const struct jv *m)
 		return ("gauge");
 	if (jv_get(m, "sum") != NULL)
 		return ("sum");
+	if (jv_get(m, "exponentialHistogram") != NULL)
+		return ("exponentialHistogram");
 	return ("histogram");
 }
 

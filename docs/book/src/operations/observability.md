@@ -293,9 +293,30 @@ environment:
 
 The C entry points are `oe_text_new()`, `oe_jsonl_new()`,
 `oe_collapsed_new()`, `oe_otlpjson_new()`, `oe_otlp_new()`,
-`oe_config_load()`, `oe_resource_init()`, `oe_otlp_config_env()` and
-`oe_report_drops()` in `<otelexport.h>`. Log records from BSDLog are not
-exported over OTLP; only DTrace and telemetry data are.
+`oe_exporter_open()`, `oe_config_load()`, `oe_resource_init()`,
+`oe_otlp_config_env()` and `oe_traceparent_parse()` in `<otelexport.h>`.
+Log records from BSDLog are not exported over OTLP; only DTrace and
+telemetry data are.
+
+DTrace data maps onto the OpenTelemetry data model natively (`dtrace(1)`
+OPENTELEMETRY OUTPUT, shared by bsdinstruments through libdtotel):
+`count()` is a monotonic cumulative Sum and `sum()` a Sum that may
+decrease; `min()`/`max()` are Gauges; `avg()` and `stddev()` keep their
+count and sum as bucket-less Histograms (stddev adds a `<name>.stddev`
+Gauge computed from the 128-bit sum of squares); `quantize()` is a base-2
+ExponentialHistogram (scale 0) and `lquantize()`/`llquantize()` explicit
+Histograms with their whole layout. `normalize()` is carried as metric
+metadata instead of being applied, and series reset by `clear()` or
+returning after `trunc()` get a new start time. Drops of every kind and
+runtime errors are cumulative counters (`dtrace.drops` by
+`dtrace.drop.kind`, `dtrace.errors` by `dtrace.fault`); errors are also
+ERROR log records (event `dtrace.error`) with the probe, fault, address
+and action, and `exit()` is the event `dtrace.exit`. A typed `print()` is
+one log record with its members as attributes, stacks are array
+attributes, and `\037otel.trace` records or a span's `traceparent=`
+field (from a USDT argument via `copyinstr()`) join the application's
+W3C trace; spans also take events and links. HyperTrace guest
+registrations and new lifetimes are `hypertrace.vm.*` events on the host.
 
 ## OpenTelemetry out of the box
 

@@ -85,6 +85,9 @@ const char *oe_severity_text(int severity, char *buf, size_t len);
 
 struct oe_kv;
 
+#define	OE_TRACE_ID_LEN	16
+#define	OE_SPAN_ID_LEN	8
+
 /*
  * One probe firing or event, normalized before it reaches any
  * exporter.  Strings are borrowed for the duration of the emit call;
@@ -112,6 +115,15 @@ struct oe_event {
 	/* Additional log record attributes (OTLP and JSONL exporters). */
 	const struct oe_kv *attrs;
 	size_t		 nattrs;
+	/*
+	 * The trace the record belongs to (LogRecord traceId/spanId and
+	 * the W3C trace flags); an all-zero trace id means none.
+	 */
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	uint8_t		 trace_flags;
+	/* LogRecord eventName: the record is a named event; NULL omits. */
+	const char	*event_name;
 };
 
 /* Which aggregating function a snapshot came from. */
@@ -138,9 +150,32 @@ struct oe_attr {
 };
 
 /*
- * One data point of one aggregation snapshot.  Either a scalar or a
- * histogram (buckets != NULL).  "attrs" carries the tuple key
- * dimensions as named key-value pairs.
+ * The buckets of one sign of a base-2 exponential histogram: counts[i]
+ * counts observations v with base^(offset + i) < |v| <=
+ * base^(offset + i + 1), base = 2^(2^-scale), as in the OpenTelemetry
+ * ExponentialHistogram data model.
+ */
+struct oe_expbuckets {
+	int32_t		 offset;
+	const uint64_t	*counts;
+	size_t		 n;
+};
+
+struct oe_exphist {
+	int32_t		 scale;
+	uint64_t	 zero_count;	/* observations with |v| <= threshold */
+	double		 zero_threshold;
+	struct oe_expbuckets positive;
+	struct oe_expbuckets negative;
+};
+
+/*
+ * One data point of one aggregation snapshot: a scalar (or, with
+ * is_double, a floating-point value), explicit histogram buckets
+ * (is_histogram with buckets), an exponential histogram (is_histogram
+ * with exp), or, with has_stats and no buckets, just the count and sum
+ * of the observations.  "attrs" carries the tuple key dimensions as
+ * named key-value pairs.
  */
 struct oe_datapoint {
 	const struct oe_attr *attrs;
@@ -149,6 +184,18 @@ struct oe_datapoint {
 	int64_t		 scalar;
 	const struct oe_bucket *buckets;
 	size_t		 nbuckets;
+	const struct oe_exphist *exp;
+	int		 has_stats;
+	uint64_t	 count;
+	double		 sum;
+	int		 is_double;
+	double		 dvalue;
+	/*
+	 * Start of this series' accumulation when it differs from the
+	 * snapshot's (the series was reset or appeared later); zero uses
+	 * the snapshot's start.
+	 */
+	struct timespec	 start;
 };
 
 struct oe_snapshot {
@@ -163,6 +210,14 @@ struct oe_snapshot {
 	 * cumulative sums and histograms); zero omits it.
 	 */
 	struct timespec	 start;
+	/* Named <scope>.<name> rather than <scope>.<profile>.<name>. */
+	int		 scope_metric;
+	/* A sum that may decrease (it adds signed values). */
+	int		 non_monotonic;
+	const char	*unit;		/* UCUM unit; NULL omits */
+	const char	*description;	/* NULL omits */
+	const struct oe_attr *metadata;	/* Metric.metadata */
+	size_t		 nmetadata;
 };
 
 /* A typed attribute (OTLP AnyValue scalar). */
@@ -196,8 +251,30 @@ enum oe_status_code {
 	OE_STATUS_ERROR = 2
 };
 
-#define	OE_TRACE_ID_LEN	16
-#define	OE_SPAN_ID_LEN	8
+/* A timestamped event within a span. */
+struct oe_span_event {
+	struct timespec	 ts;
+	const char	*name;
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+};
+
+/* A link from a span to another span, possibly of another trace. */
+struct oe_span_link {
+	uint8_t		 trace_id[OE_TRACE_ID_LEN];
+	uint8_t		 span_id[OE_SPAN_ID_LEN];
+	const char	*trace_state;	/* NULL omits */
+	uint32_t	 flags;		/* OE_SPAN_FLAGS_* and W3C flags */
+	const struct oe_kv *attrs;
+	size_t		 nattrs;
+};
+
+/*
+ * Span and link flags as in OTLP: the low byte holds the W3C trace
+ * flags; these say whether the parent (or linked span) is remote.
+ */
+#define	OE_SPAN_FLAGS_HAS_IS_REMOTE	0x100
+#define	OE_SPAN_FLAGS_IS_REMOTE		0x200
 
 /*
  * One finished span.  An all-zero parent_span_id marks a root span.
@@ -220,6 +297,12 @@ struct oe_span {
 	const struct oe_kv *attrs;
 	size_t		 nattrs;
 	struct oe_context ctx;
+	uint32_t	 flags;		/* OE_SPAN_FLAGS_* and W3C flags */
+	const char	*trace_state;	/* W3C tracestate; NULL omits */
+	const struct oe_span_event *events;
+	size_t		 nevents;
+	const struct oe_span_link *links;
+	size_t		 nlinks;
 };
 
 /*
@@ -409,10 +492,14 @@ struct oe_otlp_config {
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);
 
 /*
- * Report kernel-side record drops so the next OTLP batch carries a
- * "<scope>.drops" attribute.  No-op for non-OTLP exporters.
+ * W3C Trace Context: parse a traceparent header value
+ * ("00-<32 hex trace id>-<16 hex parent id>-<2 hex flags>", version
+ * 00 or a later version read as 00).  Returns 0, or -1 when it is not
+ * a valid traceparent (including all-zero ids).
  */
-void	oe_report_drops(struct oe_exporter *, uint64_t);
+int	oe_traceparent_parse(const char *, size_t len,
+	    uint8_t trace_id[OE_TRACE_ID_LEN], uint8_t span_id[OE_SPAN_ID_LEN],
+	    uint8_t *flags);
 
 /*
  * OTel-standard environment variables (OTEL_SERVICE_NAME,

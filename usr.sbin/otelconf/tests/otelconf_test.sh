@@ -159,6 +159,49 @@ usage_errors_body()
 	atf_check -s exit:2 -e match:"usage" "${OTELCONF}" frobnicate
 }
 
+atf_test_case validator_native
+validator_native_head()
+{
+	atf_set "descr" "The OTLP-JSON test validator knows the native metric forms"
+}
+validator_native_body()
+{
+	V="$(atf_get_srcdir)/otlp_json_validate"
+	m='{"resourceMetrics":[{"resource":{},"scopeMetrics":[{"metrics":[{"name":"x",'
+	e='}]}]}]}'
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"4\",\"scale\":0,\"zeroCount\":\"1\",\"positive\":{\"offset\":2,\"bucketCounts\":[\"1\",\"0\",\"1\"]},\"negative\":{\"offset\":-1,\"bucketCounts\":[\"1\"]}}],\"aggregationTemporality\":2}${e}" > ok1.json
+	atf_check -o match:"^metric x exponential_histogram monotonic=0$" \
+	    -o match:"^point x \[\] count=4 scale=0 zero=1 pos=2:1/0/1 neg=-1:1$" \
+	    "$V" ok1.json
+	echo "${m}\"histogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"2\",\"sum\":7.5}],\"aggregationTemporality\":2}${e}" > ok2.json
+	atf_check -o match:"^point x \[\] count=2 sum=7.5$" "$V" ok2.json
+	echo "${m}\"gauge\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"asDouble\":\"NaN\"}]}${e}" > ok3.json
+	atf_check -o match:"^point x \[\] NaN$" "$V" ok3.json
+	echo '{"resourceLogs":[{"resource":{},"scopeLogs":[{"logRecords":[{"severityNumber":17,"body":{"stringValue":"b"},"eventName":"dtrace.error","traceId":"0af7651916cd43dd8448eb211c80319c","spanId":"b7ad6b7169203331"}]}]}]}' > ok4.json
+	atf_check -o match:"^event dtrace.error$" \
+	    -o match:"^trace 0af7651916cd43dd8448eb211c80319c b7ad6b7169203331$" \
+	    "$V" ok4.json
+	# Rejections: count mismatch, scale range and type, offsets, sums.
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"3\",\"zeroCount\":\"1\"}],\"aggregationTemporality\":2}${e}" > b1.json
+	atf_check -s exit:1 -o ignore -e match:"zeroCount \+ bucket counts" "$V" b1.json
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"0\",\"scale\":21}],\"aggregationTemporality\":2}${e}" > b2.json
+	atf_check -s exit:1 -o ignore -e match:"outside -10..20" "$V" b2.json
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"0\",\"scale\":\"0\"}],\"aggregationTemporality\":2}${e}" > b3.json
+	atf_check -s exit:1 -o ignore -e match:"scale must be an integer" "$V" b3.json
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"0\",\"positive\":{\"offset\":\"1\"}}],\"aggregationTemporality\":2}${e}" > b4.json
+	atf_check -s exit:1 -o ignore -e match:"offset must be an integer" "$V" b4.json
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"0\",\"positive\":{\"offset\":4294967296}}],\"aggregationTemporality\":2}${e}" > b5.json
+	atf_check -s exit:1 -o ignore -e match:"offset out of range" "$V" b5.json
+	echo "${m}\"histogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"2\"}],\"aggregationTemporality\":2}${e}" > b6.json
+	atf_check -s exit:1 -o ignore -e match:"needs a sum" "$V" b6.json
+	echo "${m}\"gauge\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"asDouble\":\"x\"}]}${e}" > b7.json
+	atf_check -s exit:1 -o ignore -e match:"asDouble must be a number" "$V" b7.json
+	echo "${m}\"exponentialHistogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"2\",\"sum\":\"Infinity\"}],\"aggregationTemporality\":2}${e}" > b8.json
+	atf_check -s exit:1 -o ignore -e match:"zeroCount" "$V" b8.json
+	echo "${m}\"histogram\":{\"dataPoints\":[{\"timeUnixNano\":\"1\",\"count\":\"2\",\"sum\":\"NaN\"}],\"aggregationTemporality\":2}${e}" > ok5.json
+	atf_check -o match:"count=2 sum=NaN" "$V" ok5.json
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case shipped_files
@@ -166,4 +209,5 @@ atf_init_test_cases()
 	atf_add_test_case show_redacts
 	atf_add_test_case get_keys
 	atf_add_test_case usage_errors
+	atf_add_test_case validator_native
 }

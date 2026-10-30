@@ -35,8 +35,10 @@ exports what
 .Xr auditd 8
 records.
 The pipe queue is raised to its maximum; records the kernel drops
-because the queue was full are reported on the next export as a drop
-count.
+because the queue was full are counted in the cumulative monotonic sum
+.Ql otelauditd.drops
+.Pq attribute Ql otelauditd.drop.kind Ns = Ns Ql auditpipe ,
+exported whenever it grows.
 .Pp
 The options are:
 .Bl -tag -width "-e endpoint"

@@ -29,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1361,7 +1362,7 @@ ATF_TC_BODY(otlp_http_matches_file, tc)
 	coll_stop(&co);
 }
 
-/* Batching thread, gzip, drop reporting, time-based flush. */
+/* Batching thread, gzip, time-based flush. */
 ATF_TC_WITHOUT_HEAD(otlp_http_sender);
 ATF_TC_BODY(otlp_http_sender, tc)
 {
@@ -1375,8 +1376,6 @@ ATF_TC_BODY(otlp_http_sender, tc)
 	e = otlp_to(co.port, "http", NULL, 0, 1, NULL);
 	ATF_REQUIRE_EQ(0, oe_start(e));
 	ATF_REQUIRE_EQ(0, oe_start(e));		/* idempotent */
-	/* Drops with no logs pending are carried to the next batch. */
-	oe_report_drops(e, 7);
 	usleep(300000);
 	ev = make_event();
 	ev.body = "";
@@ -1386,8 +1385,8 @@ ATF_TC_BODY(otlp_http_sender, tc)
 		ATF_REQUIRE_EQ(0, oe_event(e, &ev));
 	ATF_REQUIRE_EQ(0, coll_wait(&co, 1, 3000));
 	ATF_REQUIRE(co.reqs[0].gzipped);
-	ATF_REQUIRE(strstr(co.reqs[0].body,
-	    "{\"key\":\"t.drops\",\"value\":{\"intValue\":\"7\"}}") != NULL);
+	/* Drops are a metric of the consumer's, never a log attribute. */
+	ATF_REQUIRE(strstr(co.reqs[0].body, "t.drops") == NULL);
 	check_otlp_lines(tc, co.reqs[0].body, NULL);
 	/* Time-based flush picks up a lone record and a snapshot. */
 	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
@@ -1396,22 +1395,14 @@ ATF_TC_BODY(otlp_http_sender, tc)
 	sn.npoints = 0;
 	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
 	ATF_REQUIRE_EQ(0, coll_wait(&co, 3, 3000));
-	/* Drops reported while only metrics are pending survive too. */
-	oe_report_drops(e, 3);
 	sn.npoints = 2;
 	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
 	ATF_REQUIRE_EQ(0, coll_wait(&co, 4, 3000));
 	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
 	ATF_REQUIRE_EQ(0, oe_shutdown(e));
 	ATF_REQUIRE_EQ(5, coll_nreqs(&co));
-	ATF_REQUIRE(strstr(co.reqs[4].body, "\"t.drops\"") != NULL);
 	for (i = 0; i < 5; i++)
 		check_otlp_lines(tc, co.reqs[i].body, NULL);
-	oe_exporter_free(e);
-	/* Drops on a non-OTLP exporter are a no-op. */
-	e = oe_text_new(stdout);
-	oe_report_drops(e, 1);
-	oe_report_drops(NULL, 1);
 	oe_exporter_free(e);
 	coll_stop(&co);
 }
@@ -2100,6 +2091,32 @@ ATF_TC_BODY(validator_rejects, tc)
 		const char *doc, *why;
 	} cases[] = {
 		{ "{\"resourceLogs\":[],}", "trailing comma" },
+#define	EH(dp)	"{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"	\
+		"\"name\":\"m\",\"exponentialHistogram\":{\"dataPoints\":[" dp	\
+		"]}}]}]}]}"
+		{ EH("{\"timeUnixNano\":\"1\",\"count\":\"3\",\"zeroCount\":"
+		    "\"1\",\"positive\":{\"offset\":0,\"bucketCounts\":[\"1\"]}}"),
+		    "zeroCount + bucket counts" },
+		{ EH("{\"timeUnixNano\":\"1\",\"scale\":21}"), "outside -10..20" },
+		{ EH("{\"timeUnixNano\":\"1\",\"scale\":\"0\"}"),
+		    "integer number" },
+		{ EH("{\"timeUnixNano\":\"1\",\"scale\":4294967296}"),
+		    "out of range" },
+		{ EH("{\"timeUnixNano\":\"1\",\"positive\":{\"offset\":1.5}}"),
+		    "integer number" },
+		{ EH("{\"timeUnixNano\":\"1\",\"zeroThreshold\":-1}"),
+		    "negative zeroThreshold" },
+		{ EH("{\"count\":\"0\"}"), "no time" },
+		{ EH("{\"timeUnixNano\":\"1\",\"negative\":{\"bucketCounts\":"
+		    "[1]}}"), "decimal string" },
+		{ EH("{\"timeUnixNano\":\"1\",\"exemplars\":[{\"asInt\":1}]}"),
+		    "decimal string" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{"
+		    "\"name\":\"m\",\"histogram\":{},\"exponentialHistogram\":{}}"
+		    "]}]}]}", "oneof" },
+		{ "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":["
+		    "{\"name\":\"m\",\"histogram\":{}},{\"name\":\"m\","
+		    "\"exponentialHistogram\":{}}]}]}]}", "is both" },
 		{ "{\"resourceLogs\":[]", "expected ','" },
 		{ "{\"a\":1,\"a\":2}", "duplicate key" },
 		{ "{\"resourceLogs\":[]} x", "trailing data" },
@@ -3903,6 +3920,484 @@ ATF_TC_BODY(file_target_exporter, tc)
 	ATF_CHECK(oe_exporter_open(&env, &cfg) == NULL);
 }
 
+/*
+ * The OpenTelemetry data model mappings, against a golden file built
+ * independently (gen_golden_native.py): exponential histograms, count
+ * and sum without buckets, doubles, non-monotonic sums, per-point start
+ * times, tool-level metrics with unit, description and metadata; log
+ * records with trace context and event names; spans with flags, trace
+ * state, events and links.
+ */
+ATF_TC_WITHOUT_HEAD(native_mapping_golden);
+ATF_TC_BODY(native_mapping_golden, tc)
+{
+	static const uint64_t pos1[] = { 3, 4, 0, 5 }, neg1[] = { 1 },
+	    pos2[] = { 1 };
+	static const struct oe_attr a[] = {
+		{ "process.executable.name", "nginx" } };
+	static const struct oe_attr kvv[] = { { "k", "v" } };
+	static const struct oe_attr dk[] = { { "dtrace.drop.kind",
+	    "principal" } };
+	static const struct oe_attr meta[] = { { "dtrace.normalization",
+	    "1000" } };
+	static const struct oe_bucket lqb[] = { { 9, 2 }, { -1, 1 },
+	    { INT64_MAX, 3 } };
+	struct oe_exphist x1, x2;
+	struct oe_datapoint dp[3];
+	struct oe_snapshot sn;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e;
+	struct oe_event ev;
+	struct oe_kv evkv[2], spkv, ekv, lkv;
+	struct oe_span sp;
+	struct oe_span_event spev;
+	struct oe_span_link ln;
+	struct otlp_counts c;
+	char *text;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "native.jsonl";
+	sink = oe_sink_open(&sc);
+	ATF_REQUIRE(sink != NULL);
+	e = otlpjson_on(sink, 0);
+	ATF_REQUIRE(e != NULL);
+
+	memset(&sn, 0, sizeof(sn));
+	sn.ts.tv_sec = 1700000010;
+	sn.start.tv_sec = 1700000000;
+	sn.profile = "prof";
+	/* quantize as an exponential histogram. */
+	memset(&x1, 0, sizeof(x1));
+	x1.zero_count = 2;
+	x1.positive.counts = pos1;
+	x1.positive.n = 4;
+	x1.negative.offset = 1;
+	x1.negative.counts = neg1;
+	x1.negative.n = 1;
+	memset(&x2, 0, sizeof(x2));
+	x2.zero_threshold = 0.5;
+	x2.positive.offset = -2;
+	x2.positive.counts = pos2;
+	x2.positive.n = 1;
+	memset(dp, 0, sizeof(dp));
+	dp[0].attrs = a;
+	dp[0].nattrs = 1;
+	dp[0].is_histogram = 1;
+	dp[0].exp = &x1;
+	dp[1].is_histogram = 1;
+	dp[1].exp = &x2;
+	dp[1].has_stats = 1;
+	dp[1].count = 1;
+	dp[1].sum = 2.5;
+	dp[1].start.tv_sec = 1700000005;
+	dp[2].is_histogram = 1;		/* no exponential buckets: skipped */
+	sn.name = "lat";
+	sn.kind = OE_AGG_QUANTIZE;
+	sn.points = dp;
+	sn.npoints = 3;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	/* avg: count and sum. */
+	memset(dp, 0, sizeof(dp));
+	dp[0].attrs = a;
+	dp[0].nattrs = 1;
+	dp[0].has_stats = 1;
+	dp[0].count = 4;
+	dp[0].sum = 80;
+	dp[1].is_histogram = 1;		/* neither: skipped */
+	sn.name = "avgv";
+	sn.kind = OE_AGG_AVG;
+	sn.npoints = 2;
+	sn.unit = "ns";
+	sn.description = "mean latency";
+	sn.metadata = meta;
+	sn.nmetadata = 1;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.unit = sn.description = NULL;
+	sn.metadata = NULL;
+	sn.nmetadata = 0;
+	/* Doubles. */
+	memset(dp, 0, sizeof(dp));
+	dp[0].attrs = a;
+	dp[0].nattrs = 1;
+	dp[0].is_double = 1;
+	dp[0].dvalue = 2.2360679774997898;	/* sqrt(5) */
+	dp[1].is_double = 1;
+	dp[1].dvalue = NAN;
+	dp[2].attrs = kvv;
+	dp[2].nattrs = 1;
+	dp[2].is_double = 1;
+	dp[2].dvalue = -INFINITY;
+	sn.name = "sd.stddev";
+	sn.kind = OE_AGG_STDDEV;
+	sn.npoints = 3;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	/* A sum that may decrease. */
+	memset(dp, 0, sizeof(dp));
+	dp[0].attrs = a;
+	dp[0].nattrs = 1;
+	dp[0].scalar = -7;
+	sn.name = "net";
+	sn.kind = OE_AGG_SUM;
+	sn.npoints = 1;
+	sn.non_monotonic = 1;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.non_monotonic = 0;
+	/* A tool-level counter. */
+	dp[0].attrs = dk;
+	dp[0].scalar = 3;
+	sn.name = "drops";
+	sn.kind = OE_AGG_COUNT;
+	sn.scope_metric = 1;
+	sn.unit = "{record}";
+	sn.description = "Records dropped";
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	sn.scope_metric = 0;
+	sn.unit = sn.description = NULL;
+	/* An explicit histogram with a sum. */
+	memset(dp, 0, sizeof(dp));
+	dp[0].is_histogram = 1;
+	dp[0].buckets = lqb;
+	dp[0].nbuckets = 3;
+	dp[0].has_stats = 1;
+	dp[0].sum = 42;
+	sn.name = "lq";
+	sn.kind = OE_AGG_LQUANTIZE;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+
+	/* A log record in a trace, as a named event. */
+	ev = make_event();
+	fixed_event_times(&ev);
+	ev.stack = ev.ustack = NULL;
+	ev.nstack = ev.nustack = 0;
+	ev.body = "error on enabled probe";
+	ev.severity = OE_SEV_ERROR;
+	ev.event_name = "dtrace.error";
+	ATF_REQUIRE_EQ(0, oe_traceparent_parse(
+	    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", 55,
+	    ev.trace_id, ev.span_id, &ev.trace_flags));
+	evkv[0].key = "dtrace.fault";
+	evkv[0].type = OE_VAL_STRING;
+	evkv[0].s = "badaddr";
+	evkv[1].key = "dtrace.fault.address";
+	evkv[1].type = OE_VAL_INT;
+	evkv[1].i = 16;
+	ev.attrs = evkv;
+	ev.nattrs = 2;
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+
+	/* A span with a remote parent, trace state, an event and a link. */
+	memset(&sp, 0, sizeof(sp));
+	sp.name = "handler";
+	sp.profile = "p";
+	sp.probe = "";
+	sp.execname = "";
+	sp.start.tv_sec = 1700000000;
+	sp.end.tv_sec = 1700000001;
+	memcpy(sp.trace_id, ev.trace_id, OE_TRACE_ID_LEN);
+	memcpy(sp.parent_span_id, ev.span_id, OE_SPAN_ID_LEN);
+	memset(sp.span_id, 0x11, OE_SPAN_ID_LEN);
+	sp.kind = OE_SPAN_SERVER;
+	sp.flags = OE_SPAN_FLAGS_HAS_IS_REMOTE | OE_SPAN_FLAGS_IS_REMOTE | 1;
+	sp.trace_state = "v=1";
+	memset(&spev, 0, sizeof(spev));
+	spev.ts.tv_sec = 1700000000;
+	spev.ts.tv_nsec = 500;
+	spev.name = "parsed";
+	ekv.key = "n";
+	ekv.type = OE_VAL_INT;
+	ekv.i = 2;
+	spev.attrs = &ekv;
+	spev.nattrs = 1;
+	sp.events = &spev;
+	sp.nevents = 1;
+	memset(&ln, 0, sizeof(ln));
+	ATF_REQUIRE_EQ(0, oe_traceparent_parse(
+	    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", 55,
+	    ln.trace_id, ln.span_id, &ev.trace_flags));
+	ln.trace_state = "w=2";
+	ln.flags = OE_SPAN_FLAGS_HAS_IS_REMOTE;
+	lkv.key = "why";
+	lkv.type = OE_VAL_STRING;
+	lkv.s = "retry";
+	ln.attrs = &lkv;
+	ln.nattrs = 1;
+	sp.links = &ln;
+	sp.nlinks = 1;
+	(void)spkv;
+	ATF_REQUIRE_EQ(0, oe_span(e, &sp));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	ATF_REQUIRE_EQ(0, oe_sink_close(sink));
+	text = slurp("native.jsonl", NULL);
+	c = check_otlp_lines(tc, text, "otlpjson-native.jsonl");
+	ATF_CHECK_EQ(3, c.requests);
+	ATF_CHECK_EQ(6, c.metrics);
+	ATF_CHECK_EQ(1, c.logs);
+	ATF_CHECK_EQ(1, c.spans);
+	free(text);
+}
+
+/* W3C traceparent: valid forms, future versions, and every rejection. */
+ATF_TC_WITHOUT_HEAD(traceparent_parsing);
+ATF_TC_BODY(traceparent_parsing, tc)
+{
+	static const char *const bad[] = {
+		"",
+		"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-0",
+		"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01-",
+		"ff-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+		"0g-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+		"00_0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+		"00-0af7651916cd43dd8448eb211c80319c_b7ad6b7169203331-01",
+		"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331_01",
+		"00-0AF7651916CD43DD8448EB211C80319C-b7ad6b7169203331-01",
+		"00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333z-01",
+		"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-0x",
+		"00-00000000000000000000000000000000-b7ad6b7169203331-01",
+		"00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01",
+		"01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01x",
+	};
+	uint8_t t[OE_TRACE_ID_LEN], sid[OE_SPAN_ID_LEN], f;
+	char hex[33];
+	size_t i;
+
+	ATF_REQUIRE_EQ(0, oe_traceparent_parse(
+	    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", 55,
+	    t, sid, &f));
+	oe_id_hex(t, OE_TRACE_ID_LEN, hex);
+	ATF_CHECK_STREQ("0af7651916cd43dd8448eb211c80319c", hex);
+	oe_id_hex(sid, OE_SPAN_ID_LEN, hex);
+	ATF_CHECK_STREQ("b7ad6b7169203331", hex);
+	ATF_CHECK_EQ(1, f);
+	/* A later version may carry more fields after the flags. */
+	ATF_CHECK_EQ(0, oe_traceparent_parse(
+	    "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00-extra",
+	    61, t, sid, &f));
+	ATF_CHECK_EQ(0, f);
+	ATF_CHECK_EQ(0, oe_traceparent_parse(
+	    "01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-09", 55,
+	    t, sid, &f));
+	for (i = 0; i < nitems(bad); i++)
+		ATF_CHECK_EQ_MSG(-1, oe_traceparent_parse(bad[i],
+		    strlen(bad[i]), t, sid, &f), "accepted %s", bad[i]);
+}
+
+/* The new data point forms in the JSONL and text exporters. */
+ATF_TC_WITHOUT_HEAD(native_jsonl_text);
+ATF_TC_BODY(native_jsonl_text, tc)
+{
+	static const uint64_t pos[] = { 1, 0, 2 }, neg[] = { 3 };
+	struct oe_exphist x;
+	struct oe_datapoint dp[3];
+	struct oe_snapshot sn;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *j, *t;
+	struct oe_event ev;
+	struct oe_span sp;
+	struct oe_span_event spev;
+	struct oe_span_link ln;
+	char *text;
+
+	memset(&x, 0, sizeof(x));
+	x.zero_count = 4;
+	x.positive.offset = 1;
+	x.positive.counts = pos;
+	x.positive.n = 3;
+	x.negative.counts = neg;
+	x.negative.n = 1;
+	memset(dp, 0, sizeof(dp));
+	dp[0].is_histogram = 1;
+	dp[0].exp = &x;
+	dp[0].start.tv_sec = 1700000005;
+	dp[1].has_stats = 1;
+	dp[1].count = 4;
+	dp[1].sum = 10;
+	dp[2].is_double = 1;
+	dp[2].dvalue = 1.5;
+	memset(&sn, 0, sizeof(sn));
+	sn.ts.tv_sec = 1700000010;
+	sn.profile = "p";
+	sn.name = "m";
+	sn.kind = OE_AGG_QUANTIZE;
+	sn.points = dp;
+	sn.npoints = 3;
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "n.jsonl";
+	sink = oe_sink_open(&sc);
+	ATF_REQUIRE(sink != NULL);
+	j = oe_jsonl_sink_new(sink, "p");
+	ATF_REQUIRE_EQ(0, oe_snapshot(j, &sn));
+	ev = make_event();
+	ev.event_name = "dtrace.exit";
+	memset(ev.trace_id, 0xab, OE_TRACE_ID_LEN);
+	ATF_REQUIRE_EQ(0, oe_event(j, &ev));
+	memset(ev.span_id, 0xcd, OE_SPAN_ID_LEN);
+	ATF_REQUIRE_EQ(0, oe_event(j, &ev));
+	memset(&sp, 0, sizeof(sp));
+	sp.name = "s";
+	sp.profile = "p";
+	sp.execname = "";
+	memset(sp.trace_id, 1, OE_TRACE_ID_LEN);
+	memset(sp.span_id, 2, OE_SPAN_ID_LEN);
+	memset(&spev, 0, sizeof(spev));
+	spev.name = "ev";
+	sp.events = &spev;
+	sp.nevents = 1;
+	memset(&ln, 0, sizeof(ln));
+	memset(ln.trace_id, 3, OE_TRACE_ID_LEN);
+	memset(ln.span_id, 4, OE_SPAN_ID_LEN);
+	sp.links = &ln;
+	sp.nlinks = 1;
+	ATF_REQUIRE_EQ(0, oe_span(j, &sp));
+	ATF_REQUIRE_EQ(0, oe_flush(j));
+	oe_exporter_free(j);
+	t = oe_text_sink_new(sink);
+	ATF_REQUIRE_EQ(0, oe_snapshot(t, &sn));
+	ATF_REQUIRE_EQ(0, oe_flush(t));
+	oe_exporter_free(t);
+	ATF_REQUIRE_EQ(0, oe_sink_close(sink));
+	text = slurp("n.jsonl", NULL);
+	ATF_REQUIRE(text != NULL);
+	ATF_CHECK(strstr(text, "\"exponential\":{\"scale\":0,\"zero_count\":4,"
+	    "\"positive\":{\"offset\":1,\"counts\":[1,0,2]},"
+	    "\"negative\":{\"offset\":0,\"counts\":[3]}}") != NULL);
+	ATF_CHECK(strstr(text, "\"start\":\"") != NULL);
+	ATF_CHECK(strstr(text, "{\"attributes\":{},\"count\":4,\"sum\":10}")
+	    != NULL);
+	ATF_CHECK(strstr(text, "\"value\":1.5}") != NULL);
+	ATF_CHECK(strstr(text, "\"event\":\"dtrace.exit\"") != NULL);
+	ATF_CHECK(strstr(text, "\"trace_id\":\"abababababababababababababababab\"")
+	    != NULL);
+	ATF_CHECK(strstr(text, "\"span_id\":\"cdcdcdcdcdcdcdcd\"") != NULL);
+	ATF_CHECK(strstr(text, "\"events\":[{\"time\":\"") != NULL);
+	ATF_CHECK(strstr(text, "\"links\":[{\"trace_id\":\"0303030303030303"
+	    "0303030303030303\",\"span_id\":\"0404040404040404\"}]") != NULL);
+	/* Text: power-of-two buckets, count/sum, the double. */
+	ATF_CHECK(strstr(text, "    -2^0: 3\n    0: 4\n    2^1: 1\n"
+	    "    2^3: 2\n") != NULL);
+	ATF_CHECK(strstr(text, "] count=4 sum=10\n") != NULL);
+	ATF_CHECK(strstr(text, "] 1.5\n") != NULL);
+	free(text);
+}
+
+/* Edge forms of the native mappings, checked by the validator. */
+ATF_TC_WITHOUT_HEAD(native_edges);
+ATF_TC_BODY(native_edges, tc)
+{
+	static const uint64_t pos[] = { 2 }, neg[] = { 0, 1 };
+	struct oe_exphist x;
+	struct oe_datapoint dp[3];
+	struct oe_snapshot sn;
+	struct oe_sink_config sc;
+	struct oe_sink *sink;
+	struct oe_exporter *e, *j, *t;
+	struct oe_event ev;
+	struct oe_span sp;
+	struct oe_span_event evs[2];
+	struct oe_span_link ln[2];
+	uint8_t tid[OE_TRACE_ID_LEN], sid[OE_SPAN_ID_LEN], f;
+	char *text;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.path = "e.jsonl";
+	sink = oe_sink_open(&sc);
+	ATF_REQUIRE(sink != NULL);
+	e = otlpjson_on(sink, 0);
+	/* Several count/sum points; one that is both kinds is skipped. */
+	memset(dp, 0, sizeof(dp));
+	dp[0].has_stats = 1;
+	dp[0].count = 1;
+	dp[0].sum = 1;
+	dp[1].has_stats = 1;
+	dp[1].is_histogram = 1;
+	dp[2].has_stats = 1;
+	dp[2].count = 2;
+	dp[2].sum = INFINITY;
+	memset(&sn, 0, sizeof(sn));
+	sn.ts.tv_sec = 1700000010;
+	sn.profile = "p";
+	sn.name = "a";
+	sn.kind = OE_AGG_AVG;
+	sn.points = dp;
+	sn.npoints = 3;
+	ATF_REQUIRE_EQ(0, oe_snapshot(e, &sn));
+	/* A trace id without a span id or flags. */
+	ev = make_event();
+	memset(ev.trace_id, 0x5a, OE_TRACE_ID_LEN);
+	ATF_REQUIRE_EQ(0, oe_event(e, &ev));
+	/* Two events and two links, one without state or flags. */
+	memset(&sp, 0, sizeof(sp));
+	sp.name = "s";
+	sp.profile = "p";
+	sp.execname = "";
+	memset(sp.trace_id, 1, OE_TRACE_ID_LEN);
+	memset(sp.span_id, 2, OE_SPAN_ID_LEN);
+	memset(evs, 0, sizeof(evs));
+	evs[0].name = "a";
+	evs[1].name = "b";
+	sp.events = evs;
+	sp.nevents = 2;
+	memset(ln, 0, sizeof(ln));
+	memset(ln[0].trace_id, 3, OE_TRACE_ID_LEN);
+	memset(ln[0].span_id, 4, OE_SPAN_ID_LEN);
+	memset(ln[1].trace_id, 5, OE_TRACE_ID_LEN);
+	memset(ln[1].span_id, 6, OE_SPAN_ID_LEN);
+	sp.links = ln;
+	sp.nlinks = 2;
+	ATF_REQUIRE_EQ(0, oe_span(e, &sp));
+	ATF_REQUIRE_EQ(0, oe_shutdown(e));
+	oe_exporter_free(e);
+	/* JSONL and text: the same span; buckets of one sign only. */
+	memset(&x, 0, sizeof(x));
+	x.positive.counts = pos;
+	x.positive.n = 1;
+	x.negative.counts = neg;
+	x.negative.n = 2;
+	memset(dp, 0, sizeof(dp));
+	dp[0].is_histogram = 1;
+	dp[0].exp = &x;
+	sn.kind = OE_AGG_QUANTIZE;
+	sn.npoints = 1;
+	j = oe_jsonl_sink_new(sink, "p");
+	ATF_REQUIRE_EQ(0, oe_span(j, &sp));
+	x.negative.n = 0;
+	ATF_REQUIRE_EQ(0, oe_snapshot(j, &sn));
+	x.negative.n = 2;
+	oe_exporter_free(j);
+	t = oe_text_sink_new(sink);
+	ATF_REQUIRE_EQ(0, oe_snapshot(t, &sn));
+	oe_exporter_free(t);
+	ATF_REQUIRE_EQ(0, oe_sink_close(sink));
+	text = slurp("e.jsonl", NULL);
+	ATF_REQUIRE(text != NULL);
+	{
+		char *nl = strstr(text, "\n{\"time\"");
+
+		/* The OTLP lines validate. */
+		ATF_REQUIRE(nl != NULL);
+		*nl = '\0';
+		check_otlp_lines(tc, text, NULL);
+		*nl = '\n';
+	}
+	ATF_CHECK(strstr(text, "\"sum\":\"Infinity\"") != NULL);
+	ATF_CHECK(strstr(text, "\"traceId\":\"5a5a") != NULL);
+	ATF_CHECK(strstr(text, "\"spanId\":\"0000") == NULL);
+	ATF_CHECK(strstr(text, "{\"traceId\":\"05050505050505050505050505050505"
+	    "\",\"spanId\":\"0606060606060606\",\"attributes\":[]}") != NULL);
+	ATF_CHECK(strstr(text, "\"name\":\"b\"") != NULL);
+	ATF_CHECK(strstr(text, "\"exponential\":{\"scale\":0,\"zero_count\":0,"
+	    "\"positive\":{\"offset\":0,\"counts\":[2]}}") != NULL);
+	/* Text: the empty negative bucket and zero count are not shown. */
+	ATF_CHECK(strstr(text, "    -2^1: 1\n    2^0: 2\n") != NULL);
+	free(text);
+	/* Characters below '0' are not hex digits. */
+	ATF_CHECK_EQ(-1, oe_traceparent_parse(
+	    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b716920333 -01", 55,
+	    tid, sid, &f));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3978,5 +4473,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sink_follow_rename);
 	ATF_TP_ADD_TC(tp, sink_follow_edges);
 	ATF_TP_ADD_TC(tp, file_target_exporter);
+	ATF_TP_ADD_TC(tp, native_mapping_golden);
+	ATF_TP_ADD_TC(tp, traceparent_parsing);
+	ATF_TP_ADD_TC(tp, native_jsonl_text);
+	ATF_TP_ADD_TC(tp, native_edges);
 	return (atf_no_error());
 }

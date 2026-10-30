@@ -54,6 +54,15 @@ struct dtotel_jail {
 	char		*name;		/* NULL: unknown or not visible */
 };
 
+struct dtotel_series;
+
+/* Drop kinds (dtrace_dropkind_t) and fault kinds (DTRACEFLT_*) counted. */
+#define	DTOTEL_NDROPKINDS	10
+#define	DTOTEL_NFAULTS		12	/* 0..9, library, other */
+
+/* Attributes of the pending log record (typed print(), action). */
+#define	DTOTEL_BODY_KV		34
+
 struct dtotel {
 	dtrace_hdl_t	*dtp;
 	struct oe_exporter *exporter;
@@ -100,6 +109,32 @@ struct dtotel {
 	void		*guest_arg;
 	struct dtotel_guest_state *guests;
 	int		 warned_guest;
+
+	/* Series of the latest snapshot (dtotel_agg.c). */
+	struct dtotel_series **series;
+	struct timespec	 last_snap;
+	int		 nsnaps;
+
+	/* Cumulative drop and error counts, exported as metrics. */
+	uint64_t	 drops[DTOTEL_NDROPKINDS];
+	uint64_t	 faults[DTOTEL_NFAULTS];
+	int		 counters_dirty;
+	int		 counters_seen;	/* any count was ever made */
+
+	/* The pending record's action and typed attributes. */
+	const char	*body_action;	/* static string or NULL */
+	struct oe_kv	 body_kv[DTOTEL_BODY_KV];
+	char		*body_kvstr[2 * DTOTEL_BODY_KV];	/* owned */
+	size_t		 body_nkv;
+
+	/* Trace context of the pending record, or of its firing. */
+	uint8_t		 body_trace[OE_TRACE_ID_LEN];
+	uint8_t		 body_span[OE_SPAN_ID_LEN];
+	uint8_t		 body_tflags;
+	struct dtotel_firing tp_firing;	/* a trace record before its line */
+	uint8_t		 tp_trace[OE_TRACE_ID_LEN];
+	uint8_t		 tp_span[OE_SPAN_ID_LEN];
+	uint8_t		 tp_flags;
 };
 
 /* The exporter for records of a VMID (0: the host). */
@@ -110,5 +145,6 @@ const char *dtotel_jail_name(struct dtotel *, int jid);
 
 struct dtotel_keynames *dtotel_parse_keynames(const char *);
 void	 dtotel_free_keynames(struct dtotel_keynames *);
+void	 dtotel_series_free(struct dtotel *);
 
 #endif /* !_DTOTEL_IMPL_H_ */

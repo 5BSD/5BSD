@@ -23,7 +23,8 @@ LIBADD.otlp_collector+=	z ssl crypto pthread
 FILESGROUPS+=	GOLDEN
 GOLDEN=		golden/otlpjson-basic.jsonl \
 		golden/otlpjson-spans.jsonl \
-		golden/otlpjson-semconv.jsonl
+		golden/otlpjson-semconv.jsonl \
+		golden/otlpjson-native.jsonl
 GOLDENDIR=	${TESTSDIR}/golden
 GOLDENPACKAGE=	${PACKAGE}
 

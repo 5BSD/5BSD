@@ -688,6 +688,7 @@ watch_drops_and_signals_body()
 	cat > script <<'EOF'
 chunk 0 1 1 a[1]: x\n
 drop 5
+drop 2 2
 work
 signal
 work
@@ -699,8 +700,13 @@ EOF
 	atf_check -s exit:0 -o save:out.jsonl -e match:'dropped 5 record' \
 	    bsdinstruments watch mock-prof --format otlp-json
 	# The loop stops at the signal; the post-stop pass still drains
-	# what the kernel buffered, as dtrace(1) does.
-	atf_check -o match:'requests=1 logs=2' "$v" out.jsonl
+	# what the kernel buffered, as dtrace(1) does.  The drops are a
+	# cumulative counter by kind (2 is DTRACEDROP_DYNAMIC).
+	atf_check -o match:'requests=2 logs=2 metrics=1' "$v" out.jsonl
+	atf_check -o match:'"name":"bsdinstruments.drops","description":"Records DTrace dropped, by kind","unit":"\{record\}","sum"' \
+	    -o match:'"asInt":"5","attributes":\[\{"key":"dtrace.drop.kind","value":\{"stringValue":"principal"\}\}\]' \
+	    -o match:'"asInt":"2","attributes":\[\{"key":"dtrace.drop.kind","value":\{"stringValue":"dynamic"\}\}\]' \
+	    -o match:'"isMonotonic":true' cat out.jsonl
 	atf_check -s exit:0 -o ignore grep drained out.jsonl
 	atf_check -s exit:1 grep -q unread out.jsonl
 	atf_check -s exit:0 -o ignore -e match:'dropped 5 record' \
@@ -1213,9 +1219,48 @@ EOF
 	    bsdinstruments watch mock-prof --format otel
 }
 
+atf_test_case watch_errors_and_exit
+watch_errors_and_exit_head()
+{
+	atf_set descr "runtime errors and exit() become log events and a counter"
+	atf_set require.progs cc
+}
+watch_errors_and_exit_body()
+{
+	mock_setup
+	v=$(validator)
+	cat > script <<'EOF'
+chunk 0 1 1 a[1]: x\n
+error 1 0x1000
+error 4 0
+exit 3
+work
+done
+EOF
+	atf_check -s exit:0 -o save:out.jsonl -e match:'bsdinstruments: error on enabled probe ID 1' \
+	    bsdinstruments watch mock-prof --format otlp-json
+	atf_check -o match:'requests=2 logs=4 metrics=1' "$v" out.jsonl
+	# ERROR records with the fault, its address, the action.
+	atf_check -o match:'"severityNumber":17,"severityText":"ERROR"' \
+	    -o match:'"key":"dtrace.fault","value":\{"stringValue":"badaddr"\}' \
+	    -o match:'"key":"dtrace.fault.address","value":\{"intValue":"4096"\}' \
+	    -o match:'"key":"dtrace.fault","value":\{"stringValue":"divzero"\}' \
+	    -o match:'"eventName":"dtrace.error"' \
+	    -o match:'"key":"dtrace.exit.status","value":\{"intValue":"3"\}' \
+	    -o match:'"eventName":"dtrace.exit"' \
+	    -o match:'"name":"bsdinstruments.errors"' cat out.jsonl
+	# Text output reports errors on standard error only.
+	atf_check -s exit:0 -o not-match:'dtrace.error' -e match:'mock fault' \
+	    bsdinstruments watch mock-prof
+	echo "fail handle_err" >> script
+	atf_check -s exit:1 -e match:'failed to install drop handler' \
+	    bsdinstruments watch mock-prof
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case watch_otel_file_target
+	atf_add_test_case watch_errors_and_exit
 	atf_add_test_case list_basic
 	atf_add_test_case list_json
 	atf_add_test_case generate_render

@@ -44,6 +44,11 @@ struct cap_event {
 	pid_t		 pid;
 	size_t		 nstack, nustack;
 	char		*frame0, *uframe0;
+	char		*attrs;		/* "key=value;..." */
+	int		 severity;
+	char		*event_name;
+	char		 trace[33], span[17];
+	int		 tflags;
 };
 
 struct cap_point {
@@ -51,6 +56,13 @@ struct cap_point {
 	int		 is_histogram;
 	int64_t		 scalar;
 	char		*buckets;	/* "upper:count;..." */
+	char		*exp;		/* "s<scale>;z<zero>;p<off>:c,..;n<off>:c,.." */
+	int		 has_stats;
+	uint64_t	 count;
+	double		 sum;
+	int		 is_double;
+	double		 dvalue;
+	struct timespec	 start;
 };
 
 struct cap_span {
@@ -62,6 +74,10 @@ struct cap_span {
 	enum oe_status_code status;
 	pid_t		 pid;
 	char		*attrs;		/* "key=value;..." */
+	uint32_t	 flags;
+	char		*tstate;
+	char		*events;	/* "name@sec.nsec;..." */
+	char		*links;		/* "trace/span/flags;..." */
 };
 
 struct cap_snap {
@@ -70,6 +86,8 @@ struct cap_snap {
 	struct timespec	 start;
 	size_t		 npoints;
 	struct cap_point points[8];
+	int		 scope_metric, non_monotonic;
+	char		*unit, *meta;	/* meta: "name=value;..." */
 };
 
 struct capture {
@@ -123,7 +141,52 @@ cap_event(struct oe_exporter *e, const struct oe_event *ev)
 	ce->nustack = ev->nustack;
 	ce->frame0 = ev->nstack > 0 ? fmt_frame(&ev->stack[0]) : NULL;
 	ce->uframe0 = ev->nustack > 0 ? fmt_frame(&ev->ustack[0]) : NULL;
+	{
+		struct oe_buf b;
+		size_t i;
+
+		oe_buf_init(&b);
+		oe_buf_appendstr(&b, "");
+		for (i = 0; i < ev->nattrs; i++) {
+			if (ev->attrs[i].type == OE_VAL_INT)
+				oe_buf_appendf(&b, "%s=%jd;", ev->attrs[i].key,
+				    (intmax_t)ev->attrs[i].i);
+			else
+				oe_buf_appendf(&b, "%s=%s;", ev->attrs[i].key,
+				    ev->attrs[i].s);
+		}
+		ce->attrs = strdup(b.data != NULL ? b.data : "");
+		oe_buf_free(&b);
+	}
+	ce->severity = ev->severity;
+	ce->event_name = ev->event_name != NULL ? strdup(ev->event_name) :
+	    NULL;
+	oe_id_hex(ev->trace_id, OE_TRACE_ID_LEN, ce->trace);
+	oe_id_hex(ev->span_id, OE_SPAN_ID_LEN, ce->span);
+	ce->tflags = ev->trace_flags;
 	return (0);
+}
+
+static char *
+fmt_exp(const struct oe_exphist *x)
+{
+	struct oe_buf b;
+	size_t i;
+	char *r;
+
+	oe_buf_init(&b);
+	oe_buf_appendf(&b, "s%d;z%ju;p%d:", (int)x->scale,
+	    (uintmax_t)x->zero_count, (int)x->positive.offset);
+	for (i = 0; i < x->positive.n; i++)
+		oe_buf_appendf(&b, "%s%ju", i > 0 ? "," : "",
+		    (uintmax_t)x->positive.counts[i]);
+	oe_buf_appendf(&b, ";n%d:", (int)x->negative.offset);
+	for (i = 0; i < x->negative.n; i++)
+		oe_buf_appendf(&b, "%s%ju", i > 0 ? "," : "",
+		    (uintmax_t)x->negative.counts[i]);
+	r = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	return (r);
 }
 
 static int
@@ -142,6 +205,16 @@ cap_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 	cs->kind = sn->kind;
 	cs->start = sn->start;
 	cs->npoints = sn->npoints;
+	cs->scope_metric = sn->scope_metric;
+	cs->non_monotonic = sn->non_monotonic;
+	cs->unit = sn->unit != NULL ? strdup(sn->unit) : NULL;
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "");
+	for (i = 0; i < sn->nmetadata; i++)
+		oe_buf_appendf(&b, "%s=%s;", sn->metadata[i].name,
+		    sn->metadata[i].value);
+	cs->meta = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
 	for (i = 0; i < sn->npoints && i < nitems(cs->points); i++) {
 		oe_buf_init(&b);
 		for (j = 0; j < sn->points[i].nattrs; j++)
@@ -158,6 +231,14 @@ cap_snapshot(struct oe_exporter *e, const struct oe_snapshot *sn)
 			    (intmax_t)sn->points[i].buckets[j].count);
 		cs->points[i].buckets = strdup(b.data != NULL ? b.data : "");
 		oe_buf_free(&b);
+		cs->points[i].exp = sn->points[i].exp != NULL ?
+		    fmt_exp(sn->points[i].exp) : NULL;
+		cs->points[i].has_stats = sn->points[i].has_stats;
+		cs->points[i].count = sn->points[i].count;
+		cs->points[i].sum = sn->points[i].sum;
+		cs->points[i].is_double = sn->points[i].is_double;
+		cs->points[i].dvalue = sn->points[i].dvalue;
+		cs->points[i].start = sn->points[i].start;
 	}
 	return (0);
 }
@@ -201,6 +282,27 @@ cap_span(struct oe_exporter *e, const struct oe_span *sp)
 			    sp->attrs[i].s);
 	}
 	cs->attrs = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	cs->flags = sp->flags;
+	cs->tstate = sp->trace_state != NULL ? strdup(sp->trace_state) : NULL;
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "");
+	for (i = 0; i < sp->nevents; i++)
+		oe_buf_appendf(&b, "%s@%jd.%09ld;", sp->events[i].name,
+		    (intmax_t)sp->events[i].ts.tv_sec, sp->events[i].ts.tv_nsec);
+	cs->events = strdup(b.data != NULL ? b.data : "");
+	oe_buf_free(&b);
+	oe_buf_init(&b);
+	oe_buf_appendstr(&b, "");
+	for (i = 0; i < sp->nlinks; i++) {
+		char t[33], sid[17];
+
+		oe_id_hex(sp->links[i].trace_id, OE_TRACE_ID_LEN, t);
+		oe_id_hex(sp->links[i].span_id, OE_SPAN_ID_LEN, sid);
+		oe_buf_appendf(&b, "%s/%s/%u;", t, sid,
+		    (unsigned)sp->links[i].flags);
+	}
+	cs->links = strdup(b.data != NULL ? b.data : "");
 	oe_buf_free(&b);
 	return (0);
 }
@@ -566,7 +668,7 @@ ATF_TC_BODY(open_and_handle_errors, tc)
 	ATF_REQUIRE_EQ(-1, dtotel_handle(d));
 	stub.fail_handle_buffered = 0;
 	dtotel_started(d);
-	dtotel_drops(d, 5);		/* forwarded; no-op for capture */
+	dtotel_drops(d, DTRACEDROP_PRINCIPAL, 5);	/* counted */
 	dtotel_close(d);
 }
 
@@ -682,7 +784,7 @@ ATF_TC_BODY(agg_scalars, tc)
 	fake_rec(fa[4], DTRACEAGG_MIN, 0, v, sizeof(int64_t));
 	fa[5] = fake_new("mx", 0);
 	fake_rec(fa[5], DTRACEAGG_MAX, 0, v, sizeof(int64_t));
-	/* stddev: count 4, sum 20, sumsq 120: sqrt((480-400)/16) -> 2 */
+	/* stddev: count 4, sum 20, sumsq 120: sqrt((480-400)/16) = sqrt(5) */
 	fa[6] = fake_new("sd", 0);
 	v[0] = 4;
 	v[1] = 20;
@@ -693,11 +795,13 @@ ATF_TC_BODY(agg_scalars, tc)
 	fa[7] = fake_new("odd", 0);
 	fake_rec(fa[7], DTRACEACT_PRINTF, 0, v, sizeof(int64_t));
 	run_aggs(d, fa, 8);
-	ATF_REQUIRE_EQ(6, cap.nsnaps);
+	/* sd also yields the gauge "sd.stddev". */
+	ATF_REQUIRE_EQ(7, cap.nsnaps);
 	for (i = 0; i < (size_t)cap.nsnaps; i++) {
 		struct cap_snap *s = &cap.snaps[i];
 
 		ATF_REQUIRE(s->start.tv_sec > 0);
+		ATF_CHECK_EQ(0, s->scope_metric);
 		if (strcmp(s->name, "calls") == 0) {
 			ATF_REQUIRE_EQ(OE_AGG_COUNT, s->kind);
 			ATF_REQUIRE_EQ(2, s->npoints);
@@ -705,13 +809,34 @@ ATF_TC_BODY(agg_scalars, tc)
 			    "process.pid=42;syscall=read;", s->points[0].attrs);
 			ATF_REQUIRE_EQ(10, s->points[0].scalar);
 			ATF_REQUIRE_EQ(4, s->points[1].scalar);
+			ATF_CHECK_EQ(0, s->non_monotonic);
+			ATF_CHECK_STREQ("", s->meta);
 		} else if (strcmp(s->name, "lat") == 0) {
+			/*
+			 * avg(): the count and sum themselves, not the
+			 * quotient; normalize(2) is metadata, not applied.
+			 */
 			ATF_REQUIRE_EQ(OE_AGG_AVG, s->kind);
-			ATF_REQUIRE_EQ(10, s->points[0].scalar);
-		} else if (strcmp(s->name, "sd") == 0)
-			ATF_REQUIRE_EQ(2, s->points[0].scalar);
-		else if (s->kind == OE_AGG_SUM)
+			ATF_REQUIRE_EQ(1, s->points[0].has_stats);
+			ATF_CHECK_EQ(4, s->points[0].count);
+			ATF_CHECK(s->points[0].sum == 80.0);
+			ATF_CHECK_STREQ("dtrace.normalization=2;", s->meta);
+		} else if (strcmp(s->name, "sd") == 0) {
+			ATF_REQUIRE_EQ(1, s->points[0].has_stats);
+			ATF_CHECK_EQ(4, s->points[0].count);
+			ATF_CHECK(s->points[0].sum == 20.0);
+		} else if (strcmp(s->name, "sd.stddev") == 0) {
+			ATF_REQUIRE_EQ(OE_AGG_STDDEV, s->kind);
+			ATF_REQUIRE_EQ(1, s->points[0].is_double);
+			ATF_CHECK_MSG(s->points[0].dvalue > 2.2360679774997 &&
+			    s->points[0].dvalue < 2.2360679774998, "%.17g",
+			    s->points[0].dvalue);
+		} else if (s->kind == OE_AGG_SUM) {
 			ATF_REQUIRE_STREQ("", s->name);
+			/* sum() of signed values may go down. */
+			ATF_CHECK_EQ(1, s->non_monotonic);
+			ATF_CHECK_EQ(99, s->points[0].scalar);
+		}
 	}
 	for (i = 0; i < 8; i++)
 		fake_free(fa[i]);
@@ -879,13 +1004,32 @@ ATF_TC_BODY(agg_histograms, tc)
 	fake_rec(fa[2], DTRACEAGG_LLQUANTIZE, 0, llq, 6 * sizeof(int64_t));
 	run_aggs(d, fa, 3);
 	ATF_REQUIRE_EQ(3, cap.nsnaps);
-	ATF_REQUIRE_STREQ("-1:1;0:2;1:3;3:4;9223372036854775807:5;",
-	    cap.snaps[2].points[0].buckets);
-	ATF_REQUIRE_STREQ("-1:1;9:2;29:3;9223372036854775807:4;",
+	/*
+	 * quantize as a base-2 exponential histogram: bucket ZERO-1 holds
+	 * -1 (|v| in [2^0, 2^1): negative index 0), the zero bucket the
+	 * zero count, ZERO+1 the value 1 (index 0), ZERO+2 [2,4) (index 1)
+	 * and the top bucket [2^62, 2^63) (index 62); the empty indexes
+	 * between are part of the dense bucket array.
+	 */
+	{
+		char want[512];
+		int k, n;
+
+		n = snprintf(want, sizeof(want), "s0;z2;p0:3,4");
+		for (k = 2; k < 62; k++)
+			n += snprintf(want + n, sizeof(want) - n, ",0");
+		snprintf(want + n, sizeof(want) - n, ",5;n0:1");
+		ATF_REQUIRE(cap.snaps[2].points[0].exp != NULL);
+		ATF_REQUIRE_STREQ(want, cap.snaps[2].points[0].exp);
+		ATF_REQUIRE_STREQ("", cap.snaps[2].points[0].buckets);
+	}
+	/* lquantize: the whole layout, the empty [10,20) bucket included. */
+	ATF_REQUIRE_STREQ("-1:1;9:2;19:0;29:3;9223372036854775807:4;",
 	    cap.snaps[1].points[0].buckets);
 	ATF_REQUIRE_EQ(1, cap.snaps[0].points[0].is_histogram);
 	ATF_REQUIRE_STREQ("0:1;1:2;3:3;7:4;9223372036854775807:5;",
 	    cap.snaps[0].points[0].buckets);
+	ATF_CHECK(cap.snaps[0].points[0].exp == NULL);
 	fake_free(fa[0]);
 	fake_free(fa[1]);
 	fake_free(fa[2]);
@@ -918,7 +1062,8 @@ ATF_TC_BODY(agg_errors, tc)
 	fa[4] = fake_new("e", 0);
 	fake_rec(fa[4], DTRACEAGG_STDDEV, 0, v, 8);
 	run_aggs(d, fa, 5);
-	ATF_REQUIRE_EQ(5, cap.nsnaps);
+	/* d (a full stddev record) adds its "d.stddev" gauge. */
+	ATF_REQUIRE_EQ(6, cap.nsnaps);
 	ATF_REQUIRE_EQ(0, cap.snaps[0].points[0].scalar);
 	/* An exporter failure is reported through dtotel_error(). */
 	cap.fail = 1;
@@ -1331,8 +1476,18 @@ ATF_TC_BODY(guest_routing, tc)
 	/* An unregistered guest is named after its probes' target. */
 	deliver_vm(d, "other guest\n", 13, 7, 0, "vm7");
 	dtotel_flush(d);
-	ATF_REQUIRE_EQ(1, cap.nevents);
-	ATF_REQUIRE_STREQ("host line", cap.events[0].body);
+	/*
+	 * The registration is a session event on the host's resource,
+	 * then the host's own line.
+	 */
+	ATF_REQUIRE_EQ(2, cap.nevents);
+	ATF_REQUIRE_STREQ("hypertrace.vm.registered", cap.events[0].event_name);
+	ATF_REQUIRE_STREQ("hypertrace.vm.name=vm1;hypertrace.vm.id=3;"
+	    "hypertrace.vm.epoch=9;", cap.events[0].attrs);
+	ATF_REQUIRE_STREQ("HyperTrace VM vm1 (id 3, epoch 9) registered",
+	    cap.events[0].body);
+	ATF_REQUIRE_STREQ("host line", cap.events[1].body);
+	ATF_REQUIRE(cap.events[1].event_name == NULL);
 	ATF_REQUIRE_EQ(2, nguests);
 	ATF_REQUIRE_STREQ("3/9/vm1", guests[0]->ident);
 	ATF_REQUIRE_EQ(1, guests[0]->started);
@@ -1365,7 +1520,17 @@ ATF_TC_BODY(guest_routing, tc)
 	ATF_REQUIRE_EQ(0, dtotel_guest(d, 3, 11, NULL));
 	ATF_REQUIRE(!guests[4]->freed);
 	ATF_REQUIRE_EQ(5, nguests);
+	/* New lifetimes and the rename were session events too. */
+	ATF_REQUIRE_EQ(5, cap.nevents);
+	ATF_REQUIRE_STREQ("hypertrace.vm.restarted", cap.events[2].event_name);
+	ATF_REQUIRE_STREQ("hypertrace.vm.name=vm1;hypertrace.vm.id=3;"
+	    "hypertrace.vm.epoch=10;", cap.events[2].attrs);
+	ATF_REQUIRE_STREQ("hypertrace.vm.restarted", cap.events[3].event_name);
+	ATF_REQUIRE_STREQ("hypertrace.vm.renamed", cap.events[4].event_name);
+	ATF_REQUIRE_STREQ("hypertrace.vm.name=renamed;hypertrace.vm.id=3;"
+	    "hypertrace.vm.epoch=11;", cap.events[4].attrs);
 	/* Guest exporters are flushed with the host's; failures count. */
+	ATF_REQUIRE_EQ(0, dtotel_guest(d, 12, 1, "idle"));	/* none yet */
 	ATF_REQUIRE_EQ(0, dtotel_flush_guests(d));
 	guest_fail = 3;
 	ATF_REQUIRE_EQ(-1, dtotel_flush_guests(d));
@@ -1438,7 +1603,8 @@ ATF_TC_BODY(guest_fallbacks, tc)
 	deliver_vm(d, "guest\n", 1, 2, 0, "vm2");
 	deliver_vm(d, "\037otel.resource\037host.name=x\n", 1, 2, 0, "vm2");
 	dtotel_flush(d);
-	ATF_REQUIRE_EQ(1, cap.nevents);
+	/* The registration event and the guest line, both on the host. */
+	ATF_REQUIRE_EQ(2, cap.nevents);
 	dtotel_close(d);
 
 	d = open_guest_bridge();
@@ -1724,8 +1890,11 @@ ATF_TC_BODY(session_guest_resources, tc)
 	fake_free(fa);
 	text = read_file("out.jsonl");
 	validate_lines(text, &c);
-	ATF_REQUIRE_EQ(2, c.logs);
+	/* The two lines and the guest's registration event. */
+	ATF_REQUIRE_EQ(3, c.logs);
 	ATF_REQUIRE_EQ(1, c.metrics);
+	ATF_REQUIRE(strstr(text, "\"eventName\":\"hypertrace.vm.registered\"")
+	    != NULL);
 	guestline = strstr(text, "hypertrace.vm.name");
 	ATF_REQUIRE(guestline != NULL);
 	ATF_REQUIRE(strstr(text, "{\"key\":\"hypertrace.vm.id\",\"value\":"
@@ -2028,6 +2197,10 @@ ATF_TC_BODY(key_action_edges, tc)
 	dtotel_close(d);
 }
 
+static int deliver_rec(const char *, int, uint64_t, dtrace_epid_t,
+    dtrace_actkind_t, uint32_t);
+static const struct cap_snap *find_snap(const char *);
+
 ATF_TC_WITHOUT_HEAD(histogram_edges);
 ATF_TC_BODY(histogram_edges, tc)
 {
@@ -2082,6 +2255,37 @@ ATF_TC_BODY(histogram_edges, tc)
 		memset(&cap.snaps, 0, sizeof(cap.snaps));
 		cap.nsnaps = 0;
 	}
+	/*
+	 * A short quantize record (no zero bucket), llquantize with only
+	 * its argument word, lquantize with more words than its layout.
+	 * sq: buckets 1 and 3 are negative indexes 61 and 59.
+	 */
+	{
+		int64_t sq[4] = { 0, 1, 0, 2 }, la[1], lx[8];
+		struct fake_agg *x[3];
+
+		x[0] = fake_new("sq", 0);
+		fake_rec(x[0], DTRACEAGG_QUANTIZE, 0, sq, sizeof(sq));
+		la[0] = (int64_t)LLQ_ARG(2, 0, 2, 2);
+		x[1] = fake_new("la", 0);
+		fake_rec(x[1], DTRACEAGG_LLQUANTIZE, 0, la, sizeof(la));
+		memset(lx, 0, sizeof(lx));
+		lx[0] = (int64_t)LQ_ARG(0, 10, 1);
+		lx[1] = 1;
+		lx[7] = 9;
+		x[2] = fake_new("lx", 0);
+		fake_rec(x[2], DTRACEAGG_LQUANTIZE, 0, lx, sizeof(lx));
+		run_aggs(d, x, 3);
+		ATF_REQUIRE_STREQ("s0;z0;p0:;n59:2,0,1",
+		    find_snap("sq")->points[0].exp);
+		ATF_REQUIRE_STREQ("", find_snap("la")->points[0].buckets);
+		ATF_REQUIRE_STREQ("-1:1;9:0;9223372036854775807:0;",
+		    find_snap("lx")->points[0].buckets);
+		for (i = 0; i < 3; i++)
+			fake_free(x[i]);
+		memset(&cap.snaps, 0, sizeof(cap.snaps));
+		cap.nsnaps = 0;
+	}
 	/* stddev whose sum of squares does not exceed the sum squared. */
 	v[0] = 1;
 	v[1] = 4;
@@ -2093,7 +2297,11 @@ ATF_TC_BODY(histogram_edges, tc)
 	fa[6] = fake_new("empty", 0);
 	fa[6]->desc->dtagd_nrecs = 0;
 	run_aggs(d, fa, 7);
-	ATF_REQUIRE_EQ(6, cap.nsnaps);
+	/* sd's deviation gauge is 0 when sumsq*n <= sum^2. */
+	ATF_REQUIRE_EQ(7, cap.nsnaps);
+	for (i = 0; i < cap.nsnaps; i++)
+		if (strcmp(cap.snaps[i].name, "sd.stddev") == 0)
+			ATF_CHECK(cap.snaps[i].points[0].dvalue == 0);
 	for (i = 0; i < 7; i++)
 		fake_free(fa[i]);
 	dtotel_close(d);
@@ -2103,12 +2311,15 @@ ATF_TC_WITHOUT_HEAD(bridge_alloc_failure);
 ATF_TC_BODY(bridge_alloc_failure, tc)
 {
 	struct dtotel *d;
-	struct fake_agg *fa;
-	int64_t v = 1;
+	struct fake_agg *fa, *fs, *fq, *fl;
+	int64_t v = 1, sd[4] = { 2, 6, 20, 0 }, q[DTRACE_QUANTIZE_NBUCKETS];
 	uint32_t k = 3;
 	int i;
 
-	for (i = 1; i <= 60; i++) {
+	memset(q, 0, sizeof(q));
+	q[DTRACE_QUANTIZE_ZEROBUCKET - 2] = 1;
+	q[DTRACE_QUANTIZE_ZEROBUCKET + 3] = 1;
+	for (i = 1; i <= 400; i++) {
 		struct dtotel_config cfg;
 
 		memset(&cap, 0, sizeof(cap));
@@ -2124,11 +2335,27 @@ ATF_TC_BODY(bridge_alloc_failure, tc)
 		fa = fake_new("c", 1);
 		fake_rec(fa, DTRACEACT_DIFEXPR, 0, &k, sizeof(k));
 		fake_rec(fa, DTRACEAGG_COUNT, 0, &v, sizeof(v));
+		fs = fake_new("s", 1);
+		fake_rec(fs, DTRACEACT_DIFEXPR, 0, &k, sizeof(k));
+		fake_rec(fs, DTRACEAGG_STDDEV, 0, sd, sizeof(sd));
+		fq = fake_new("q", 0);
+		fake_rec(fq, DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+		{
+			int64_t lx[5] = { (int64_t)LQ_ARG(0, 1, 2), 1, 1, 1, 1 };
+
+			fake_rec(fq, DTRACEAGG_LQUANTIZE, 0, lx, sizeof(lx));
+			fq->desc->dtagd_nrecs--;	/* q stays a quantize */
+			fl = fake_new("l", 0);
+			fake_rec(fl, DTRACEAGG_LQUANTIZE, 0, lx, sizeof(lx));
+		}
 		failalloc_arm(i);
 		d = dtotel_open(&cfg);
 		if (d == NULL) {
 			failalloc_arm(0);
 			fake_free(fa);
+			fake_free(fs);
+			fake_free(fq);
+			fake_free(fl);
 			continue;
 		}
 		(void)dtotel_handle(d);
@@ -2141,16 +2368,24 @@ ATF_TC_BODY(bridge_alloc_failure, tc)
 		deliver_vm(d, "\037otel.resource\037host.name=h\n", 2, 4, 0, "vm4");
 		deliver_vm(d, "g\n", 3, 9, 0, "vm9");
 		deliver_vm(d, "\037otel.resource\037a=b\n", 4, 10, 0, "vm10");
+		deliver_rec("struct s {\n    int a = 0x1\n    struct t t = {\n"
+		    "        int b = 0x2\n    }\n}\n", 0, 5, 1,
+		    DTRACEACT_DIFEXPR, 1);
 		{
-			const dtrace_aggdata_t *ads[1] = { &fa->ad };
+			const dtrace_aggdata_t *ads[4] = { &fa->ad, &fs->ad,
+			    &fq->ad, &fl->ad };
 
 			stub.aggs = ads;
-			stub.naggs = 1;
+			stub.naggs = 4;
+			(void)dtotel_aggregate(d);
 			(void)dtotel_aggregate(d);
 			stub.naggs = 0;
 		}
 		failalloc_arm(0);
 		fake_free(fa);
+		fake_free(fs);
+		fake_free(fq);
+		fake_free(fl);
 		dtotel_close(d);
 	}
 }
@@ -2396,7 +2631,7 @@ ATF_TC_BODY(session_file_target, tc)
 	ATF_REQUIRE_EQ(0, dtotel_session_close(s, 1));
 	text = read_file("logs/dtrace.jsonl.0");
 	validate_lines(text, &c);
-	ATF_CHECK_EQ(2, c.logs);
+	ATF_CHECK_EQ(3, c.logs);	/* + the registration event */
 	ATF_CHECK(strstr(text, "hypertrace.vm.name") != NULL);
 	ATF_CHECK(strstr(text, "after rotation") == NULL);
 	free(text);
@@ -2465,14 +2700,21 @@ ATF_TC_BODY(agg_growth, tc)
 	run_aggs(d, fa, 18);
 	ATF_REQUIRE_EQ(cap.nsnaps, 2);
 	ATF_CHECK_EQ(cap.snaps[0].npoints + cap.snaps[1].npoints, 18);
+	/* All 127 buckets: 63 negative, the zero bucket, 63 positive. */
 	for (i = 0; i < 2; i++)
 		if (strcmp(cap.snaps[i].name, "q") == 0)
-			ATF_CHECK(strlen(cap.snaps[i].points[0].buckets) > 0);
+			ATF_CHECK(cap.snaps[i].points[0].exp != NULL &&
+			    strncmp(cap.snaps[i].points[0].exp, "s0;z1;p0:1,",
+			    11) == 0 &&
+			    strstr(cap.snaps[i].points[0].exp, ";n0:1,") != NULL);
 	for (i = 0; i < nitems(fa); i++)
 		fake_free(fa[i]);
 	dtotel_close(d);
 
-	/* Empty llquantize bins (and empty under/overflow) are skipped. */
+	/*
+	 * Empty llquantize bins (and empty under/overflow buckets) are
+	 * kept: every point carries the complete layout.
+	 */
 	d = open_bridge("x { @llq = llquantize(x, 2, 0, 2, 2); }");
 	memset(llq, 0, sizeof(llq));
 	llq[0] = (int64_t)LLQ_ARG(2, 0, 2, 2);
@@ -2481,7 +2723,8 @@ ATF_TC_BODY(agg_growth, tc)
 	fake_rec(fa[0], DTRACEAGG_LLQUANTIZE, 0, llq, 6 * sizeof(int64_t));
 	run_aggs(d, fa, 1);
 	ATF_REQUIRE_EQ(1, cap.nsnaps);
-	ATF_CHECK_STREQ("1:2;", cap.snaps[0].points[0].buckets);
+	ATF_CHECK_STREQ("0:0;1:2;3:0;7:0;9223372036854775807:0;",
+	    cap.snaps[0].points[0].buckets);
 	fake_free(fa[0]);
 	dtotel_close(d);
 }
@@ -2529,6 +2772,540 @@ ATF_TC_BODY(firing_identity, tc)
 	ATF_REQUIRE_EQ(1, (int)cap.events[5].nstack);
 	ATF_CHECK(strncmp(cap.events[5].frame0, "mmmm", 4) == 0);
 	ATF_CHECK(strchr(cap.events[5].frame0, '`') == NULL);
+	dtotel_close(d);
+}
+
+/* ---------------------------------------------------------------- */
+/* Native OpenTelemetry mappings					*/
+
+/* A record of a given action (and print() type index) for a firing. */
+static int
+deliver_rec(const char *text, int cpu, uint64_t hrtime, dtrace_epid_t epid,
+    dtrace_actkind_t act, uint32_t format)
+{
+	dtrace_bufdata_t bd;
+	dtrace_probedata_t pd;
+	dtrace_eprobedesc_t ed;
+	dtrace_recdesc_t rec;
+
+	memset(&bd, 0, sizeof(bd));
+	memset(&pd, 0, sizeof(pd));
+	memset(&ed, 0, sizeof(ed));
+	memset(&rec, 0, sizeof(rec));
+	ed.dtepd_epid = epid;
+	pd.dtpda_cpu = cpu;
+	pd.dtpda_timestamp = hrtime;
+	pd.dtpda_edesc = &ed;
+	pd.dtpda_pdesc = &test_pdesc;
+	rec.dtrd_action = act;
+	rec.dtrd_format = format;
+	bd.dtbda_buffered = text;
+	bd.dtbda_probe = &pd;
+	bd.dtbda_recdesc = &rec;
+	return (stub.bufhandler(&bd, stub.bufarg));
+}
+
+static const struct cap_snap *
+find_snap(const char *name)
+{
+	int i;
+
+	for (i = 0; i < cap.nsnaps; i++)
+		if (strcmp(cap.snaps[i].name, name) == 0)
+			return (&cap.snaps[i]);
+	return (NULL);
+}
+
+static const struct cap_point *
+find_point(const struct cap_snap *s, const char *attrs)
+{
+	size_t i;
+
+	for (i = 0; s != NULL && i < s->npoints; i++)
+		if (strcmp(s->points[i].attrs, attrs) == 0)
+			return (&s->points[i]);
+	return (NULL);
+}
+
+static struct fake_agg *
+count_agg(const char *name, uint64_t key, int64_t value)
+{
+	struct fake_agg *f;
+
+	f = fake_new(name, 1);
+	fake_rec(f, DTRACEACT_DIFEXPR, 0, &key, sizeof(key));
+	fake_rec(f, DTRACEAGG_COUNT, 0, &value, sizeof(value));
+	return (f);
+}
+
+static int
+same_ts(const struct timespec *a, const struct timespec *b)
+{
+
+	return (a->tv_sec == b->tv_sec && a->tv_nsec == b->tv_nsec);
+}
+
+/*
+ * Resets: a series whose count went down (clear()), or that was absent
+ * from the previous snapshot (new, or back after trunc()), starts at the
+ * previous snapshot; the rest keep the trace's start (zero point start).
+ */
+ATF_TC_WITHOUT_HEAD(agg_series_resets);
+ATF_TC_BODY(agg_series_resets, tc)
+{
+	struct dtotel *d;
+	struct fake_agg *fa[4];
+	struct timespec t1, t3;
+	const struct cap_point *p;
+	int64_t q[DTRACE_QUANTIZE_NBUCKETS];
+
+	d = open_bridge("x { @c[pid] = count(); @q = quantize(x); }");
+	memset(q, 0, sizeof(q));
+	q[DTRACE_QUANTIZE_ZEROBUCKET + 1] = 4;
+	fa[0] = count_agg("c", 1, 5);
+	fa[1] = count_agg("c", 2, 3);
+	fa[2] = fake_new("q", 0);
+	fake_rec(fa[2], DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+	run_aggs(d, fa, 3);
+	/* First snapshot: everything accumulates since the trace began. */
+	p = find_point(find_snap("c"), "process.pid=1;");
+	ATF_REQUIRE(p != NULL);
+	ATF_CHECK_EQ(0, p->start.tv_sec);
+	t1 = d->last_snap;
+	ATF_REQUIRE(t1.tv_sec > 0);
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+	fake_free(fa[2]);
+
+	cap.nsnaps = 0;
+	usleep(10000);
+	fa[0] = count_agg("c", 1, 7);		/* grew: same start */
+	fa[1] = count_agg("c", 2, 1);		/* cleared and regrew */
+	fa[2] = count_agg("c", 3, 2);		/* new */
+	q[DTRACE_QUANTIZE_ZEROBUCKET + 1] = 2;	/* cleared */
+	fa[3] = fake_new("q", 0);
+	fake_rec(fa[3], DTRACEAGG_QUANTIZE, 0, q, sizeof(q));
+	run_aggs(d, fa, 4);
+	ATF_CHECK_EQ(0, find_point(find_snap("c"), "process.pid=1;")->start.tv_sec);
+	ATF_CHECK(same_ts(&find_point(find_snap("c"), "process.pid=2;")->start, &t1));
+	ATF_CHECK(same_ts(&find_point(find_snap("c"), "process.pid=3;")->start, &t1));
+	ATF_CHECK(same_ts(&find_point(find_snap("q"), "")->start, &t1));
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+	fake_free(fa[2]);
+	fake_free(fa[3]);
+
+	/* trunc() removed key 2; when it returns it starts afresh. */
+	cap.nsnaps = 0;
+	fa[0] = count_agg("c", 1, 8);
+	run_aggs(d, fa, 1);
+	t3 = d->last_snap;
+	fake_free(fa[0]);
+	cap.nsnaps = 0;
+	fa[0] = count_agg("c", 1, 9);
+	fa[1] = count_agg("c", 2, 1);
+	run_aggs(d, fa, 2);
+	ATF_CHECK_EQ(0, find_point(find_snap("c"), "process.pid=1;")->start.tv_sec);
+	ATF_CHECK(same_ts(&find_point(find_snap("c"), "process.pid=2;")->start, &t3));
+	fake_free(fa[0]);
+	fake_free(fa[1]);
+
+	/* Out of memory for the bookkeeping: points keep the trace's start. */
+	cap.nsnaps = 0;
+	fa[0] = count_agg("c", 1, 1);
+	stub.aggs = (const dtrace_aggdata_t *[]){ &fa[0]->ad };
+	stub.naggs = 1;
+	failalloc_arm(4);
+	ATF_CHECK_EQ(0, dtotel_aggregate(d));
+	failalloc_arm(0);
+	stub.naggs = 0;
+	fake_free(fa[0]);
+	dtotel_close(d);
+}
+
+/* Drops by kind and runtime errors by fault, as cumulative counters. */
+ATF_TC_WITHOUT_HEAD(drop_and_error_counters);
+ATF_TC_BODY(drop_and_error_counters, tc)
+{
+	struct dtotel *d;
+	const struct cap_snap *s;
+	dtrace_errdata_t e;
+	dtrace_probedesc_t pd;
+	dtrace_eprobedesc_t ed;
+
+	d = open_bridge(NULL);
+	/* Nothing counted: nothing to report, even when forced. */
+	dtotel_report(d, 1);
+	ATF_REQUIRE_EQ(0, cap.nsnaps);
+	dtotel_drops(d, DTRACEDROP_PRINCIPAL, 3);
+	dtotel_drops(d, DTRACEDROP_DYNAMIC, 2);
+	dtotel_drops(d, DTRACEDROP_DBLERROR, 1);
+	dtotel_drops(d, 99, 4);			/* unknown: principal */
+	dtotel_drops(d, DTRACEDROP_SPEC, 0);	/* nothing */
+	memset(&e, 0, sizeof(e));
+	memset(&pd, 0, sizeof(pd));
+	memset(&ed, 0, sizeof(ed));
+	strlcpy(pd.dtpd_provider, "fbt", sizeof(pd.dtpd_provider));
+	strlcpy(pd.dtpd_mod, "kernel", sizeof(pd.dtpd_mod));
+	strlcpy(pd.dtpd_func, "vn_open", sizeof(pd.dtpd_func));
+	strlcpy(pd.dtpd_name, "entry", sizeof(pd.dtpd_name));
+	ed.dtepd_epid = 7;
+	e.dteda_pdesc = &pd;
+	e.dteda_edesc = &ed;
+	e.dteda_cpu = 1;
+	e.dteda_action = 2;
+	e.dteda_offset = 16;
+	e.dteda_fault = DTRACEFLT_BADADDR;
+	e.dteda_addr = 0x10;
+	e.dteda_msg = "error on enabled probe ID 7: invalid address (0x10)";
+	deliver(d, "pending\n", 0, 5, 3, 0);
+	dtotel_error_record(d, &e);
+	/* The pending line went out first. */
+	ATF_REQUIRE_EQ(2, cap.nevents);
+	ATF_REQUIRE_STREQ("pending", cap.events[0].body);
+	ATF_REQUIRE_EQ(OE_SEV_ERROR, cap.events[1].severity);
+	ATF_REQUIRE_STREQ("dtrace.error", cap.events[1].event_name);
+	ATF_REQUIRE_STREQ("fbt:kernel:vn_open:entry", cap.events[1].probe);
+	ATF_REQUIRE_STREQ(e.dteda_msg, cap.events[1].body);
+	ATF_REQUIRE_STREQ("dtrace.fault=badaddr;dtrace.fault.code=1;"
+	    "dtrace.fault.address=16;dtrace.action.index=2;"
+	    "dtrace.difo.offset=16;dtrace.epid=7;", cap.events[1].attrs);
+	ATF_REQUIRE_EQ(1, cap.events[1].ctx.cpu);
+	/* No address for a division by zero; library and odd faults. */
+	e.dteda_fault = DTRACEFLT_DIVZERO;
+	e.dteda_edesc = NULL;
+	e.dteda_pdesc = NULL;
+	e.dteda_msg = NULL;
+	dtotel_error_record(d, &e);
+	ATF_REQUIRE_STREQ("dtrace.fault=divzero;dtrace.fault.code=4;"
+	    "dtrace.action.index=2;dtrace.difo.offset=16;",
+	    cap.events[2].attrs);
+	ATF_REQUIRE_STREQ("DTrace error", cap.events[2].body);
+	ATF_REQUIRE_STREQ("", cap.events[2].probe);
+	e.dteda_fault = DTRACEFLT_LIBRARY + 3;
+	dtotel_error_record(d, &e);
+	e.dteda_fault = 77;
+	dtotel_error_record(d, &e);
+	e.dteda_fault = DTRACEFLT_KPRIV;
+	dtotel_error_record(d, &e);
+	ATF_REQUIRE(strstr(cap.events[5].attrs, "dtrace.fault.address=16;")
+	    != NULL);
+	e.dteda_fault = DTRACEFLT_BADALIGN;
+	dtotel_error_record(d, &e);
+	ATF_REQUIRE(strstr(cap.events[6].attrs, "dtrace.fault.address=16;")
+	    != NULL);
+	e.dteda_fault = DTRACEFLT_UPRIV;
+	dtotel_error_record(d, &e);
+	ATF_REQUIRE(strstr(cap.events[7].attrs, "dtrace.fault.address=16;")
+	    != NULL);
+	dtotel_report(d, 0);
+	s = find_snap("drops");
+	ATF_REQUIRE(s != NULL);
+	ATF_CHECK_EQ(1, s->scope_metric);
+	ATF_CHECK_EQ(OE_AGG_COUNT, s->kind);
+	ATF_CHECK_STREQ("{record}", s->unit);
+	ATF_CHECK_EQ(3, s->npoints);
+	ATF_CHECK_EQ(7, find_point(s, "dtrace.drop.kind=principal;")->scalar);
+	ATF_CHECK_EQ(2, find_point(s, "dtrace.drop.kind=dynamic;")->scalar);
+	ATF_CHECK_EQ(1, find_point(s,
+	    "dtrace.drop.kind=error_in_error_probe;")->scalar);
+	s = find_snap("errors");
+	ATF_REQUIRE(s != NULL);
+	ATF_CHECK_STREQ("{error}", s->unit);
+	ATF_CHECK_EQ(7, s->npoints);
+	ATF_CHECK_EQ(1, find_point(s, "dtrace.fault=badaddr;")->scalar);
+	ATF_CHECK_EQ(1, find_point(s, "dtrace.fault=library;")->scalar);
+	ATF_CHECK_EQ(1, find_point(s, "dtrace.fault=other;")->scalar);
+	/* Unchanged since: nothing, unless forced. */
+	cap.nsnaps = 0;
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(0, cap.nsnaps);
+	dtotel_report(d, 1);
+	ATF_CHECK_EQ(2, cap.nsnaps);
+	/* dtotel_aggregate() always includes them. */
+	cap.nsnaps = 0;
+	ATF_REQUIRE_EQ(0, dtotel_aggregate(d));
+	ATF_CHECK_EQ(2, cap.nsnaps);
+	/* An exporter failure marks the session. */
+	cap.fail = 1;
+	dtotel_report(d, 1);
+	ATF_CHECK(dtotel_error(d));
+	cap.fail = 0;
+	dtotel_close(d);
+
+	/* exit() is a named event; a failing exporter marks the session. */
+	d = open_bridge(NULL);
+	dtotel_exit(d, 3);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_CHECK_STREQ("exit(3)", cap.events[0].body);
+	ATF_CHECK_STREQ("dtrace.exit", cap.events[0].event_name);
+	ATF_CHECK_STREQ("dtrace.exit.status=3;", cap.events[0].attrs);
+	cap.fail = 1;
+	dtotel_exit(d, 0);
+	ATF_CHECK(dtotel_error(d));
+	cap.fail = 0;
+	dtotel_close(d);
+	d = open_bridge(NULL);
+	cap.fail = 1;
+	e.dteda_fault = DTRACEFLT_ILLOP;
+	dtotel_error_record(d, &e);
+	ATF_CHECK(dtotel_error(d));
+	cap.fail = 0;
+	/* Errors without drops: only the errors counter. */
+	cap.nsnaps = 0;
+	dtotel_report(d, 0);
+	ATF_CHECK_EQ(1, cap.nsnaps);
+	ATF_CHECK(find_snap("errors") != NULL);
+	dtotel_close(d);
+}
+
+#define	TP1	"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+#define	TP2	"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+
+/* W3C trace context attached to log lines: before or after them. */
+ATF_TC_WITHOUT_HEAD(trace_context_records);
+ATF_TC_BODY(trace_context_records, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.trace\037traceparent=" TP1 "\n", 0, 10, 2, 0);
+	deliver(d, "request[1]: start\n", 0, 10, 2, 0);
+	deliver(d, "request[1]: done\n", 0, 20, 2, 0);
+	deliver(d, "\037otel.trace\037traceparent=" TP2 "\n", 0, 20, 2, 0);
+	/* Another firing's context never applies. */
+	deliver(d, "\037otel.trace\037traceparent=" TP1 "\n", 0, 30, 2, 0);
+	deliver(d, "other\n", 0, 31, 2, 0);
+	deliver(d, "\037otel.trace\037traceparent=00-zz\n", 0, 40, 2, 0);
+	deliver(d, "\037otel.trace\037tracestate=a=b\n", 0, 40, 2, 0);
+	deliver(d, "untraced\n", 0, 40, 2, 0);
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(4, cap.nevents);
+	ATF_CHECK_STREQ("0af7651916cd43dd8448eb211c80319c",
+	    cap.events[0].trace);
+	ATF_CHECK_STREQ("b7ad6b7169203331", cap.events[0].span);
+	ATF_CHECK_EQ(1, cap.events[0].tflags);
+	ATF_CHECK_STREQ("4bf92f3577b34da6a3ce929d0e0e4736",
+	    cap.events[1].trace);
+	ATF_CHECK_STREQ("00f067aa0ba902b7", cap.events[1].span);
+	ATF_CHECK_EQ(0, cap.events[1].tflags);
+	ATF_CHECK_STREQ("00000000000000000000000000000000",
+	    cap.events[2].trace);
+	ATF_CHECK_STREQ("00000000000000000000000000000000",
+	    cap.events[3].trace);
+	dtotel_close(d);
+}
+
+/* Spans join the application's trace; events and links. */
+ATF_TC_WITHOUT_HEAD(span_trace_context);
+ATF_TC_BODY(span_trace_context, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver(d, ANCHOR, 0, 1000, 1, 0);
+	/* Root of the request: its parent is the application's span. */
+	deliver(d, "\037otel.span\037name=handler\037start=2000\037end=9000"
+	    "\037thread=5\037traceparent=" TP1 "\037tracestate=v=1"
+	    "\037event=2500:parsed\037event=8000:replied"
+	    "\037link=" TP2 "\n", 0, 9000, 2, 0);
+	/* A child: its parent is local, its trace the application's. */
+	deliver(d, "\037otel.span\037name=io\037start=3000\037end=4000"
+	    "\037thread=5\037parent=2000\037traceparent=" TP1 "\n", 0, 4000,
+	    2, 0);
+	/* Unanchored events keep their distance from the span's end. */
+	ATF_REQUIRE_EQ(2, cap.nspans);
+	ATF_CHECK_STREQ("handler", cap.spans[0].name);
+	ATF_CHECK_STREQ("0af7651916cd43dd8448eb211c80319c",
+	    cap.spans[0].trace);
+	ATF_CHECK_STREQ("b7ad6b7169203331", cap.spans[0].parent);
+	ATF_CHECK_EQ(OE_SPAN_FLAGS_HAS_IS_REMOTE | OE_SPAN_FLAGS_IS_REMOTE |
+	    1, cap.spans[0].flags);
+	ATF_CHECK_STREQ("v=1", cap.spans[0].tstate);
+	ATF_CHECK_STREQ("parsed@1700000000.000001500;"
+	    "replied@1700000000.000007000;", cap.spans[0].events);
+	ATF_CHECK_STREQ("4bf92f3577b34da6a3ce929d0e0e4736/00f067aa0ba902b7/0;",
+	    cap.spans[0].links);
+	ATF_CHECK_STREQ("0af7651916cd43dd8448eb211c80319c",
+	    cap.spans[1].trace);
+	ATF_CHECK_STREQ(cap.spans[0].span, cap.spans[1].parent);
+	ATF_CHECK_EQ(OE_SPAN_FLAGS_HAS_IS_REMOTE | 1, cap.spans[1].flags);
+	ATF_CHECK(cap.spans[1].tstate == NULL);
+	/* Malformed: event without a name or time, bad links/parents. */
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\037event=5\n",
+	    0, 1, 2, 0);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\037event=x:y\n",
+	    0, 1, 2, 0);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\037event=5:\n",
+	    0, 1, 2, 0);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2\037link=00\n",
+	    0, 1, 2, 0);
+	deliver(d, "\037otel.span\037name=a\037start=1\037end=2"
+	    "\037traceparent=junk\n", 0, 1, 2, 0);
+	ATF_CHECK_EQ(2, cap.nspans);
+	/* More than eight events or links: the rest are dropped. */
+	deliver(d, "\037otel.span\037name=many\037start=1100\037end=1200"
+	    "\037event=1101:e\037event=1102:e\037event=1103:e\037event=1104:e"
+	    "\037event=1105:e\037event=1106:e\037event=1107:e\037event=1108:e"
+	    "\037event=1109:e\037link=" TP1 "\037link=" TP1 "\037link=" TP1
+	    "\037link=" TP1 "\037link=" TP1 "\037link=" TP1 "\037link=" TP1
+	    "\037link=" TP1 "\037link=" TP2 "\n", 0, 1200, 2, 0);
+	ATF_REQUIRE_EQ(3, cap.nspans);
+	ATF_CHECK(strstr(cap.spans[2].events, "1109") == NULL);
+	ATF_CHECK(strstr(cap.spans[2].links, "4bf92f35") == NULL);
+	dtotel_close(d);
+
+	/* Before any clock anchor events move with the span. */
+	d = open_bridge(NULL);
+	deliver(d, "\037otel.span\037name=u\037start=100\037end=300"
+	    "\037event=200:mid\n", 0, 300, 2, 0);
+	ATF_REQUIRE_EQ(1, cap.nspans);
+	{
+		long long s0, e0, m0;
+
+		s0 = (long long)cap.spans[0].start.tv_sec * 1000000000 +
+		    cap.spans[0].start.tv_nsec;
+		e0 = (long long)cap.spans[0].end.tv_sec * 1000000000 +
+		    cap.spans[0].end.tv_nsec;
+		ATF_REQUIRE(sscanf(cap.spans[0].events, "mid@%lld", &m0) == 1);
+		ATF_CHECK_EQ(200, e0 - s0);
+		(void)m0;
+		ATF_CHECK(strstr(cap.spans[0].events, "mid@") != NULL);
+	}
+	dtotel_close(d);
+}
+
+/*
+ * Typed print(): one log record with structured members; the action
+ * behind every line is an attribute.
+ */
+ATF_TC_WITHOUT_HEAD(typed_print_and_actions);
+ATF_TC_BODY(typed_print_and_actions, tc)
+{
+	struct dtotel *d;
+
+	d = open_bridge(NULL);
+	deliver_rec("struct timespec {\n"
+	    "    time_t tv_sec = 0x5\n"
+	    "    long tv_nsec = 0x10\n"
+	    "    struct inner in = {\n"
+	    "        int a :3 = 0x1\n"
+	    "        char *p = 0xdead\n"
+	    "    }\n"
+	    "    int after = 0x2\n"
+	    "}\n", 0, 10, 2, DTRACEACT_DIFEXPR, 3);
+	deliver_rec("int 0x5\n", 0, 11, 2, DTRACEACT_DIFEXPR, 3);
+	deliver_rec("traced\n", 0, 12, 2, DTRACEACT_DIFEXPR, 0);
+	deliver_rec("printed\n", 0, 13, 2, DTRACEACT_PRINTF, 0);
+	deliver_rec("  0  1  2\n", 0, 14, 2, DTRACEACT_TRACEMEM, 0);
+	deliver_rec("mem\n", 0, 15, 2, DTRACEACT_PRINTM, 0);
+	deliver_rec("out\n", 0, 16, 2, DTRACEACT_SYSTEM, 0);
+	deliver_rec("f\n", 0, 17, 2, DTRACEACT_FREOPEN, 0);
+	deliver_rec("kernel`foo\n", 0, 18, 2, DTRACEACT_SYM, 0);
+	deliver_rec("kernel\n", 0, 19, 2, DTRACEACT_MOD, 0);
+	deliver_rec("0x1\n", 0, 20, 2, DTRACEACT_USYM, 0);
+	deliver_rec("libc\n", 0, 21, 2, DTRACEACT_UMOD, 0);
+	deliver_rec("0x2\n", 0, 22, 2, DTRACEACT_UADDR, 0);
+	deliver_rec("t\n", 0, 23, 2, DTRACEACT_TRACEMEM_DYNSIZE, 0);
+	deliver_rec("x\n", 0, 24, 2, DTRACEACT_EXIT, 0);
+	deliver_rec("              kernel`bar+0x1\n", 0, 25, 2, DTRACEACT_STACK,
+	    0);
+	deliver_rec("              0x400\n", 0, 26, 2, DTRACEACT_USTACK, 0);
+	deliver_rec("              0x401\n", 0, 27, 2, DTRACEACT_JSTACK, 0);
+	/* A print() of nothing it can split: one line, as text. */
+	deliver_rec("plain", 0, 28, 2, DTRACEACT_DIFEXPR, 3);
+	/* A type line with nothing after the type. */
+	deliver_rec("struct\n", 0, 29, 2, DTRACEACT_DIFEXPR, 3);
+	/* Trailing blanks, blank lines, extra spaces, unclosed braces. */
+	deliver_rec("struct u {  \n\n    int sp =  0x7  \n"
+	    "    struct v v = {\n        int w = 0x8\n", 0, 30, 2,
+	    DTRACEACT_DIFEXPR, 3);
+	/* An empty first line. */
+	deliver_rec("\nint 0x5\n", 0, 31, 2, DTRACEACT_DIFEXPR, 3);
+	dtotel_flush(d);
+	ATF_REQUIRE(cap.nevents >= 16);
+	ATF_CHECK_STREQ("dtrace.action=print;dtrace.print.type=struct timespec;"
+	    "dtrace.print.tv_sec=0x5;dtrace.print.tv_nsec=0x10;"
+	    "dtrace.print.in.a=0x1;dtrace.print.in.p=0xdead;"
+	    "dtrace.print.after=0x2;", cap.events[0].attrs);
+	ATF_CHECK(strncmp(cap.events[0].body, "struct timespec {\n", 18) == 0);
+	ATF_CHECK(cap.events[0].body[strlen(cap.events[0].body) - 1] == '}');
+	ATF_CHECK_STREQ("dtrace.action=print;dtrace.print.type=int;"
+	    "dtrace.print.value=0x5;", cap.events[1].attrs);
+	ATF_CHECK_STREQ("dtrace.action=trace;", cap.events[2].attrs);
+	ATF_CHECK_STREQ("dtrace.action=printf;", cap.events[3].attrs);
+	ATF_CHECK_STREQ("dtrace.action=tracemem;", cap.events[4].attrs);
+	ATF_CHECK_STREQ("dtrace.action=printm;", cap.events[5].attrs);
+	ATF_CHECK_STREQ("dtrace.action=system;", cap.events[6].attrs);
+	ATF_CHECK_STREQ("dtrace.action=freopen;", cap.events[7].attrs);
+	ATF_CHECK_STREQ("dtrace.action=sym;", cap.events[8].attrs);
+	ATF_CHECK_STREQ("dtrace.action=mod;", cap.events[9].attrs);
+	ATF_CHECK_STREQ("dtrace.action=usym;", cap.events[10].attrs);
+	ATF_CHECK_STREQ("dtrace.action=umod;", cap.events[11].attrs);
+	ATF_CHECK_STREQ("dtrace.action=uaddr;", cap.events[12].attrs);
+	ATF_CHECK_STREQ("dtrace.action=tracemem;", cap.events[13].attrs);
+	ATF_CHECK_STREQ("", cap.events[14].attrs);	/* not named */
+	{
+		int k;
+
+		for (k = 0; k < cap.nevents; k++)
+			if (strncmp(cap.events[k].body, "struct u", 8) == 0)
+				break;
+		ATF_REQUIRE(k < cap.nevents);
+		ATF_CHECK_STREQ("dtrace.action=print;dtrace.print.type="
+		    "struct u;dtrace.print.sp=0x7;dtrace.print.v.w=0x8;",
+		    cap.events[k].attrs);
+		ATF_REQUIRE(k + 1 < cap.nevents);
+		ATF_CHECK_STREQ("dtrace.action=print;", cap.events[k + 1].attrs);
+	}
+	dtotel_close(d);
+
+	/* Deep nesting and more members than fit are cut, not fatal. */
+	d = open_bridge(NULL);
+	{
+		struct oe_buf b;
+		int i;
+
+		oe_buf_init(&b);
+		oe_buf_appendstr(&b, "struct deep {\n");
+		for (i = 0; i < 10; i++)
+			oe_buf_appendf(&b, "struct n n%d = {\n", i);
+		for (i = 0; i < 10; i++)
+			oe_buf_appendstr(&b, "}\n");
+		for (i = 0; i < 40; i++)
+			oe_buf_appendf(&b, "int m%d = 0x%x\n", i, i);
+		oe_buf_appendstr(&b, "no equals here\n}\n");
+		deliver_rec(b.data, 0, 10, 2, DTRACEACT_DIFEXPR, 3);
+		oe_buf_free(&b);
+	}
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_CHECK(strstr(cap.events[0].attrs, "dtrace.print.m0=0x0;") != NULL);
+	ATF_CHECK(strstr(cap.events[0].attrs, "m39") == NULL);
+	dtotel_close(d);
+
+	/* Members after levels too deep to keep resume at the right level. */
+	d = open_bridge(NULL);
+	{
+		struct oe_buf b;
+		int i;
+
+		oe_buf_init(&b);
+		oe_buf_appendstr(&b, "struct deep {\n");
+		for (i = 0; i < 10; i++)
+			oe_buf_appendf(&b, "struct n n%d = {\n", i);
+		oe_buf_appendstr(&b, "int in = 0x1\n");
+		for (i = 0; i < 10; i++)
+			oe_buf_appendstr(&b, "}\n");
+		oe_buf_appendstr(&b, "int top = 0x2\n}\n");
+		deliver_rec(b.data, 0, 10, 2, DTRACEACT_DIFEXPR, 3);
+		oe_buf_free(&b);
+	}
+	dtotel_flush(d);
+	ATF_REQUIRE_EQ(1, cap.nevents);
+	ATF_CHECK(strstr(cap.events[0].attrs,
+	    "dtrace.print.n0.n1.n2.n3.n4.n5.n6.n7.in=0x1;") != NULL);
+	ATF_CHECK(strstr(cap.events[0].attrs, "dtrace.print.top=0x2;") != NULL);
 	dtotel_close(d);
 }
 
@@ -2586,5 +3363,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, firing_identity);
 	ATF_TP_ADD_TC(tp, session_system_config);
 	ATF_TP_ADD_TC(tp, session_file_target);
+	ATF_TP_ADD_TC(tp, agg_series_resets);
+	ATF_TP_ADD_TC(tp, drop_and_error_counters);
+	ATF_TP_ADD_TC(tp, trace_context_records);
+	ATF_TP_ADD_TC(tp, span_trace_context);
+	ATF_TP_ADD_TC(tp, typed_print_and_actions);
 	return (atf_no_error());
 }

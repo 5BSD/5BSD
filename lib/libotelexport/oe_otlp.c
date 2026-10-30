@@ -85,7 +85,6 @@ struct oe_otlp {
 	pthread_cond_t	 cv;
 	char		**frags[OTLP_NSIGNALS];	/* per-record fragments */
 	size_t		 nfrags[OTLP_NSIGNALS], capfrags[OTLP_NSIGNALS];
-	uint64_t	 pending_drops;
 	struct post_job	*jobs_head, *jobs_tail;
 	int		 stop;
 	int		 started;
@@ -482,8 +481,7 @@ deliver(struct oe_otlp *o, enum oe_signal sig, const char *body, size_t len)
 
 /* Called with the lock held; takes every batch out of the object. */
 static void
-take_batches(struct oe_otlp *o, char **frags[], size_t nfrags[],
-    uint64_t *drops)
+take_batches(struct oe_otlp *o, char **frags[], size_t nfrags[])
 {
 	int i;
 
@@ -493,33 +491,20 @@ take_batches(struct oe_otlp *o, char **frags[], size_t nfrags[],
 		o->frags[i] = NULL;
 		o->nfrags[i] = o->capfrags[i] = 0;
 	}
-	*drops = o->pending_drops;
-	o->pending_drops = 0;
 }
 
 /* Post taken batches.  Called without the lock. */
 static void
-post_batches(struct oe_otlp *o, char **frags[], size_t nfrags[],
-    uint64_t drops)
+post_batches(struct oe_otlp *o, char **frags[], size_t nfrags[])
 {
 	char *body;
 	size_t len;
 	int i;
 
-	if (nfrags[OE_SIGNAL_LOGS] == 0 && drops > 0) {
-		/*
-		 * No log records this cycle (aggregation-only
-		 * profiles): re-credit the drops so they ride the
-		 * next batch instead of being silently destroyed.
-		 */
-		pthread_mutex_lock(&o->lock);
-		o->pending_drops += drops;
-		pthread_mutex_unlock(&o->lock);
-	}
 	for (i = 0; i < OTLP_NSIGNALS; i++) {
 		if (nfrags[i] > 0) {
 			body = oe_enc_request(&o->enc, (enum oe_signal)i,
-			    frags[i], nfrags[i], drops, &len);
+			    frags[i], nfrags[i], &len);
 			if (body != NULL) {
 				deliver(o, (enum oe_signal)i, body, len);
 				free(body);
@@ -570,7 +555,6 @@ sender_main(void *arg)
 	struct timespec deadline;
 	char **frags[OTLP_NSIGNALS];
 	size_t nfrags[OTLP_NSIGNALS];
-	uint64_t drops;
 	int i, timedout;
 
 	pthread_mutex_lock(&o->lock);
@@ -592,21 +576,13 @@ sender_main(void *arg)
 
 		if (timedout) {
 			/* Time-based flush of whatever accumulated. */
-			take_batches(o, frags, nfrags, &drops);
+			take_batches(o, frags, nfrags);
 			pthread_mutex_unlock(&o->lock);
 			if (!batches_empty(nfrags))
-				post_batches(o, frags, nfrags, drops);
+				post_batches(o, frags, nfrags);
 			else {
 				for (i = 0; i < OTLP_NSIGNALS; i++)
 					oe_frags_free(frags[i], nfrags[i]);
-				/*
-				 * Nothing to post this tick: re-credit
-				 * any drops so they ride a later batch
-				 * instead of being destroyed.
-				 */
-				pthread_mutex_lock(&o->lock);
-				o->pending_drops += drops;
-				pthread_mutex_unlock(&o->lock);
 				/* Idle: probe the collector for replay. */
 				if (o->spool_path != NULL &&
 				    o->spool_size > 0 && time(NULL) -
@@ -678,7 +654,6 @@ otlp_queue(struct oe_otlp *o, enum oe_signal sig, char *rec, int batched)
 	char **frags;
 	char *body;
 	size_t nfrags, len;
-	uint64_t drops;
 
 	if (rec == NULL)
 		return (-1);
@@ -696,14 +671,9 @@ otlp_queue(struct oe_otlp *o, enum oe_signal sig, char *rec, int batched)
 	/* Batch full: build the request and hand it to the sender. */
 	frags = o->frags[sig];
 	nfrags = o->nfrags[sig];
-	drops = 0;
-	if (sig == OE_SIGNAL_LOGS) {
-		drops = o->pending_drops;
-		o->pending_drops = 0;
-	}
 	o->frags[sig] = NULL;
 	o->nfrags[sig] = o->capfrags[sig] = 0;
-	body = oe_enc_request(&o->enc, sig, frags, nfrags, drops, &len);
+	body = oe_enc_request(&o->enc, sig, frags, nfrags, &len);
 	if (body != NULL)
 		enqueue_job(o, sig, body, len);
 	pthread_mutex_unlock(&o->lock);
@@ -747,12 +717,11 @@ otlp_flush(struct oe_exporter *e)
 	struct oe_otlp *o = (struct oe_otlp *)e;
 	char **frags[OTLP_NSIGNALS];
 	size_t nfrags[OTLP_NSIGNALS];
-	uint64_t drops;
 
 	pthread_mutex_lock(&o->lock);
-	take_batches(o, frags, nfrags, &drops);
+	take_batches(o, frags, nfrags);
 	pthread_mutex_unlock(&o->lock);
-	post_batches(o, frags, nfrags, drops);
+	post_batches(o, frags, nfrags);
 	return (0);
 }
 
@@ -811,19 +780,6 @@ static const struct oe_exporter_ops otlp_ops = {
 	.free = otlp_free,
 	.span = otlp_span,
 };
-
-void
-oe_report_drops(struct oe_exporter *e, uint64_t count)
-{
-	struct oe_otlp *o;
-
-	if (e == NULL || e->ops != &otlp_ops)
-		return;
-	o = (struct oe_otlp *)e;
-	pthread_mutex_lock(&o->lock);
-	o->pending_drops += count;
-	pthread_mutex_unlock(&o->lock);
-}
 
 static int
 spool_open(struct oe_otlp *o, const struct oe_otlp_config *cfg)

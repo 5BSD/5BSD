@@ -42,12 +42,11 @@ void	 oe_enc_context(struct oe_buf *, pid_t, const char *execname,
 	    const struct oe_context *, int *first);
 
 /*
- * Wrap fragments in one Export*ServiceRequest.  "drops" (logs only)
- * is spliced into the first record as "<scope>.drops".  The result
- * is malloc'd and NUL-terminated; *lenp excludes the NUL.
+ * Wrap fragments in one Export*ServiceRequest.  The result is malloc'd
+ * and NUL-terminated; *lenp excludes the NUL.
  */
 char	*oe_enc_request(const struct oe_otlpenc *, enum oe_signal,
-	    char **frags, size_t nfrags, uint64_t drops, size_t *lenp);
+	    char **frags, size_t nfrags, size_t *lenp);
 
 /* URL path ("v1/logs", ...) for a signal. */
 const char *oe_enc_path(enum oe_signal);

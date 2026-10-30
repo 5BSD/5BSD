@@ -18,7 +18,12 @@
  *			buffered handler, or written to the work FILE
  *			in text mode.  cpu -1 means no probe data.
  *	work		end of one dtrace_work() pass
- *	drop <n>	report n drops from the next pass
+ *	drop <n> [kind]	report n drops (of dtrace_dropkind_t kind, default
+ *			principal) from the next pass
+ *	error <fault> <addr>
+ *			a runtime error (DTRACEFLT_* number) for the
+ *			error handler
+ *	exit <status>	an exit() record for the record callback
  *	signal		raise SIGINT during the next pass
  *	done		the next pass reports DTRACE_WORKSTATUS_DONE
  *	sleep <ms>	pause inside the pass (lets time-based flushes,
@@ -49,6 +54,10 @@ struct mock_chunk {
 	char		*text;
 	int		 endpass;	/* "work" marker */
 	int		 drop;
+	int		 dropkind;
+	int		 fault;		/* error: DTRACEFLT_* + 1 */
+	uint64_t	 addr;
+	int		 exit;		/* exit: status + 1 */
 	int		 sig;
 	int		 done;
 	int		 sleep_ms;
@@ -70,6 +79,8 @@ static struct {
 	void		*bufarg;
 	dtrace_handle_drop_f *drop;
 	void		*droparg;
+	dtrace_handle_err_f *err;
+	void		*errarg;
 	FILE		*log;
 } m;
 
@@ -128,8 +139,16 @@ load(void)
 			c->text = unescape(p + 1);
 		} else if (strcmp(line, "work") == 0)
 			m.chunks[m.nchunks++].endpass = 1;
-		else if (strncmp(line, "drop ", 5) == 0)
-			m.chunks[m.nchunks++].drop = atoi(line + 5);
+		else if (strncmp(line, "drop ", 5) == 0) {
+			c = &m.chunks[m.nchunks++];
+			c->drop = (int)strtol(line + 5, &p, 10);
+			c->dropkind = (int)strtol(p, NULL, 10);
+		} else if (strncmp(line, "error ", 6) == 0) {
+			c = &m.chunks[m.nchunks++];
+			c->fault = (int)strtol(line + 6, &p, 10) + 1;
+			c->addr = strtoull(p, NULL, 0);
+		} else if (strncmp(line, "exit ", 5) == 0)
+			m.chunks[m.nchunks++].exit = atoi(line + 5) + 1;
 		else if (strcmp(line, "signal") == 0)
 			m.chunks[m.nchunks++].sig = 1;
 		else if (strcmp(line, "done") == 0)
@@ -222,6 +241,18 @@ dtrace_setopt(dtrace_hdl_t *dtp, const char *opt, const char *val)
 	snprintf(what, sizeof(what), "setopt:%s", opt);
 	logf_("setopt %s=%s\n", opt, val != NULL ? val : "");
 	return (failing(what) ? -1 : 0);
+}
+
+int
+dtrace_handle_err(dtrace_hdl_t *dtp, dtrace_handle_err_f *hdlr, void *arg)
+{
+
+	(void)dtp;
+	if (failing("handle_err"))
+		return (-1);
+	m.err = hdlr;
+	m.errarg = arg;
+	return (0);
 }
 
 int
@@ -326,8 +357,6 @@ dtrace_work(dtrace_hdl_t *dtp, FILE *fp, dtrace_consume_probe_f *pfunc,
 	memset(&rec, 0, sizeof(rec));
 	(void)pfunc(&pd, arg);
 	(void)rfunc(&pd, NULL, arg);
-	rec.dtrd_action = DTRACEACT_EXIT;
-	(void)rfunc(&pd, &rec, arg);
 	rec.dtrd_action = DTRACEACT_PRINTF;
 	(void)rfunc(&pd, &rec, arg);
 	if (failing("work"))
@@ -357,8 +386,31 @@ dtrace_work(dtrace_hdl_t *dtp, FILE *fp, dtrace_consume_probe_f *pfunc,
 
 			memset(&dd, 0, sizeof(dd));
 			dd.dtdda_drops = (uint64_t)c->drop;
+			dd.dtdda_kind = (dtrace_dropkind_t)c->dropkind;
 			dd.dtdda_msg = "mock drops";
 			(void)m.drop(&dd, m.droparg);
+			continue;
+		}
+		if (c->fault) {
+			dtrace_errdata_t ed2;
+
+			memset(&ed2, 0, sizeof(ed2));
+			ed2.dteda_pdesc = &mock_pdesc;
+			ed2.dteda_fault = c->fault - 1;
+			ed2.dteda_addr = c->addr;
+			ed2.dteda_action = 1;
+			ed2.dteda_msg = "error on enabled probe ID 1 (ID 2: "
+			    "syscall:freebsd:read:entry): mock fault\n";
+			(void)m.err(&ed2, m.errarg);
+			continue;
+		}
+		if (c->exit) {
+			uint32_t status = (uint32_t)(c->exit - 1);
+
+			memset(&rec, 0, sizeof(rec));
+			rec.dtrd_action = DTRACEACT_EXIT;
+			pd.dtpda_data = (caddr_t)&status;
+			(void)rfunc(&pd, &rec, arg);
 			continue;
 		}
 		if (fp != NULL) {

@@ -718,7 +718,7 @@ The userland plane is the process spine that turns the kernel's mac_capability p
 
 - `dtrace_fdopen(int fd, int version, int flags, int *errp)` — `<dtrace.h>`, cddl/lib/libdtrace.
 - `tracecmp_open()`, `tracecmp_dtrace_open()`, `tracecmp_stats()` — `<tracecmp.h>`, lib/libtracecmp; wire ops `TRACECMP_OP_HELLO/OPEN/STATS` on `system.Trace` v1.0.0.
-- `oe_text_new()`, `oe_jsonl_new()`, `oe_collapsed_new()`, `oe_otlp_new()`, `oe_env_load()`, `oe_report_drops()` — `<otelexport.h>`, lib/libotelexport (`libotelexport.3`).
+- `oe_text_new()`, `oe_jsonl_new()`, `oe_collapsed_new()`, `oe_otlp_new()`, `oe_env_load()`, `oe_exporter_open()`, `oe_traceparent_parse()` — `<otelexport.h>`, lib/libotelexport (`libotelexport.3`).
 - CLI: `bsdtrace(8)`, `bsdinstruments(8)`, `hwstat(8)`, `tracectl(8)`, `logctl(8)`; scripts under `/usr/share/dtrace/` (run with `dtrace -s`) and `/usr/share/bsdinstruments/profiles/`.
 - DTrace providers: kernel `mac_capability*:::`, `capsicum:::`, `envfd:::`, `trustedzfs:::`, `oes:::`, ...; userland `capsule*:::`, `switchboard*:::`, `bsdtrace*:::`, `tracecmp*:::`, `logcmp*:::`, `bsdlog*:::`, `casper*:::`, `pam_*:::`.
 - Profile authoring markers: `/* @bsdinstruments-predicate */`, `-predicate-and`, `-stack`, `-ustack`, `${param}`.

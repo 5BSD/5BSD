@@ -401,6 +401,8 @@ dtotel_session_tick(struct dtotel_session *s)
 	 * which may be long in coming.
 	 */
 	dtotel_flush(s->bridge);
+	/* Drop and error counters, when they changed. */
+	dtotel_report(s->bridge, 0);
 	if (dtotel_error(s->bridge))
 		return (-1);
 	/* OTLP/HTTP batches on its own sender thread. */
