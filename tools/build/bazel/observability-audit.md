@@ -7707,3 +7707,13 @@ setpmac's mac_set_proc then execvp sequence. No explicit new DTrace/audit/syslog
 hooks were added. Review kernel audit records and user-visible failures for
 relabeling, symlink handling and denied process transitions on the target policy.
 Build parity does not prove authorization, audit coverage or enforcement.
+
+### Extended-attribute utilities (2026-10-30)
+
+Native rmextattr generation preserves 12 probe schemas and 14 ordinary/enabled
+sites, verified against Make including emitted instruction checks. File/link
+get/list/set/delete instrumentation remains unchanged. Live firing, namespace
+permissions and failed mutation audit coverage require runtime qualification.
+Extattrctl has no explicit probes in the scanned main source. Maintained ATF
+installation matches, but duplicate symlink_nofollow registration needs repair
+before test discovery/execution can be claimed complete.

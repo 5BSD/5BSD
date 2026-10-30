@@ -42888,3 +42888,28 @@ recursive labeling, policy rejection, process exec and kernel audit behavior
 remain matching-system runtime gates. Existing build-bsd explicit inputs suffice;
 no frontend/signing/publication contract changed. Full system and performance
 qualification remain open; BIP remains excluded.
+
+### Extended-attribute utility migration (2026-10-30)
+
+Native rmextattr/getextattr/setextattr/lsextattr and extattrctl now build and
+install, with conditional DTrace header/object generation, native sbuf linkage,
+binary/manual hardlinks and conditional maintained ATF suite installation.
+Fresh tests-enabled Make comparisons pass: extattr has 13 install records and
+five regular payloads; extattrctl has five records and three payloads. No missing/
+extra paths or metadata mismatches. Symbols, ordered dependencies, manual/test/
+Kyuafile bytes and debuglink CRCs match. Hardlink targets and content are checked.
+
+Native evidence: /usr/obj/usr/src/bazel-extattr-tools-20261030. Make references:
+bazel-{extattr,extattrctl}-make-20261030. Comparators/results:
+/usr/obj/usr/src/bazel-extattr-tools-reference-20261030, per-program subdirectories.
+DOF inventories match 12 probe schemas; both binaries pass instruction/range
+checks for 14 ordinary and 14 enabled sites. This is not live firing evidence.
+
+Existing extattr_test.sh registers symlink_nofollow twice. The installed test
+payload currently preserves Make exactly; fix the source registration and verify
+case discovery before claiming runnable suite completeness. No ATF cases ran.
+DTrace-disabled/RESCUE/BOOTSTRAPPING selection and filesystem namespace, symlink,
+permission and error-path runtime checks remain qualification gaps. No host
+attributes were changed. Existing build-bsd explicit targets/configuration cover
+this work; no frontend/signing/publication contract changed. Full system,
+bootstrap, cache and performance gates remain open.
