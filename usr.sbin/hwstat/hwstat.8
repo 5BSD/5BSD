@@ -32,7 +32,7 @@
 collects CPU power consumption (Intel RAPL or AMD Zen package energy),
 CPU temperatures,
 frequencies, C-state usage, ACPI thermal zones, and GPU state,
-and ships the results as text, JSONL, or OTLP/HTTP metrics to an
+and ships the results as text, JSONL, or OTLP metrics to an
 OpenTelemetry collector.
 .Ss Subcommands
 .Bl -tag -width "watch"
@@ -261,6 +261,8 @@ The OTLP exporter honors
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
 .Ev OTEL_EXPORTER_OTLP_HEADERS ,
 .Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
+.Pq Ql grpc , Ql http/protobuf No by default, or Ql http/json ,
 and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT .
 Settings not given on the command line or in the environment come from

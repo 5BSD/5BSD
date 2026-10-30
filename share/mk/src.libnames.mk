@@ -13,6 +13,7 @@ __<src.libnames.mk>__:	.NOTMAIN
 
 _PRIVATELIBS=	\
 		9p \
+		absl \
 		atf_c \
 		atf_cxx \
 		auditd \
@@ -30,8 +31,11 @@ _PRIVATELIBS=	\
 		heimipcs \
 		kldelf \
 		ldns \
+		nghttp2 \
 		opencsd \
 		pkgconf \
+		protobuf \
+		protobuf-lite \
 		samplerate \
 		sqlite3 \
 		ssh \
@@ -73,6 +77,7 @@ _INTERNALLIBS=	\
 		openbsd \
 		opts \
 		otelexport \
+		protoc \
 		parse \
 		pe \
 		pkgecc \
@@ -82,6 +87,7 @@ _INTERNALLIBS=	\
 		smdb \
 		smutil \
 		telnet \
+		upb \
 		util++ \
 		vers \
 		wpaap \
@@ -446,7 +452,11 @@ _DP_gmock_main=	gmock
 _DP_gtest=	pthread regex
 _DP_gtest_main=	gtest
 _DP_ifconfig=	m
-_DP_otelexport=	z ssl crypto pthread ucl
+_DP_otelexport=	z ssl crypto pthread ucl upb nghttp2
+_DP_absl=	pthread
+_DP_protobuf=	absl z pthread
+_DP_protobuf-lite=	absl pthread
+_DP_protoc=	protobuf absl
 _DP_dtotel=	dtrace jail otelexport
 _DP_iscsiutil=	md
 _DP_kldelf=	elf
@@ -793,6 +803,12 @@ LIBPMCSTAT?=	${LIBPMCSTATDIR}/libpmcstat${PIE_SUFFIX}.a
 LIBOTELEXPORTDIR=	${_LIB_OBJTOP}/lib/libotelexport
 LIBOTELEXPORT?=	${LIBOTELEXPORTDIR}/libotelexport${PIE_SUFFIX}.a
 
+LIBPROTOCDIR=	${_LIB_OBJTOP}/lib/protobuf/libprotoc
+LIBPROTOC?=	${LIBPROTOCDIR}/libprotoc${PIE_SUFFIX}.a
+
+LIBUPBDIR=	${_LIB_OBJTOP}/lib/protobuf/libupb
+LIBUPB?=	${LIBUPBDIR}/libupb${PIE_SUFFIX}.a
+
 LIBDTOTELDIR=	${_LIB_OBJTOP}/cddl/lib/libdtotel
 LIBDTOTEL?=	${LIBDTOTELDIR}/libdtotel${PIE_SUFFIX}.a
 
@@ -980,6 +996,8 @@ LIBCAP_SYSLOGDIR=	${_LIB_OBJTOP}/lib/libcasper/services/cap_syslog
 LIBFIDL_BSDDIR=	${_LIB_OBJTOP}/lib/libfidl
 LIBCPLUSPLUSDIR=	${_LIB_OBJTOP}/lib/libc++
 LIBCBORDIR=	${_LIB_OBJTOP}/lib/libcbor
+LIBPROTOBUFDIR=	${_LIB_OBJTOP}/lib/protobuf/libprotobuf
+LIBPROTOBUF-LITEDIR=	${_LIB_OBJTOP}/lib/protobuf/libprotobuf-lite
 LIBBSDXMLDIR=	${_LIB_OBJTOP}/lib/libexpat
 LIBFIDO2DIR=	${_LIB_OBJTOP}/lib/libfido2
 LIBKVMDIR=	${_LIB_OBJTOP}/lib/libkvm

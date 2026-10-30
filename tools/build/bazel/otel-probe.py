@@ -133,11 +133,16 @@ def path_string_check(objcopy, make_object, bazel_object, src, scratch, ms, bs, 
     return report
 
 
-def make_compile_command(dry_run, obj):
+def make_compile_command(dry_run, obj, by_basename=False):
     matches = []
     for line in dry_run.splitlines():
         tokens = shlex.split(line) if ' -c ' in line else []
-        if '-o' in tokens and tokens[tokens.index('-o') + 1] == obj:
+        if '-o' not in tokens:
+            continue
+        target = tokens[tokens.index('-o') + 1]
+        # Generated sources keep their protogen/<set>/... subdirectory in the
+        # Make object name (bsd.obj.mk); Bazel names objects by basename.
+        if target == obj or (by_basename and Path(target).name == obj):
             matches.append(tokens)
     # bsd.progs.mk runs one sub-make per program, so an object shared by
     # several programs of a directory appears once per program; it is the
@@ -328,6 +333,8 @@ def main():
     # comparison meaningless (found when a test source changed mid-run).
     source_files = sorted({f for c in manifest['components'] for f in (src / c['path']).rglob('*')
                            if f.is_file()} |
+                          {f for t in manifest.get('source_trees', []) for f in (src / t).rglob('*')
+                           if f.is_file() and 'tests' not in f.relative_to(src / t).parts} |
                           {f for t in manifest['header_trees'] for f in (src / t).rglob('*.h')})
     source_digest = {str(f): sha(f) for f in source_files}
     try:
@@ -391,6 +398,9 @@ def main():
         for component in manifest['components']:
             shutil.copytree(src / component['path'], ws / component['path'],
                             symlinks=False, dirs_exist_ok=True)
+        for tree in manifest.get('source_trees', []):
+            shutil.copytree(src / tree, ws / tree, symlinks=False, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns('tests'))
         for tree in manifest['header_trees']:
             for header in sorted((src / tree).rglob('*.h')):
                 if not header.resolve(strict=True).is_relative_to(src):
@@ -429,8 +439,10 @@ def main():
             for item in artifacts:
                 _, listed, _ = rec.run(prefix + ['query', 'labels(srcs, %s)' % item['label']], cwd=ws)
                 bazel_srcs = [x.rsplit(':', 1)[1] for x in listed.split() if x.endswith('.c')]
+                # Generated sources (protoc-gen.mk protogen/<set>/...) come
+                # from a rule target; protobuf-probe.py compares them.
                 make_srcs = [x for x in make_info[item['component']]['srcs'][item['label']]
-                             if x.endswith('.c')]
+                             if x.endswith('.c') and not x.startswith('protogen/')]
                 if sorted(bazel_srcs) != sorted(make_srcs):
                     raise ValueError('BUILD srcs differ from Make SRCS for ' + item['label'])
                 # Query output is sorted; source order is checked through archive
@@ -472,7 +484,8 @@ def main():
             per_object = {}
             for obj in objects:
                 stem = re.sub(r'(\.pic)?\.o$', '', Path(obj).name)
-                make_tokens = make_compile_command(dry, stem + item['make_object_suffix'])
+                make_tokens = make_compile_command(dry, stem + item['make_object_suffix'],
+                                                   by_basename=True)
                 bazel_tokens = compile_actions[obj]
                 mflags, mincludes, missing = normalize_make_compile(make_tokens, src)
                 bflags, bincludes, dropped = normalize_bazel_compile(bazel_tokens)
@@ -483,7 +496,8 @@ def main():
                 if mincludes != bincludes:
                     raise ValueError('include search path differs from Make for %s: %s vs %s' %
                                      (obj, mincludes, bincludes))
-                make_object = Path(make_info[item['component']]['objdir']) / (stem + item['make_object_suffix'])
+                make_object = Path(make_info[item['component']]['objdir']) / \
+                    make_tokens[make_tokens.index('-o') + 1]
                 ms = checker.sections(tools['llvm-objcopy'], readelf, make_object, scratch)
                 bs = checker.sections(tools['llvm-objcopy'], readelf, ws / obj, scratch)
                 differing = sorted(n for n in set(ms) | set(bs) if ms.get(n) != bs.get(n))
@@ -671,9 +685,20 @@ def host_runtime(rec, out, fixture, src, artifacts):
     report = {'status': 'passed', 'abi_blocked': []}
     work = out / 'host-runtime'
     work.mkdir()
+    # Host rtld and host libraries; only libraries the host does not have
+    # at all (new base libraries, for example libprivatenghttp2) come from
+    # the staged SDK, through a directory holding just those.
+    manifest = json.loads((fixture / 'manifest.json').read_text())
+    sdk_only = work / 'sdk-only-libs'
+    sdk_only.mkdir()
+    for needed, info in sorted(manifest['libraries'].items()):
+        if not (Path('/lib') / needed).exists() and not (Path('/usr/lib') / needed).exists():
+            shutil.copy2(info['sdk_path'], sdk_only / needed)
+    report['sdk_libraries_on_host'] = sorted(p.name for p in sdk_only.iterdir())
+    env = dict(os.environ, LD_LIBRARY_PATH=str(sdk_only))
 
     def execute(argv, cwd=work):
-        status, stdout, stderr = rec.run(argv, cwd=cwd, timeout=120, check=False)
+        status, stdout, stderr = rec.run(argv, cwd=cwd, timeout=120, check=False, env=env)
         if ABI_FAILURE.search(stderr):
             report['abi_blocked'].append({'argv': [str(x) for x in argv], 'stderr': stderr})
         return status, stdout, stderr

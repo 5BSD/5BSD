@@ -111,6 +111,15 @@ dtotel_option(struct dtotel_options *o, const char *name, const char *value,
 		return (seterr(err, errlen, "-x %s needs a value", name));
 	if (strcmp(name, "otelendpoint") == 0)
 		o->endpoint = value;
+	else if (strcmp(name, "otelprotocol") == 0) {
+		if (strcmp(value, "grpc") != 0 &&
+		    strcmp(value, "http/protobuf") != 0 &&
+		    strcmp(value, "http/json") != 0)
+			return (seterr(err, errlen, "-x otelprotocol=%s: "
+			    "expected grpc, http/protobuf or http/json",
+			    value));
+		o->protocol = value;
+	}
 	else if (strcmp(name, "otelspool") == 0)
 		o->spool = value;
 	else if (strcmp(name, "otelspoolmax") == 0) {
@@ -143,7 +152,8 @@ dtotel_options_check(const struct dtotel_options *o, const char *output,
 {
 
 	if (o->format == DTOTEL_OFF) {
-		if (o->endpoint != NULL || o->spool != NULL ||
+		if (o->endpoint != NULL || o->protocol != NULL ||
+		    o->spool != NULL ||
 		    o->spool_max != 0 || o->rotate_size != 0 ||
 		    o->rotate_interval != 0 || o->rotate_keep != 0)
 			return (seterr(err, errlen, "-x otel* options need "
@@ -163,9 +173,10 @@ dtotel_options_check(const struct dtotel_options *o, const char *output,
 			    "-x otelspool"));
 		return (0);
 	}
-	if (o->endpoint != NULL || o->spool != NULL || o->spool_max != 0)
-		return (seterr(err, errlen, "-x otelendpoint and -x otelspool "
-		    "apply to -x otel=otlp only"));
+	if (o->endpoint != NULL || o->protocol != NULL || o->spool != NULL ||
+	    o->spool_max != 0)
+		return (seterr(err, errlen, "-x otelendpoint, -x otelprotocol "
+		    "and -x otelspool apply to -x otel=otlp only"));
 	if (output == NULL && (o->rotate_size != 0 ||
 	    o->rotate_interval != 0 || o->rotate_keep != 0))
 		return (seterr(err, errlen, "-x otelrotate* options need a "
@@ -200,7 +211,10 @@ make_exporter(struct dtotel_session *s, const struct oe_resource *r,
 		break;
 	}
 	memset(&ocfg, 0, sizeof(ocfg));
-	/* -x otelendpoint > OTEL_* > otel.conf(5) > default, resolved. */
+	/*
+	 * -x otelendpoint/otelprotocol > OTEL_* > otel.conf(5) > default,
+	 * resolved.
+	 */
 	oe_otlp_config_env(&ocfg, &s->env);
 	ocfg.profile = s->profile;
 	ocfg.resource = r;
@@ -281,6 +295,7 @@ dtotel_session_open(const struct dtotel_session_config *cfg, char *err,
 	memset(&req, 0, sizeof(req));
 	req.scope = cfg->scope_name;
 	req.endpoint = s->opts.endpoint;
+	req.protocol = s->opts.protocol;
 	req.spool = s->opts.spool;
 	req.spool_max = s->opts.spool_max;
 	req.system = s->opts.format == DTOTEL_OTLP;

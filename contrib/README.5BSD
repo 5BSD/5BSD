@@ -1267,3 +1267,88 @@ Local changes: none (see contrib/openbsd-pf/README.5BSD for the policy on
 Integration: tests/sys/netpfil/pf/openbsd (ATF wrapper, srctree install);
   tools/test/pf-parity/openbsd-regress (two-guest runner).
 Update procedure: contrib/openbsd-pf/README.5BSD.
+
+Protocol Buffers
+----------------
+Upstream project: Protocol Buffers, https://github.com/protocolbuffers/protobuf
+Version: 29.6
+Imported: 2026-10-29
+Source: contrib/protobuf/
+Archive: https://github.com/protocolbuffers/protobuf/releases/download/v29.6/protobuf-29.6.tar.gz
+SHA256: 877bf9f880631aa31daf2c09896276985696728137fcd43cc534a28c5566d9ba
+  (the devel/protobuf port's distinfo)
+License: contrib/protobuf/LICENSE (BSD-3-Clause);
+  third_party/utf8_range/LICENSE (MIT). Generated code belongs to the owner
+  of the input file. Not imported: third_party/lunit (MIT) and the other
+  bundled submodules. No copyleft files.
+Scope and trims: C++ runtime, libprotoc with the C++ generator only, upb
+  with its C, mini-table and reflection generators, utf8_range, the
+  well-known .proto files (tools/build/protobuf/trim.py).
+Local changes: tools/build/protobuf/patches/protobuf-default-proto-path.patch
+  and protobuf-upb-defpool-oom.patch (allocation failure crashed upb);
+  the 5BSD protoc driver usr.bin/protoc/main.cc is derived from upstream's
+  src/google/protobuf/compiler/main.cc (BSD-3-Clause notice kept).
+Integration: lib/protobuf (libprivateprotobuf, libprivateprotobuf-lite,
+  internal libprotoc and libupb), usr.bin/protoc (installed as
+  /usr/libexec/protoc, off the default PATH), libexec/protoc-gen-upb,
+  protoc-gen-upb_minitable, protoc-gen-upbdefs, bootstrap copies in
+  buildworld (Makefile.inc1), lib/protobuf/protoc-gen.mk; the protobuf
+  package (devel set); /usr/share/licenses/protobuf.
+Update procedure: tools/build/protobuf/README.
+
+Abseil
+------
+Upstream project: Abseil, https://github.com/abseil/abseil-cpp
+Version: LTS 20250127.1
+Imported: 2026-10-29
+Source: contrib/abseil-cpp/
+Archive: https://github.com/abseil/abseil-cpp/releases/download/20250127.1/abseil-cpp-20250127.1.tar.gz
+SHA256: b396401fd29e2e679cace77867481d388c807671dc2acc602a0259eeb79b7811
+  (the devel/abseil port's distinfo)
+License: contrib/abseil-cpp/LICENSE (Apache-2.0, no NOTICE file);
+  absl/time/internal/cctz/src/tzfile.h is public domain. No copyleft files.
+Scope and trims: the sources of upstream's single-library build
+  (CMake/AbseilDll.cmake) and the headers they and protobuf include.
+Local changes: tools/build/protobuf/patches/abseil-*.patch (upstream commit
+  a4950fba and the port's powerpc fix, both from devel/abseil; options.h for
+  installed headers and the inline namespace lts_20250127_5bsd).
+Integration: lib/libabsl (libprivateabsl.so.2501) in the protobuf package;
+  /usr/share/licenses/abseil-cpp.
+Update procedure: tools/build/protobuf/README.
+
+nghttp2
+-------
+Upstream project: nghttp2, https://github.com/nghttp2/nghttp2
+Version: 1.70.0
+Imported: 2026-10-29
+Source: contrib/nghttp2/
+Archive: https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.xz
+SHA256: e05cb1388eaca3830aded4ccf20044b6e1ac1a61411dcca11b0437c4285c8bc2
+  (the www/libnghttp2 port's distinfo)
+License: contrib/nghttp2/COPYING (MIT); lib/sfparse.c carries the MIT notice
+  of Bjoern Hoehrmann's UTF-8 decoder. Not imported: mruby, munit and the
+  other bundled third-party code. No copyleft files.
+Scope and trims: lib/ only (the port's --enable-lib-only).
+Local changes: none; lib/libnghttp2/config.h and nghttp2/nghttp2ver.h replace
+  configure.
+Integration: lib/libnghttp2 (libprivatenghttp2.so.14) in the libnghttp2
+  package, used by libotelexport's OTLP/gRPC transport;
+  /usr/share/licenses/nghttp2.
+Update procedure: tools/build/protobuf/README.
+
+OpenTelemetry protocol definitions
+----------------------------------
+Upstream project: opentelemetry-proto,
+  https://github.com/open-telemetry/opentelemetry-proto
+Version: 1.10.0
+Imported: 2026-10-29
+Source: contrib/opentelemetry-proto/
+Archive: https://github.com/open-telemetry/opentelemetry-proto/archive/v1.10.0.tar.gz
+SHA256: 52c85df79badc45da7e6a8735e8090b05a961b0208756187e1492a40db2d1f5f
+  (the devel/opentelemetry-proto port's distfile)
+License: contrib/opentelemetry-proto/LICENSE (Apache-2.0, no NOTICE file).
+Scope and trims: the .proto files.
+Local changes: none.
+Integration: lib/libotelexport generates upb code from them at build time
+  (OTLP/HTTP protobuf and OTLP/gRPC); /usr/share/licenses/opentelemetry-proto.
+Update procedure: tools/build/protobuf/README.

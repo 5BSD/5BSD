@@ -660,11 +660,12 @@ parse_export(struct oe_sysconf *sc, const char *file,
 static int
 parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 {
-	static const char *const protocols[] = { "http/json", NULL };
+	static const char *const protocols[] = { "http/protobuf", "grpc",
+	    "http/json", NULL };
 	static const char *const compressions[] = { "gzip", "none", NULL };
 	const ucl_object_t *cur;
 	ucl_object_iter_t it;
-	const char *key, *s;
+	const char *key;
 	int64_t v;
 
 	it = NULL;
@@ -677,15 +678,6 @@ parse_root(struct oe_sysconf *sc, const char *file, const ucl_object_t *root)
 			if (get_url(sc, file, key, cur, &sc->endpoint) != 0)
 				return (-1);
 		} else if (strcmp(key, "protocol") == 0) {
-			s = ucl_object_type(cur) == UCL_STRING ?
-			    ucl_object_tostring(cur) : "";
-			if (strcmp(s, "http/protobuf") == 0 ||
-			    strcmp(s, "grpc") == 0) {
-				sc_error(sc, "%s: protocol \"%s\": "
-				    "libotelexport implements only "
-				    "\"http/json\"", file, s);
-				return (-1);
-			}
 			if (get_enum(sc, file, key, cur, protocols,
 			    &sc->protocol) != 0)
 				return (-1);
@@ -911,6 +903,8 @@ oe_env_load_system(struct oe_env *env, const struct oe_sysconf *sc,
 		env->endpoint = sc->endpoint;
 	if (env->compression == NULL)
 		env->compression = sc->compression;
+	if (env->protocol == NULL)
+		env->protocol = sc->protocol;
 	if (env->timeout_ms < 0)
 		env->timeout_ms = sc->timeout_ms;
 	if (merge_missing(&env->resource_attrs, &env->nresource_attrs,
@@ -961,6 +955,20 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 	env->sysconf = sc;
 	if (r != 0)
 		goto nomem;
+	if (req->protocol != NULL) {
+		if (strcmp(req->protocol, "grpc") != 0 &&
+		    strcmp(req->protocol, "http/protobuf") != 0 &&
+		    strcmp(req->protocol, "http/json") != 0) {
+			oe_env_free(env);
+			snprintf(err, errlen, "unknown OTLP protocol \"%s\" "
+			    "(expected grpc, http/protobuf or http/json)",
+			    req->protocol);
+			return (-1);
+		}
+		env->protocol = req->protocol;
+	}
+	if (env->protocol == NULL)
+		env->protocol = OE_DEFAULT_PROTOCOL;
 	if (sc != NULL && !sc->enable)
 		sc = NULL;
 	if (env->endpoint == NULL && sc != NULL && sc->export_file) {
@@ -980,7 +988,9 @@ oe_config_load(struct oe_env *env, const struct oe_config_request *req,
 		return (0);
 	}
 	if (env->endpoint == NULL) {
-		env->endpoint = OE_DEFAULT_ENDPOINT;
+		/* OTLP/gRPC collectors listen on 4317, OTLP/HTTP on 4318. */
+		env->endpoint = strcmp(env->protocol, "grpc") == 0 ?
+		    OE_DEFAULT_GRPC_ENDPOINT : OE_DEFAULT_ENDPOINT;
 		env->endpoint_default = 1;
 	}
 	if (req->spool != NULL) {

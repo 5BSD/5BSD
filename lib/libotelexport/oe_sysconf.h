@@ -25,7 +25,7 @@
 
 /* No endpoint: the services refuse to start until one is configured. */
 #define	OE_SYSCONF_DEFAULT_ENDPOINT	""
-#define	OE_SYSCONF_DEFAULT_PROTOCOL	"http/json"
+#define	OE_SYSCONF_DEFAULT_PROTOCOL	"http/protobuf"
 #define	OE_SYSCONF_DEFAULT_COMPRESSION	"gzip"
 #define	OE_SYSCONF_DEFAULT_TIMEOUT_MS	10000
 #define	OE_SYSCONF_DEFAULT_HOSTID_FILE	"/etc/hostid"
@@ -51,7 +51,7 @@
 struct oe_sysconf {
 	int		 enable;	/* system layer active */
 	char		*endpoint;	/* exporter endpoint (base URL); "" unset */
-	char		*protocol;	/* exporter protocol: http/json */
+	char		*protocol;	/* http/protobuf | grpc | http/json */
 	char		*compression;	/* gzip | none */
 	int		 timeout_ms;
 	char		*headers_file;	/* "" when unset */

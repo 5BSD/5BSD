@@ -199,8 +199,8 @@ records and timed operations into
 .Vt struct oe_span
 records, then hands them to an exporter object which ships them to a
 destination: a stream or rotating file as text, JSON Lines, collapsed
-stacks or OTLP JSON Lines, or an OpenTelemetry collector over
-OTLP/HTTP+JSON.
+stacks or OTLP JSON Lines, or an OpenTelemetry collector over OTLP/HTTP
+with protobuf or JSON bodies, or over OTLP/gRPC.
 The library is a C port of the ObservableBSD Swift
 .Dq OTelExport
 library.
@@ -897,17 +897,56 @@ and
 which also flush the sink.
 The exporter runs on the caller's thread.
 .El
-.Ss OTLP/HTTP+JSON exporter
+.Ss OTLP exporter
 .Fn oe_otlp_new
 creates an exporter that batches events as OpenTelemetry
 .Vt LogRecord
-objects and POSTs them to
+objects, aggregation snapshots as OTLP metrics and spans as OTLP spans,
+and sends each batch to a collector with the configured
+.Va protocol :
+.Bl -tag -width "http/protobuf"
+.It Ql http/protobuf
+OTLP/HTTP with binary protobuf bodies
+.Pq Ql Content-Type: application/x-protobuf ,
+POSTed to
 .Pa /v1/logs ,
-maps aggregation snapshots to OTLP metrics POSTed to
-.Pa /v1/metrics ,
-and batches spans to
-.Pa /v1/traces ,
-all relative to the configured endpoint.
+.Pa /v1/metrics
+and
+.Pa /v1/traces
+relative to the endpoint.
+.It Ql grpc
+OTLP/gRPC: a unary call of the
+.Ql Export
+method of
+.Ql opentelemetry.proto.collector.logs.v1.LogsService ,
+.Ql ...metrics.v1.MetricsService
+or
+.Ql ...trace.v1.TraceService
+over HTTP/2
+.Pq with the nghttp2 library ,
+in cleartext with prior knowledge for an
+.Ql http
+endpoint and over TLS with ALPN
+.Ql h2
+for an
+.Ql https
+endpoint.
+The endpoint's path is not used.
+.It Ql http/json
+OTLP/HTTP with the protobuf JSON encoding
+.Pq Ql Content-Type: application/json ,
+to the same paths as
+.Ql http/protobuf .
+.El
+.Pp
+All three carry the same requests: the protobuf transports transcode the
+JSON request the exporter batches and spools
+.Pq the format Fn oe_otlpjson_new writes
+into the binary
+.Vt Export*ServiceRequest
+with upb, using the
+.Pa opentelemetry-proto
+1.10.0 definitions compiled into the library.
 It is configured by a
 .Vt struct oe_otlp_config :
 .Bd -literal -offset indent
@@ -925,12 +964,18 @@ struct oe_otlp_config {
 	const char	*spool_path;
 	uint64_t	 spool_max;
 	const char	*scope_name;
+	int		 spool_optional;
+	const char	*protocol;
 };
 .Ed
 .Bl -tag -width "flush_interval"
 .It Va endpoint
 Base URL of the collector, for example
-.Ql http://localhost:4318 .
+.Ql http://localhost:4318
+.Pq OTLP/HTTP
+or
+.Ql http://localhost:4317
+.Pq OTLP/gRPC .
 Only the
 .Ql http
 and
@@ -1008,14 +1053,21 @@ Seconds between time-based flushes performed by the sender thread.
 Number of additional attempts after a failed POST.
 A negative value selects the default of 2.
 .It Va timeout
-Connect, send and receive timeout in seconds for each HTTP request.
+Connect, send and receive timeout in seconds for each HTTP request; for
+OTLP/gRPC the deadline of the whole call, also sent as
+.Ql grpc-timeout .
 0 selects the default of 10.
 .It Va headers , Va nheaders
-Extra HTTP request headers, sent verbatim on every POST.
+Extra HTTP request headers, sent verbatim on every POST; for OTLP/gRPC
+they are sent as call metadata with lowercase names, and names the gRPC
+framing owns
+.Pq for example Ql content-type , Ql te , Ql grpc-timeout
+are skipped.
 The array is copied at construction.
 .It Va compression
 Request bodies are gzip-compressed with
 .Ql Content-Encoding: gzip
+.Pq OTLP/gRPC: the message, with Ql grpc-encoding: gzip
 unless this is the string
 .Ql none
 .Pq compared case-insensitively .
@@ -1030,6 +1082,21 @@ The file is created
 or adopted at construction, so an unusable path fails there.
 .It Va spool_max
 Spool size limit in bytes; 0 selects 64 MiB.
+.It Va protocol
+.Ql http/protobuf ,
+.Ql grpc
+or
+.Ql http/json ;
+anything else fails construction.
+.Dv NULL
+selects
+.Ql http/json ,
+so programs that build their configuration without
+.Fn oe_otlp_config_env
+keep their behavior;
+.Fn oe_otlp_config_env
+always sets the resolved protocol, by default
+.Ql http/protobuf .
 .It Va spool_optional
 When non-zero, a spool that cannot be opened, or that another exporter
 holds, is reported on standard error and left unused instead of
@@ -1107,23 +1174,45 @@ then the event's own attributes, and the event's severity
 .Pq INFO when unspecified .
 Spans carry the same, followed by their own attributes.
 .Pp
-Failed POSTs are retried with exponential backoff starting at 100 ms plus
-up to 50% jitter, as recommended by the OTLP specification.
-Transport errors and HTTP status 429, 502, 503 and 504 are retryable;
-a
+Failed requests are retried with exponential backoff starting at 100 ms
+plus up to 50% jitter, as recommended by the OTLP specification.
+Transport errors are retryable for every protocol.
+Over OTLP/HTTP, status 429, 502, 503 and 504 are retryable; a
 .Ql Retry-After
 header on a retryable response adds its delay to the backoff.
-Any other non-2xx status is reported once and the batch is discarded.
-A 2xx response whose body reports
-.Ql partialSuccess
-with a non-zero
-.Ql rejectedLogRecords ,
-.Ql rejectedDataPoints
-or
-.Ql rejectedSpans
-count is logged to standard error but not retried.
-Each request uses a fresh connection with
-.Ql Connection: close .
+Any other non-2xx status is reported once, with the message of a
+.Vt google.rpc.Status
+body for
+.Ql http/protobuf ,
+and the batch is discarded.
+Over OTLP/gRPC, the status is the
+.Ql grpc-status
+of the trailers or of a Trailers-Only response, or is mapped from a
+non-200 HTTP status or a stream reset as gRPC defines;
+.Dv CANCELLED ,
+.Dv DEADLINE_EXCEEDED ,
+.Dv ABORTED ,
+.Dv OUT_OF_RANGE ,
+.Dv UNAVAILABLE
+and
+.Dv DATA_LOSS
+are retryable,
+.Dv RESOURCE_EXHAUSTED
+only when
+.Ql grpc-status-details-bin
+carries a
+.Vt google.rpc.RetryInfo ,
+whose delay is added to the backoff, and every other status is reported
+once with its
+.Ql grpc-message
+and the batch is discarded.
+A successful response whose
+.Vt partial_success
+.Pq JSON Ql partialSuccess
+reports rejected log records, data points or spans, or an error message,
+is logged to standard error but not retried.
+Each request uses a fresh connection
+.Pq OTLP/HTTP: Ql Connection: close .
 .Pp
 .Fn oe_shutdown
 stops the sender thread, waits for queued posts to complete, then drains
@@ -1144,8 +1233,8 @@ batches.
 With a spool configured, a request that fails with a transport error or
 a retryable status after
 .Va max_retries
-retries is appended to the spool as one OTLP JSON line, in the same
-format
+retries is appended to the spool as one OTLP JSON line, whatever the
+protocol, in the same format
 .Fn oe_otlpjson_new
 writes, and the file is fsynced.
 After the next request the collector accepts, and every five seconds
@@ -1244,22 +1333,37 @@ struct oe_config_request {
 	const char	*spool;		/* command line, or NULL */
 	uint64_t	 spool_max;	/* command line, or 0 */
 	int		 system;	/* read otel.conf(5) */
+	const char	*protocol;	/* command line, or NULL */
 };
 .Ed
 .Pp
 On success
-.Va env->endpoint
+.Va env->protocol
 is always set
+.Pq Dv OE_DEFAULT_PROTOCOL , Ql http/protobuf , at the bottom ;
+an unknown command line protocol is an error.
+.Va env->endpoint
+is always set too
 .Po
 .Dv OE_DEFAULT_ENDPOINT ,
 .Ql http://localhost:4318 ,
-the conventional OTLP/HTTP default, at the bottom, when no layer names
-an endpoint; the shipped
+the conventional OTLP/HTTP default, or
+.Dv OE_DEFAULT_GRPC_ENDPOINT ,
+.Ql http://localhost:4317 ,
+for
+.Ql grpc ,
+at the bottom, when no layer names an endpoint; the shipped
 .Xr otel.conf 5
 names none, and
 .Va env->endpoint_default
 is then set
 .Pc ;
+with the
+.Xr otel.conf 5
+file target
+.Va env->file_path
+is set as well, and neither the endpoint nor the protocol is used (the
+file is always OTLP JSON Lines);
 environment resource attributes and headers win over system ones with
 the same name, and credentials from the
 .Xr otel.conf 5
@@ -1292,8 +1396,8 @@ the service name
 .Fa version ,
 and the remaining resource attributes as custom attributes.
 .Fn oe_otlp_config_env
-copies the resolved endpoint, timeout, headers, compression and spool
-settings into a
+copies the resolved endpoint, protocol, timeout, headers, compression and
+spool settings into a
 .Vt struct oe_otlp_config ,
 leaving its other members alone.
 .Ss Host detection
@@ -1503,6 +1607,21 @@ if unset, which the OTLP exporter treats as gzip.
 .It Ev OTEL_EXPORTER_OTLP_TIMEOUT
 .Va timeout_ms ,
 in milliseconds; \-1 if unset.
+.It Ev OTEL_EXPORTER_OTLP_PROTOCOL
+.Va protocol :
+.Ql grpc ,
+.Ql http/protobuf
+or
+.Ql http/json ;
+another value is reported and ignored.
+.Dv NULL
+if unset;
+.Fn oe_config_load
+then takes
+.Xr otel.conf 5
+.Ic protocol ,
+else
+.Ql http/protobuf .
 .It Ev OTEL_RESOURCE_ATTRIBUTES
 .Va resource_attrs
 and
@@ -1582,10 +1701,12 @@ With a spool,
 also fails when the spool cannot be opened or created or is not a
 regular file.
 .Sh SEE ALSO
+.Xr protoc 1 ,
+.Xr otel.conf 5 ,
 .Xr bsdinstruments 8 ,
 .Xr hwstat 8
 .Rs
-.%T OpenTelemetry Protocol Specification, OTLP/HTTP
+.%T OpenTelemetry Protocol Specification
 .%U https://opentelemetry.io/docs/specs/otlp/
 .Re
 .Rs

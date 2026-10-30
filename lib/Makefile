@@ -32,6 +32,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libsqlite3 \
 	geom \
 	lib9p \
+	libabsl \
 	libalias \
 	libarchive \
 	libauditcmp \
@@ -90,6 +91,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libmt \
 	lib80211 \
 	libnetbsd \
+	libnghttp2 \
 	libnetmap \
 	libnetworkcmp \
 	libsysctlcmp \
@@ -104,6 +106,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	liboes \
 	libopenbsd \
 	libotelexport \
+	protobuf \
 	libcapsulert \
 	libpam \
 	libpathconv \
@@ -147,6 +150,9 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 # libraries, those libraries should be listed as build order dependencies here.
 
 SUBDIR_DEPEND_geom=	libufs
+# libotelexport encodes OTLP with upb and speaks gRPC through nghttp2.
+SUBDIR_DEPEND_libotelexport= protobuf libnghttp2
+SUBDIR_DEPEND_protobuf= libabsl
 SUBDIR_DEPEND_googletest= libregex
 SUBDIR_DEPEND_libarchive= libz libbz2 libexpat liblzma libmd libzstd
 SUBDIR_DEPEND_libauditdm= libbsm

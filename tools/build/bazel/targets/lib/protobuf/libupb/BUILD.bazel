@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: lib/protobuf/libupb/Makefile (INTERNALLIB upb, C, WARNS 1,
+# CFLAGS -I contrib/protobuf -I upb/reflection/cmake -fvisibility=hidden and
+# the Makefile.inc include paths).
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+UPB_SRCS = [
+    "upb/base/status.c",
+    "upb/hash/common.c",
+    "upb/json/decode.c",
+    "upb/json/encode.c",
+    "upb/lex/atoi.c",
+    "upb/lex/round_trip.c",
+    "upb/lex/strtod.c",
+    "upb/lex/unicode.c",
+    "upb/mem/alloc.c",
+    "upb/mem/arena.c",
+    "upb/message/accessors.c",
+    "upb/message/array.c",
+    "upb/message/compare.c",
+    "upb/message/compat.c",
+    "upb/message/copy.c",
+    "upb/message/internal/compare_unknown.c",
+    "upb/message/internal/extension.c",
+    "upb/message/internal/iterator.c",
+    "upb/message/internal/message.c",
+    "upb/message/map.c",
+    "upb/message/map_sorter.c",
+    "upb/message/merge.c",
+    "upb/message/message.c",
+    "upb/mini_descriptor/build_enum.c",
+    "upb/mini_descriptor/decode.c",
+    "upb/mini_descriptor/internal/base92.c",
+    "upb/mini_descriptor/internal/encode.c",
+    "upb/mini_descriptor/link.c",
+    "upb/mini_table/extension_registry.c",
+    "upb/mini_table/internal/message.c",
+    "upb/mini_table/message.c",
+    "upb/reflection/def_pool.c",
+    "upb/reflection/def_type.c",
+    "upb/reflection/desc_state.c",
+    "upb/reflection/enum_def.c",
+    "upb/reflection/enum_reserved_range.c",
+    "upb/reflection/enum_value_def.c",
+    "upb/reflection/extension_range.c",
+    "upb/reflection/field_def.c",
+    "upb/reflection/file_def.c",
+    "upb/reflection/internal/def_builder.c",
+    "upb/reflection/internal/strdup2.c",
+    "upb/reflection/message.c",
+    "upb/reflection/message_def.c",
+    "upb/reflection/message_reserved_range.c",
+    "upb/reflection/method_def.c",
+    "upb/reflection/oneof_def.c",
+    "upb/reflection/service_def.c",
+    "upb/text/encode.c",
+    "upb/text/internal/encode.c",
+    "upb/util/def_to_proto.c",
+    "upb/util/required_fields.c",
+    "upb/wire/byte_size.c",
+    "upb/wire/decode.c",
+    "upb/wire/encode.c",
+    "upb/wire/eps_copy_input_stream.c",
+    "upb/wire/internal/decode_fast.c",
+    "upb/wire/reader.c",
+    "upb/reflection/cmake/google/protobuf/descriptor.upb_minitable.c",
+    "third_party/utf8_range/utf8_range.c",
+]
+
+LOCAL = ["-Icontrib/protobuf", "-Icontrib/protobuf/upb/reflection/cmake", "-fvisibility=hidden", "-Icontrib/protobuf/src", "-Icontrib/protobuf/third_party/utf8_range"]
+
+# libupb.a and libupb_pie.a.  Consumers add the include paths themselves
+# (lib/protobuf/protoc-gen.mk: -I contrib/protobuf -I upb/reflection/cmake).
+[bsd_cc_archive(
+    name = "upb" + suffix,
+    archive = "upb" + suffix,
+    kind = kind,
+    srcs = ["//contrib/protobuf:" + s for s in UPB_SRCS],
+    src_paths = UPB_SRCS,
+    hdrs = ["//contrib/protobuf:headers"],
+    copts = bsd_c_flags(kind, 1, local = LOCAL),
+) for kind, suffix in (("o", ""), ("pieo", "_pie"))]

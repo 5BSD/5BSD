@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Declared Bazel targets for lib/libotelexport (experimental pilot).
 # Make reference: lib/libotelexport/Makefile (INTERNALLIB, WARNS 6,
-# CFLAGS+=-I${SRCTOP}/contrib/libucl/include, LIBADD z ssl crypto pthread
-# ucl).  otel-probe.py fails if SRCS differ.
-load("//toolchain:bsd_component.bzl", "bsd_internal_library")
+# CFLAGS+=-I contrib/libucl/include -I contrib/nghttp2/lib/includes
+# -I lib/libnghttp2, LIBADD z ssl crypto pthread ucl upb nghttp2, and the
+# OTLP set of lib/protobuf/protoc-gen.mk: PROTO_SETS=otlp, PROTO_LANG upbdefs,
+# which adds -I${.OBJDIR}/protogen/otlp -I contrib/protobuf
+# -I contrib/protobuf/upb/reflection/cmake and the generated sources with
+# CWARNFLAGS -Wno-cast-qual -Wno-cast-align).  otel-probe.py fails if SRCS
+# differ; protobuf-probe.py compares the generated files with Make's.
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_protoc")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -21,11 +26,57 @@ OTELEXPORT_SRCS = [
     "oe_otlpfile.c",
     "oe_sysconf.c",
     "oe_service.c",
+    "oe_otlppb.c",
+    "oe_otlppost.c",
+    "oe_grpc.c",
 ]
+
+# PROTO_FILES.otlp, in order.
+OTLP_PROTOS = [
+    "opentelemetry/proto/common/v1/common.proto",
+    "opentelemetry/proto/resource/v1/resource.proto",
+    "opentelemetry/proto/logs/v1/logs.proto",
+    "opentelemetry/proto/metrics/v1/metrics.proto",
+    "opentelemetry/proto/trace/v1/trace.proto",
+    "opentelemetry/proto/collector/logs/v1/logs_service.proto",
+    "opentelemetry/proto/collector/metrics/v1/metrics_service.proto",
+    "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+]
+
+# protoc-gen.mk: the mini-tables of every file, then the definitions.
+OTLP_GENERATED = (["protogen/otlp/" + p[:-6] + ".upb_minitable.c" for p in OTLP_PROTOS] +
+                  ["protogen/otlp/" + p[:-6] + ".upbdefs.c" for p in OTLP_PROTOS])
+
+bsd_protoc(
+    name = "otlp_gen",
+    protos = ["//contrib/opentelemetry-proto:" + p for p in OTLP_PROTOS],
+    proto_paths = OTLP_PROTOS,
+    proto_root = "contrib/opentelemetry-proto",
+    wkt_root = "contrib/protobuf/src",
+    out_dir = "protogen/otlp",
+    lang = "upbdefs",
+    protoc = "//usr.bin/protoc:protoc_tool",
+    gen_upb = "//libexec/protoc-gen-upb:protoc_gen_upb_tool",
+    gen_upb_minitable = "//libexec/protoc-gen-upb_minitable:protoc_gen_upb_minitable_tool",
+    gen_upbdefs = "//libexec/protoc-gen-upbdefs:protoc_gen_upbdefs_tool",
+)
+
+filegroup(
+    name = "otlp_gen_sources",
+    srcs = [":otlp_gen"],
+    output_group = "sources",
+)
+
+filegroup(
+    name = "otlp_gen_headers",
+    srcs = [":otlp_gen"],
+    output_group = "headers",
+)
 
 # Private headers included only by the library sources.
 OTELEXPORT_PRIVATE_HDRS = [
     "oe_otlpenc.h",
+    "oe_otlppb.h",
 ]
 
 # Makefile INCS plus the headers base-system consumers include through
@@ -33,15 +84,47 @@ OTELEXPORT_PRIVATE_HDRS = [
 # services and tests use oe_sysconf.h).  Not installed for an INTERNALLIB.
 OTELEXPORT_HDRS = ["otelexport.h", "oe_sysconf.h", "oe_http.h"]
 
+LOCAL = [
+    "-Icontrib/libucl/include",
+    "-Icontrib/nghttp2/lib/includes",
+    "-Ilib/libnghttp2",
+    "-Icontrib/protobuf",
+    "-Icontrib/protobuf/upb/reflection/cmake",
+]
+
 # libotelexport.a and libotelexport_pie.a.
-bsd_internal_library(
-    name = "otelexport",
-    srcs = OTELEXPORT_SRCS + OTELEXPORT_PRIVATE_HDRS + ["//:libucl_hdrs"],
-    hdrs = OTELEXPORT_HDRS,
-    warns = 6,
-    local_cflags = ["-Icontrib/libucl/include"],
-    # src.libnames.mk _DP_otelexport (ucl is a private library)
-    linkopts = ["-lz", "-lssl", "-lcrypto", "-lpthread", "-lprivateucl"],
+[bsd_cc_archive(
+    name = "otelexport" + suffix,
+    archive = "otelexport" + suffix,
+    kind = kind,
+    srcs = OTELEXPORT_SRCS + [":otlp_gen_sources"],
+    src_paths = OTELEXPORT_SRCS + OTLP_GENERATED,
+    hdrs = OTELEXPORT_HDRS + OTELEXPORT_PRIVATE_HDRS + [
+        "//:libucl_hdrs",
+        "//contrib/nghttp2:headers",
+        "//lib/libnghttp2:headers",
+        "//contrib/protobuf:headers",
+        ":otlp_gen_headers",
+    ],
+    generated_includes = ["lib/libotelexport/protogen/otlp"],
+    copts = bsd_c_flags(kind, 6, local = LOCAL),
+    per_file_cwarn = {f: ["-Wno-cast-qual", "-Wno-cast-align"] for f in OTLP_GENERATED},
+    deps = ["//lib/protobuf/libupb:upb" + suffix],
+    # src.libnames.mk _DP_otelexport (ucl and nghttp2 are private
+    # libraries from the SDK; upb is the INTERNALLIB dependency above).
+    linkopts = ["-lz", "-lssl", "-lcrypto", "-lpthread", "-lprivateucl", "-lprivatenghttp2"],
+    public_hdrs = OTELEXPORT_HDRS,
+) for kind, suffix in (("o", ""), ("pieo", "_pie"))]
+
+# Test programs that include the private headers (tests/Makefile
+# CFLAGS+=-I${.CURDIR:H}).
+exports_files(OTELEXPORT_PRIVATE_HDRS)
+
+cc_library(
+    name = "private_headers",
+    testonly = True,
+    hdrs = OTELEXPORT_PRIVATE_HDRS,
+    includes = ["."],
 )
 
 # Consumers' CFLAGS+=-I${SRCTOP}/lib/libotelexport.

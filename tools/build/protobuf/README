@@ -1,0 +1,81 @@
+Protocol Buffers, Abseil, nghttp2 and opentelemetry-proto imports
+=================================================================
+
+contrib/protobuf, contrib/abseil-cpp, contrib/nghttp2 and
+contrib/opentelemetry-proto are trimmed imports of upstream release
+archives (versions and SHA256 in each contrib/*/README.5BSD and in
+contrib/README.5BSD).  This directory holds what reproduces them.
+
+trim.py SRC OUT
+	Computes the keep sets from the pristine extracted archives in SRC
+	(protobuf-29.6, abseil-cpp-20250127.1, nghttp2-1.70.0,
+	opentelemetry-proto-1.10.0) and writes the trimmed trees and
+	OUT/lists.json:
+	  protobuf	the upstream CMake source lists (src/file_lists.cmake)
+			for libprotobuf, libprotobuf-lite, libprotoc without the
+			non-C++ generators, libupb, protoc-gen-upb,
+			protoc-gen-upb_minitable and protoc-gen-upbdefs, the
+			well-known and compiler .proto files, utf8_range, the
+			version scripts, and every file reachable by #include
+			"..." from those;
+	  abseil-cpp	upstream's single-library composition
+			(CMake/AbseilDll.cmake ABSL_INTERNAL_DLL_FILES) plus the
+			include closure of it and of the kept protobuf files;
+	  nghttp2	lib/ (the port's --enable-lib-only) and its includes;
+	  opentelemetry-proto	the .proto files.
+	License and notice files are always kept.  Tests, benchmarks,
+	build systems of other platforms and the other language runtimes
+	are not imported.
+
+Install locations
+	lib/protobuf/protobuf.dirs.mk: protoc in /usr/libexec (not on the
+	default PATH; base components call it by its full path, and it must
+	not shadow the ports protoc), the upb plugins in /usr/libexec.  The
+	bootstrap copies use the same paths under ${WORLDTMP}/legacy.
+
+patches/
+	The local changes, applied to the trimmed trees with patch -p1 in
+	the import directory:
+	  abseil-a4950fba-is_trivially_relocatable.patch
+		upstream commit a4950fba (the devel/abseil port applies the
+		same commit): use __builtin_is_cpp_trivially_relocatable;
+		clang 21 deprecates __is_trivially_relocatable.  The hunk for
+		the omitted type_traits_test.cc is left out.
+	  abseil-powerpc-timebase-frequency.patch
+		the devel/abseil port's fix for the FreeBSD/powerpc
+		kern.timecounter.tc.timebase.frequency sysctl width.
+	  abseil-options-5bsd.patch
+		absl/base/options.h for headers installed with a binary
+		library: std::any/optional/string_view/variant always (C++17
+		is required), absl::ordering always (the std alias needs
+		C++20), and the inline namespace lts_20250127_5bsd, which
+		differs from the ports' Abseil so the two never interpose.
+	  protobuf-upb-defpool-oom.patch
+		upb_DefPool_New() and _upb_DefPool_LoadDefInitEx() did not
+		check upb_Arena_New(), so an allocation failure while loading
+		compiled-in definitions crashed instead of failing (found by
+		the libotelexport and libdtotel allocation-failure sweeps).
+	  protobuf-default-proto-path.patch
+		protoc also looks for the well-known types in
+		<prefix>/include/private, where base installs them
+		(/usr/libexec/../include/private).
+
+genmk.py LISTS SRCTOP
+	Rewrites the "# BEGIN generated" blocks (SRCS and INCSGROUPS) of
+	lib/libabsl, lib/protobuf/*, libexec/protoc-gen-* and lib/libnghttp2
+	Makefiles from OUT/lists.json, and prints the private include
+	directories, which etc/mtree/BSD.usr.dist must list under
+	usr/include/private.
+
+Update procedure
+	1. Fetch and verify the new archives against the 5BSD ports
+	   distinfo (devel/protobuf, devel/abseil, www/libnghttp2,
+	   devel/opentelemetry-proto) and review the ports' patches.
+	2. Extract them, run trim.py, import the trimmed trees on the
+	   vendor branches, merge, and reapply or drop patches/.
+	3. Run genmk.py; update etc/mtree/BSD.usr.dist, SHLIB_MAJOR
+	   (protobuf major, ABSL_SOVERSION, the nghttp2 libtool current
+	   minus age), lib/libnghttp2/nghttp2/nghttp2ver.h and the inline
+	   namespace in abseil-options-5bsd.patch.
+	4. Update the Bazel targets (tools/build/bazel/targets) and rerun
+	   the probe; rebuild the world and run the libotelexport tests.

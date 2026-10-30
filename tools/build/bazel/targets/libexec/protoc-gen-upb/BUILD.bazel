@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Make reference: libexec/protoc-gen-upb/Makefile (PROG_CXX protoc-gen-upb, CXXSTD c++17,
+# WARNS 1 with libexec's WFORMAT, LIBADD upb absl).  "protoc_gen_upb_tool" is the
+# static exec-configuration build used for code generation.
+load("//toolchain:bsd_cc.bzl", "bsd_c_flags", "bsd_cc_archive", "bsd_cc_program", "bsd_cc_shared", "bsd_cxx_flags")
+
+package(default_visibility = ["//visibility:public"])
+
+# Keep in the order of Makefile SRCS.
+SRCS = [
+    "src/google/protobuf/compiler/code_generator_lite.cc",
+    "src/google/protobuf/port.cc",
+    "upb_generator/c/generator.cc",
+    "upb_generator/c/names.cc",
+    "upb_generator/c/names_internal.cc",
+    "upb_generator/common.cc",
+    "upb_generator/common/names.cc",
+    "upb_generator/file_layout.cc",
+    "upb_generator/minitable/names.cc",
+    "upb_generator/minitable/names_internal.cc",
+    "upb_generator/cmake/google/protobuf/compiler/plugin.upb_minitable.c",
+]
+
+LOCAL = ["-Icontrib/protobuf/upb_generator/cmake", "-Icontrib/protobuf/src", "-Icontrib/protobuf", "-Icontrib/protobuf/upb/reflection/cmake"]
+
+
+bsd_cc_program(
+    name = "protoc_gen_upb",
+    output = "protoc-gen-upb",
+    copts = bsd_c_flags("pieo", 1, local = LOCAL, prog = True, wformat = True),
+    cxxopts = bsd_cxx_flags("pieo", 1, "c++17", local = LOCAL,
+                            cxx_local = ["-Icontrib/abseil-cpp"], prog = True,
+                            wformat = True),
+    deps = ["//lib/protobuf/libupb:upb_pie"],
+    linkopts = ["-gz=zlib", "-pie", "-lprivateabsl", "-lc++", "-lm"],
+    srcs = ["//contrib/protobuf:" + s for s in SRCS],
+    src_paths = SRCS,
+    hdrs = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"],
+)
+
+bsd_cc_program(
+    name = "protoc_gen_upb_tool",
+    output = "protoc-gen-upb_tool",
+    static = True,
+    copts = bsd_c_flags("o", 1, local = LOCAL),
+    cxxopts = bsd_cxx_flags("o", 1, "c++17", local = LOCAL,
+                            cxx_local = ["-Icontrib/abseil-cpp"]),
+    deps = ["//lib/protobuf/libupb:upb", "//lib/libabsl:absl"],
+    linkopts = ["-static", "-lpthread", "-lc++", "-lm"],
+    srcs = ["//contrib/protobuf:" + s for s in SRCS],
+    src_paths = SRCS,
+    hdrs = ["//contrib/protobuf:headers", "//contrib/abseil-cpp:headers"],
+)

@@ -115,6 +115,7 @@ SUBDIR=	apply \
 	proccontrol \
 	procstat \
 	protect \
+	protoc \
 	rctl \
 	renice \
 	resizewin \

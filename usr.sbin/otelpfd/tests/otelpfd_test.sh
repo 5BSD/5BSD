@@ -33,6 +33,9 @@ config()
 {
 	cat > otel.conf <<EOF
 endpoint = "http://127.0.0.1:${PORT:-9}";
+# The fake receiver stores JSON bodies; the protobuf transports have
+# their own tests (lib/libotelexport/tests/otlppb_test).
+protocol = "http/json";
 host_id_file = "";
 resource { "deployment.environment.name" = "test"; }
 # No spool: these cases do not test outages (and must not use the

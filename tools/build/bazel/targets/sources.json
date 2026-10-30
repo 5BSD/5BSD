@@ -1,6 +1,15 @@
 {
-  "comment": "otel-probe.py inputs. Component directories are copied whole at their tree paths; header_trees contribute only *.h files. Source file lists live in the BUILD.bazel files and are checked against Make SRCS (srcs_var; default_src when bsd.progs.mk falls back to <prog>.c). Private INTERNALLIB directories are passed to consumers through private_libraries.",
+  "comment": "otel-probe.py inputs. Component directories are copied whole at their tree paths; header_trees contribute only *.h files. Source file lists live in the BUILD.bazel files and are checked against Make SRCS (srcs_var; default_src when bsd.progs.mk falls back to <prog>.c). Private INTERNALLIB directories are passed to consumers through private_libraries. source_trees are copied whole (the protobuf stack that generates and links libotelexport's OTLP bindings); a component without artifacts is a Make reference only (libupb: consumers link its _pie archive from a private object directory; protobuf-probe.py compares it with Bazel).",
   "components": [
+    {
+      "name": "libupb",
+      "path": "lib/protobuf/libupb",
+      "artifacts": [],
+      "make_targets": [
+        "libupb.a",
+        "libupb_pie.a"
+      ]
+    },
     {
       "name": "libotelexport",
       "path": "lib/libotelexport",
@@ -76,6 +85,16 @@
           "make_object_suffix": ".pieo",
           "srcs_var": "SRCS.sysconf_oom_test",
           "atf": true
+        },
+        {
+          "kind": "program",
+          "label": "//lib/libotelexport/tests:otlppb_encode",
+          "bazel": "lib/libotelexport/tests/otlppb_encode",
+          "make": "otlppb_encode.full",
+          "make_object_suffix": ".pieo",
+          "srcs_var": "SRCS.otlppb_encode",
+          "atf": false,
+          "default_src": "otlppb_encode.c"
         }
       ],
       "make_targets": [
@@ -83,7 +102,8 @@
         "otlp_validate",
         "otlp_collector",
         "sysconf_test",
-        "sysconf_oom_test"
+        "sysconf_oom_test",
+        "otlppb_encode"
       ]
     },
     {
@@ -328,6 +348,11 @@
   ],
   "private_libraries": [
     {
+      "component": "libupb",
+      "make_var": "LIBUPBDIR",
+      "bazel_dir": "lib/protobuf/libupb"
+    },
+    {
       "component": "libotelexport",
       "make_var": "LIBOTELEXPORTDIR",
       "bazel_dir": "lib/libotelexport"
@@ -446,6 +471,30 @@
     {
       "path": "toolchain/sysroot/usr/include/bsm/libbsm.h",
       "kind": "SDK header (libbsm)"
+    },
+    {
+      "path": "lib/libotelexport/oe_otlppb.h",
+      "kind": "private library header (protobuf transports)"
+    },
+    {
+      "path": "lib/libotelexport/oe_grpc.c",
+      "kind": "library source (gRPC client)"
+    },
+    {
+      "path": "contrib/nghttp2/lib/includes/nghttp2/nghttp2.h",
+      "kind": "nghttp2 header reached by -I"
+    },
+    {
+      "path": "lib/libnghttp2/nghttp2/nghttp2ver.h",
+      "kind": "nghttp2 version header (lib/libnghttp2)"
+    },
+    {
+      "path": "contrib/protobuf/upb/reflection/def.h",
+      "kind": "upb header used by oe_otlppb.c and the generated definitions"
+    },
+    {
+      "path": "contrib/protobuf/upb/base/string_view.h",
+      "kind": "upb header used by the generated mini-tables"
     }
   ],
   "link_probes": [
@@ -468,6 +517,23 @@
     {
       "path": "toolchain/sysroot/usr/lib/libjail.so",
       "kind": "SDK link input (libdtotel consumers)"
+    },
+    {
+      "path": "toolchain/sysroot/usr/lib/libprivatenghttp2.so",
+      "kind": "SDK link input (libotelexport consumers)"
     }
+  ],
+  "source_trees": [
+    "contrib/abseil-cpp",
+    "contrib/protobuf",
+    "contrib/nghttp2",
+    "contrib/opentelemetry-proto",
+    "lib/libabsl",
+    "lib/protobuf",
+    "lib/libnghttp2",
+    "usr.bin/protoc",
+    "libexec/protoc-gen-upb",
+    "libexec/protoc-gen-upb_minitable",
+    "libexec/protoc-gen-upbdefs"
   ]
 }

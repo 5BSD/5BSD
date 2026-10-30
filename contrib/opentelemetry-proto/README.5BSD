@@ -1,0 +1,21 @@
+5BSD import status
+==================
+
+Upstream:  OpenTelemetry protocol (OTLP) definitions 1.10.0,
+           https://github.com/open-telemetry/opentelemetry-proto
+Archive:   https://github.com/open-telemetry/opentelemetry-proto/archive/v1.10.0.tar.gz
+           (5BSD ports distfile open-telemetry-opentelemetry-proto-v1.10.0_GH0.tar.gz)
+SHA256:    52c85df79badc45da7e6a8735e8090b05a961b0208756187e1492a40db2d1f5f
+           (equal to the devel/opentelemetry-proto port's distinfo)
+License:   LICENSE (Apache-2.0; upstream has no NOTICE file).
+
+Imported: the .proto files, LICENSE, README.md and CHANGELOG.md.  Not
+imported: the examples, tooling and build files.
+
+Local changes: none.
+
+lib/libotelexport generates upb code and reflection definitions from the
+common, resource, logs, metrics, trace and collector service definitions
+at build time (lib/protobuf/protoc-gen.mk) for its OTLP/HTTP protobuf and
+OTLP/gRPC transports.  Installed licence:
+/usr/share/licenses/opentelemetry-proto.

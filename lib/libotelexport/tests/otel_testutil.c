@@ -47,6 +47,12 @@ char	*__wrap_strndup(const char *, size_t);
 static int fail_countdown;	/* 0: disarmed */
 static int fail_fired;
 static pthread_mutex_t fail_lock = PTHREAD_MUTEX_INITIALIZER;
+/*
+ * Only the thread that armed the countdown counts allocations: the
+ * loopback servers of the tests run in threads of the same process and
+ * must not consume (or race for) the injected failure.
+ */
+static pthread_t fail_thread;
 
 void
 failalloc_arm(int nth)
@@ -55,6 +61,7 @@ failalloc_arm(int nth)
 	pthread_mutex_lock(&fail_lock);
 	fail_countdown = nth;
 	fail_fired = 0;
+	fail_thread = pthread_self();
 	pthread_mutex_unlock(&fail_lock);
 }
 
@@ -71,7 +78,8 @@ should_fail(void)
 	int fail = 0;
 
 	pthread_mutex_lock(&fail_lock);
-	if (fail_countdown > 0 && --fail_countdown == 0) {
+	if (fail_countdown > 0 && pthread_equal(pthread_self(), fail_thread) &&
+	    --fail_countdown == 0) {
 		fail = 1;
 		fail_fired = 1;
 	}
@@ -117,9 +125,10 @@ __wrap_strndup(const char *s, size_t n)
 /* ---------------------------------------------------------------- */
 /* Loopback collector						 	*/
 
-static int
-make_cert(SSL_CTX *ctx, const char *certfile)
+int
+coll_make_cert(void *vctx, const char *certfile)
 {
+	SSL_CTX *ctx = vctx;
 	EVP_PKEY *key;
 	X509 *x;
 	X509_NAME *name;
@@ -232,6 +241,8 @@ serve_one(struct collector *co, int fd)
 	struct cconn c;
 	struct coll_reply rep;
 	struct coll_req *rq;
+	size_t rep_bodylen = 0;
+	int rep_chunked = 0;
 	char *buf, *hdrend, *cl, resp[1024];
 	size_t cap, len, need, hlen;
 	ssize_t n;
@@ -284,8 +295,11 @@ serve_one(struct collector *co, int fd)
 			break;
 	}
 	pthread_mutex_lock(&co->lock);
-	if (co->next < co->nscript)
+	if (co->next < co->nscript) {
+		rep_bodylen = co->bodylen[co->next];
+		rep_chunked = co->chunked[co->next];
 		rep = co->script[co->next++];
+	}
 	else {
 		memset(&rep, 0, sizeof(rep));
 		rep.status = 200;
@@ -304,7 +318,10 @@ serve_one(struct collector *co, int fd)
 			    &rq->bodylen);
 		else {
 			rq->bodylen = len - hlen - 4;
-			rq->body = __real_strndup(hdrend + 4, rq->bodylen);
+			/* Binary safe: protobuf bodies contain NULs. */
+			rq->body = __real_malloc(rq->bodylen + 1);
+			memcpy(rq->body, hdrend + 4, rq->bodylen);
+			rq->body[rq->bodylen] = '\0';
 		}
 	}
 	pthread_mutex_unlock(&co->lock);
@@ -314,6 +331,26 @@ serve_one(struct collector *co, int fd)
 		snprintf(resp, sizeof(resp), "HTTP/1.1 %d OK\r\n",
 		    rep.status);
 		c_write(&c, resp, strlen(resp));
+	} else if (rep.status != 0 && rep_chunked) {
+		size_t blen = rep_bodylen > 0 ? rep_bodylen :
+		    rep.body != NULL ? strlen(rep.body) : 0, half = blen / 2;
+
+		/* Two chunks with an extension, then the last chunk. */
+		snprintf(resp, sizeof(resp), "HTTP/1.1 %d X\r\n"
+		    "Transfer-Encoding: chunked\r\n%s\r\n%zx;ext=1\r\n",
+		    rep.status, rep.headers != NULL ? rep.headers : "", half);
+		c_write(&c, resp, strlen(resp));
+		c_write(&c, rep.body, half);
+		snprintf(resp, sizeof(resp), "\r\n%zx\r\n", blen - half);
+		c_write(&c, resp, strlen(resp));
+		c_write(&c, rep.body + half, blen - half);
+		c_write(&c, "\r\n0\r\n\r\n", 7);
+	} else if (rep.status != 0 && rep_bodylen > 0) {
+		snprintf(resp, sizeof(resp), "HTTP/1.1 %d X\r\n"
+		    "Content-Length: %zu\r\n%s\r\n", rep.status, rep_bodylen,
+		    rep.headers != NULL ? rep.headers : "");
+		c_write(&c, resp, strlen(resp));
+		c_write(&c, rep.body, rep_bodylen);
 	} else if (rep.status != 0) {
 		snprintf(resp, sizeof(resp), "HTTP/1.1 %d X\r\n"
 		    "Content-Length: %zu\r\n%s\r\n%s", rep.status,
@@ -370,7 +407,7 @@ coll_start(struct collector *co, int port, int tls, const char *certfile)
 	co->tls = tls;
 	if (tls) {
 		co->ssl_ctx = SSL_CTX_new(TLS_server_method());
-		if (co->ssl_ctx == NULL || make_cert(co->ssl_ctx,
+		if (co->ssl_ctx == NULL || coll_make_cert(co->ssl_ctx,
 		    certfile) != 0)
 			return (-1);
 	}
@@ -397,8 +434,20 @@ coll_script(struct collector *co, const struct coll_reply *r, int n)
 
 	pthread_mutex_lock(&co->lock);
 	memcpy(co->script, r, (size_t)n * sizeof(*r));
+	memset(co->bodylen, 0, sizeof(co->bodylen));
+	memset(co->chunked, 0, sizeof(co->chunked));
 	co->nscript = n;
 	co->next = 0;
+	pthread_mutex_unlock(&co->lock);
+}
+
+void
+coll_script_body(struct collector *co, int i, size_t len, int chunked)
+{
+
+	pthread_mutex_lock(&co->lock);
+	co->bodylen[i] = len;
+	co->chunked[i] = chunked;
 	pthread_mutex_unlock(&co->lock);
 }
 

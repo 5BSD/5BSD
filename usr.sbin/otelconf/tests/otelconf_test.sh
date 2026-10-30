@@ -124,7 +124,7 @@ spool { directory = "/var/spool/x"; max_bytes = 2097152; }
 EOF
 	atf_check -o inline:"false\n" ${OC} get enable
 	atf_check -o inline:"https://c.example:4318\n" ${OC} get endpoint
-	atf_check -o inline:"http/json\n" ${OC} get protocol
+	atf_check -o inline:"http/protobuf\n" ${OC} get protocol
 	atf_check -o inline:"none\n" ${OC} get compression
 	atf_check -o inline:"5\n" ${OC} get timeout_ms
 	atf_check -o inline:"\n" ${OC} get headers_file

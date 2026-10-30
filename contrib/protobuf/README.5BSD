@@ -1,0 +1,35 @@
+5BSD import status
+==================
+
+Upstream:  Protocol Buffers 29.6, https://github.com/protocolbuffers/protobuf
+Archive:   https://github.com/protocolbuffers/protobuf/releases/download/v29.6/protobuf-29.6.tar.gz
+SHA256:    877bf9f880631aa31daf2c09896276985696728137fcd43cc534a28c5566d9ba
+           (equal to the devel/protobuf port's distinfo)
+License:   LICENSE (BSD-3-Clause, Google); third_party/utf8_range/LICENSE
+           (MIT, Yibo Cai and Google).  Code that protoc generates is owned
+           by the owner of the input file (LICENSE).
+
+Trimmed to what base builds (tools/build/protobuf/trim.py): the C++
+runtime (libprotobuf, libprotobuf-lite), libprotoc without the Java,
+Kotlin, C#, Objective-C, PHP, Python, Ruby and Rust generators, upb with
+its C, mini-table and reflection generators and their checked-in bootstrap
+sources, utf8_range, the well-known and compiler .proto files and the
+version scripts.  Not imported: tests, benchmarks, conformance, the other
+language runtimes, hpb, the bundled third_party submodules and every
+build system.
+
+Local changes (tools/build/protobuf/patches):
+  protobuf-default-proto-path.patch	protoc looks in
+	<prefix>/include/private for the well-known types.
+  protobuf-upb-defpool-oom.patch	upb checks the arena allocations
+	of upb_DefPool_New() and of loading compiled-in definitions, which
+	crashed on allocation failure.
+
+Built by lib/protobuf (libprivateprotobuf, libprivateprotobuf-lite, the
+internal libprotoc and libupb), usr.bin/protoc (installed as
+/usr/libexec/protoc, off the default PATH, per lib/protobuf/protobuf.dirs.mk;
+a 5BSD driver that registers the C++ generator only) and
+libexec/protoc-gen-upb,
+protoc-gen-upb_minitable and protoc-gen-upbdefs; lib/protobuf/protoc-gen.mk
+generates code at build time with the copies buildworld bootstraps.
+Installed licence: /usr/share/licenses/protobuf.

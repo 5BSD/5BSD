@@ -1,0 +1,192 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd October 29, 2026
+.Dt PROTOC 1
+.Os
+.Sh NAME
+.Nm protoc
+.Nd Protocol Buffers compiler
+.Sh SYNOPSIS
+.Nm /usr/libexec/protoc
+.Op Fl I Ns Ar path | Fl -proto_path Ns = Ns Ar path
+.Op Fl -cpp_out Ns = Ns Ar dir
+.Op Fl - Ns Ar name Ns _out Ns = Ns Ar dir
+.Op Fl -plugin Ns = Ns Ar protoc-gen-name Ns = Ns Ar program
+.Op Fl o Ar file | Fl -descriptor_set_out Ns = Ns Ar file
+.Op Fl -include_imports
+.Op Fl -decode Ns = Ns Ar message_type
+.Op Fl -decode_raw
+.Op Fl -encode Ns = Ns Ar message_type
+.Op Ar options
+.Ar file.proto ...
+.Sh DESCRIPTION
+.Nm
+parses Protocol Buffers definitions
+.Pq Pa .proto
+files and generates code for them, or converts messages between the binary
+wire format and the text format.
+It is installed as
+.Pa /usr/libexec/protoc ,
+outside the default
+.Ev PATH :
+base system components run it by that path, normally through the build
+fragment
+.Pa lib/protobuf/protoc-gen.mk ,
+and it does not take the place of a Protocol Buffers compiler installed
+from ports.
+The base system
+.Nm
+contains the C++ generator.
+Other generators are separate programs, called plugins, that
+.Nm
+runs as
+.Pa protoc-gen- Ns Ar name
+for an
+.Fl - Ns Ar name Ns _out
+option, found on
+.Ev PATH
+or named with
+.Fl -plugin .
+The base system installs three plugins for C code that uses the upb
+runtime:
+.Bl -tag -width "/usr/libexec/protoc-gen-upb_minitable"
+.It Pa /usr/libexec/protoc-gen-upb
+generates the upb C API,
+.Ar name Ns Pa .upb.h .
+.It Pa /usr/libexec/protoc-gen-upb_minitable
+generates the upb mini-tables,
+.Ar name Ns Pa .upb_minitable.c
+and
+.Ar name Ns Pa .upb_minitable.h .
+.It Pa /usr/libexec/protoc-gen-upbdefs
+generates the reflection definitions for
+.Vt upb_DefPool ,
+.Ar name Ns Pa .upbdefs.c
+and
+.Ar name Ns Pa .upbdefs.h .
+.El
+.Pp
+The well-known types
+.Pq Pa google/protobuf/*.proto
+are installed in
+.Pa /usr/include/private
+and are found without an
+.Fl I
+option.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl I Ns Ar path , Fl -proto_path Ns = Ns Ar path
+Search
+.Ar path
+for imports and input files.
+May be given more than once; directories are searched in order.
+.It Fl -cpp_out Ns = Ns Ar dir
+Generate C++ header and source files
+.Pq Ar name Ns Pa .pb.h , Ar name Ns Pa .pb.cc
+in
+.Ar dir .
+.It Fl - Ns Ar name Ns _out Ns = Ns Ar dir
+Run the plugin
+.Pa protoc-gen- Ns Ar name
+and write its output in
+.Ar dir .
+.It Fl - Ns Ar name Ns _opt Ns = Ns Ar option
+Pass
+.Ar option
+to the generator or plugin
+.Ar name .
+.It Fl -plugin Ns = Ns Ar protoc-gen-name Ns = Ns Ar program
+Use
+.Ar program
+as the plugin
+.Ar protoc-gen-name .
+.It Fl o Ar file , Fl -descriptor_set_out Ns = Ns Ar file
+Write a
+.Vt FileDescriptorSet
+of the inputs to
+.Ar file .
+.It Fl -include_imports
+With
+.Fl o ,
+include the imports of the inputs in the set.
+.It Fl -decode Ns = Ns Ar message_type
+Read a binary message of type
+.Ar message_type ,
+defined in the given
+.Pa .proto
+files, from standard input and write it in text format to standard output.
+.It Fl -decode_raw
+Read an arbitrary binary message from standard input and write its tag/value
+pairs in text format to standard output.
+No
+.Pa .proto
+files are needed.
+.It Fl -encode Ns = Ns Ar message_type
+Read a text format message of type
+.Ar message_type
+from standard input and write it in binary to standard output.
+.It Fl -version
+Print the version and exit.
+.It Fl h , Fl -help
+Print all options and exit.
+.El
+.Pp
+Arguments may also be read from a file named
+.Li @ Ns Ar file ,
+one per line.
+.Sh FILES
+.Bl -tag -width "/usr/include/private/google/protobuf" -compact
+.It Pa /usr/libexec/protoc
+the compiler
+.It Pa /usr/include/private/google/protobuf
+well-known type definitions and the C++ runtime headers
+.It Pa /usr/libexec/protoc-gen-upb
+upb C API plugin
+.It Pa /usr/libexec/protoc-gen-upb_minitable
+upb mini-table plugin
+.It Pa /usr/libexec/protoc-gen-upbdefs
+upb reflection plugin
+.It Pa /usr/share/licenses/protobuf
+licence of the protobuf sources
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+Generate C++ code for
+.Pa example.proto
+in the current directory:
+.Pp
+.Dl $ /usr/libexec/protoc --cpp_out=. example.proto
+.Pp
+Generate upb C code:
+.Bd -literal -offset indent
+$ /usr/libexec/protoc \e
+    --plugin=protoc-gen-upb=/usr/libexec/protoc-gen-upb \e
+    --plugin=protoc-gen-upb_minitable=/usr/libexec/protoc-gen-upb_minitable \e
+    --upb_out=. --upb_minitable_out=. example.proto
+.Ed
+.Pp
+Show the fields of an unknown binary message:
+.Pp
+.Dl $ /usr/libexec/protoc --decode_raw < message.bin
+.Sh SEE ALSO
+.Xr libotelexport 3
+.Pp
+.Lk https://protobuf.dev/ "Protocol Buffers documentation"
+.Sh HISTORY
+.Nm
+29.6 first appeared in the 5BSD base system, with the C++ runtime as the
+private libraries
+.Pa libprivateprotobuf
+and
+.Pa libprivateprotobuf-lite .
+.Sh CAVEATS
+Only the C++ generator is built in; the upstream Java, Python, C#,
+Objective-C, PHP, Ruby, Rust and Kotlin generators are not part of the base
+system.
+The C++ runtime libraries are private to the base system: generated C++
+code built outside the base system should use a Protocol Buffers runtime
+and compiler from ports, not
+.Pa /usr/libexec/protoc .

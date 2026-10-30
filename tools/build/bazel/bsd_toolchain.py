@@ -7,7 +7,7 @@ import shutil
 
 HERE = Path(__file__).resolve().parent
 TOOLS = ('clang', 'ld.lld', 'llvm-ar', 'llvm-nm', 'llvm-objcopy', 'llvm-strip')
-STARLARK = ('cc_toolchain_config.bzl', 'bsd_component.bzl', 'bsd_generate.bzl')
+STARLARK = ('cc_toolchain_config.bzl', 'bsd_component.bzl', 'bsd_generate.bzl', 'bsd_cc.bzl')
 
 
 def stage_toolchain(tc, sysroot, objdump, awk, target, cpu, clang_version):

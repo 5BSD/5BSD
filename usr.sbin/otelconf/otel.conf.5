@@ -20,7 +20,7 @@ The base system contains no collector or agent: the programs export
 directly to the receiver named here.
 It is read through one configuration path of the base exporter library
 .Pq Xr oe_config_load 3
-by every program exporting with OTLP/HTTP:
+by every program exporting with OTLP:
 .Xr dtrace 1
 .Pq Fl x Cm otel=otlp ,
 .Xr bsdinstruments 8
@@ -83,8 +83,10 @@ Where telemetry goes:
 .Bl -tag -width "directory"
 .It Ic target Pq string, default Qq otlp
 .Qq otlp
-sends OTLP/HTTP to
-.Ic endpoint .
+sends OTLP to
+.Ic endpoint
+with
+.Ic protocol .
 .Qq file
 writes OTLP JSON Lines instead: one
 .Li ExportLogsServiceRequest ,
@@ -117,7 +119,7 @@ created with mode 0640 and synchronized to disk at least once a second
 while records arrive.
 An endpoint from the command line or
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT
-still selects OTLP/HTTP for that program; the spool is not used with
+still selects OTLP export for that program; the spool is not used with
 the file target.
 A file target that cannot be opened is an error, not a fallback.
 .Pp
@@ -141,14 +143,15 @@ Directory of the files, owned by
 with mode 0750; the rc.d services create it when missing.
 .El
 .It Ic endpoint Pq string, default Qq
-Base URL of the OTLP/HTTP receiver, for example an OpenTelemetry
-Collector.
-Signals are sent to
+Base URL of the OTLP receiver, for example an OpenTelemetry Collector.
+With the OTLP/HTTP protocols, signals are sent to
 .Pa /v1/metrics ,
 .Pa /v1/logs
 and
 .Pa /v1/traces
-below it.
+below it; with
+.Qq grpc
+it names the OTLP/gRPC server.
 .Pp
 Not used with the
 .Ic export.target
@@ -176,18 +179,35 @@ and
 .Xr hwstat 8
 .Fl -format Cm otel
 .Pc
-then uses the conventional OTLP/HTTP default of the OpenTelemetry
+then uses the conventional default of the OpenTelemetry
 specification,
 .Qq http://localhost:4318 ,
+or
+.Qq http://localhost:4317
+when the protocol is
+.Qq grpc ,
 where a collector the user runs listens by default.
-.It Ic protocol Pq string, default Qq http/json
-OTLP transport.
-The base exporter implements only
-.Qq http/json ;
+.It Ic protocol Pq string, default Qq http/protobuf
+OTLP protocol of the tools and services:
 .Qq http/protobuf
-and
+.Pq OTLP/HTTP, protobuf bodies ,
 .Qq grpc
-are refused.
+.Pq OTLP/gRPC
+or
+.Qq http/json
+.Pq OTLP/HTTP, JSON bodies .
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
+and the tools' command line options take precedence.
+With
+.Qq grpc ,
+.Ic endpoint
+must name an OTLP/gRPC receiver, normally on port 4317.
+The protocol applies only to
+.Ic export.target
+.Qq otlp :
+the
+.Qq file
+target always writes OTLP JSON Lines, whatever the protocol.
 .It Ic compression Pq string, default Qq gzip
 .Qq gzip
 or
@@ -238,7 +258,7 @@ Persistent buffering of OTLP batches the collector could not take
 .Pq the Qq otlp target only :
 .Bl -tag -width "max_bytes"
 .It Ic directory Pq path, default Pa /var/spool/otel
-Every program exporting with OTLP/HTTP
+Every program exporting with OTLP
 .Po
 .Xr dtrace 1
 .Fl x Cm otel=otlp ,

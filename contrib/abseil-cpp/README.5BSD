@@ -1,0 +1,27 @@
+5BSD import status
+==================
+
+Upstream:  Abseil LTS 20250127.1, https://github.com/abseil/abseil-cpp
+Archive:   https://github.com/abseil/abseil-cpp/releases/download/20250127.1/abseil-cpp-20250127.1.tar.gz
+SHA256:    b396401fd29e2e679cace77867481d388c807671dc2acc602a0259eeb79b7811
+           (equal to the devel/abseil port's distinfo)
+License:   LICENSE (Apache-2.0; upstream has no NOTICE file).
+           absl/time/internal/cctz/src/tzfile.h is in the public domain.
+
+Trimmed to what base builds (tools/build/protobuf/trim.py): the sources of
+upstream's single-library build (CMake/AbseilDll.cmake, the "abseil_dll"
+target) and the headers they and the imported protobuf need.  Not
+imported: absl/flags, tests, benchmarks, test helpers and build files.
+
+Local changes (tools/build/protobuf/patches):
+  abseil-a4950fba-is_trivially_relocatable.patch	upstream commit
+	a4950fba, as the devel/abseil port: clang 21 deprecates
+	__is_trivially_relocatable.
+  abseil-powerpc-timebase-frequency.patch	the devel/abseil port's
+	FreeBSD/powerpc timebase sysctl fix.
+  abseil-options-5bsd.patch	absl/base/options.h fixed for installed
+	headers (std::any, optional, string_view, variant; absl ordering) and
+	the inline namespace lts_20250127_5bsd.
+
+Built by lib/libabsl as one private library, libprivateabsl.so.2501.
+Installed licence: /usr/share/licenses/abseil-cpp.

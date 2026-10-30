@@ -13,8 +13,9 @@
 # file and the rc.d OpenTelemetry services refuse to start.
 enable = true;
 
-# Where telemetry goes.  target = "otlp": OTLP/HTTP to endpoint below.
-# target = "file": OTLP JSON Lines files, <directory>/<program>.jsonl
+# Where telemetry goes.  target = "otlp": OTLP to endpoint below, using
+# protocol.  target = "file": OTLP JSON Lines files (whatever protocol
+# says), <directory>/<program>.jsonl
 # (dtrace, bsdinstruments, hwstat, otelpfd, otelauditd), mode 0640,
 # rotated by newsyslog(8) (/etc/newsyslog.conf.d/otel.conf).
 export {
@@ -22,13 +23,15 @@ export {
 	directory = "/var/log/otel";
 }
 
-# Base URL of the OTLP/HTTP receiver (an OpenTelemetry Collector).
+# Base URL of the OTLP receiver (an OpenTelemetry Collector).
 # The base system has no local collector, so none is configured: the
 # telemetry services refuse to start until this is set (or the file
 # target is chosen).  Programs run by hand with OTLP output then use the
-# conventional http://localhost:4318.
+# conventional http://localhost:4318 (http://localhost:4317 for grpc).
+# protocol: "http/protobuf", "grpc" or "http/json"; used by the otlp
+# target only.
 endpoint = "";
-protocol = "http/json";
+protocol = "http/protobuf";
 compression = "gzip";
 timeout_ms = 10000;
 

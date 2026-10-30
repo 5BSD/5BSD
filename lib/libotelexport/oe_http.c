@@ -9,6 +9,7 @@
  * a bounded response body for partial-success checking.
  */
 
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
@@ -105,8 +106,8 @@ oe_url_parse(const char *url, struct oe_url *u)
 	return (0);
 }
 
-static int
-tcp_connect(const struct oe_url *u, int timeout_ms)
+int
+oe_tcp_connect(const struct oe_url *u, int timeout_ms)
 {
 	struct addrinfo hints, *res, *ai;
 	struct pollfd pfd;
@@ -199,7 +200,7 @@ conn_open(struct conn *c, const struct oe_url *u, int timeout_ms,
 	struct timeval tv;
 
 	memset(c, 0, sizeof(*c));
-	c->fd = tcp_connect(u, timeout_ms);
+	c->fd = oe_tcp_connect(u, timeout_ms);
 	if (c->fd < 0) {
 		snprintf(errbuf, errlen, "connect to %s:%d failed",
 		    u->host, u->port);
@@ -251,12 +252,50 @@ oe_http_post(const struct oe_url *u, const char *path,
     const char *user_agent, const void *body, size_t bodylen,
     int gzipped, int timeout_ms, struct oe_http_response *resp)
 {
+
+	return (oe_http_post_type(u, path, "application/json", headers,
+	    nheaders, user_agent, body, bodylen, gzipped, timeout_ms, resp));
+}
+
+/*
+ * Undo chunked transfer coding in place (RFC 9112 7.1); returns the
+ * decoded length.  A truncated or malformed chunk ends the body there.
+ */
+static size_t
+dechunk(char *data, size_t len)
+{
+	char *in, *end, *out, *ext;
+	unsigned long n;
+
+	in = out = data;
+	end = data + len;
+	while (in < end) {
+		n = strtoul(in, &ext, 16);
+		if (ext == in || (ext = memchr(ext, '\n', (size_t)(end -
+		    ext))) == NULL || n == 0 || n > (size_t)(end - ext - 1))
+			break;
+		memmove(out, ext + 1, n);
+		out += n;
+		in = ext + 1 + n;
+		if (in + 2 <= end && in[0] == '\r' && in[1] == '\n')
+			in += 2;
+	}
+	return ((size_t)(out - data));
+}
+
+int
+oe_http_post_type(const struct oe_url *u, const char *path,
+    const char *content_type, const struct oe_attr *headers,
+    size_t nheaders, const char *user_agent, const void *body,
+    size_t bodylen, int gzipped, int timeout_ms,
+    struct oe_http_response *resp)
+{
 	struct conn c;
 	struct oe_buf req, in;
 	char chunk[4096], *hdrend, *line, *next;
 	ssize_t n;
 	size_t i, off;
-	int ret;
+	int ret, chunked;
 
 	memset(resp, 0, sizeof(*resp));
 	resp->status = -1;
@@ -270,7 +309,7 @@ oe_http_post(const struct oe_url *u, const char *path,
 	oe_buf_appendf(&req, "POST %s/%s HTTP/1.1\r\n", u->basepath, path);
 	oe_buf_appendf(&req, "Host: %s:%d\r\n", u->host, u->port);
 	oe_buf_appendf(&req, "User-Agent: %s\r\n", user_agent);
-	oe_buf_appendstr(&req, "Content-Type: application/json\r\n");
+	oe_buf_appendf(&req, "Content-Type: %s\r\n", content_type);
 	if (gzipped)
 		oe_buf_appendstr(&req, "Content-Encoding: gzip\r\n");
 	for (i = 0; i < nheaders; i++)
@@ -332,7 +371,8 @@ oe_http_post(const struct oe_url *u, const char *path,
 	hdrend = strstr(in.data, "\r\n\r\n");
 	if (hdrend != NULL) {
 		*hdrend = '\0';
-		/* Scan headers for Retry-After. */
+		/* Scan headers for Retry-After and chunked coding. */
+		chunked = 0;
 		for (line = in.data; line != NULL; line = next) {
 			next = strstr(line, "\r\n");
 			if (next != NULL) {
@@ -341,13 +381,21 @@ oe_http_post(const struct oe_url *u, const char *path,
 			}
 			if (strncasecmp(line, "Retry-After:", 12) == 0)
 				resp->retry_after = strtod(line + 12, NULL);
+			else if (strncasecmp(line, "Transfer-Encoding:",
+			    18) == 0 && strcasestr(line + 18, "chunked") !=
+			    NULL)
+				chunked = 1;
 		}
 		/*
-		 * Keep a copy of the body for partial-success checks.
-		 * Ignores chunked framing markers; the check is a
-		 * best-effort substring scan.
+		 * Keep a copy of the leading body bytes for partial-success
+		 * checks: text for JSON, binary for protobuf.
 		 */
-		strlcpy(resp->body, hdrend + 4, sizeof(resp->body));
+		off = (size_t)(in.data + in.len - (hdrend + 4));
+		if (chunked)
+			off = dechunk(hdrend + 4, off);
+		resp->body_len = MIN(off, sizeof(resp->body) - 1);
+		memcpy(resp->body, hdrend + 4, resp->body_len);
+		resp->body[resp->body_len] = '\0';
 	}
 	ret = 0;
 

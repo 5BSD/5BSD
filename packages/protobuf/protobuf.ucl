@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+comment = "Protocol Buffers compiler and private C++ runtime"
+
+desc = <<EOD
+/usr/libexec/protoc (protoc(1)), the Protocol Buffers compiler, with its
+C++ generator and the upb C code generator plugins (not on the default
+PATH; ports keep their own protoc), and the private libraries it uses: the
+protobuf C++ runtime (libprivateprotobuf, libprivateprotobuf-lite) and
+Abseil (libprivateabsl).  The libraries are for base system programs; code
+built outside the base system should use the ports Protocol Buffers.
+EOD

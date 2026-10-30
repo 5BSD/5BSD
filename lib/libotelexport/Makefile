@@ -16,6 +16,11 @@ SRCS=		oe_util.c \
 		oe_sysconf.c \
 		oe_service.c
 
+# OTLP/HTTP with protobuf bodies and OTLP/gRPC (oe_otlppb.h).
+SRCS+=		oe_otlppb.c \
+		oe_otlppost.c \
+		oe_grpc.c
+
 INCS=		otelexport.h
 
 MAN=		libotelexport.3 \
@@ -85,7 +90,33 @@ MLINKS+=	libotelexport.3 oe_exporter_open.3
 
 # oe_sysconf.c reads otel.conf(5) with libucl.
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		z ssl crypto pthread ucl
+# oe_grpc.c frames HTTP/2 with nghttp2.
+CFLAGS+=	-I${SRCTOP}/contrib/nghttp2/lib/includes \
+		-I${SRCTOP}/lib/libnghttp2
+LIBADD=		z ssl crypto pthread ucl upb nghttp2
+
+# The OTLP messages, generated at build time with their upb reflection
+# definitions (oe_otlppb.c transcodes JSON requests through them).
+PROTO_SETS=	otlp
+PROTO_LANG.otlp= upbdefs
+PROTO_ROOT.otlp= ${SRCTOP}/contrib/opentelemetry-proto
+PROTO_FILES.otlp= \
+		opentelemetry/proto/common/v1/common.proto \
+		opentelemetry/proto/resource/v1/resource.proto \
+		opentelemetry/proto/logs/v1/logs.proto \
+		opentelemetry/proto/metrics/v1/metrics.proto \
+		opentelemetry/proto/trace/v1/trace.proto \
+		opentelemetry/proto/collector/logs/v1/logs_service.proto \
+		opentelemetry/proto/collector/metrics/v1/metrics_service.proto \
+		opentelemetry/proto/collector/trace/v1/trace_service.proto
+.include "${SRCTOP}/lib/protobuf/protoc-gen.mk"
+
+# The OTLP definitions (Apache-2.0) are compiled into every program that
+# links this library.
+FILESGROUPS+=	OTLP_LICENSES
+OTLP_LICENSES=	${SRCTOP}/contrib/opentelemetry-proto/LICENSE
+OTLP_LICENSESDIR= /usr/share/licenses/opentelemetry-proto
+OTLP_LICENSESPACKAGE= utilities
 
 WARNS?=		6
 

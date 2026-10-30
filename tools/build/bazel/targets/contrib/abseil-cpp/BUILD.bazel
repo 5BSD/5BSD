@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# contrib/abseil-cpp (trimmed import): sources and headers as declared
+# inputs for //lib/libabsl.  Upstream BUILD files are not imported or used.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["absl/**/*.cc"]))
+
+filegroup(
+    name = "headers",
+    srcs = glob(["absl/**/*.h", "absl/**/*.inc"]),
+)
