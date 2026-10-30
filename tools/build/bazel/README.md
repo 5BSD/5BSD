@@ -42456,3 +42456,31 @@ are amd64 candidates; runtime and cross-architecture qualification remain open.
 Frontend review: existing build-bsd target/typed inputs suffice; both use normal
 installation archive helpers. No signing or publication contract changed and
 nothing was installed on the host.
+
+### Native libotelexport candidate and ATF cases (2026-10-30)
+
+Added all six exporter sources as ordinary/PIE internal archives, with declared
+native zlib, SSL, crypto and threading dependencies. Both variants match fresh
+Make's six-member order and 165 global/weak symbol entries (including undefined
+references), normalizing only the PIE object suffix. The maintained 11 ATF cases
+all pass without skips/failures through build-bsd, covering buffers, JSON escaping,
+frame/environment/URL handling, text/JSONL/collapsed output, timestamps and OTLP
+configuration validation. Fixture sources were not modified.
+
+Strict install comparison caught and removed an extra header: although INCS is
+listed, INTERNALLIB suppresses header/archive installation. Make installs only
+the manual and its 24 aliases. Native comparison now passes for 25 destinations,
+one regular compressed manual and matching hardlinks. Public/private headers
+remain declared build interfaces, not installed files. Evidence under
+bazel-libotelexport-reference-20261030: archive-audit.json, install-audit.json,
+payload-audit.json and runtime-summary.json; native run bazel-libotelexport-20261030-r3.
+
+This does not qualify HTTP/TLS server delivery, collector interoperability,
+queue/shutdown concurrency, performance, cross-architecture or test installation.
+Existing tests are now Bazel executable targets but their package installation
+is still outstanding. Frontend review: normal explicit targets/tests, ATF reporting
+and install helpers suffice; no signing/publication or frontend input contract
+changes are introduced. Source inventory still identifies libomp, libunbound and
+legacy libgssapi as missing local library targets; aggregate directories without
+BUILD files must not be counted as unimplemented libraries without inspecting
+children. Existing targets likewise do not establish full-system qualification.

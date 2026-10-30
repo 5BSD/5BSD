@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+cc_binary(name = "otelexport_test", srcs = ["otelexport_test.c"],
+    deps = ["//lib/libotelexport:otelexport", "//lib/libotelexport:private_headers", "//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True)
+_CASES = ['buf_basic', 'json_escaping', 'frame_format', 'env_parsing', 'url_parse', 'text_exporter', 'text_exporter_empty_body', 'jsonl_exporter', 'collapsed_exporter', 'iso8601_shape', 'otlp_config_validation']
+[bsd_atf_test(name = case, case_name = case, body = ":otelexport_test", interface = "program",
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small", timeout = "moderate") for case in _CASES]
+test_suite(name = "native_tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])

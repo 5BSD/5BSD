@@ -7584,3 +7584,9 @@ Native artifacts/install metadata match Make; no implementation/hooks changed.
 Libvgl needs console acquisition/restoration, framebuffer and input runtime
 coverage. NSS TACACS+ needs lookup results, thread lifecycle, service failure
 and credential/server policy coverage. Neither is established by ABI comparison.
+
+### libotelexport (2026-10-30)
+
+Eleven maintained formatting/configuration ATF cases pass against native archives.
+No exporter logic or hooks changed. Collector delivery, TLS validation, queue
+pressure/drop reporting and concurrent shutdown need further runtime coverage.
