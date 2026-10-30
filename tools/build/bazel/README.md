@@ -43345,3 +43345,28 @@ Frontend review: existing typed tests/explicit target/SDK inputs cover this rule
 no frontend/backend/signing/publication contract changed. Embedded policy bytes
 are not signing or verified-boot qualification. Whole-system/bootstrap/pkgbase and
 performance remain open; Make remains production/default.
+
+
+### certctl and test installation (2026-10-30)
+
+Added native installed-system certctl with native crypto linkage. Configuration-
+selected test installation preserves certctl_test, certctl.subr, failure_test.py
+and generated Kyuafile. No program or test-source behavior changed. The first
+metadata comparison caught a redundant test-directory record; existing BSD.tests
+mtree already supplies that directory, so the explicit duplicate was removed.
+
+Native run: /usr/obj/usr/src/bazel-certctl-20261030-r2. Fresh Make reference:
+/usr/obj/usr/src/bazel-certctl-make-20261030. Scripts/evidence:
+/usr/obj/usr/src/bazel-certctl-reference-20261030/certctl. All nine installation
+records and seven regular payloads match: no missing/extra/metadata differences,
+matching symbol/dynamic inventories, debuglink CRC and exact manual/test bytes.
+No certificate store was modified and no test body was executed.
+
+The BOOTSTRAPPING variant uses scandir instead of fdscandir and remains a separate
+unimplemented native bootstrap target/qualification requirement. Tests-disabled
+configuration and actual trust/distrust/rehash/error/atomicity test execution also
+remain open; existing host/source ABI limitations still apply to runtime planning.
+Frontend review: existing build-bsd explicit target, tests setting and SDK inputs
+cover the installed-system rule; no frontend/backend/signing/publication contract
+changed. This is not bootstrap, verified-boot, complete pkgbase or whole-system
+qualification. Make remains production/default.

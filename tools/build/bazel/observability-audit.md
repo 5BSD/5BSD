@@ -8009,3 +8009,12 @@ checks pass; strict DTrace equality fails and live firing remains open. Evidence
 /usr/obj/usr/src/bazel-capsulectl-reference-20261030/dof-difference.json.
 Qualify production lifecycle authorization and control failures separately from
 the maintained fake-service fixture. No live control operations were performed.
+
+
+### certctl (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ calls were found in certctl.c. Native executable
+and complete test installation match Make artifacts. Test bodies remain unrun;
+qualify trust/distrust/rehash, malformed certificates, filesystem/write failures
+and atomicity using the maintained tests. Review certificate-store change audit
+coverage. No host certificate-store modification was performed.
