@@ -44,6 +44,9 @@ LINK_MARKER = 'DTRACE_BAZEL_LINK_PROBE'
 
 # Make component directories built for the reference, in dependency order.
 MAKE_COMPONENTS = [
+    # libotelexport's OTLP protobuf transport links the internal upb
+    # library, which the dtrace link finds in the Make object tree.
+    ('libupb', 'lib/protobuf/libupb', ['libupb_pie.a']),
     ('libotelexport', 'lib/libotelexport', ['libotelexport_pie.a']),
     ('libdtotel', 'cddl/lib/libdtotel', ['libdtotel_pie.a']),
     ('libdtrace', 'cddl/lib/libdtrace', ['libdtrace.so.2.full', 'priv.d']),
@@ -54,7 +57,10 @@ PRIVATE_LIBS = {'libotelexport': 'LIBOTELEXPORTDIR', 'libdtotel': 'LIBDTOTELDIR'
 # Workspace inputs: whole component directories, header trees (*.h, *.hh)
 # and individual source files outside the component directories.
 COPY_DIRS = ['cddl/lib/libdtrace', 'cddl/usr.sbin/dtrace', 'cddl/lib/libdtotel',
-             'lib/libotelexport']
+             'lib/libotelexport', 'lib/protobuf/libupb']
+# libotelexport's protobuf closure (upb, generated OTLP, nghttp2 and the
+# protoc tools), as listed for the OTel probe.
+OTEL_SOURCE_TREES = json.loads((HERE / 'targets/sources.json').read_text()).get('source_trees', [])
 HEADER_TREES = ['sys', 'cddl/compat/opensolaris/include', 'cddl/contrib/opensolaris/head',
                 'cddl/contrib/opensolaris/lib/libctf/common',
                 'cddl/contrib/opensolaris/lib/libdtrace/common', 'usr.sbin/dtraced',
@@ -225,7 +231,7 @@ def main():
         (out / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
 
     source_files = set()
-    for directory in COPY_DIRS:
+    for directory in COPY_DIRS + OTEL_SOURCE_TREES:
         source_files.update(f for f in (src / directory).rglob('*')
                             if f.is_file() and 'tests' not in f.relative_to(src / directory).parts)
     for tree in HEADER_TREES:
@@ -249,7 +255,11 @@ def main():
         make_info = {}
         for name, path, targets in MAKE_COMPONENTS:
             objdir = out / 'make' / name
-            objdir.mkdir()
+            if name == 'libupb':
+                # Where LIBUPBDIR (src.libnames.mk) points.
+                objdir = (out / 'make/objprefix' / str(src).lstrip('/') / 'amd64.amd64' /
+                          path)
+            objdir.mkdir(parents=True)
             common = [var + '=' + str(out / 'make' / lib) for lib, var in PRIVATE_LIBS.items()
                       if lib != name]
             base = ['/usr/bin/env', 'MAKEOBJDIR=' + str(objdir), make, '-C', src / path]
@@ -280,10 +290,10 @@ def main():
         ws.mkdir()
         bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
                                       a.target, a.cpu, a.clang_version)
-        for directory in COPY_DIRS:
+        for directory in COPY_DIRS + OTEL_SOURCE_TREES:
             # Test directories are not inputs of these targets.
             shutil.copytree(src / directory, ws / directory, symlinks=False, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns('tests'))
+                            ignore=shutil.ignore_patterns('tests', *bsd_toolchain.SOURCE_BAZEL_FILES))
         files = set()
         for tree in HEADER_TREES:
             files.update((src / tree).rglob('*.h'))

@@ -397,10 +397,11 @@ def main():
                                       a.target, a.cpu, a.clang_version)
         for component in manifest['components']:
             shutil.copytree(src / component['path'], ws / component['path'],
-                            symlinks=False, dirs_exist_ok=True)
+                            symlinks=False, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns(*bsd_toolchain.SOURCE_BAZEL_FILES))
         for tree in manifest.get('source_trees', []):
             shutil.copytree(src / tree, ws / tree, symlinks=False, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns('tests'))
+                            ignore=shutil.ignore_patterns('tests', *bsd_toolchain.SOURCE_BAZEL_FILES))
         for tree in manifest['header_trees']:
             for header in sorted((src / tree).rglob('*.h')):
                 if not header.resolve(strict=True).is_relative_to(src):

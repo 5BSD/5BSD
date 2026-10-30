@@ -330,7 +330,7 @@ def main():
                                       a.target, a.cpu, a.clang_version)
         for directory in COPY_DIRS:
             shutil.copytree(src / directory, ws / directory, symlinks=False, dirs_exist_ok=True,
-                            ignore=shutil.ignore_patterns('tests'))
+                            ignore=shutil.ignore_patterns('tests', *bsd_toolchain.SOURCE_BAZEL_FILES))
         (ws / 'contrib/libucl/include').mkdir(parents=True)
         for header in (src / 'contrib/libucl/include').glob('*.h'):
             shutil.copy2(header, ws / 'contrib/libucl/include' / header.name)

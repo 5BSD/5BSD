@@ -43097,3 +43097,21 @@ covers libotelexport with the three new sources and the generated set.
 Not qualified: matching-system VM runtime of the Bazel builds, Bazel9,
 installation/METALOG parity, the upstream test suites under Bazel. The
 probe is standalone (not part of `qualify.py` or `build-bsd bazel-test`).
+
+Probes alongside the native in-tree BUILD files (2026-10-30)
+-------------------------------------------------------------
+Since dev's native qualification added `BUILD.bazel`/`*.bzl` files inside the
+source directories (for example `lib/libotelexport/BUILD.bazel`), the
+declared-toolchain probes (`otel-probe.py`, `protobuf-probe.py`,
+`dtrace-probe.py`) leave those files out when they copy component
+directories into their workspace (`bsd_toolchain.SOURCE_BAZEL_FILES`); their
+own targets still come only from `targets/`, and any other Bazel file in a
+probe workspace is still refused. `dtrace-probe.py` now also covers
+libotelexport's protobuf closure: the Make reference builds
+`lib/protobuf/libupb` where `LIBUPBDIR` points, and the workspace receives the
+`source_trees` of `targets/sources.json`. Against the merged tree's SDK
+(`/usr/obj/5BSD-otel-validation/merge2-obj`) all three probes passed
+(`merge2-bazel-{otel,dtrace,protobuf}/result.json`). The native
+`lib/libotelexport/BUILD.bazel` still lists the six sources of the pre-merge
+library and does not build the current one (sysconf, service, file target,
+OTLP protobuf/gRPC); the declared probes, not that file, cover it.

@@ -46,7 +46,7 @@ def stage_toolchain(tc, sysroot, objdump, awk, target, cpu, clang_version):
         'filegroup(name="strip_inputs", srcs=["bin/llvm-strip"])\n'
         'filegroup(name="empty")\n' + config +
         'cc_toolchain(name="compiler", toolchain_identifier="bsd-staged-clang", '
-        'toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", '
+        'toolchain_config=":config", all_files=":inputs", compiler_files=":compile_inputs", as_files=":compile_inputs", '
         'linker_files=":link_inputs", ar_files=":archive_inputs", objcopy_files=":objcopy_inputs", '
         'strip_files=":strip_inputs", dwp_files=":empty", supports_param_files=1)\n'
         'cc_toolchain_suite(name="suite", toolchains={%s: ":compiler"})\n' % json.dumps(cpu))
@@ -58,3 +58,11 @@ def build_flags(cpu, jobs):
             '--action_env=PATH=/bin:/usr/bin', '--subcommands',
             '--crosstool_top=//toolchain:suite', '--cpu=' + cpu,
             '--host_crosstool_top=//toolchain:suite', '--host_cpu=' + cpu]
+
+
+# The source tree's own (native) Bazel files.  The probes declare their
+# targets in their overlay (targets/), so these are left out when component
+# directories are copied into a probe workspace; the probes still refuse a
+# workspace in which any other Bazel file appears.
+SOURCE_BAZEL_FILES = ('BUILD', 'BUILD.bazel', '*.bzl', 'WORKSPACE', 'WORKSPACE.bazel',
+                      'MODULE.bazel')
