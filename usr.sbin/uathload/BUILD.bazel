@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+cc_binary(name = "uathload", srcs = ["uathload.c"], deps = [], dynamic_deps = [], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_uudecode.bzl", "bsd_uudecode")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_uudecode(name = "firmware", src = "//:sys/contrib/dev/uath/ar5523.bin.uu", output = "ar5523.bin",
+    decoder = "//usr.bin/bintrans:bintrans", loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"])
+bsd_install_file(name = "install_firmware", src = ":firmware", destination = "/usr/share/firmware/ar5523.bin", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
+utility_installation(name = "install_manifest", program = "uathload", manual = "uathload.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":install_firmware"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/usr/share/firmware": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

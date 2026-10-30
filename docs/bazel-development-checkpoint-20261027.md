@@ -19770,3 +19770,38 @@ performance qualification. Make remains production/default.
   Original failing Make bootstrap log is retained in the corresponding non-r2
   directory. Frontend review: maintained build-bsd bazel-test explicit targets
   and 16 jobs suffice; no C/backend/signing/publication contract changes needed.
+
+### 2026-10-30: wireless utilities and native firmware decoding
+
+- Added uhsoctl, wlandebug, wlanstat and uathload native targets, preserving
+  maintained source/library choices, manual sections and installation metadata.
+  wlanstat directly includes a source-tree net80211 ioctl header; it is now an
+  explicit input. wlandebug retains Make's libm shared dependency through the
+  native libifconfig graph.
+- wlanstat's maintained Makefile replaces CFLAGS and omits optimization. Its
+  native target explicitly uses -O0 to preserve that behavior. This is recorded
+  for a separate optimization/performance review rather than silently changing
+  the reference or accepting differing compiler-generated symbol inventories.
+- uathload firmware uses new reusable bsd_uudecode.bzl with native bintrans,
+  native rtld and declared libc/libsys in the execution configuration. The input
+  contains a license preamble that the fixture-only Python decoder rejects;
+  production firmware now uses the maintained decoder rather than extending a
+  replacement parser or editing the licensed input. Execution evidence confirms
+  BSDNativeUUDecode ran successfully under processwrapper-sandbox. This does not
+  establish stronger sandbox enforcement or cross-target execution.
+- Fresh Make comparisons pass for all four: 22 changed metadata records, 13
+  regular payloads, four debug links; global/weak symbols, ordered dependencies,
+  manual bytes and CRCs match. Firmware is byte-identical, 153416 bytes, SHA256
+  352f07dda4dc263426550cb23304d4684011cde0a67d701ae8a673906b1063e0.
+  Firmware directory package metadata also matches Make.
+- Evidence under /usr/obj/usr/src: bazel-wireless-tools-reference-20261030
+  (per-component comparators/results and audit-all.py), final native capture
+  bazel-wireless-tools-20261030-r4, fresh bazel-{uhsoctl,wlandebug,wlanstat,uathload}-make-20261030.
+  Earlier captures retain framing, missing-header and link/optimization failures;
+  r3 execution.json records successful native firmware generation.
+- No live modem/network/debugging/statistics/firmware operations were run.
+  Hardware runtime, native Bazel behavioral tests, comparative performance and
+  whole-world/kernel/package qualification remain open. Frontend review:
+  maintained build-bsd bazel-test uses these explicit targets with 16 jobs and
+  captures their generated payloads; no frontend C/backend/signing/publication
+  contract changes needed. Make remains production default.

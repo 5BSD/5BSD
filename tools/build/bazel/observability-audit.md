@@ -8260,3 +8260,12 @@ checks cover dry-run, selection, reinstall and rejection; they do not establish
 administrative audit attribution for timezone changes. Interactive dialog and
 installed-system runtime remain unqualified. The bootstrap source fix only
 conditions UI-specific clock state/query; no instrumentation was removed.
+
+### 2026-10-30: uhsoctl, wlandebug, wlanstat and uathload
+
+No local DTrace provider or direct libbsm integration is declared by these tools.
+uhsoctl retains its existing syslog calls; wlanstat retains libbsdstat and
+wlandebug retains libifconfig. Firmware generation is qualified without loading
+firmware onto hardware. Modem control, debug-mask changes, hardware statistics
+and firmware-operation authorization/audit attribution require runtime review.
+Installation and firmware-byte parity do not establish those behaviors.
