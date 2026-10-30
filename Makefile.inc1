@@ -3569,7 +3569,8 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libutil lib/libpjdlog ${_lib_libypclnt} lib/libz lib/msun \
 		lib/libxo \
 		${_secure_lib_libcrypto} ${_secure_lib_libssl} \
-		${_lib_libldns} ${_secure_lib_libssh}
+		${_lib_libldns} ${_secure_lib_libssh} \
+		${_lib_libcbor}
 
 lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
 	lib/libtrustedzfs__L lib/libcapsulert__L
@@ -3699,6 +3700,9 @@ lib/libldns__L: secure/lib/libssl__L
 .endif
 .if ${MK_OPENSSH} != "no"
 _secure_lib_libssh= secure/lib/libssh
+# libfido2 (built with the rest of lib/) links libprivatecbor from the
+# sysroot, so libcbor is installed with the prebuilt libraries.
+_lib_libcbor= lib/libcbor
 secure/lib/libssh__L: lib/libz__L secure/lib/libcrypto__L lib/libcrypt__L
 .if ${MK_LDNS} != "no"
 secure/lib/libssh__L: lib/libldns__L
