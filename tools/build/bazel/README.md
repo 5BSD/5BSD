@@ -43664,3 +43664,17 @@ Evidence: `/usr/obj/usr/src/bazel-acpi-tools-reference-20261030`; native capture
 acpidb and iasl remain outside this migrated subset. No firmware error injection,
 power-management operation or firmware dump/disassembly runtime was exercised.
 These results establish component artifact parity against the staged SDK.
+
+### ACPICA debugger artifacts (2026-10-30)
+
+`//usr.sbin/acpi/acpidb:install_archive` now builds the debugger from 190 explicit
+sources and its declared ACPICA headers, using native libthr and the maintained
+application defines/no-strict-aliasing option. All source labels match actual
+fresh Make compilation commands with no missing/extra/duplicate inputs.
+Five installation records and three regular payloads pass Make metadata,
+manual-byte, ELF symbol/dependency and debug CRC comparisons.
+
+Evidence: `/usr/obj/usr/src/bazel-acpidb-reference-20261030`, captured native
+artifacts `bazel-acpidb-20261030`. Maintained build-bsd drove the build with 16 jobs.
+AML interpretation, simulated region behavior, debugger interaction and thread
+runtime are not qualified by this artifact comparison. iasl remains pending.

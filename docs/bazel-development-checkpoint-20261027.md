@@ -19515,3 +19515,24 @@ performance qualification. Make remains production/default.
 - Frontend review: maintained Bazel-built build-bsd bazel-test with explicit
   targets and 16 jobs covers these additions without new frontend C/backend,
   staging/signing/publication requirements. No host installation occurred.
+
+### 2026-10-30: native ACPICA debugger
+
+- Added acpidb with 190 explicit source labels (189 contributed ACPICA sources),
+  45 transitively referenced ACPICA headers, native libthr, ACPI_DB_APP and
+  ACPI_EXEC_APP, and Make's no-strict-aliasing/compiler compatibility choice.
+  Root-owned contributed sources are narrowly exported without introducing new
+  package boundaries that would invalidate existing bhyve/kernel labels.
+- Source audit compares actual fresh Make compile commands to native source
+  labels: 190 each, no omissions/extras/duplicates. Source inventories and the
+  audit are retained in the evidence directory, not dynamically read by Bazel.
+- Fresh Make artifact comparison passes five changed installation records and
+  three regular payloads, including exact manual, package/permission metadata,
+  global/weak ELF symbols and ordered shared-library dependencies, debug CRC.
+- Evidence: `/usr/obj/usr/src/bazel-acpidb-reference-20261030`, native capture
+  `bazel-acpidb-20261030`, fresh `bazel-acpidb-make-20261030` under `/usr/obj/usr/src`.
+- Frontend review: maintained Bazel-built build-bsd bazel-test used explicit
+  inputs and 16 jobs; no new C/backend/staging/signing/publication requirements.
+  AML load/interpretation, region simulation, debugger commands and thread
+  behavior remain runtime qualification work. iasl still needs migration;
+  complete ACPI/world/bootstrap/runtime/performance completion is not claimed.

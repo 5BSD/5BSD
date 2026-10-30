@@ -8160,3 +8160,13 @@ should cover attribution/denial of ACPI ioctl operations, firmware reads,
 suspend requests, and error-injection requests using appropriate isolated
 hardware/VM fixtures. No such operation was executed on the host. Kernel audit
 coverage must be examined before treating absent userland libbsm as a gap.
+
+### 2026-10-30: acpidb
+
+Preserved the maintained ACPICA debugger/application compile definitions and
+native libthr dependency. The local frontend declares no DTrace provider or
+direct audit-library linkage; ACPICA's debugger/debug output is a separate
+mechanism. Thread instrumentation belongs to libthr and is not a new acpidb
+provider. Runtime review should cover AML loading, interpreter exceptions,
+simulated region I/O and debugger/thread shutdown. None was exercised here;
+no host firmware execution or system-state change was performed.
