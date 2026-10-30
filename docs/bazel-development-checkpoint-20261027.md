@@ -18836,3 +18836,27 @@ boot or protection against root. Existing build-bsd typed options, explicit
 inputs and capimage rules cover this addition; no frontend/backend/signing/
 publication contract changed. Full system/bootstrap/pkgbase/performance remain
 open; Make remains the production/default backend.
+
+### BSDBluetooth independent audit/DTrace options (2026-10-30)
+
+Two additional configurations now pass fresh Make comparisons:
+- audit=false, dtrace=true: bazel-bt-daemon-noaudit-20261030 and fresh Make
+  bazel-bt-daemon-noaudit-make-20261030. Evidence/scripts under
+  /usr/obj/usr/src/bazel-bt-daemon-noaudit-reference-20261030.
+- audit=true, dtrace=false: bazel-bt-daemon-nodtrace-20261030 and fresh Make
+  bazel-bt-daemon-nodtrace-make-20261030. Evidence/scripts under
+  /usr/obj/usr/src/bazel-bt-daemon-nodtrace-reference-20261030.
+
+Each matches 26 installation records, nine regular payloads, symbol/dynamic
+linkage inventories, unit/config/manual bytes, two debuglink CRCs and exact
+blued.ucl bytes in the stripped policy section. All builds completed.
+Audit-disabled binaries have no direct libbsm dependency and retain matching
+DTrace providers/129 schemas/158 validated ordinary sites. DTrace-disabled
+binaries have no DOF section and retain libbsm linkage. Saved linkage/DOF reports
+record these limits; they do not establish runtime record emission or firing.
+
+Together with the earlier enabled/enabled build, this qualifies three build
+configurations; disabled/disabled has not been compared. Defaults remain audit
+and DTrace enabled. Existing build-bsd typed options work without frontend or
+backend changes. Runtime activation/authorization/Bluetooth and complete system,
+bootstrap/pkgbase/performance qualification remain open. No host service ran.

@@ -43094,3 +43094,10 @@ options are explicit; enabled DTrace providers/129 schemas and 158 sites match.
 The daemon retains its declared unsigned policy bytes after stripping. Evidence:
 /usr/obj/usr/src/bazel-bt-daemon-reference-20261030. Disabled variants and live
 activation/authorization/Bluetooth/audit/probe qualification remain open.
+
+BSDBluetooth option checks (2026-10-30): audit-off/DTrace-on and audit-on/DTrace-off
+both match Make artifacts and retained policy. The former retains 129 probe
+schemas/158 valid sites without direct BSM linkage; the latter retains BSM and
+has no DOF section. Evidence: bazel-bt-daemon-noaudit-reference-20261030 and
+bazel-bt-daemon-nodtrace-reference-20261030 under /usr/obj/usr/src. Both defaults
+remain enabled; disabled/disabled and runtime behavior are not qualified here.

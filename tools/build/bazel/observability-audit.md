@@ -7901,3 +7901,11 @@ controller descriptor transfer, GATT service ownership/reclamation, ATT/SMP/ISO
 protocol errors, pairing keys/persistence, adapter removal and authorization
 failures, plus audit/probe-enabled and disabled variants. No runtime service was
 started. Embedded unsigned policy parity does not prove enforcement/signing.
+
+
+BSDBluetooth option follow-up (2026-10-30): independent audit-disabled and
+DTrace-disabled build comparisons pass. Audit-off retains 129 DTrace schemas
+and 158 validated ordinary sites; DTrace-off retains direct libbsm linkage and
+has no executable DOF. Neither result proves emitted audit records, live probes
+or runtime authorization. Both options remain enabled by default. The combined
+disabled/disabled configuration was not exercised in this comparison.
