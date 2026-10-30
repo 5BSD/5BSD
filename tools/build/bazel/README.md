@@ -43636,3 +43636,18 @@ Evidence: `/usr/obj/usr/src/bazel-router-tools-reference-20261030/`, native capt
 `bazel-router-tools-20261030`. The maintained frontend drove the capture with
 16 jobs. Live packet handling, control operations and network configuration
 were not exercised; runtime and performance qualification remain pending.
+
+### inetd qualification (2026-10-30)
+
+`//usr.sbin/inetd:install_archive` builds native objects/libraries and DTrace,
+retains LOGIN_CAP/IPSEC, and selects IPv6 support and TCP wrappers through typed
+build settings. Installation preserves inetd.conf and its section-5 manual
+hardlink to inetd.8. Fresh Make artifact parity passes eight records/four regular
+payloads in both default and explicit IPv6/wrappers/DTrace-disabled builds.
+
+The default retains two matching DTrace probe schemas/sites. Reduced-feature
+artifacts omit DOF/probe symbols and libwrap while retaining libipsec, matching
+Make. Evidence: `/usr/obj/usr/src/bazel-inetd-reference-20261030` and
+`/usr/obj/usr/src/bazel-inetd-options-reference-20261030`. Both captures used the
+maintained frontend with 16 jobs. No service was started or live probes fired;
+these are component artifact comparisons, not runtime qualification.

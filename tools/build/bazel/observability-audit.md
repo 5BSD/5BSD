@@ -8138,3 +8138,16 @@ runtime coverage should examine RARP request/reply paths, router advertisement
 and renumbering handling, configuration reloads, and control-socket authorization
 with kernel audit attribution. Absence of userland libbsm alone does not establish
 missing audit events. No network daemon or control operation ran on the host.
+
+### 2026-10-30: inetd
+
+Preserved inetd spawn/refuse probes. Default native and fresh Make artifacts
+match both schemas and two ordinary instruction sites; no is-enabled sites
+exist in this provider. Explicit DTrace-disabled builds omit DOF and probe
+symbols in both implementations, without changing the enabled default.
+Evidence: `/usr/obj/usr/src/bazel-inetd-reference-20261030/dof-audit.py`,
+`native-dof.json`/`make-dof.json`, and the corresponding options-reference audit.
+Live event delivery, accepted/refused connections, login-cap transitions, TCP
+wrapper rules, IPv6 and IPsec behavior remain runtime qualification items.
+No direct audit-library dependency was introduced; kernel audit coverage for
+service creation/refusal needs runtime examination.

@@ -19472,3 +19472,26 @@ performance qualification. Make remains production/default.
   consumed explicit targets with 16 jobs; existing inputs suffice, so no C
   frontend/backend/staging/signing/publication change was needed. These staged
   SDK artifact comparisons do not qualify runtime or system-wide performance.
+
+### 2026-10-30: native inetd and optional features
+
+- Added native inetd objects, DTrace provider, native libutil/libwrap/libipsec
+  linkage, LOGIN_CAP/IPSEC defines, IPv6/TCP-wrapper/DTrace selects, maintained
+  configuration and cross-section manual hardlink. DTrace remains on by default.
+- Fresh Make comparison passed in default and explicit no-INET6_SUPPORT,
+  no-TCP_WRAPPERS, no-DTRACE configurations: eight installation records and four
+  regular payloads each, plus the manual hardlink. Compared metadata/tags, exact
+  configuration/manual bytes, global/weak ELF symbols and ordered dependencies,
+  debug CRCs and hardlink content/inode semantics.
+- Default DTrace matches two probe schemas and two ordinary instruction sites.
+  Both reduced-feature binaries have no DOF, probe symbols or libwrap dependency;
+  both retain libipsec. Live spawn/refuse events and network service operation
+  remain untested. This covers two configurations, not every option combination.
+- Evidence under `/usr/obj/usr/src`: `bazel-inetd-reference-20261030`,
+  `bazel-inetd-options-reference-20261030`, matching native captures and fresh
+  Make stages. Per-reference audit scripts/JSON retain the comparisons.
+- Frontend review: existing explicit targets/settings cover these additions via
+  maintained Bazel-built build-bsd bazel-test with 16 jobs. No frontend C/backend,
+  signing or publication change required. No daemon was started, no port bound,
+  and no host install or configuration mutation performed. Whole-system runtime,
+  bootstrap, packaging/publication and performance gates remain open.
