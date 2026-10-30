@@ -7544,3 +7544,10 @@ An existing size_t*/ssize_t* parser-length diagnostic in pmclog_read/get_event
 was observed without suppression; review signedness and fragmented/malformed
 record handling with parser fixtures before claiming runtime correctness.
 No new probes or audit hooks were introduced by this build migration.
+
+### libpmcstat (2026-10-30)
+
+Ordinary and PIE internal archives match fresh Make member/symbol inventories.
+No probes or audit hooks changed. Runtime coverage still needs sampled event/log
+processing, process lifecycle, ELF image/symbol resolution, malformed logs and
+error cleanup on a matching system. Archive parity does not prove those paths.

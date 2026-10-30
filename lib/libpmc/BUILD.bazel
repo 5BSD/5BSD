@@ -29,3 +29,5 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+cc_library(name = "public_headers", hdrs = ["pmc.h", "pmclog.h", "pmcformat.h"], includes = ["."], visibility = ["//visibility:public"])

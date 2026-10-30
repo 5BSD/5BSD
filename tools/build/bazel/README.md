@@ -42254,3 +42254,24 @@ SDK headers/startup/unwind runtime remain bootstrap prerequisites. No hardware
 PMC operation, log-parser runtime, system performance or full-world completion
 is claimed. Libpmcstat currently exposes only its header interface, not its
 implementation archive.
+
+### Native libpmcstat internal archives (2026-10-30)
+
+Built all six maintained implementation sources as ordinary and PIE archives.
+The PMC public-header interface is a separate CcInfo dependency, avoiding a link
+cycle with libpmc's use of libpmcstat declarations. Neither archive is installed,
+matching Make's INTERNALLIB declaration; no package payload is invented.
+
+Fresh Make comparison passes for both archives: six members in source order and
+150 global/weak symbol entries each, including undefined symbols. The comparison
+normalizes only Make's .pieo member suffix to Bazel's .o. Saved native artifact
+hashes are verified. Execution records show -fpie for each of the six PIE objects
+and no -fpie for the ordinary objects. Evidence is archive-audit.json under
+/usr/obj/usr/src/bazel-libpmcstat-reference-20261030; native output is
+/usr/obj/usr/src/bazel-libpmcstat-20261030. This supersedes the earlier statement
+that only libpmcstat headers are migrated. No PMC sampling, ELF image resolution,
+log processing runtime, cross-architecture or performance qualification is claimed.
+
+Frontend review: maintained build-bsd explicit targets and typed inputs already
+build these archive targets. No new build option, staging/signing/verification,
+installation or publication contract is introduced; no frontend change required.
