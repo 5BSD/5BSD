@@ -4377,3 +4377,14 @@ The format-5 build-settings boolean
 controller diagnostics. The legacy dump command resolves the opened device
 and supports only the mfi driver diagnostic sysctl.
 Controller operations require separate runtime qualification.
+
+.Ss Native installer helper identity
+The format-5 build-settings string
+.Cm //tools/build/bazel/config:installer_osname
+(default 5BSD) supplies the maintained installer OSNAME header used by
+.Cm distextract , distfetch
+and
+.Cm partedit .
+It must be nonempty and contain no control characters.
+The native partedit target currently selects the x86 implementation on amd64;
+this does not qualify an installation or disk-editing operation.

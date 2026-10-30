@@ -8432,3 +8432,12 @@ retain both ELF classes and the maintained skeleton generator. Private symbol
 transformation/generated-output checks pass; a complete rescue build must still
 verify preservation of its constituent programs' probes and audit paths. These
 tool checks do not establish instrumentation retention in a linked rescue image.
+
+### 2026-10-30: installer helper binaries
+
+The four helper Makefiles declare no local DTrace provider or direct libbsm
+linkage. Native sources preserve archive extraction, download, GEOM partitioning
+and console-child logic, but artifact checks do not qualify these operations.
+Disk changes/rollback and error attribution, archive paths, fetch integrity and
+child/terminal lifecycle require disposable installation/runtime tests. None of
+these operations was executed against the host.

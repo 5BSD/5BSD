@@ -44411,3 +44411,38 @@ Existing build-bsd explicit target inputs cover these additions. The maintained
 generator backend was updated in the same change for shell flags; no new frontend
 C/manual user option, security policy or staging/publication contract is needed.
 Make remains production/default; full-system gates remain open.
+
+### Native installer helper binaries (2026-10-30)
+
+Added distextract, distfetch, partedit and runconsoles with maintained sources,
+library dependencies, /usr/libexec/bsdinstall placement and bsdinstall ownership.
+The current amd64 partedit target explicitly uses partedit_x86.c; autopart and
+scriptedpart remain binary hardlinks, and /usr/sbin/sade keeps its maintained
+relative symlink and section-8 manual. No generic architecture fallback is used.
+The top-level installer scripts/data/test suite are still separate migration work;
+these four targets do not claim a complete installer.
+
+Generated opt_osname.h now comes from the typed installer_osname setting (default
+5BSD), using a declared Starlark action. The maintained build-bsd manual documents
+the setting. Empty/control-character values are rejected and C string escaping
+is explicit. Existing format-5 build-settings forwarding handles the new input;
+no C frontend replacement or one-off build entry point is needed.
+
+Evidence: /usr/obj/usr/src/bazel-installer-binaries-reference-20261030; native
+capture bazel-installer-binaries-20261030. Fresh per-component Make references
+are bazel-distextract-make-20261030, bazel-distfetch-make-20261030,
+bazel-partedit-make-20261030, and bazel-runconsoles-make-20261030. Make's include
+header prerequisite was generated in each private object tree before its helper.
+Installation record counts match 5/5/9/5 respectively, with no missing/extra
+paths or metadata differences. Regular payload counts 2/2/3/2 pass symbol,
+ordered dynamic dependency and manual checks; each executable has a validated
+debuglink CRC. Both partedit hardlinks and its symlink are checked.
+
+A separate build-bsd run, bazel-installer-osname-20261030, captures the generated
+header for installer_osname="Example BSD". osname-audit.json verifies exact header
+bytes and the artifact receipt hash; fresh Make default headers all name 5BSD.
+Alternate-name full helper binaries are not separately qualified. No installer,
+disk editor, archive extraction, fetch or console child was executed. UI,
+filesystem/network behavior, other architectures, full installed test suite and
+performance remain open. No security/staging/signing/publication semantics were
+changed; Make remains production/default.

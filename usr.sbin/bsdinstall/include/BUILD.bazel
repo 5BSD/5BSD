@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":osname.bzl", "osname_header")
+osname_header(name = "generated", osname = "//tools/build/bazel/config:installer_osname")
+cc_library(name = "headers", hdrs = [":generated"], strip_include_prefix = ".", visibility = ["//usr.sbin/bsdinstall:__subpackages__"])
