@@ -8370,3 +8370,13 @@ attribution and the uefisign child capability boundary need runtime qualificatio
 VALE create/attach/detach and polling operations, and power-device suspend requests,
 need matching-kernel observability/audit review. Artifact checks do not establish
 these operations or their performance; none were executed on the host.
+
+### 2026-10-30: oeslogger
+
+Preserved oeslogger event-handled, wait-done and dispatch-error provider schemas.
+Native and Make executables match all three schemas and five ordinary probe
+sites; instruction/function-bound checks pass. Optional disabled builds contain
+no DOF. These checks cover the executable provider, not runtime firing or all
+liboes/dependency providers. Event subscription/authorization, event JSON output,
+stream loss/error reporting and live tracing still need matching-system tests.
+No OES event session was opened during this qualification.

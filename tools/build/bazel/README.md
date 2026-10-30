@@ -44195,3 +44195,29 @@ The uefisign child retains its caph_enter call. Whole-system runtime/package and
 performance gates remain open. Make remains production/default.
 Existing build-bsd explicit target inputs cover these components; no frontend C,
 manual option, signing/staging/verification or publication contract changed.
+
+### Native oeslogger and DTrace variants (2026-10-30)
+
+Added native oeslogger using the maintained share/examples/oes/oeslogger.c via
+an explicit narrowly visible source export, local diagnostics header/provider,
+and native shared liboes. FIVEBSD_TRACE remains defined in both variants;
+WITH_DTRACE and the declared provider generation/object transformation follow
+the existing typed dtrace setting, which remains enabled by default.
+
+Evidence roots: /usr/obj/usr/src/bazel-oeslogger-reference-20261030 and
+bazel-oeslogger-nodtrace-reference-20261030. Native captures:
+bazel-oeslogger-20261030 and bazel-oeslogger-nodtrace-20261030. Independent Make
+references: bazel-oeslogger-make-20261030 and
+bazel-oeslogger-nodtrace-make-20261030. Each variant matches five installation
+records, three regular payload symbol/dependency/manual checks and one debuglink
+CRC. Enabled DOF comparison matches three probe schemas, with five ordinary
+sites and zero is-enabled sites; both ELF instruction/function-bound checks
+pass. Disabled executable section checks find no SHT_SUNW_dof sections in
+native or Make. Evidence JSON and comparison scripts remain in those roots.
+
+No OES session or event stream was opened; event JSON semantics, authorization,
+stream loss/error handling and live probe firing still require runtime tests.
+Artifact/probe metadata checks do not establish system-wide OES behavior or
+performance. Existing build-bsd format-5 targets/dtrace settings cover both
+variants without new frontend C/manual options or staging/signing/publication
+contracts. Make remains production/default and full system gates remain open.
