@@ -158,6 +158,7 @@ struct common_args {
 	int broker;
 	enum watch_format format;
 	const char	*endpoint;
+	const char	*protocol;
 	const char	*bufsize;
 	const char	*switchrate;
 	const char	*output;
@@ -182,6 +183,7 @@ enum {
 	OPT_WITH_USTACK,
 	OPT_FORMAT,
 	OPT_ENDPOINT,
+	OPT_PROTOCOL,
 	OPT_BUFSIZE,
 	OPT_SWITCHRATE,
 	OPT_BROKER,
@@ -207,6 +209,7 @@ static const struct option watch_opts[] = {
 	{ "with-ustack", no_argument, NULL, OPT_WITH_USTACK },
 	{ "format", required_argument, NULL, OPT_FORMAT },
 	{ "endpoint", required_argument, NULL, OPT_ENDPOINT },
+	{ "protocol", required_argument, NULL, OPT_PROTOCOL },
 	{ "bufsize", required_argument, NULL, OPT_BUFSIZE },
 	{ "switchrate", required_argument, NULL, OPT_SWITCHRATE },
 	{ "broker", no_argument, NULL, OPT_BROKER },
@@ -431,6 +434,17 @@ parse_common(int argc, char **argv, struct common_args *ca, int is_watch,
 			ca->rotate_keep = (unsigned)parse_num(optarg,
 			    "--rotate-keep", 1, 999);
 			break;
+		case OPT_PROTOCOL:
+			if (!is_watch)
+				usage_fn();
+			if (strcmp(optarg, "grpc") != 0 &&
+			    strcmp(optarg, "http/protobuf") != 0 &&
+			    strcmp(optarg, "http/json") != 0)
+				errx(2, "--protocol expects grpc, "
+				    "http/protobuf or http/json, got '%s'",
+				    optarg);
+			ca->protocol = optarg;
+			break;
 		case OPT_ENDPOINT:
 		case OPT_BUFSIZE:
 		case OPT_SWITCHRATE:
@@ -514,6 +528,7 @@ watch_usage(void)
 	    "[--rotate-time time]\n"
 	    "            [--rotate-keep n]]\n"
 	    "           [--endpoint url [--spool file [--spool-max size]]]\n"
+	    "           [--protocol grpc|http/protobuf|http/json]\n"
 	    "           [--bufsize size] [--switchrate rate]\n");
 	exit(2);
 }
@@ -539,8 +554,9 @@ cmd_watch(int argc, char **argv)
 	    ca.rotate_interval != 0 || ca.rotate_keep != 0))
 		errx(2, "rotation options need --output");
 	if (ca.format != FORMAT_OTEL && (ca.spool != NULL ||
-	    ca.spool_max != 0 || ca.endpoint != NULL))
-		errx(2, "--endpoint and --spool apply to --format otel only");
+	    ca.spool_max != 0 || ca.endpoint != NULL || ca.protocol != NULL))
+		errx(2, "--endpoint, --protocol and --spool apply to --format "
+		    "otel only");
 	if (ca.spool == NULL && ca.spool_max != 0)
 		errx(2, "--spool-max needs --spool");
 	if (ca.interval != 0 && (ca.format == FORMAT_TEXT ||
@@ -555,6 +571,7 @@ cmd_watch(int argc, char **argv)
 	wo.broker = ca.broker;
 	wo.format = ca.format;
 	wo.endpoint = ca.endpoint;
+	wo.protocol = ca.protocol;
 	wo.bufsize = ca.bufsize;
 	wo.switchrate = ca.switchrate;
 	wo.with_stack = ca.with_stack;

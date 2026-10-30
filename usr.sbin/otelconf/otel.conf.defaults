@@ -15,7 +15,7 @@ enable = true;
 
 # Where base system emitters send OTLP: the local agent by default.
 endpoint = "http://localhost:4318";
-protocol = "http/json";
+protocol = "http/protobuf";
 compression = "gzip";
 timeout_ms = 10000;
 

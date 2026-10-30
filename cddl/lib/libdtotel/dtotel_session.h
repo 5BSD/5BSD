@@ -22,6 +22,7 @@ enum dtotel_format {
 struct dtotel_options {
 	enum dtotel_format format;
 	const char	*endpoint;	/* otlp: collector base URL */
+	const char	*protocol;	/* otlp: grpc, http/protobuf, http/json */
 	const char	*spool;		/* otlp: spool file */
 	uint64_t	 spool_max;
 	uint64_t	 rotate_size;	/* file formats with an output file */
@@ -31,7 +32,8 @@ struct dtotel_options {
 
 /*
  * Parse one "-x name=value" option.  Returns 1 when it was an
- * OpenTelemetry option (otel, otelendpoint, otelspool, otelspoolmax,
+ * OpenTelemetry option (otel, otelendpoint, otelprotocol, otelspool,
+ * otelspoolmax,
  * otelrotatesize, otelrotatetime, otelrotatekeep), 0 when the name
  * does not start with "otel", and -1 with a message in err.
  */

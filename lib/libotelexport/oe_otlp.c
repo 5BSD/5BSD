@@ -45,6 +45,7 @@
 #include "otelexport.h"
 #include "oe_http.h"
 #include "oe_otlpenc.h"
+#include "oe_otlppb.h"
 
 #define	OTLP_DEFAULT_BATCH	200
 #define	OTLP_DEFAULT_FLUSH	0.5
@@ -59,6 +60,9 @@ enum post_result {
 	POST_REJECTED,		/* non-retryable status: drop */
 	POST_FAILED		/* transport error or retries exhausted */
 };
+_Static_assert(POST_OK == OE_OTLPPB_OK && POST_REJECTED ==
+    OE_OTLPPB_REJECTED && POST_FAILED == OE_OTLPPB_FAILED,
+    "oe_otlppb_post() results are post_result values");
 
 struct post_job {
 	struct post_job	*next;
@@ -80,6 +84,8 @@ struct oe_otlp {
 	int		 use_gzip;
 	struct oe_attr	*headers;
 	size_t		 nheaders;
+	/* http/protobuf and grpc (oe_otlppb.h); NULL for http/json. */
+	struct oe_otlppb *pb;
 
 	pthread_mutex_t	 lock;
 	pthread_cond_t	 cv;
@@ -212,6 +218,10 @@ post_with_retry(struct oe_otlp *o, enum oe_signal sig, const char *body,
 	double backoff_ms, retry_after;
 	int attempt, gzipped;
 
+	/* The protobuf transports send and retry on their own. */
+	if (o->pb != NULL)
+		return ((enum post_result)oe_otlppb_post(o->pb, sig, body,
+		    len));
 	path = oe_enc_path(sig);
 	gz = NULL;
 	gzipped = 0;
@@ -791,6 +801,7 @@ otlp_free(struct oe_exporter *e)
 		free(__DECONST(char *, o->headers[i].name));
 		free(__DECONST(char *, o->headers[i].value));
 	}
+	oe_otlppb_free(o->pb);
 	free(o->headers);
 	free(o->spool_path);
 	if (o->spool_lockfd >= 0)
@@ -936,6 +947,12 @@ oe_otlp_new(const struct oe_otlp_config *cfg)
 			    o->headers[i].value == NULL)
 				goto fail;
 		}
+	}
+	if (oe_otlppb_open(cfg->protocol, &o->url, o->headers, o->nheaders,
+	    o->user_agent, o->timeout_ms, o->max_retries, o->use_gzip,
+	    &o->pb) != 0) {
+		otlp_free(&o->e);
+		return (NULL);
 	}
 	if (cfg->spool_path != NULL && spool_open(o, cfg) != 0) {
 		if (!cfg->spool_optional) {

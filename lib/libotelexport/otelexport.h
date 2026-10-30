@@ -364,7 +364,10 @@ struct oe_otlpjson_config {
 
 struct oe_exporter *oe_otlpjson_new(const struct oe_otlpjson_config *);
 
-/* Configuration for the OTLP/HTTP+JSON exporter. */
+/*
+ * Configuration for the OTLP exporter: OTLP/HTTP with JSON or protobuf
+ * bodies, or OTLP/gRPC.
+ */
 struct oe_otlp_config {
 	const char	*endpoint;	/* base URL, e.g. http://host:4318 */
 	const char	*profile;	/* profile name for scope */
@@ -390,6 +393,13 @@ struct oe_otlp_config {
 	 * system spool of otel.conf(5); see oe_config_load()).
 	 */
 	int		 spool_optional;
+	/*
+	 * "http/json", "http/protobuf" or "grpc"
+	 * (OTEL_EXPORTER_OTLP_PROTOCOL).  NULL is http/json for callers
+	 * that build the configuration themselves; oe_otlp_config_env()
+	 * sets the resolved protocol, http/protobuf by default.
+	 */
+	const char	*protocol;
 };
 
 struct oe_exporter *oe_otlp_new(const struct oe_otlp_config *);
@@ -404,7 +414,7 @@ void	oe_report_drops(struct oe_exporter *, uint64_t);
  * OTel-standard environment variables (OTEL_SERVICE_NAME,
  * OTEL_RESOURCE_ATTRIBUTES, OTEL_EXPORTER_OTLP_ENDPOINT,
  * OTEL_EXPORTER_OTLP_HEADERS, OTEL_EXPORTER_OTLP_COMPRESSION,
- * OTEL_EXPORTER_OTLP_TIMEOUT).
+ * OTEL_EXPORTER_OTLP_TIMEOUT, OTEL_EXPORTER_OTLP_PROTOCOL).
  */
 struct oe_sysconf;
 
@@ -423,6 +433,11 @@ struct oe_env {
 	int		 spool_optional; /* system spool: never fatal */
 	struct oe_sysconf *sysconf;	/* owned otel.conf(5) layer */
 	char		*spool_buf;	/* owned system spool path */
+	/*
+	 * grpc, http/protobuf or http/json; NULL if unset.  Always set by
+	 * oe_config_load() (default http/protobuf).
+	 */
+	const char	*protocol;
 };
 
 /*
@@ -453,9 +468,13 @@ struct oe_config_request {
 	const char	*spool;		/* command line, or NULL */
 	uint64_t	 spool_max;	/* command line, or 0 */
 	int		 system;	/* read otel.conf(5) */
+	const char	*protocol;	/* command line, or NULL */
 };
 
 #define	OE_DEFAULT_ENDPOINT	"http://localhost:4318"
+/* The default for OTLP/gRPC, whose collectors listen on 4317. */
+#define	OE_DEFAULT_GRPC_ENDPOINT "http://localhost:4317"
+#define	OE_DEFAULT_PROTOCOL	"http/protobuf"
 
 int	oe_config_load(struct oe_env *, const struct oe_config_request *,
 	    char *err, size_t errlen);
@@ -472,8 +491,8 @@ void	oe_resource_init(struct oe_resource *, const struct oe_env *,
 	    const char *version);
 
 /*
- * Fill the endpoint, timeout, headers, compression and spool members
- * of an OTLP/HTTP configuration from resolved settings; other members
+ * Fill the endpoint, protocol, timeout, headers, compression and spool
+ * members of an OTLP configuration from resolved settings; other members
  * are left alone.
  */
 void	oe_otlp_config_env(struct oe_otlp_config *, const struct oe_env *);

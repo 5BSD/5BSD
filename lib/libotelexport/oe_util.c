@@ -376,6 +376,16 @@ oe_env_load(struct oe_env *env)
 		    "none\n", env->compression);
 		env->compression = NULL;
 	}
+	env->protocol = getenv("OTEL_EXPORTER_OTLP_PROTOCOL");
+	if (env->protocol != NULL &&
+	    strcmp(env->protocol, "grpc") != 0 &&
+	    strcmp(env->protocol, "http/protobuf") != 0 &&
+	    strcmp(env->protocol, "http/json") != 0) {
+		fprintf(stderr, "otelexport: ignoring "
+		    "OTEL_EXPORTER_OTLP_PROTOCOL=%s: expected grpc, "
+		    "http/protobuf or http/json\n", env->protocol);
+		env->protocol = NULL;
+	}
 	env->timeout_ms = -1;
 	timeout = getenv("OTEL_EXPORTER_OTLP_TIMEOUT");
 	if (timeout != NULL) {
@@ -440,6 +450,8 @@ oe_otlp_config_env(struct oe_otlp_config *cfg, const struct oe_env *env)
 	cfg->headers = env->headers;
 	cfg->nheaders = env->nheaders;
 	cfg->compression = env->compression;
+	cfg->protocol = env->protocol != NULL ? env->protocol :
+	    OE_DEFAULT_PROTOCOL;
 	cfg->spool_path = env->spool_path;
 	cfg->spool_max = env->spool_max;
 	cfg->spool_optional = env->spool_optional;

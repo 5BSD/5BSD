@@ -104,6 +104,7 @@ struct watch_opts {
 	int		 broker;
 	enum watch_format format;
 	const char	*endpoint;
+	const char	*protocol;	/* --protocol, or NULL */
 	const char	*bufsize;	/* NULL: default */
 	const char	*switchrate;	/* NULL: default */
 	int		 with_stack;

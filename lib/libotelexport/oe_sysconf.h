@@ -24,7 +24,7 @@
 #define	OE_SYSCONF_DEFAULTS_PATH	"/etc/defaults/otel.conf"
 
 #define	OE_SYSCONF_DEFAULT_ENDPOINT	"http://localhost:4318"
-#define	OE_SYSCONF_DEFAULT_PROTOCOL	"http/json"
+#define	OE_SYSCONF_DEFAULT_PROTOCOL	"http/protobuf"
 #define	OE_SYSCONF_DEFAULT_COMPRESSION	"gzip"
 #define	OE_SYSCONF_DEFAULT_TIMEOUT_MS	10000
 #define	OE_SYSCONF_DEFAULT_HOSTID_FILE	"/etc/hostid"
@@ -52,7 +52,7 @@
 struct oe_sysconf {
 	int		 enable;	/* system layer active */
 	char		*endpoint;	/* exporter endpoint (base URL) */
-	char		*protocol;	/* exporter protocol: http/json */
+	char		*protocol;	/* http/protobuf | grpc | http/json */
 	char		*compression;	/* gzip | none */
 	int		 timeout_ms;
 	char		*headers_file;	/* "" when unset */

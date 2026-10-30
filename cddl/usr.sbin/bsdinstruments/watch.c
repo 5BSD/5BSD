@@ -207,12 +207,14 @@ watch_run(const struct profile *p, const char *rendered,
 	 * OTEL_RESOURCE_ATTRIBUTES, else the program name.  Other
 	 * OTEL_RESOURCE_ATTRIBUTES entries override detected values.
 	 *
-	 * Exporter settings: --endpoint/--spool > OTEL_* environment >
+	 * Exporter settings: --endpoint/--protocol/--spool > OTEL_*
+	 * environment >
 	 * otel.conf(5) > default.  Only --format otel reads otel.conf.
 	 */
 	memset(&req, 0, sizeof(req));
 	req.scope = "bsdinstruments";
 	req.endpoint = wo->endpoint;
+	req.protocol = wo->protocol;
 	req.spool = wo->spool;
 	req.spool_max = wo->spool_max;
 	req.system = wo->format == FORMAT_OTEL;
