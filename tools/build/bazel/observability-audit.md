@@ -7503,3 +7503,13 @@ Artifact/install parity passes for the legacy Heimdal error-formatting and table
 library. No runtime authentication decisions occur here, and no new audit/probe
 hooks were added. Hook and error-table runtime behavior remains unqualified;
 MIT com_err qualification is a separate implementation and cannot establish it.
+
+### librpcsec_gss (2026-10-30)
+
+Native MIT-configured artifact/install comparison passes. Authentication context
+establishment, credential lookup, service callbacks and message wrapping remain
+runtime qualification areas; no new probes or audit hooks were introduced.
+Review whether context establishment/rejection and credential lifecycle events
+need caller-level audit coverage when exercising authenticated RPC/NFS. Avoid
+recording credential or message secrets in any future instrumentation. Legacy
+GSS dispatcher qualification remains blocked on a matching SDK configuration.

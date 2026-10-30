@@ -3,3 +3,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # Optional installed headers must remain available to configured native builds.
 cc_library(name = "hesiod_header", hdrs = ["hesiod.h"], strip_include_prefix = ".",
     visibility = ["//lib/libc/gen:__pkg__", "//lib/libc/net:__pkg__"])
+
+# Source headers consumed by the maintained RPCSEC_GSS build.
+cc_library(name = "rpcsec_gss_headers", hdrs = ['_ctype.h', 'ctype.h', 'grp.h', 'gssapi/gssapi.h', 'netconfig.h', 'pwd.h', 'rpc/auth.h', 'rpc/auth_des.h', 'rpc/auth_unix.h', 'rpc/clnt.h', 'rpc/clnt_soc.h', 'rpc/clnt_stat.h', 'rpc/pmap_clnt.h', 'rpc/pmap_prot.h', 'rpc/rpc.h', 'rpc/rpc_msg.h', 'rpc/rpcb_clnt.h', 'rpc/rpcent.h', 'rpc/rpcsec_gss.h', 'rpc/svc.h', 'rpc/svc_auth.h', 'rpc/svc_soc.h', 'rpc/xdr.h', 'runetype.h', 'stdio.h', 'stdlib.h', 'string.h', 'strings.h', 'time.h', 'unistd.h', 'xlocale/_ctype.h', 'xlocale/_string.h', 'xlocale/_strings.h', 'xlocale/_time.h'], visibility = ["//lib/librpcsec_gss:__pkg__"])

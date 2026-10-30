@@ -17477,3 +17477,26 @@ install-audit.json and payload-audit.json under bazel-libcom_err-reference-20261
 using bazel-libcom_err-20261030-r2 artifacts. Runtime error-table/hooks and complete
 legacy Kerberos configuration remain unqualified; this does not change the
 default MIT selection or close whole-world/bootstrap/pkgbase gates.
+
+### MIT-configured RPCSEC_GSS (2026-10-30)
+
+Native librpcsec_gss builds five explicit sources with the maintained source
+header closure and links the native MIT GSS shared-library graph. Its version
+map, static/shared libraries, debug output and 17 manuals are declared Bazel
+inputs/actions. The target explicitly rejects configurations outside the
+existing mitkrb5_enabled selection; no legacy fallback is substituted.
+Fresh Make comparison passes at 23 installation destinations, 20 regular
+payloads and one debug link, including symbols/versions, ordered dynamic
+metadata, archive member order, manual bytes and installation metadata. Evidence:
+bazel-librpcsec_gss-reference-20261030/{install-audit,payload-audit}.json and
+bazel-librpcsec_gss-20261030 under /usr/obj/usr/src. Existing build-bsd typed
+configuration and explicit targets suffice; no frontend/backend input changes
+are required. No authenticated RPC/NFS exchange or credential lifecycle is
+qualified by these artifact checks. Whole-system/bootstrap gates remain open.
+
+The separate legacy libgssapi reference attempt fails against the MIT-prepared
+SDK: its installed GSS header differs from the legacy interface and dispatcher
+compilation reports missing/incompatible declarations. Evidence is preserved in
+bazel-libgssapi-make-20261030/all.log. No shim, fabricated header, weakened error
+check or legacy implementation change was introduced. Full legacy qualification
+requires a correctly configured SDK/header installation and remains outstanding.
