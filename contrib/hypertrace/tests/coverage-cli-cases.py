@@ -2100,8 +2100,12 @@ def check_otlpjson_printf(d, stdout):
     errors = []
     if stdout != '':
         errors.append('stdout not empty')
-    if [i['body']['stringValue'] for _, _, i in logs] != ['hello 42']:
+    # exit() is the named event dtrace.exit after the line.
+    if [i['body']['stringValue'] for _, _, i in logs] != ['hello 42', 'exit(0)']:
         errors.append(f'log bodies {[i["body"] for _, _, i in logs]}')
+    elif logs[1][2].get('eventName') != 'dtrace.exit' or \
+            attrs(logs[1][2]).get('dtrace.exit.status') != '0':
+        errors.append(f'exit event {logs[1][2]}')
     res, scope, rec = logs[0]
     t = int(rec['timeUnixNano'])
     if not W0 < t < W0 + 10**9:
@@ -2200,7 +2204,9 @@ def collector_env(statuses=''):
                 break
             time.sleep(0.02)
         port = (coll/'port').read_text().strip()
+        # The loopback collector reads OTLP/HTTP JSON bodies only.
         return {'OTEL_EXPORTER_OTLP_ENDPOINT': f'http://127.0.0.1:{port}',
+                'OTEL_EXPORTER_OTLP_PROTOCOL': 'http/json',
                 'OTEL_EXPORTER_OTLP_COMPRESSION': 'none',
                 'OTEL_RESOURCE_ATTRIBUTES': 'deployment.environment.name=lab'}
     return env_fn
@@ -2230,7 +2236,8 @@ case('otel-otlp-http', FAST + ['-q', '-x', 'otel=otlp', '-n',
 
 def check_spool(d, stdout):
     reqs = otlp_lines(d, d/'spool.jsonl')
-    if len(otel_items(reqs, 'logs')) != 1:
+    # The line and the dtrace.exit event.
+    if len(otel_items(reqs, 'logs')) != 2:
         return ['spool lacks the log batch']
     return []
 
@@ -2284,7 +2291,12 @@ for name, args, msg in (
         ('spoolmax-alone', ['-x', 'otel=otlp', '-x', 'otelspoolmax=1k'],
          '-x otelspoolmax needs -x otelspool'),
         ('json-endpoint', ['-x', 'otel=json', '-x', 'otelendpoint=http://h'],
-         '-x otelendpoint and -x otelspool apply to -x otel=otlp only'),
+         '-x otelendpoint, -x otelprotocol and -x otelspool apply to -x otel=otlp only'),
+        ('json-protocol', ['-x', 'otel=json', '-x', 'otelprotocol=grpc'],
+         '-x otelendpoint, -x otelprotocol and -x otelspool apply to -x otel=otlp only'),
+        ('protocol', ['-x', 'otel=otlp', '-x', 'otelprotocol=grpcs'],
+         '-x otelprotocol=grpcs: expected grpc, http/protobuf or http/json'),
+        ('protocol-alone', ['-x', 'otelprotocol=grpc'], '-x otel* options need -x otel'),
         ('stdout-rotate', ['-x', 'otel=json', '-x', 'otelrotatesize=1k'],
          '-x otelrotate* options need a file (-o)'),
         ('list-mode', ['-x', 'otel=json', '-l'],
@@ -2317,7 +2329,9 @@ case('otel-final-snapshot-fails', FAST + ['-q', '-x', 'otel=json', '-n',
                                           'BEGIN { @c = count(); exit(0); }'],
      script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:1 a:0:1 n:0',
      api_faults='dtrace_aggregate_snap:1:5',
-     status=1, stdout='', stderr_has=['failed to export OpenTelemetry data\n'])
+     status=1, stdout_re=r'\{"time":"[^"]*","observed":"[^"]*","profile":"dtrace",'
+     r'"body":"exit\(0\)","event":"dtrace.exit","attributes":\{"dtrace.exit.status":0\}\}\n',
+     stderr_has=['failed to export OpenTelemetry data\n'])
 case('otel-drops', ['-b', '64', '-x', 'otel=json', '-x', 'switchrate=10ms', '-n',
                     ENTRY + ' { trace(arg0); }'],
      script=ANCHOR + ' ; ' + ';'.join(f'go 0 {ENTRY} n:{i}' for i in range(1, 5)),
