@@ -8180,3 +8180,12 @@ these do not establish broad diagnostics coverage or live system observability.
 No AML was loaded into firmware/kernel or executed by an interpreter. Audit
 requirements for deployment of compiled tables belong to the loader/deployment
 path and are not inferred from successful offline compilation.
+
+### 2026-10-30: ifmcstat, mtest and ndp
+
+No userland DTrace provider or direct audit-library integration appears in these
+maintained inputs. Native builds preserve this behavior. Runtime follow-up should
+cover multicast join/leave/source filtering, neighbor add/delete/flush, permission
+denials, and both ndp backend paths with kernel audit attribution. No multicast
+or neighbor-state mutation was executed on the host. Artifact parity and feature
+selection checks do not establish live observability coverage.

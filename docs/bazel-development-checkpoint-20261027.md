@@ -19564,3 +19564,25 @@ performance qualification. Make remains production/default.
   and aggregate explicit targets with 16 jobs; no frontend C/backend/staging,
   signing or publication change required. Complete world/kernel/pkgbase,
   reproducible bootstrap, Bazel runtime tests and performance gates remain open.
+
+### 2026-10-30: multicast and neighbor-discovery utilities
+
+- Added native ifmcstat, mtest and ndp targets. Preserved conditional INET6 in
+  multicast utilities, Make's unconditional INET for mtest, and ndp's selected
+  Netlink source or WITHOUT_NETLINK route-socket implementation with native libxo.
+- Fresh default and alternative Make comparisons pass for all three: five
+  changed installation records/three regular payloads per program/configuration,
+  complete metadata/tags, exact manuals, ELF symbols/dependencies and debug CRC.
+- Recorded Bazel execution commands and actual Make compile commands agree on
+  INET/INET6/WITHOUT_NETLINK defines. ndp_netlink.c compiles in both defaults and
+  neither alternative. Disabling optional INET6_SUPPORT does not make ndp an
+  IPv4 utility; its alternative here selects the IPv6 route-socket backend.
+- Evidence under `/usr/obj/usr/src`: `bazel-multicast-tools-reference-20261030`,
+  `bazel-multicast-options-reference-20261030`, final default native capture
+  `bazel-multicast-tools-20261030-r2`, `bazel-multicast-options-20261030`, and
+  per-program fresh Make stages. An initial duplicate BUILD argument was caught
+  by Bazel analysis and corrected before qualification; failed output retained.
+- Frontend review: explicit targets/settings through maintained Bazel-built
+  build-bsd bazel-test, 16 jobs, no new C/backend/signing/publication changes.
+  No multicast membership, neighbor cache, routing state or host network setting
+  was changed. Packet behavior/runtime/performance qualification remains open.

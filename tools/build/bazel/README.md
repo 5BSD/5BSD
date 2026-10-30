@@ -43696,3 +43696,17 @@ This is not a Bazel test or hardware/AML execution qualification. Evidence:
 maintained subtree. Evaluated Make SUBDIR agrees; the captured aggregate has
 exactly five archives with verified hashes. Maintained build-bsd drove component
 and aggregate captures with 16 jobs. Full-system qualification remains separate.
+
+### Multicast/neighbor utility artifacts (2026-10-30)
+
+Native `//usr.sbin/{ifmcstat,mtest,ndp}:install_archive` targets preserve protocol
+options and ndp's Netlink/route-socket backend selection. All three match fresh
+Make artifacts in default and alternative configurations: five installation
+records and three regular payloads each. Recorded compiler commands confirm
+INET/INET6/WITHOUT_NETLINK parity and actual inclusion/exclusion of ndp_netlink.c.
+mtest retains Make's unconditional INET support; ndp remains IPv6 in either backend.
+
+Evidence: `/usr/obj/usr/src/bazel-multicast-tools-reference-20261030` and
+`bazel-multicast-options-reference-20261030`. Maintained build-bsd captured both
+using 16 jobs. No live network state was modified; artifact checks do not qualify
+multicast membership, neighbor-cache operations or protocol runtime behavior.
