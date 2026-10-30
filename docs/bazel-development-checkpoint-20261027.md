@@ -18000,3 +18000,27 @@ avoid overlapping MIT payloads. Authentication/mechanism loading, credentials,
 full configuration SDK and runtime/performance remain unqualified. Existing
 build-bsd explicit targets and typed configuration suffice; no frontend input,
 signing or publication contract changed. Make remains the production default.
+
+### World inventory refresh and next integration queue (2026-10-30)
+
+Fresh maintained world-inventory.py traversal succeeds for 2,103 configured
+directories with 16 jobs, current staged amd64 profile and the same explicit
+public loader trust anchor used by the previous survey. Evidence:
+/usr/obj/usr/src/bazel-world-inventory-refresh-20261030/inventory.json.
+This discovers Make recursion only, not native compile/install coverage.
+
+A new maintained world-components.py query is running with 16 jobs against that
+inventory, output bazel-world-components-refresh-20261030. On completion, inspect
+summary failures before invoking world-native-survey.py; do not reuse stale
+metadata or turn BUILD-file presence into completion counts. The root still has
+no complete world installation aggregate, and current library component parity
+does not imply a world/kernel/pkgbase build has succeeded.
+
+Concrete next program group: usr.sbin/unbound/{daemon,anchor,checkconf,control,setup}
+has no local BUILD files. These contain four programs, generated renamed manuals
+(including the section-5 daemon configuration manual), and the setup script.
+Migrate their actual per-program sources/dependencies and maintained manual
+transformations, preserving package tags; qualify before wiring into a future
+world aggregate. Existing native libunbound now supplies their main dependency.
+This diagnostic changes no frontend or production build contract; normal
+build-bsd remains unchanged and Make remains default.
