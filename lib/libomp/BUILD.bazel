@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "config_headers", hdrs = ["kmp_config.h", "kmp_i18n_default.inc", "kmp_i18n_id.inc", "omp-tools.h", "omp.h"], includes = ["."])
+_CXX_SOURCES = ['//contrib/llvm-project/openmp/runtime/src:thirdparty/ittnotify/ittnotify_static.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_affinity.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_alloc.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_atomic.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_barrier.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_cancel.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_csupport.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_debug.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_dispatch.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_environment.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_error.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_ftn_cdecl.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_ftn_extra.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_global.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_gsupport.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_i18n.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_io.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_itt.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_lock.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_runtime.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_sched.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_settings.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_str.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_taskdeps.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_tasking.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_threadprivate.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_utility.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_version.cpp', '//contrib/llvm-project/openmp/runtime/src:kmp_wait_release.cpp', '//contrib/llvm-project/openmp/runtime/src:ompt-general.cpp', '//contrib/llvm-project/openmp/runtime/src:z_Linux_util.cpp']
+cc_library(name = "objects", srcs = _CXX_SOURCES,
+    deps = [":config_headers", "//contrib/llvm-project/openmp/runtime/src:headers", "//contrib/llvm-project/libcxx/include:headers"],
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS"],
+    copts = ["-std=c++17", "-nostdinc++", "-ffunction-sections", "-fdata-sections", "-fvisibility-inlines-hidden", "-fno-exceptions", "-fno-rtti", "-Wno-vla-cxx-extension"],
+    linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "assembly", srcs = ["//contrib/llvm-project/openmp/runtime/src:z_Linux_asm.S"],
+    deps = [":config_headers", "//contrib/llvm-project/openmp/runtime/src:headers"],
+    linkstatic = True, target_compatible_with = _PLATFORM)
+cc_library(name = "omp", deps = [":objects", ":assembly", "//lib/msun:m", "//lib/libthr:thr"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "omp_shared", deps = [":omp"], dynamic_deps = ["//lib/msun:m_shared", "//lib/libthr:thr_shared"],
+    shared_lib_name = "libomp.so", additional_linker_inputs = ["//contrib/llvm-project/openmp/runtime/src:exports_so.txt"],
+    user_link_flags = ["-Wl,-soname,libomp.so", "-Wl,--version-script=$(location //contrib/llvm-project/openmp/runtime/src:exports_so.txt)", "-Wl,--warn-shared-textrel,--gc-sections,-z,noexecstack,-fini=__kmp_internal_end_fini"],
+    visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Aggregate installation candidate; pkgbase subpackage construction is separate.
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+)

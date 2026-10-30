@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["*.cpp", "*.S", "thirdparty/ittnotify/*.cpp"]) + ["exports_so.txt"], visibility = ["//lib/libomp:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["**/*.h"]), textual_hdrs = ["ompt-specific.cpp", "kmp_itt.inl"],
+    includes = [".", "thirdparty/ittnotify"], visibility = ["//lib/libomp:__pkg__"])

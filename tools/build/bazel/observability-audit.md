@@ -7590,3 +7590,10 @@ and credential/server policy coverage. Neither is established by ABI comparison.
 Eleven maintained formatting/configuration ATF cases pass against native archives.
 No exporter logic or hooks changed. Collector delivery, TLS validation, queue
 pressure/drop reporting and concurrent shutdown need further runtime coverage.
+
+### OpenMP runtime (2026-10-30)
+
+Native 31-C++/one-assembly runtime and installation match Make artifacts.
+Existing OMPT and ITT implementation inputs are included; no hooks changed.
+Parallel teams, task scheduling, barriers, shutdown, OMPT callbacks and runtime
+CPU/memory behavior need execution qualification before claiming correctness.

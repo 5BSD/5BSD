@@ -42484,3 +42484,35 @@ changes are introduced. Source inventory still identifies libomp, libunbound and
 legacy libgssapi as missing local library targets; aggregate directories without
 BUILD files must not be counted as unimplemented libraries without inspecting
 children. Existing targets likewise do not establish full-system qualification.
+
+### Native OpenMP runtime candidate (2026-10-30, qualification pending)
+
+Added the maintained 31 C++ sources and assembly source, existing platform
+configuration headers, explicitly declared upstream headers/textual
+ompt-specific.cpp, version script, native threading/math dependencies and
+libomp.so installation with omp.h, debug symbols and libgomp.so compatibility
+symlink. Source libc++ headers supply C++ interfaces with -nostdinc++; no extra
+C++ runtime linkage is invented. C++17/no-RTTI/no-exceptions, section GC,
+non-executable stack and the runtime fini hook follow Make. Initial target is
+amd64; other architecture assembly/branch-protection settings remain open.
+
+Fresh Make reference passes in bazel-libomp-make-20261030. Native analysis first
+caught an empty .inc glob, then compilation caught the textually included
+ompt-specific.cpp; the declarations were corrected. Native r3 is running in
+bazel-libomp-20261030-r3. Comparison scripts are prepared under
+bazel-libomp-reference-20261030; no successful native/artifact/runtime claim yet.
+Frontend review: existing build-bsd explicit targets and install/debug helpers
+suffice for this candidate; no new frontend input, signing or publication
+contract. Parallel-region/task/runtime and performance qualification remain open.
+
+OpenMP qualification follow-up: declared the remaining kmp_itt.inl textual
+input; an include scan confirms all non-.h quoted inputs are now represented.
+Native r4 built and installation matched, but ordered dynamic metadata rejected
+libthr preceding libm. Reordered native dependencies to match Make, leaving the
+strict comparison unchanged. Native r5 now passes six installation destinations,
+three regular payloads and one debug link, including full global/weak symbols,
+ordered dynamic dependencies, exact omp.h bytes, symlink metadata and debug CRC.
+Evidence: install-audit.json and payload-audit.json under
+bazel-libomp-reference-20261030, native run bazel-libomp-20261030-r5.
+Runtime parallel regions/tasks and memory/CPU performance remain unqualified;
+artifact parity alone does not establish OpenMP concurrency correctness.
