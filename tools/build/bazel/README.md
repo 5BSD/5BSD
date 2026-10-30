@@ -43074,3 +43074,8 @@ Make install records and four regular payloads. Providers/13 probe schemas match
 and both binaries pass 13 probe-site instruction/range checks. Evidence:
 /usr/obj/usr/src/bazel-meshd-reference-20261030. Disabled-DTrace compilation,
 live firing and daemon/runtime qualification remain open.
+
+meshd's optional DTrace-disabled build also matches Make; no-dof.json verifies
+DOF-section absence in both executables. Evidence:
+/usr/obj/usr/src/bazel-meshd-nodtrace-reference-20261030. DTrace remains enabled
+by default; runtime/live firing gates remain open.

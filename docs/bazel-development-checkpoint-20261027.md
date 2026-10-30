@@ -18762,3 +18762,17 @@ gates. No daemon was executed. Existing build-bsd typed DTrace and explicit targ
 SDK inputs cover the addition; no frontend/backend/signing/publication contract
 changed. Full world/kernel/bootstrap/pkgbase/performance remain open; Make remains
 the production/default backend.
+
+### meshd optional DTrace-disabled configuration (2026-10-30)
+
+The explicit dtrace=false build now passes the same Make comparison as the
+enabled build. Native: /usr/obj/usr/src/bazel-meshd-nodtrace-20261030.
+Fresh Make WITHOUT_DTRACE=1: bazel-meshd-nodtrace-make-20261030.
+Evidence/scripts: /usr/obj/usr/src/bazel-meshd-nodtrace-reference-20261030.
+Seven install records and four regular payloads match; symbol/dynamic dependency
+inventories, manual/sample bytes and debuglink CRC pass. ELF section-table checks
+verify no SHT_SUNW_dof section in either executable (no-dof.json/no-dof.py).
+Both builds completed successfully. This closes the optional disabled build
+comparison gap, not live daemon/probe/runtime qualification. DTrace remains
+enabled by default. Existing build-bsd typed setting works without frontend or
+backend changes. No host installation or daemon execution occurred.
