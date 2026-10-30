@@ -43903,3 +43903,21 @@ with 16 jobs and existing explicit input settings.
   maintained build-bsd bazel-test uses these explicit targets with 16 jobs and
   captures their generated payloads; no frontend C/backend/signing/publication
   contract changes needed. Make remains production default.
+
+### 2026-10-30: fwcontrol and dconschat
+
+- Added native fwcontrol (including the shared kernel-tree fwcrom.c) and
+  dconschat with native libkvm. Exact FireWire/dcons headers are declared with
+  narrow consumer visibility and their maintained include paths; no source copy
+  or broad kernel-source glob is used.
+- Fresh Make installation comparisons pass for each: five changed metadata
+  records, three regular payloads, one debug link; global/weak symbols, ordered
+  dynamic dependencies, manual bytes and debug CRCs match.
+- Evidence under /usr/obj/usr/src: bazel-firewire-tools-reference-20261030 with
+  per-component comparison scripts/results, bazel-firewire-tools-20261030 native
+  capture, bazel-fwcontrol-make-20261030 and bazel-dconschat-make-20261030 fresh
+  Make stages. No live FireWire/kernel-memory/remote-console operation was run.
+- Frontend review: maintained build-bsd bazel-test explicit targets and 16 jobs
+  handle both archives. No frontend C/backend/signing/publication contract
+  changes required. Hardware/VM behavior, native Bazel behavioral tests,
+  cross-target builds and full-system/performance qualification remain open.

@@ -8269,3 +8269,12 @@ wlandebug retains libifconfig. Firmware generation is qualified without loading
 firmware onto hardware. Modem control, debug-mask changes, hardware statistics
 and firmware-operation authorization/audit attribution require runtime review.
 Installation and firmware-byte parity do not establish those behaviors.
+
+### 2026-10-30: fwcontrol and dconschat
+
+Neither tool declares a local DTrace provider or direct libbsm integration.
+Native targets preserve the shared FireWire ROM source and dconschat libkvm
+access path. Controller reset/configuration, DMA/console access and associated
+authorization/audit attribution need runtime review with appropriate fixtures.
+Current evidence covers build/install artifacts only; no host device or kernel
+memory operation was executed.
