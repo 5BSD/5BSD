@@ -7661,3 +7661,12 @@ no privileged executable was run on the host.
 Cron follow-up: DTrace-disabled native and Make variants now match installation
 and payloads; actual ELF section tables contain no DOF for cron or crontab.
 Enabled live firing and scheduler/audit behavior remain unqualified.
+
+### authpf (2026-10-30)
+
+Native migration preserves existing syslog diagnostics for malformed SSH_CLIENT,
+noninteractive sessions, user/shell checks, PF device access, session locks and
+credential changes. The scoped source scan found no explicit DTrace/audit hooks.
+Review audit coverage for rule changes, privilege failures and session cleanup
+in isolated runtime tests. Preserved logs and privileged metadata do not prove
+correct authorization or live firewall effects.

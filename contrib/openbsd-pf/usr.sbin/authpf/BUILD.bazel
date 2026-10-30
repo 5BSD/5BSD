@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["authpf.c", "authpf.8"], visibility = ["//usr.sbin/authpf:__pkg__"])
+cc_library(name = "headers", hdrs = ["pathnames.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/authpf:__pkg__"])

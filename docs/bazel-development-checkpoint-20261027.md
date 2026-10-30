@@ -18192,3 +18192,25 @@ both cron and crontab from both builds (no-dof.json). This closes the disabled
 build variant gap recorded above, not the live scheduler/PAM/privilege tests.
 Existing typed dtrace configuration needed no frontend/backend changes; no host
 installation, scheduler execution or privilege-state change was performed.
+
+### Authpf privileged utility (2026-10-30)
+
+Native authpf now uses declared vendor sources/pathnames and the maintained
+forced OpenBSD compatibility header, with native math/util linkage. Installation
+preserves root:authpf ownership, mode 6555 and binary/manual authpf-noip hardlinks.
+No application source or authentication behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-authpf-20261030.
+Fresh Make reference: /usr/obj/usr/src/bazel-authpf-make-20261030.
+Comparators/results: /usr/obj/usr/src/bazel-authpf-reference-20261030.
+All seven installation records match without missing/extra paths or metadata
+mismatches. Three regular payloads pass ELF symbol and ordered dependency
+comparison, exact manual bytes and debuglink CRC. Hardlink targets/content and
+Make inode identity are checked for both aliases.
+
+No privileged executable was run. SSH session validation, identity/group changes,
+PF rule installation/removal, concurrent sessions and logout cleanup remain
+runtime gates on an isolated matching system. Component compilation uses the
+existing staged SDK; full-world, independent bootstrap, cache and performance
+qualification remain open. Existing build-bsd explicit targets suffice; no
+frontend/signing/publication contract changed. Make remains production/default.
