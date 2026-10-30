@@ -8319,3 +8319,11 @@ Native builds preserve source behavior and controller headers. Physical-memory
 access, controller administration and authorization/audit attribution remain
 runtime review items. Installation parity is the evidence available here; no
 host controller or memory operation ran.
+
+### 2026-10-30: camdd
+
+No local DTrace provider or direct libbsm integration is declared. Native targets
+preserve CAM/mt/util/thread dependencies. Private regular-file copy checks pass;
+CAM completion latency, queue depth/error reporting and device-access audit
+attribution need runtime review with suitable hardware/VM fixtures. File-copy
+correctness is not evidence of device performance or complete I/O observability.

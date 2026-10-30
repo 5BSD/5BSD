@@ -19945,3 +19945,25 @@ performance qualification. Make remains production/default.
   handles both archives; no frontend C/backend/signing/publication contract
   changes. Device behavior, native Bazel behavioral tests, cross builds and full
   world/kernel/package/performance qualification remain open. Make stays default.
+
+### 2026-10-30: camdd native build and regular-file correctness
+
+- Added native camdd with maintained CAM/mt/util/pthread dependencies. Fresh Make
+  comparison passes five changed metadata records, three regular payloads and
+  one debug link, including symbols, ordered dependencies, manual bytes and CRC.
+- Three private regular-file cases pass for each captured binary (six total):
+  partial final block with differing read/write block sizes, smaller blocks,
+  and input/output offsets with a transfer limit. Every output matches exact
+  expected bytes, including the output hole. No disk/tape device was opened.
+- Runtime harness copies/hashes native or staged Make libcam/libmt/libutil/
+  libthr/libsbuf/libbsdxml/libc/libsys, verifies their NEEDED closure, and uses
+  an explicitly copied native loader for both implementations. Host kernel is
+  still used. These are correctness checks, not disk performance results or
+  native Bazel test execution. CAM passthrough, asynchronous queueing, tape,
+  error recovery and comparative CPU/memory/I/O qualification remain open.
+- Evidence under /usr/obj/usr/src: bazel-camdd-reference-20261030 comparisons,
+  runtime-audit.py and runtime/audit.json/per-case logs/runtime-input hashes;
+  bazel-camdd-20261030 native capture and bazel-camdd-make-20261030 reference.
+- Frontend review: existing maintained build-bsd bazel-test target handling with
+  16 jobs suffices; no frontend C/backend/signing/publication contract changes.
+  Full-world/kernel/package/VM/performance gates remain open; Make stays default.
