@@ -16,3 +16,6 @@ cc_library(name = "interface_type_headers", hdrs = ["if_types.h"], includes = ["
 cc_library(name = "link_address_headers", hdrs = ["if_dl.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
 
 cc_library(name = "radix_headers", hdrs = ["radix.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
+
+cc_library(name = "netmap_user_headers", hdrs = ["netmap.h", "netmap_user.h", "netmap_legacy.h"],
+    strip_include_prefix = ".", include_prefix = "net", visibility = ["//visibility:public"])

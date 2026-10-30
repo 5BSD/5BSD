@@ -16853,3 +16853,37 @@ bazel-libutilpp-reference-20261029, plus the saved native artifacts/test reports
 The initial manifest-provider error and r2 parity differences remain documented.
 This completes selected libutil++ archive/manual/test installation qualification,
 not system-wide, cross-platform, independent bootstrap or performance gates.
+
+### Native libnetmap and librss candidates (2026-10-30)
+
+Added explicit native sources, headers, ordinary archives, shared libraries and
+installation graphs for libnetmap and librss. Netmap's three source-owned userland
+ABI headers are declared through sys/net; no wildcard pulls kernel implementation
+into the library. Libnetmap preserves inherited ABI 5 and package=netmap; librss
+preserves ABI 1, package=librss and /lib placement with its relative development
+symlink. Neither Makefile installs a manual, and none is invented here.
+
+Fresh Make references bazel-libnetmap-make-20261029 and bazel-librss-make-20261029
+completed. Combined native run bazel-netmap-rss-20261030 is pending, with per-library
+comparators under the respective reference directories. Existing build-bsd/source_graph
+explicit target inputs support these additions unchanged. Netmap's maintained
+three-case ATF suite still needs integration; its capability_openat case requires
+root and a netmap-capable kernel and must not be counted as host-safe evidence.
+No network device/RSS state is changed by this build. Full-system gates remain open.
+
+Netmap qualification follow-up: fresh tests-enabled Make build/install completed
+under bazel-libnetmap-full-make-20261029, including libnetmap_cap_test, its debug
+file and Kyuafile. The existing combined native run remains live (confirmed by
+its process and session), so it has not been restarted. Host-safe ATF target
+preparation covers borrowed_fd and invalid_fd; capability_openat will remain an
+explicit privileged/device qualification, not silently omitted or counted as a
+passing host test. No runtime result or combined artifact parity is claimed yet.
+
+Netmap/RSS artifact result: bazel-netmap-rss-20261030 passes both native library
+installation builds. Fresh Make comparison matches seven libnetmap and six
+librss destinations with no missing/extra or metadata differences. Each library's
+four regular payloads pass archive member/symbol checks, ordered dynamic metadata,
+public header bytes and one debug-link CRC. Evidence is retained in each
+reference directory's install-audit.json and payload-audit.json. Netmap runtime
+and tests-enabled native installation remain next work; RSS sysctl/device behavior
+has not been exercised. Full-system and performance gates remain open.

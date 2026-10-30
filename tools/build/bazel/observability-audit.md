@@ -7332,3 +7332,11 @@ bazel-libutilpp-reference-20261029, plus the saved native artifacts/test reports
 The initial manifest-provider error and r2 parity differences remain documented.
 This completes selected libutil++ archive/manual/test installation qualification,
 not system-wide, cross-platform, independent bootstrap or performance gates.
+
+### libnetmap and librss (2026-10-30)
+
+All maintained library sources are preserved; no production probes or audit hooks
+were added. Native artifact/install parity passes for both. Netmap descriptor
+ownership tests remain to be wired; privileged registration/mmap needs a qualified
+netmap kernel. RSS sysctl/affinity behavior is untested. Neither artifact comparison
+establishes packet performance, kernel event coverage or policy enforcement.
