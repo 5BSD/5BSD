@@ -8380,3 +8380,12 @@ no DOF. These checks cover the executable provider, not runtime firing or all
 liboes/dependency providers. Event subscription/authorization, event JSON output,
 stream loss/error reporting and live tracing still need matching-system tests.
 No OES event session was opened during this qualification.
+
+### 2026-10-30: tcpdchk, tcpdmatch and tcpsso
+
+No local DTrace provider or direct libbsm linkage is declared by these Make
+components. The diagnostic programs retain fakelog/scaffold sources and libwrap
+policy evaluation. Private tcpdmatch allow/deny verdict checks pass for both
+builds. Policy diagnostic coverage, name-service behavior, and tcpsso socket-option
+attribution/error paths need further runtime review; no host socket control was
+performed. These checks establish no performance result.

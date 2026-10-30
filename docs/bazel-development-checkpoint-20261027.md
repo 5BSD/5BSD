@@ -20123,3 +20123,33 @@ Artifact/probe metadata checks do not establish system-wide OES behavior or
 performance. Existing build-bsd format-5 targets/dtrace settings cover both
 variants without new frontend C/manual options or staging/signing/publication
 contracts. Make remains production/default and full system gates remain open.
+
+### Native TCP diagnostic utilities (2026-10-30)
+
+Added tcpdchk/tcpdmatch with explicit vendor source/header/manual exports, native
+libwrap, distinct Make compile definitions, and the existing inet6_support
+selection. Added tcpsso with its maintained source and libc dependency. The
+standard /usr/libexec and /etc/hosts.allow/hosts.deny compile-time defaults match
+the current Make configuration and existing native tcpd/libwrap layout; arbitrary
+Make LIBEXECDIR overrides are not qualified here.
+
+Evidence: /usr/obj/usr/src/bazel-tcp-tools-reference-20261030; native capture
+bazel-tcp-tools-20261030; independent Make references bazel-tcpdchk-make-20261030,
+bazel-tcpdmatch-make-20261030, bazel-tcpsso-make-20261030. Each component matches
+five installation records, three regular payload symbol/dependency/manual checks
+and one debuglink CRC. An initial tcpsso comparison ran before its Make reference
+finished and reported a missing METALOG; it was rerun after successful completion.
+No build was restarted or assertion weakened.
+
+runtime/audit.json records eight passing tcpdmatch private-policy checks across
+native and Make: default access, deny-all, allow-before-deny precedence, and a
+rule for another service. Executables/native loader/native or staged Make
+libraries were copied and hashed; library dependency closure was checked. The
+host kernel/NSS remained in use, with an explicit empty inetd.conf and private
+hosts.allow/hosts.deny selected by -d. No host access policy was modified.
+These tests do not qualify all tcpdchk diagnostics, IPv6-disabled compilation,
+netgroup/DNS behavior, tcpsso kernel ABI/socket mutation, or performance.
+
+Existing build-bsd explicit target inputs and inet6_support setting cover these
+additions without new frontend C/manual settings or staging/signing/publication
+contracts. Make remains production/default; whole-system gates remain open.
