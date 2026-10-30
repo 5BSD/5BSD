@@ -16887,3 +16887,27 @@ public header bytes and one debug-link CRC. Evidence is retained in each
 reference directory's install-audit.json and payload-audit.json. Netmap runtime
 and tests-enabled native installation remain next work; RSS sysctl/device behavior
 has not been exercised. Full-system and performance gates remain open.
+
+### Native netmap ATF and configured installation candidate (2026-10-30)
+
+Added the maintained libnetmap_cap_test program and all three ATF case targets.
+The host_tests suite selects borrowed_fd and invalid_fd; capability_openat is an
+explicit manual target requiring root and a netmap kernel. Tests-enabled native
+installation includes the complete test executable, Kyuafile and debug data,
+including the privileged case for later qualified-system execution. No test body
+has been replaced or weakened. Native runtime libraries are declared explicitly.
+
+Run bazel-libnetmap-full-20261030 is pending against the completed full Make
+reference. This uses existing build-bsd/source_graph tests setting and explicit
+target/test interfaces without frontend changes. Passing the two selected cases
+would not establish registration/mmap, packet performance or full-system behavior.
+
+Netmap test result: bazel-libnetmap-full-20261030 passes borrowed_fd and invalid_fd
+(two reported ATF cases). Tests-enabled installation matches the fresh full Make
+reference at all 14 changed destinations, with zero missing/extra or metadata
+mismatches. Seven regular payloads match symbols, ordered dynamic tags, headers,
+Kyuafile bytes and two debug-link CRCs. Evidence is retained in
+bazel-libnetmap-reference-20261029/full-install-audit.json and
+full-payload-audit.json plus saved native test reports/artifacts. capability_openat
+remains explicitly unrun; successful registration, mmap and packet behavior need
+a qualified netmap kernel. No production implementation changes were required.

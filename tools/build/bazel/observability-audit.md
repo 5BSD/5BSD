@@ -7340,3 +7340,13 @@ were added. Native artifact/install parity passes for both. Netmap descriptor
 ownership tests remain to be wired; privileged registration/mmap needs a qualified
 netmap kernel. RSS sysctl/affinity behavior is untested. Neither artifact comparison
 establishes packet performance, kernel event coverage or policy enforcement.
+
+Netmap test result: bazel-libnetmap-full-20261030 passes borrowed_fd and invalid_fd
+(two reported ATF cases). Tests-enabled installation matches the fresh full Make
+reference at all 14 changed destinations, with zero missing/extra or metadata
+mismatches. Seven regular payloads match symbols, ordered dynamic tags, headers,
+Kyuafile bytes and two debug-link CRCs. Evidence is retained in
+bazel-libnetmap-reference-20261029/full-install-audit.json and
+full-payload-audit.json plus saved native test reports/artifacts. capability_openat
+remains explicitly unrun; successful registration, mmap and packet behavior need
+a qualified netmap kernel. No production implementation changes were required.
