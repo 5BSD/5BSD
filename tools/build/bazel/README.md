@@ -43651,3 +43651,16 @@ Make. Evidence: `/usr/obj/usr/src/bazel-inetd-reference-20261030` and
 `/usr/obj/usr/src/bazel-inetd-options-reference-20261030`. Both captures used the
 maintained frontend with 16 jobs. No service was started or live probes fired;
 these are component artifact comparisons, not runtime qualification.
+
+### ACPI utility artifacts (2026-10-30)
+
+`//usr.sbin/acpi/{acpiconf,acpidump,einj}:install_archive` use native compilation,
+explicit source ACPICA/ioctl/register headers, and maintained acpi package
+metadata. Each matches five fresh Make installation records and three regular
+payloads, including manuals, ELF symbols/dependencies and debug CRCs.
+Evidence: `/usr/obj/usr/src/bazel-acpi-tools-reference-20261030`; native capture
+`bazel-acpi-tools-20261030` used maintained build-bsd with 16 jobs.
+
+acpidb and iasl remain outside this migrated subset. No firmware error injection,
+power-management operation or firmware dump/disassembly runtime was exercised.
+These results establish component artifact parity against the staged SDK.

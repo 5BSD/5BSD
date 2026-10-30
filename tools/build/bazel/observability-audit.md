@@ -8151,3 +8151,12 @@ Live event delivery, accepted/refused connections, login-cap transitions, TCP
 wrapper rules, IPv6 and IPsec behavior remain runtime qualification items.
 No direct audit-library dependency was introduced; kernel audit coverage for
 service creation/refusal needs runtime examination.
+
+### 2026-10-30: acpiconf, acpidump and einj
+
+The maintained inputs declare no userland DTrace providers or direct audit
+library dependencies. Native targets preserve that behavior. Runtime review
+should cover attribution/denial of ACPI ioctl operations, firmware reads,
+suspend requests, and error-injection requests using appropriate isolated
+hardware/VM fixtures. No such operation was executed on the host. Kernel audit
+coverage must be examined before treating absent userland libbsm as a gap.

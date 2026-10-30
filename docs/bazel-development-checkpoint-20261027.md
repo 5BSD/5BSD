@@ -19495,3 +19495,23 @@ performance qualification. Make remains production/default.
   signing or publication change required. No daemon was started, no port bound,
   and no host install or configuration mutation performed. Whole-system runtime,
   bootstrap, packaging/publication and performance gates remain open.
+
+### 2026-10-30: native ACPI configuration/dump/error-injection utilities
+
+- Added native acpiconf, acpidump and einj compilation and installation targets.
+  Preserved the parent Makefile's acpi package assignment. Explicit ACPICA
+  public header closure and narrow ACPI ioctl/PCI register header targets
+  replace broad source include-path reliance. Existing ACPICA package boundaries
+  and bhyve header targets were left intact.
+- Each fresh Make/native comparison passes five changed installation records
+  and three regular payloads, with exact manuals, metadata/package tags, ELF
+  global/weak symbols and ordered dynamic dependencies, and separated debug CRC.
+- Evidence under `/usr/obj/usr/src`: `bazel-acpi-tools-reference-20261030`, native
+  capture `bazel-acpi-tools-20261030`, and fresh per-tool Make stages.
+- This does not finish the ACPI subtree: acpidb and iasl remain to migrate.
+  Firmware dump/disassembly integration, battery/suspend operations and hardware
+  error injection were not executed. Artifact parity does not qualify hardware
+  behavior, live observability, or system-wide performance.
+- Frontend review: maintained Bazel-built build-bsd bazel-test with explicit
+  targets and 16 jobs covers these additions without new frontend C/backend,
+  staging/signing/publication requirements. No host installation occurred.
