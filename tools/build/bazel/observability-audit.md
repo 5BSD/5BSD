@@ -7482,3 +7482,10 @@ Native amd64 shared runtime artifact/install comparison passes, including versio
 unwind exports. No tracing/audit hooks were added or removed. Live exception
 propagation, signal-frame walks and sanitizer interaction remain unqualified;
 matching ELF exports and debug CRCs are not a runtime unwind test.
+
+### Compiler-runtime compatibility installations (2026-10-30)
+
+Libgcc_s_asneeded contains no implementation objects; libc++experimental currently
+contains only upstream keep.cpp. Neither contains runtime service logic or new
+probe/audit opportunities. Artifact/install parity passes; runtime linker
+AS_NEEDED behavior is not established by linker-script byte equality.

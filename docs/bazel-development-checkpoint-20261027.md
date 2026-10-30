@@ -17415,3 +17415,19 @@ and inventory-refactor.json in bazel-libgcc_s-reference-20261030. The failed r2
 ABI comparison remains evidence of why architecture-aware preprocessing matters.
 Live exception propagation, stack walks, sanitizer/other-architecture coverage
 and independent bootstrap remain open. Make remains production/default.
+
+### Remaining runtime installation components (2026-10-30)
+
+Native bazel-runtime-install-20261030 passes through maintained build-bsd.
+Libgcc_s_asneeded matches fresh Make at four destinations/three regular payloads/
+one debug link: the deliberately empty compatibility DSO, debug file, generated
+AS_NEEDED linker script and debug directory. Symbols, ordered dynamic metadata,
+script bytes and debug CRC match. Libc++experimental matches its single static
+archive, including member order and symbols, built from upstream experimental/
+keep.cpp with C++20/PIC settings. No synthetic source was introduced.
+Evidence: install-audit.json and payload-audit.json under the corresponding
+bazel-libgcc_s_asneeded-reference-20261030 and bazel-libc++experimental-reference-
+20261030 directories in /usr/obj/usr/src. Existing explicit-target/toolchain
+frontend inputs suffice; build-bsd/backend interfaces need no changes. Runtime
+linker AS_NEEDED behavior and broader exception/bootstrap/system qualification
+remain open. Make remains production/default.
