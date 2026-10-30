@@ -19309,3 +19309,32 @@ Frontend review: existing explicit targets/SDK inputs cover these additions;
 no frontend/backend/signing/publication contract changed. Full world/kernel,
 bootstrap, pkgbase, runtime and resource/performance gates remain open. Make
 remains production/default.
+
+
+### sesutil, smart/diskhealth and zonectl (2026-10-30)
+
+Added native rules preserving explicit sources and maintained library order.
+smart uses its maintained contrib sources/headers, LIBXO definition, smart package
+and diskhealth binary/manual hardlinks. zonectl includes configuration-selected
+installation of the maintained ATF shell suite and Kyuafile. No source behavior
+changed; no broad include-directory escape or substituted device implementation.
+
+Native build via the captured Bazel-built frontend:
+/usr/obj/usr/src/bazel-storage-tools-20261030. Fresh Make references:
+/usr/obj/usr/src/bazel-{sesutil,smart,zonectl}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-storage-tools-reference-20261030, per-program directories.
+sesutil passes five installation records/three regular payloads; smart passes
+seven records/three payloads plus both hardlinks; zonectl passes seven records/
+five payloads including test files. Symbol/dynamic inventories, manuals, tests,
+metadata and all three debuglink CRCs match; no missing/extra paths.
+
+No utility or test body was executed. Enclosure discovery/control, SMART health
+protocols/output/error paths, and zoned-device state transitions remain runtime
+qualification. zonectl's maintained tests create zoned memory devices and need
+appropriate isolated kernel testing. Tests-disabled and broader platform coverage
+remain open. No disk, enclosure or zone state was modified.
+
+Frontend review: existing explicit targets, tests setting and SDK inputs work
+through native build-bsd; no frontend/backend/signing/publication contract changed.
+These are selected amd64 artifacts, not world/kernel/bootstrap/pkgbase/runtime or
+performance qualification. Make remains production/default.

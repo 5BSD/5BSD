@@ -8066,3 +8066,12 @@ artifact comparisons pass. Runtime checks remain for protocol/input errors, utmp
 changes, connection-drop authorization and BPF wake packet operations. Review
 existing kernel/library audit coverage for these operations before adding probes.
 No device, accounting, connection or packet operation was executed.
+
+
+### Storage administration utilities (2026-10-30)
+
+No direct DTRACE/SDT_PROBE/audit_ references were found in sesutil, smart or
+zonectl sources. Native artifact and test-installation comparisons pass. Qualify
+enclosure control/health decoding and zone transitions/errors with appropriate
+isolated devices. Review CAM/ioctl audit and probe coverage separately from these
+userland source scans. No disk, enclosure, zoned-device or test-body execution.
