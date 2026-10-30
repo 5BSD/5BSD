@@ -18293,3 +18293,24 @@ pending, along with quota editing/enforcement, filesystem accounting, concurrent
 updates and error-path runtime checks. No host quota/mount state changed.
 Existing build-bsd explicit targets suffice; no frontend/signing/publication
 contract changed. Independent world/bootstrap/pkgbase and performance remain open.
+
+### Quot maintained test installation (2026-10-30)
+
+The tests-enabled native quot aggregate now installs the maintained ATF shell
+suite and generated Kyuafile. Both existing UFS1/UFS2 cases and cleanup routines
+are unchanged. Test directory metadata comes from BSD.tests.dist; an initially
+redundant explicit directory declaration was removed after comparison caught it.
+
+Native evidence: /usr/obj/usr/src/bazel-quot-tests-20261030-r2.
+Fresh tests-enabled Make reference: bazel-quot-tests-make-20261030.
+Comparators/logs: /usr/obj/usr/src/bazel-quot-tests-reference-20261030.
+Seven changed install records match, with no missing/extra destinations or
+metadata mismatches; five regular payloads pass. The installed quot_test and
+Kyuafile are byte-identical to Make, and program symbols/dependencies/manual/
+debuglink still match. Final source cleanup only removed trailing whitespace.
+
+This closes test payload installation, not execution: no UFS fixture was mounted,
+no ATF case ran, and direct Bazel execution/VM orchestration is still pending.
+The suite requires root and creates/mounts memory disks, so qualify it in the
+isolated matching VM. Existing build-bsd tests setting selects installation;
+no frontend, signing or publication contract changed.
