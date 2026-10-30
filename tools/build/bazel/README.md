@@ -43735,3 +43735,19 @@ are host-run C tests, not Bazel tests or live hardware qualification. Sampling,
 exec-timing and shell test bodies, plus tests-disabled installation, remain open.
 Evidence: `/usr/obj/usr/src/bazel-hwstat-tools-reference-20261030`; final native
 capture `bazel-hwstat-tools-20261030-r3` used maintained build-bsd with 16 jobs.
+
+### hwstat native runtime follow-up (2026-10-30)
+
+`//usr.sbin/hwstat/tests:mock_tests` registers 33 maintained sensor/metrics/RAPL/
+sampling cases through bsd_atf_test with native rtld and declared native runtime
+libraries. All 33 passed with zero skipped cases; report hashes and registration
+against source were checked. Evidence:
+`/usr/obj/usr/src/bazel-hwstat-native-tests-reference-20261030` and
+`bazel-hwstat-native-tests-20261030`.
+
+Direct captured Make/native runs also passed the ten sampling and seven real
+child-timing cases each, bringing host-runtime C coverage to 80 executions.
+Real-child timing remains outside Bazel registration because its absolute child
+paths need declared-input integration. Shell tests and live hardware/export
+behavior are not yet qualified. Maintained build-bsd drove the native test run
+with 16 jobs and existing explicit input settings.

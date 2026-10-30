@@ -19628,3 +19628,28 @@ performance qualification. Make remains production/default.
   explicit targets/tests setting with 16 jobs; no new frontend C/backend/staging,
   signing/publication requirements. Full-system/VM/Bazel-runtime/performance
   qualification remains open, as do tests-disabled installation variants here.
+
+### 2026-10-30: hwstat native Bazel tests and remaining C runtime coverage
+
+- Completed direct host-runtime runs for sampling_test (10 cases) and
+  exec_timing_test (7), for both captured native and Make binaries: 34 additional
+  passes, 80 total C case executions including the earlier 46. These use host
+  loader/libraries, and the timing suite uses real child processes/host utilities;
+  this is explicitly separate from native Bazel qualification.
+- Added 33 native bsd_atf_test cases for sensors, metrics, RAPL and mocked sampling,
+  each using the maintained C binary, native rtld, native ATF/libc/libsys and
+  declared native export libraries where required. No hardware devices or child
+  tools are required by these cases. All 33 passed with zero skips; captured XML,
+  logs and hashes were audited, and case registration matches maintained sources.
+- The seven exec-timing cases remain host-qualified rather than Bazel-registered:
+  their absolute child-tool paths require a declared-input integration first.
+  Shell suite execution, live hardware/export behavior, and tests-disabled
+  installation remain pending. No assertion or test body was weakened.
+- Evidence: `/usr/obj/usr/src/bazel-hwstat-tools-reference-20261030/runtime-extra-audit.py`
+  and JSON/per-case logs; `bazel-hwstat-native-tests-reference-20261030` inputs,
+  case inventory/report audit; `bazel-hwstat-native-tests-20261030` receipt,
+  execution log and captured test reports under `/usr/obj/usr/src`.
+- Frontend review: existing maintained build-bsd bazel-test explicit test labels,
+  runtime dependency declarations and 16-job execution suffice. No frontend C,
+  backend/publication change needed. This closes bounded native test coverage,
+  not complete-world/runtime/VM/performance gates.

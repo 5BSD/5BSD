@@ -8208,3 +8208,12 @@ Mocked sensor/metrics/RAPL C tests passed for both implementations, including
 counter rollover/failure cases. This is not evidence of real counter accuracy,
 live export delivery, or kernel audit attribution. Hardware access denials,
 reclaim visibility and external export behavior remain runtime review items.
+
+### 2026-10-30: hwstat runtime qualification follow-up
+
+All 33 mocked sensor/metrics/RAPL/sampling cases passed under native Bazel test
+execution with declared native loader/libraries; none skipped. Host-runtime
+Make/native timing cases additionally cover child exit, failure, signals, masks,
+poll intervals and reaping. These exercise maintained measurement logic but do
+not demonstrate real hardware-counter accuracy, live export delivery or kernel
+audit coverage. The shell suite remains unexecuted.

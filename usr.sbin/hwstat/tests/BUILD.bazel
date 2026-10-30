@@ -25,3 +25,58 @@ _NAMES = ["exec_timing_test", "hwstat_test", "metrics_test", "rapl_test", "sampl
 bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _NAMES, interfaces = {n: "atf" for n in _NAMES})
 bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/hwstat/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=hwstat-tests"])
 bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Mocked inputs: these cases require no hardware devices or external child tools.
+_MOCK_CASES = {
+    "sensors_test": [
+        "sparse_cpu_ids",
+        "nonclearing_intel_temperature",
+        "named_temperatures",
+        "cpu_intervals",
+        "invalid_temperature"
+    ],
+    "metrics_test": [
+        "amd_binary",
+        "amd_invalid",
+        "platform_collectors",
+        "frequency_capabilities",
+        "capability_collectors"
+    ],
+    "rapl_test": [
+        "atom_units",
+        "atom_sample_rollover",
+        "atom_wrap_deadline",
+        "non_atom_units_unchanged",
+        "wrap_deadline_not_poll_period",
+        "shortest_domain_wrap_deadline",
+        "intel_energy_units",
+        "long_energy_interval",
+        "energy_failure_is_sticky",
+        "delayed_energy_poll",
+        "amd_energy",
+        "unavailable_energy",
+        "intel_partial_domains"
+    ],
+    "sampling_test": [
+        "exec_signals_preserve_poll_deadline",
+        "exec_fork_failure_restores_signals",
+        "exec_signal_wait_failure_reaps_child",
+        "watch_read_failures",
+        "exec_initial_failure",
+        "exec_midrun_failure",
+        "exec_final_failure",
+        "exec_preserves_child_failure",
+        "exec_interrupted_wait",
+        "watch_polls_between_outputs"
+    ]
+}
+_BASE_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+_EXPORT_RUNTIME = ["//lib/msun:m_shared", "//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"]
+[bsd_atf_test(name = program + "_" + case, case_name = case,
+    interface = "program", body = ":" + program,
+    loader = "//libexec/rtld-elf:rtld_binary",
+    runtime_lib = _BASE_RUNTIME + (_EXPORT_RUNTIME if program == "sampling_test" else []),
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 30, size = "small")
+ for program in _MOCK_CASES for case in _MOCK_CASES[program]]
+test_suite(name = "mock_tests", tests = [":" + program + "_" + case for program in _MOCK_CASES for case in _MOCK_CASES[program]], visibility = ["//visibility:public"])
