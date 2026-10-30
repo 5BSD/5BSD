@@ -81,7 +81,7 @@ ATF_TC_BODY(builtin_defaults, tc)
 	ATF_REQUIRE_EQ(oe_sysconf_load(&sc, "", ""), 0);
 	ATF_CHECK_EQ(sc.enable, 1);
 	ATF_CHECK_STREQ(sc.endpoint, "http://localhost:4318");
-	ATF_CHECK_STREQ(sc.protocol, "http/json");
+	ATF_CHECK_STREQ(sc.protocol, "http/protobuf");
 	ATF_CHECK_STREQ(sc.compression, "gzip");
 	ATF_CHECK_EQ(sc.timeout_ms, 10000);
 	ATF_CHECK_STREQ(sc.headers_file, "");
@@ -232,8 +232,6 @@ ATF_TC_BODY(malformed, tc)
 	expect_error("endpoint = \"http://a\"; endpoint = \"http://b\";",
 	    "endpoint must be a single string");
 	expect_error("endpoint = \"ftp://host\";", "is not an http");
-	expect_error("protocol = \"grpc\";", "implements only");
-	expect_error("protocol = \"http/protobuf\";", "implements only");
 	expect_error("protocol = \"carrier-pigeon\";", "is not supported");
 	expect_error("protocol = 7;", "protocol must be a single string");
 	expect_error("compression = \"zstd\";", "is not supported");

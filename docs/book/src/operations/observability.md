@@ -272,9 +272,10 @@ BSDTrace daemon.
 
 dtrace(1) (`-x otel`), bsdinstruments, hwstat, otelpfd and otelauditd share
 `libotelexport(3)`, which renders a stream of events, snapshots and spans as
-text, JSONL, collapsed stacks, OTLP JSON Lines files, or OTLP/HTTP JSON (logs,
-metrics and traces, gzip-compressed), spools batches through collector
-outages and accounts for dropped records. Log records carry an OTel
+text, JSONL, collapsed stacks, OTLP JSON Lines files, or OTLP to a collector
+(logs, metrics and traces, gzip-compressed) over OTLP/HTTP with protobuf
+bodies (the default), OTLP/gRPC or OTLP/HTTP with JSON bodies, spools batches
+through collector outages and accounts for dropped records. Log records carry an OTel
 severity (`severityNumber`/`severityText`; INFO unless the emitter sets
 one, as otelauditd does for failures). Metric names are
 `<scope>.<profile>.<name>` with the tool as the instrumentation scope
@@ -288,6 +289,7 @@ environment:
 | `OTEL_EXPORTER_OTLP_HEADERS` | Extra request headers |
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` or none |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Request timeout |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (default), `grpc` or `http/json` (dtrace `-x otelprotocol=`, bsdinstruments `--protocol` override) |
 | `OTEL_SERVICE_NAME` | `service.name` resource attribute |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes |
 
@@ -297,18 +299,51 @@ The C entry points are `oe_text_new()`, `oe_jsonl_new()`,
 `oe_report_drops()` in `<otelexport.h>`. Log records from BSDLog are not
 exported over OTLP; only DTrace and telemetry data are.
 
+The exporter batches and spools every request in the OTLP JSON encoding;
+for `http/protobuf` and `grpc` it transcodes each request to the binary
+`Export*ServiceRequest` with upb, using the opentelemetry-proto 1.10.0
+definitions that the build compiles with the base system's `protoc(1)`
+(`lib/protobuf/protoc-gen.mk`), so a spool written under one protocol
+replays under another. OTLP/gRPC runs over HTTP/2 (nghttp2): cleartext
+with prior knowledge for `http://` endpoints, TLS with ALPN `h2` for
+`https://`, gzip message compression, `grpc-timeout`, and the OTLP retry
+policy (UNAVAILABLE and the other transient codes, RESOURCE_EXHAUSTED
+only with a RetryInfo delay). Partial-success responses are reported for
+every protocol. The default endpoint is `http://localhost:4318`, or
+`http://localhost:4317` for `grpc`.
+
+### Protocol Buffers in the base system
+
+Protocol Buffers 29.6 is part of the base system for any component that
+uses `.proto` definitions, not only OpenTelemetry. `/usr/libexec/protoc`
+(`protoc(1)`) carries the C++ generator; `/usr/libexec/protoc-gen-upb`,
+`protoc-gen-upb_minitable` and `protoc-gen-upbdefs` generate C for the upb
+runtime. protoc is deliberately not on the default `PATH`: the runtime it
+generates code for is private to the base system, and a `/usr/bin/protoc`
+would shadow the ports compiler (and satisfy ports' build dependencies on
+it); base components run it by its full path. Buildworld
+bootstraps these tools and `lib/protobuf/protoc-gen.mk` generates bindings
+at build time (`PROTO_SETS`, `PROTO_LANG` `upb`, `upbdefs` or `cpp`), so no
+generated code is checked in. The C++ runtime and Abseil are private
+libraries (`libprivateprotobuf`, `libprivateprotobuf-lite`,
+`libprivateabsl`, headers under `/usr/include/private`) and upb is an
+internal static library, as upstream requires; nghttp2 is the private
+`libprivatenghttp2`. Their licences are installed under
+`/usr/share/licenses`.
+
 ## OpenTelemetry out of the box
 
 The system configuration `/etc/otel.conf` (over `/etc/defaults/otel.conf`,
 see `otel.conf(5)`) is the layer below the environment: command line >
 `OTEL_*` environment > `otel.conf` > built-in defaults. It holds the
-endpoint (default `http://localhost:4318`, the local agent), compression,
+endpoint (default `http://localhost:4318`, the local agent), protocol
+(default `http/protobuf`), compression,
 timeout, a separate credentials file (mode 0600/0400, owned by root),
 resource attributes (`service.namespace`, `deployment.environment.name`,
 `host.id` from `/etc/hostid`), the spool directory `/var/spool/otel` and
 the local agent's settings. `otelconf(8)` validates it with the library's
 own loader, prints values for rc.d scripts and renders the agent
-configuration. Every OTLP/HTTP exporter (dtrace `-x otel=otlp`,
+configuration. Every OTLP exporter (dtrace `-x otel=otlp`,
 bsdinstruments `--format otel`, hwstat, otelpfd, otelauditd) reads it through
 one function, `oe_config_load(3)`; credentials from it are only sent to the
 endpoint it names. Without a command-line spool, an exporter that may write

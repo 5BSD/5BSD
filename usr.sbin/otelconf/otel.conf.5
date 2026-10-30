@@ -84,15 +84,21 @@ and
 .Pa /v1/logs
 below it.
 The default is the local agent.
-.It Ic protocol Pq string, default Qq http/json
-OTLP transport.
-The base exporter implements only
-.Qq http/json ;
+.It Ic protocol Pq string, default Qq http/protobuf
+OTLP protocol of the tools and services:
 .Qq http/protobuf
-and
+.Pq OTLP/HTTP, protobuf bodies ,
 .Qq grpc
-are refused here and are available through the agent's
-.Ic upstream_protocol .
+.Pq OTLP/gRPC
+or
+.Qq http/json
+.Pq OTLP/HTTP, JSON bodies .
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
+and the tools' command line options take precedence.
+With
+.Qq grpc ,
+.Ic endpoint
+must name an OTLP/gRPC receiver, normally on port 4317.
 .It Ic compression Pq string, default Qq gzip
 .Qq gzip
 or

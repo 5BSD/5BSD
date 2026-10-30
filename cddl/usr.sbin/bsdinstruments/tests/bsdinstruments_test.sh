@@ -11,6 +11,9 @@
 # --format otel reads otel.conf(5); keep the cases independent of the
 # system's (otelconf's otel_emitters_test covers the system layer).
 export OTELCONF_DEFAULTS= OTELCONF_FILE=
+# The loopback collector (otlp_collector) reads OTLP/HTTP JSON; the
+# protobuf transports are tested in lib/libotelexport/tests/otlppb_test.
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
 
 make_profile()
 {

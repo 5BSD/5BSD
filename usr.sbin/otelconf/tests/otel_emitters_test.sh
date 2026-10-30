@@ -38,6 +38,9 @@ config()
 	chmod 0600 creds
 	cat > otel.conf <<EOF
 endpoint = "http://127.0.0.1:${PORT:-9}";
+# The fake receiver stores JSON bodies; the protobuf transports have
+# their own tests (lib/libotelexport/tests/otlppb_test).
+protocol = "http/json";
 headers_file = "$(pwd)/creds";
 host_id_file = "$(pwd)/hostid";
 resource {

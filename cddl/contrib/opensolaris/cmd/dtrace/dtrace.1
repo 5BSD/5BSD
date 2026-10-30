@@ -1314,8 +1314,13 @@ With
 sends the traced data to OpenTelemetry instead of printing it:
 .Bl -tag -width "otlp-json"
 .It Cm otlp
-OTLP/HTTP with JSON bodies to a collector
-.Pq Pa /v1/logs , /v1/metrics , /v1/traces .
+OTLP to a collector, with the protocol of
+.Cm otelprotocol :
+OTLP/HTTP with protobuf
+.Pq the default
+or JSON bodies
+.Pq Pa /v1/logs , /v1/metrics , /v1/traces ,
+or OTLP/gRPC.
 .It Cm otlp-json
 OTLP JSON Lines, one export request per line, as the OpenTelemetry
 Collector's file exporter writes them and its
@@ -1457,7 +1462,8 @@ The
 .Ev OTEL_RESOURCE_ATTRIBUTES ,
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
 .Ev OTEL_EXPORTER_OTLP_HEADERS ,
-.Ev OTEL_EXPORTER_OTLP_COMPRESSION
+.Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
 and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT
 environment variables are honored as described in
@@ -1469,8 +1475,8 @@ settings given neither as
 options nor in the environment come from
 .Xr otel.conf 5
 .Po
-endpoint, credentials, compression, timeout, resource attributes and the
-spool
+endpoint, protocol, credentials, compression, timeout, resource attributes
+and the spool
 .Pc ,
 and an invalid
 .Xr otel.conf 5
@@ -1512,13 +1518,41 @@ it takes precedence over
 and the
 .Xr otel.conf 5
 endpoint; the built-in default is
-.Ql http://localhost:4318 .
+.Ql http://localhost:4318 ,
+or
+.Ql http://localhost:4317
+with the
+.Ql grpc
+protocol.
+.It Cm otelprotocol Ns = Ns Ar protocol
+OTLP protocol for
+.Cm otlp :
+.Ql http/protobuf ,
+.Ql grpc
+or
+.Ql http/json ;
+it takes precedence over
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL
+and the
+.Xr otel.conf 5
+protocol; the built-in default is
+.Ql http/protobuf .
+Over
+.Ql grpc ,
+an
+.Ql https
+endpoint uses TLS with ALPN
+.Ql h2
+and an
+.Ql http
+endpoint cleartext HTTP/2.
 .It Cm otelspool Ns = Ns Ar file
 for
 .Cm otlp ,
 keep batches the collector could not take after the retries in
 .Ar file
-as OTLP JSON Lines and resend them, oldest first, once it accepts a
+as OTLP JSON Lines, whatever the protocol, and resend them, oldest
+first, once it accepts a
 request again, in this run or a later one; guests use
 .Ar file Ns Li .vm Ns Ar vmid .
 Without it, the system spool

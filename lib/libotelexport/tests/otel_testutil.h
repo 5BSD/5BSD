@@ -46,6 +46,9 @@ struct collector {
 	volatile int	 stop;
 	pthread_mutex_t	 lock;
 	struct coll_reply script[COLL_MAX_SCRIPT];
+	/* coll_script_body(): binary body lengths and chunked replies. */
+	size_t		 bodylen[COLL_MAX_SCRIPT];
+	int		 chunked[COLL_MAX_SCRIPT];
 	int		 nscript, next;
 	struct coll_req	 reqs[COLL_MAX_REQ];
 	int		 nreqs;
@@ -59,10 +62,20 @@ struct collector {
 int	 coll_start(struct collector *, int port, int tls,
 	    const char *certfile);
 void	 coll_script(struct collector *, const struct coll_reply *, int);
+/*
+ * After coll_script(): reply i has a binary body of len bytes (0: the
+ * string length), sent chunked when chunked is set.
+ */
+void	 coll_script_body(struct collector *, int i, size_t len, int chunked);
 void	 coll_stop(struct collector *);
 int	 coll_nreqs(struct collector *);
 /* Wait (up to ms) until at least n requests arrived. */
 int	 coll_wait(struct collector *, int n, int ms);
+/*
+ * Give an SSL_CTX (SSL_CTX *) a fresh self-signed certificate for
+ * "localhost" and write its PEM to certfile.
+ */
+int	 coll_make_cert(void *ctx, const char *certfile);
 /* A loopback port with nothing listening on it. */
 int	 closed_port(void);
 

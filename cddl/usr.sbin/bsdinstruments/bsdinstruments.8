@@ -34,6 +34,7 @@
 .Op Fl -rotate-time Ar time
 .Op Fl -rotate-keep Ar n
 .Op Fl -endpoint Ar url
+.Op Fl -protocol Ar grpc | http/protobuf | http/json
 .Op Fl -spool Ar file
 .Op Fl -spool-max Ar size
 .Op Fl -bufsize Ar size
@@ -56,8 +57,8 @@ bundles a catalog of DTrace profiling templates covering system
 tracing, file and network activity, allocations, scheduler and lock
 contention analysis, and USDT-instrumented applications, and ships
 the results as text, JSONL, collapsed stacks or OTLP JSON Lines to
-standard output or a rotating file, or as OTLP/HTTP+JSON to an
-OpenTelemetry collector.
+standard output or a rotating file, or as OTLP to an OpenTelemetry
+collector over OTLP/HTTP with protobuf or JSON bodies, or OTLP/gRPC.
 .Pp
 A profile is a plain
 .Pa .d
@@ -228,13 +229,30 @@ Loki, or Vector; aggregations become
 .Ql \&"type\&":\&"metric\&"
 objects with their key dimensions and values or histogram buckets.
 .It Cm otel
-Batch events as OTLP LogRecords POSTed to the collector's
-.Pa /v1/logs
-endpoint; DTrace aggregations become typed metrics on
-.Pa /v1/metrics
+Batch events as OTLP LogRecords sent to the collector's logs
+endpoint
+.Pq OTLP/HTTP Pa /v1/logs ;
+DTrace aggregations become typed metrics
+.Pq Pa /v1/metrics
 (count/sum as monotonic Sums, min/max/avg as Gauges, quantize
-variants as Histograms); spans go to
-.Pa /v1/traces .
+variants as Histograms); spans go to the traces endpoint
+.Pq Pa /v1/traces .
+The protocol is
+.Fl -protocol ,
+else
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL ,
+else the
+.Xr otel.conf 5
+.Ic protocol ,
+else
+.Ql http/protobuf :
+.Ql http/protobuf
+and
+.Ql http/json
+POST protobuf or JSON bodies over OTLP/HTTP,
+.Ql grpc
+calls the collector services over HTTP/2
+.Pq TLS with ALPN Ql h2 for an Ql https endpoint .
 .It Cm otlp-json
 The same OTLP requests written as JSON Lines, one request per line: the
 format of the OpenTelemetry Collector's file exporter, readable by its
@@ -398,7 +416,8 @@ With
 keeps batches the collector could not take after the retries: they are
 appended to
 .Ar file
-as OTLP JSON Lines and resent, oldest first, once the collector accepts
+as OTLP JSON Lines, whatever the protocol, and resent, oldest first, once
+the collector accepts
 a request again, either later in the same run or in a later run with
 the same spool.
 .Fl -spool-max Ar size
@@ -488,12 +507,17 @@ The OTLP exporter honors the standard OpenTelemetry variables
 .Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
 .Ev OTEL_EXPORTER_OTLP_HEADERS ,
 .Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL ,
 and
 .Ev OTEL_EXPORTER_OTLP_TIMEOUT .
-An explicit
+Explicit
 .Fl -endpoint
-flag takes precedence over
-.Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+and
+.Fl -protocol
+flags take precedence over
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT
+and
+.Ev OTEL_EXPORTER_OTLP_PROTOCOL .
 With
 .Fl -format Cm otel ,
 settings given neither on the command line nor in the environment come
@@ -502,7 +526,11 @@ from
 and an invalid
 .Xr otel.conf 5
 is an error; the built-in default endpoint is
-.Ql http://localhost:4318 .
+.Ql http://localhost:4318 ,
+or
+.Ql http://localhost:4317
+for
+.Ql grpc .
 Malformed values are reported and ignored as described in
 .Xr libotelexport 3 .
 Aggregation keys written as clause-local variables

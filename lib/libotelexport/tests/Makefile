@@ -18,6 +18,12 @@ BINDIR.otlp_collector=	${TESTSDIR}
 MAN.otlp_collector=
 LIBADD.otlp_collector+=	z ssl crypto pthread
 
+# The OTLP protobuf encoder as a filter, for the oracle tests.
+PROGS+=		otlppb_encode
+BINDIR.otlppb_encode=	${TESTSDIR}
+MAN.otlppb_encode=
+LIBADD.otlppb_encode+=	otelexport
+
 # The golden files keep their golden/ subdirectory when installed (the
 # package FILES group always installs into TESTSDIR itself).
 FILESGROUPS+=	GOLDEN
@@ -35,6 +41,27 @@ ATF_TESTS_C+=	sysconf_oom_test
 SRCS.sysconf_oom_test=	sysconf_oom_test.c failalloc.c
 
 CFLAGS+=	-I${.CURDIR:H}
+
+# The OTLP protobuf and gRPC transports: transcoder, decoders, the gRPC
+# client against a loopback nghttp2 server (grpc_testsrv.c), OTLP/HTTP
+# protobuf against the loopback collector, the exporter end to end.  The
+# protobuf the library produces is checked by the C++ oracle (pbcpp).
+ATF_TESTS_C+=	otlppb_test
+SRCS.otlppb_test=	otlppb_test.c grpc_testsrv.c otel_testutil.c
+LDFLAGS.otlppb_test+=	${WRAP_ALLOC}
+LIBADD.otlppb_test+=	otelexport nghttp2 z ssl crypto pthread
+CFLAGS.grpc_testsrv.c+=	-I${SRCTOP}/contrib/nghttp2/lib/includes \
+			-I${SRCTOP}/lib/libnghttp2
+SUBDIR+=	pbcpp
+ATF_TESTS_SH+=	otlppb_oracle_test
+
+# Loopback OTLP/HTTP and OTLP/gRPC receiver for the system tests.
+PROGS+=		otlp_pb_receiver
+SRCS.otlp_pb_receiver=	otlp_pb_receiver.c grpc_testsrv.c otel_testutil.c
+BINDIR.otlp_pb_receiver=	${TESTSDIR}
+MAN.otlp_pb_receiver=
+LDFLAGS.otlp_pb_receiver+=	${WRAP_ALLOC}
+LIBADD.otlp_pb_receiver+=	nghttp2 z ssl crypto pthread
 
 # Allocation-failure injection (otel_testutil.c).
 WRAP_ALLOC=	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
