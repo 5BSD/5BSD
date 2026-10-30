@@ -11,3 +11,8 @@ cc_library(name = "tzdir_header", hdrs = ["tzdir.h"], strip_include_prefix = "."
     ('libc_manual_time2posix.3', 'time2posix.3'),
     ('libc_manual_tzfile.5', 'tzfile.5'),
 ]]
+
+# Native operator tools share upstream configuration and version inputs.
+exports_files(["zic.c", "zic.8"], visibility = ["//usr.sbin/zic:__pkg__"])
+exports_files(["zdump.c", "zdump.8"], visibility = ["//usr.sbin/zdump:__pkg__"])
+cc_library(name = "tool_headers", hdrs = ["tzconfig.h", "private.h", "tzdir.h", "tzfile.h", "version.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/zic:__pkg__", "//usr.sbin/zdump:__pkg__"])

@@ -8242,3 +8242,12 @@ assertion failures per Make/native build on this older host; four cases per
 build pass. Do not interpret installation parity or matching failures as complete
 runtime/observability qualification. See bazel-sysconf-reference-20261030 under
 /usr/obj/usr/src for the retained evidence.
+
+### 2026-10-30: timezone operator tools
+
+zic and zdump declare no local DTrace provider or direct audit-library integration.
+Native targets preserve upstream sources/configuration. Offline slim/fat compile,
+alias, transition and invalid-input checks pass against fresh Make artifacts;
+these do not establish system timezone-update audit attribution or live tracing.
+Any administrative timezone-change audit coverage remains a separate runtime
+review item; no host configuration was modified during qualification.

@@ -19715,3 +19715,27 @@ performance qualification. Make remains production/default.
   jobs suffice; no frontend C/backend/signing/publication contract change.
   Tests-disabled installation, matching-kernel runtime, native Bazel tests and
   overall world/kernel/package/performance gates remain open. Make stays default.
+
+### 2026-10-30: native zic and zdump
+
+- Added native targets for both tools with explicit contributed sources/manuals,
+  the maintained forced tzconfig.h include, and declared private/version headers.
+  Existing libc timezone target visibility remains unchanged; tool exports are
+  limited to their consumers.
+- Fresh Make comparisons pass for each: five changed metadata records, three
+  regular payloads, one debug link. Global/weak symbols, ordered dynamic
+  dependencies, manual bytes and debug CRCs match the maintained reference.
+- Offline runtime checks use captured binaries with host loader/libc and private
+  outputs. Both builds produce byte-identical slim/fat TZif files for fixed and
+  seasonal zones plus aliases; 2023/2024 transition and compact output match
+  after normalizing only private output-root paths. Invalid input is rejected
+  without output files. No system timezone configuration or database was changed.
+- Evidence under /usr/obj/usr/src: bazel-timezone-tools-reference-20261030
+  (per-tool installation/payload audits, runtime-audit.py, runtime/audit.json
+  and command stdout/stderr), bazel-timezone-tools-20261030 native capture,
+  bazel-zic-make-20261030 and bazel-zdump-make-20261030 fresh Make references.
+- Frontend review: maintained build-bsd bazel-test handles the explicit targets
+  with 16 jobs. No new frontend C/backend/staging/signing/publication contract.
+  Native Bazel test execution, installed timezone-data generation, cross-target
+  execution and full-world/kernel/package/performance gates remain open. These
+  tool checks do not qualify the entire timezone subsystem. Make stays default.
