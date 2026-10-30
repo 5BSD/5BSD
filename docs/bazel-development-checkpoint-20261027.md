@@ -18579,3 +18579,26 @@ concurrency need isolated matching-system tests. Full world/kernel/bootstrap,
 pkgbase and performance qualification remain open. Existing build-bsd explicit
 targets and SDK inputs handle these actions; no frontend/backend, signing or
 publication contract changed. Make remains the production/default backend.
+
+### Bluetooth command utilities (2026-10-30)
+
+Added native l2control, l2ping, hccontrol and bcmfw targets with explicit sources,
+local headers and maintained native libbluetooth dependencies (bcmfw has no
+explicit LIBADD). hccontrol includes /etc/defaults/bluetooth.device.conf with
+Make's config tag/mode and directory metadata. No program source changed.
+
+Native run: /usr/obj/usr/src/bazel-bluetooth-tools-20261030. Fresh Make build,
+install and installconfig references: bazel-{l2control,l2ping,hccontrol,bcmfw}-
+make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bluetooth-tools-reference-20261030, per-command directories.
+All commands completed successfully. l2control/l2ping/bcmfw each match five
+installation records and three regular payloads; hccontrol matches seven
+records and four regular payloads. No missing/extra paths or metadata mismatches.
+Symbol/dynamic dependency inventories, manual/config bytes and four debuglink
+CRCs pass. These comparisons do not establish Bluetooth runtime correctness.
+
+Hardware/controller queries, L2CAP traffic, HCI command behavior, firmware
+loading/error paths and matching-kernel Netgraph behavior remain to qualify.
+No device was opened or firmware loaded. Existing build-bsd target/SDK inputs
+cover this group; no frontend/backend/signing/publication contract changed.
+Full world/kernel/bootstrap/pkgbase and performance remain open; Make is default.

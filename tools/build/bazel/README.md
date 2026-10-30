@@ -43019,3 +43019,9 @@ hard links, native lexer generation, four manuals and eight configuration files
 match Make's 20 installation records and 14 regular payloads. Evidence:
 /usr/obj/usr/src/bazel-autofs-reference-20261030. Live mount/helper operation,
 complete system builds and performance remain unqualified.
+
+
+Bluetooth command coverage (2026-10-30): native l2control, l2ping, hccontrol and
+bcmfw pass Make installation/payload comparisons, including hccontrol's default
+configuration. Evidence: /usr/obj/usr/src/bazel-bluetooth-tools-reference-20261030.
+Controller/L2CAP/firmware runtime checks remain open; no devices were accessed.

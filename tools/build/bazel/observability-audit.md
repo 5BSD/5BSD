@@ -7782,3 +7782,14 @@ helper execution and failures, kernel upcalls, mount authorization denial,
 concurrent requests, reload/shutdown and timed unmounts, including diagnostics.
 LDAP/NIS/NFS/media integration requires isolated fixtures. No host mounts or
 service state were changed.
+
+
+### Bluetooth command utilities (2026-10-30)
+
+l2control/l2ping/hccontrol/bcmfw retain maintained sources and dependencies.
+Source scan found no direct DTRACE/SDT_PROBE/audit_ references in these command
+directories. Native Make artifact comparisons pass, with no hardware execution.
+Follow-up runtime cases: malformed addresses/commands, privilege denial, absent
+controllers, HCI query/update errors, L2CAP timeout/payload handling and firmware
+transfer interruption/failure. Audit/logging adequacy for controller changes and
+firmware loading needs review; this build migration does not add or prove it.
