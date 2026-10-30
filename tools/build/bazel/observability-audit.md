@@ -7426,3 +7426,9 @@ Native amd64 candidate preserves sources and configured snapshot command code.
 Make declares no program DTrace provider. Kernel-side probe/audit coverage,
 VM control and snapshot operations need matching-kernel runtime qualification.
 No live VM control is issued during artifact checks.
+
+### bhyveload (2026-10-30)
+
+Native amd64 build preserves source and userboot callback interface. Its Makefile
+declares no DTrace provider; live userboot loading, VM ioctl behavior and kernel
+observability remain unqualified. No guest was created or loaded.

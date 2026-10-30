@@ -17206,3 +17206,19 @@ bazel-bhyvectl-reference-20261030; default/disabled install/payload audits remai
 there too. This is a component configuration check, not complete cache/sandbox
 qualification. Both settings preserve Make artifact/install contracts. Full
 world/kernel/pkgbase/bootstrap and runtime/performance gates remain open.
+
+### Native amd64 bhyveload (2026-10-30)
+
+Added native bhyveload with explicit userboot interface headers and libvmmapi
+linkage. Run bazel-bhyveload-20261030 passes through maintained build-bsd with
+16 jobs. Fresh Make comparison matches five installation destinations, three
+regular payloads and one debug-link CRC, including symbols, ordered dynamic
+metadata and manual bytes. Evidence: install-audit.json/payload-audit.json under
+bazel-bhyveload-reference-20261030. Existing explicit target/SDK inputs require
+no frontend/backend changes. No guest loading was attempted.
+
+The userboot interface target does not constitute a native userboot loader build.
+Bhyve engine work still includes snapshot/architecture source selection, DTrace
+vsock provider, slirp helper, generated GDB XML, keyboard layouts and both manuals.
+Those outputs must be retained in engine subtree migration. Full system, loader
+runtime, bootstrap and performance gates remain open.
