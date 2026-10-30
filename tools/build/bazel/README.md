@@ -43622,3 +43622,17 @@ confirms selected fragment sets, test payload presence/absence, and DOF plus
 separated-debug probe symbols in both implementations. This does not claim the
 full option cross-product or runtime test execution. DTrace defaults stay on.
 Evidence: `/usr/obj/usr/src/bazel-newsyslog-options-reference-20261030/`.
+
+### RARP/router advertisement utilities (2026-10-30)
+
+Native `//usr.sbin/{rarpd,rtadvd,rtadvctl}:install_archive` targets preserve
+maintained source/library lists and installation metadata. Shared rtadvd sources
+used by rtadvctl are explicit labels with declared header dependencies.
+Fresh Make artifact comparisons pass for rarpd (five records/three payloads),
+rtadvd (six/four), and rtadvctl (five/three), including exact manuals, symbols,
+dynamic dependencies, and debug CRCs. No extra sample configuration is installed.
+
+Evidence: `/usr/obj/usr/src/bazel-router-tools-reference-20261030/`, native capture
+`bazel-router-tools-20261030`. The maintained frontend drove the capture with
+16 jobs. Live packet handling, control operations and network configuration
+were not exercised; runtime and performance qualification remain pending.

@@ -19452,3 +19452,23 @@ performance qualification. Make remains production/default.
   alternative with 16 jobs, requiring no frontend C/backend/policy change.
   No default was disabled. No host log rotation, live tracing, TAP execution,
   installation/publication or performance qualification was performed.
+
+### 2026-10-30: RARP and router advertisement utilities
+
+- Added native rarpd, rtadvd and rtadvctl builds with their maintained source
+  lists and native libutil dependencies where Make specifies them. rtadvctl
+  explicitly imports shared control/interface/timer sources and narrowly
+  exported headers from rtadvd, rather than relying on Make .PATH discovery.
+- Fresh Make comparison passes: rarpd five changed installation records/three
+  regular payloads; rtadvd six/four; rtadvctl five/three. Checks cover complete
+  metadata/tags, exact manuals, ELF symbols and ordered dynamic dependencies,
+  and separated debug CRCs. rtadvd includes its configuration manual, but does
+  not invent a configuration payload that its Makefile does not install.
+- Evidence under `/usr/obj/usr/src`: `bazel-router-tools-reference-20261030`,
+  native capture `bazel-router-tools-20261030`, and fresh per-program Make stages.
+  No RARP service, router advertisements, control socket operations, or host
+  network reconfiguration were executed.
+- Frontend integration reviewed: maintained Bazel-built build-bsd bazel-test
+  consumed explicit targets with 16 jobs; existing inputs suffice, so no C
+  frontend/backend/staging/signing/publication change was needed. These staged
+  SDK artifact comparisons do not qualify runtime or system-wide performance.

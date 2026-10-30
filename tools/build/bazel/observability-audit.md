@@ -8129,3 +8129,12 @@ has no DTrace probe symbols; the default artifacts retain both. Audit evidence:
 `/usr/obj/usr/src/bazel-newsyslog-options-reference-20261030/options-audit.json`.
 This is configuration coverage, not removal of default instrumentation. Live
 probe firing and TAP runtime qualification remain pending.
+
+### 2026-10-30: rarpd, rtadvd and rtadvctl
+
+These maintained source/build inputs declare no userland DTrace provider or
+direct audit-library integration. Migration preserves that behavior. Follow-up
+runtime coverage should examine RARP request/reply paths, router advertisement
+and renumbering handling, configuration reloads, and control-socket authorization
+with kernel audit attribution. Absence of userland libbsm alone does not establish
+missing audit events. No network daemon or control operation ran on the host.
