@@ -7449,3 +7449,9 @@ Registration-only engine objects require alwayslink to retain Make's direct-obje
 semantics; strict symbol comparison detected and corrected their initial omission.
 Live provider registration/firing and VM workload performance remain unqualified.
 Evidence: bazel-bhyve-reference-20261030/*dof*.json.
+
+Bhyve option follow-up (2026-10-30): snapshot-disabled Make/native outputs match
+130 DOF schemas, 183 ordinary sites and ten is-enabled sites. DTrace-disabled
+outputs match full subtree artifacts and have no DOF sections. Marked one
+probe-only cleanup local __unused so Make -Werror also builds without tracing;
+cleanup and error semantics are unchanged. No live firing or VM test is claimed.

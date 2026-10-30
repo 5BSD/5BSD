@@ -17295,3 +17295,32 @@ This establishes the default amd64 engine and subtree artifacts. Snapshot-off,
 DTrace-off, network/OpenSSL variants, live VM operation, snapshot/restore,
 probe firing, sandbox/cache and performance qualification remain work. The
 full-system/world/kernel/pkgbase/bootstrap gates remain open; Make stays default.
+
+### Bhyve option qualification (2026-10-30)
+
+Started separate snapshot-disabled native/Make builds using the existing typed
+bhyve_snapshot input. Prepared independent DTrace-disabled inputs to exercise
+the unrewritten alwayslink object path too. These are separate configurations,
+not a combined disabled profile that obscures which setting changes behavior.
+No frontend/backend contract changes are required; both settings already flow
+through maintained build-bsd. Native runtime and full option matrix remain open.
+
+Snapshot-disabled bhyve passes native/Make artifact parity: 86 destinations,
+81 regular payloads and two debug links. Its DOF metadata matches 130 schemas,
+183 ordinary sites and ten is-enabled sites with independently validated bytes.
+DTrace-disabled native builds, but the fresh Make reference rejects a trace-only
+cleanup return variable in snapshot.c under -Werror=unused-but-set-variable.
+Annotated that local __unused with its probe-only purpose; cleanup invocation,
+released-state handling and return/error semantics are unchanged. Fresh native
+and Make r2 DTrace-disabled builds are pending. Original failure is retained.
+
+Bhyve DTrace-disabled final result: bazel-bhyve-nodtrace-20261030-r2 and fresh
+Make r2 complete after the trace-only variable annotation. Installation matches
+86 destinations; all 81 regular payloads match symbol inventories, ordered
+dynamic metadata, manuals/data and two debug-link CRCs. Both engine ELF section
+tables contain zero DOF sections. The untraced alwayslink path retains the same
+registration symbols as Make. Evidence: nodtrace-install-audit.json,
+nodtrace-payload-audit.json and nodtrace-dof.json under bazel-bhyve-reference-20261030.
+Snapshot-disabled evidence uses the nosnapshot-* files in that directory.
+No live VM, snapshot/restore or provider-firing result is implied; networking/
+OpenSSL variants and broader system/cache/performance gates remain open.
