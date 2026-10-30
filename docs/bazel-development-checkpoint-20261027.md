@@ -18418,3 +18418,37 @@ five regular payloads still match Make, including exact corrected test/Kyuafile
 bytes and binary/debug checks. This closes duplicate discovery, not native ATF
 execution, filesystem permission coverage or live probe qualification. Existing
 build-bsd tests configuration suffices; no frontend/signing/publication change.
+
+### Process utility group in progress (2026-10-30)
+
+Native chroot, setfib and rtprio/idprio candidates now declare program and
+installation targets. Chroot retains conditional rootchange provider/header/
+object generation; rtprio retains idprio binary/manual hardlinks. Native run
+bazel-process-tools-20261030 and isolated Make references
+bazel-<program>-make-20261030 are running. Comparators reside under
+/usr/obj/usr/src/bazel-process-tools-reference-20261030; no parity claim yet.
+
+Next checks: install/payload parity for all three, chroot DOF schemas and emitted
+sites, then variant/runtime follow-ups. No root directory, FIB or priority was
+changed on the host. Existing build-bsd explicit inputs suffice; no frontend,
+signing or publication contract changed. Runtime authorization and exec behavior
+remain matching-kernel gates; this migration changes no application policy.
+
+### Process utility artifact qualification completed (2026-10-30)
+
+Native chroot, setfib and rtprio/idprio pass fresh Make build/install comparisons.
+Chroot and setfib each match five installation records; rtprio matches seven,
+including both idprio hardlinks. Each has three regular payloads with matching
+symbol inventories, ordered dynamic dependencies, manual bytes and debuglink CRC.
+No missing/extra destinations or metadata mismatches. Chroot DOF inventories
+match two schemas; both binaries pass instruction/range checks at two ordinary
+and two enabled sites. No live probe firing was tested.
+
+Native evidence: /usr/obj/usr/src/bazel-process-tools-20261030. Make references:
+bazel-{chroot,setfib,rtprio}-make-20261030. Comparators and chroot DOF records:
+/usr/obj/usr/src/bazel-process-tools-reference-20261030, per-program directories.
+No application source or policy changed. No root/FIB/priority transition ran.
+DTrace-disabled and rescue/bootstrap chroot variants, authorization, credential
+changes, child exec, priority limits and routing behavior remain runtime/config
+qualification gaps. Existing build-bsd explicit inputs suffice; no frontend,
+signing or publication contract changed. Full-system gates remain open.

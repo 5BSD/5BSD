@@ -7721,3 +7721,11 @@ before test discovery/execution can be claimed complete.
 Extattr follow-up: duplicate symlink_nofollow registration is removed. All 19
 source-defined cases are discovered exactly once in the installed native script
 using host ATF list-only mode. Actual case execution and live probes remain open.
+
+### Chroot, setfib and rtprio/idprio (2026-10-30)
+
+Chroot's existing rootchange provider is preserved: two schemas and two ordinary/
+enabled sites match emitted Make metadata and instruction checks. No explicit
+DTrace/audit/syslog hooks were found in the scoped setfib/rtprio source scan.
+Review kernel audit coverage for root, FIB and scheduling transitions, failures
+and subsequent exec. Live policy and probe behavior remain unqualified.
