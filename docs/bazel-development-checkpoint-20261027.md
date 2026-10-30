@@ -18804,3 +18804,35 @@ checks, rights denial, descriptor brokerage/transfer and lifecycle tests remain
 open. No helper was executed. Existing build-bsd target/SDK and capimage pipeline
 cover these inputs; no frontend/backend/signing/publication contract changed.
 Full system/bootstrap/pkgbase/performance remain open; Make remains default.
+
+### BSDBluetooth daemon and aggregate capability bundle (2026-10-30)
+
+Added native BSDBluetooth with all 35 maintained C sources, explicit local/BLE/
+controller protocol headers, native library linkage and configurable audit and
+DTrace support. The compile exposed an undeclared source vhid.h dependency;
+the existing sys/dev/hid target now grants narrow package visibility and is an
+explicit dependency. No broad source include fallback was introduced.
+Generated policy assembly is retained in stripped executables. Aggregate install
+includes the controller manifest, bundle/unit/configuration files, distinct
+manual alias and the maintained /usr/sbin/blued symlink. The first metadata
+comparison caught symlink mode 0777 versus Make's recorded 0755; it is corrected.
+
+Native run: /usr/obj/usr/src/bazel-bt-daemon-20261030-r3. Fresh Make reference:
+bazel-bt-daemon-make-20261030 (daemon plus recursive controller install).
+Evidence/scripts: /usr/obj/usr/src/bazel-bt-daemon-reference-20261030.
+All 26 installation records and nine regular payloads match, including symbol/
+dynamic dependency inventories, bundle/unit/config/manual bytes, links and two
+debuglink CRCs. policy-audit.py/json verify exact blued.ucl bytes in the daemon's
+stripped .5bsd.policy. Controller policy was separately qualified in the prior
+helper step. Native/Make DTrace providers and 129 probe schemas match; both
+binaries pass amd64 instruction/function-range checks for 158 ordinary sites,
+zero enabled-check sites (native-dof.json/make-dof.json). No live firing claimed.
+
+No daemon or controller was executed. Audit-disabled/DTrace-disabled variants,
+activation and stamped authorization, descriptor grants, GATT/ATT/SMP/ISO,
+pairing/persistence/restart, controller removal and live audit/probes remain
+runtime/configuration gates. Embedded unsigned policy is not signing, verified
+boot or protection against root. Existing build-bsd typed options, explicit
+inputs and capimage rules cover this addition; no frontend/backend/signing/
+publication contract changed. Full system/bootstrap/pkgbase/performance remain
+open; Make remains the production/default backend.

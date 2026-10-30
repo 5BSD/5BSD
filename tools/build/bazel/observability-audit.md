@@ -7888,3 +7888,16 @@ rights, malformed adapter requests, privileged HCI descriptor creation/transfer,
 peer disconnect and resource retirement. Embedded .5bsd.policy parity alone does
 not prove runtime entitlement enforcement or signed-image verification. Main
 BSDBluetooth daemon and aggregate bundle migration remain outstanding.
+
+
+### BSDBluetooth main daemon and bundle (2026-10-30)
+
+Native migration retains WITH_DTRACE and USE_BSM_AUDIT selection, native BSM
+linkage and the maintained provider. Enabled build matches Make artifacts;
+providers/129 probe schemas match, with 158 ordinary instruction sites validated
+in each daemon and zero enabled-check sites. This is not live firing or audit
+record evidence. Qualification must cover service activation, stamped grants,
+controller descriptor transfer, GATT service ownership/reclamation, ATT/SMP/ISO
+protocol errors, pairing keys/persistence, adapter removal and authorization
+failures, plus audit/probe-enabled and disabled variants. No runtime service was
+started. Embedded unsigned policy parity does not prove enforcement/signing.

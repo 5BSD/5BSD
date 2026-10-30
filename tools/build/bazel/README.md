@@ -43086,3 +43086,11 @@ bundle directories match 13 Make install records and three regular payloads.
 Both stripped executables retain exact declared controller.ucl policy bytes.
 Evidence: /usr/obj/usr/src/bazel-bt-controller-reference-20261030. This is unsigned
 policy/build parity; main daemon, bundle/runtime and signing gates remain open.
+
+
+BSDBluetooth bundle coverage (2026-10-30): native daemon/controller aggregate
+matches 26 Make installation records and nine regular payloads. Audit/DTrace
+options are explicit; enabled DTrace providers/129 schemas and 158 sites match.
+The daemon retains its declared unsigned policy bytes after stripping. Evidence:
+/usr/obj/usr/src/bazel-bt-daemon-reference-20261030. Disabled variants and live
+activation/authorization/Bluetooth/audit/probe qualification remain open.
