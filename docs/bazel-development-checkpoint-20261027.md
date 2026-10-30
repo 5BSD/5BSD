@@ -18602,3 +18602,26 @@ loading/error paths and matching-kernel Netgraph behavior remain to qualify.
 No device was opened or firmware loaded. Existing build-bsd target/SDK inputs
 cover this group; no frontend/backend/signing/publication contract changed.
 Full world/kernel/bootstrap/pkgbase and performance remain open; Make is default.
+
+### Bluetooth security daemon (2026-10-30)
+
+Added native hcsecd with declared lex/m4 and yacc actions, generated parser header
+and explicit native libbluetooth linkage. Configuration installation preserves
+root:wheel mode 0600, config package tags and the distinct configuration manual.
+No daemon source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-hcsecd-20261030; fresh Make reference:
+bazel-hcsecd-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-hcsecd-reference-20261030. Eight installation records and
+five regular payloads match Make; symbol/dynamic dependency inventories,
+configuration/manual bytes and debuglink CRC pass. generated-inputs.json records
+native lexer/parser actions and verifies the parser header is an input to lexer
+compilation. Both builds completed successfully; no runtime tests were selected.
+
+Pairing, key persistence, configuration parsing/reload, authorization failures
+and matching-kernel HCI behavior remain to qualify. No daemon/device was run.
+The observability log records a pre-existing __config_debug__-guarded routine
+that logs PIN/key contents for separate security review. Existing build-bsd
+explicit targets and SDK inputs cover this work; no frontend/backend/signing/
+publication contract change. Full system/bootstrap/pkgbase/performance remain
+open and Make remains production/default.

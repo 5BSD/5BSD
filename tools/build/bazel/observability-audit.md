@@ -7793,3 +7793,18 @@ Follow-up runtime cases: malformed addresses/commands, privilege denial, absent
 controllers, HCI query/update errors, L2CAP timeout/payload handling and firmware
 transfer interruption/failure. Audit/logging adequacy for controller changes and
 firmware loading needs review; this build migration does not add or prove it.
+
+
+### hcsecd (2026-10-30)
+
+Native migration preserves daemon/parser/lexer behavior and syslog diagnostics;
+artifact comparisons and generated-header dependency checks pass. Runtime
+qualification should cover valid/invalid/duplicate map entries, pairing acceptance
+and rejection, key persistence/reload, stale temporary files and permissions,
+controller loss and lifecycle signals. No runtime audit/probe evidence claimed.
+
+Security-review finding: parser.y dump_config(), guarded by __config_debug__,
+formats PIN and full link-key bytes for LOG_DEBUG. This pre-existing diagnostic
+needs credential-redaction review before enabling that variant. The normal
+Makefile/native target does not add that define. No daemon behavior was changed
+in this build migration; neither pairing nor key storage was exercised.

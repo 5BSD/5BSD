@@ -43025,3 +43025,10 @@ Bluetooth command coverage (2026-10-30): native l2control, l2ping, hccontrol and
 bcmfw pass Make installation/payload comparisons, including hccontrol's default
 configuration. Evidence: /usr/obj/usr/src/bazel-bluetooth-tools-reference-20261030.
 Controller/L2CAP/firmware runtime checks remain open; no devices were accessed.
+
+
+hcsecd coverage (2026-10-30): native lexer/parser generation, parser-header
+compilation dependency and eight installation records pass selected amd64 Make
+comparison, including mode-0600 configuration. Evidence:
+/usr/obj/usr/src/bazel-hcsecd-reference-20261030. Pairing/key/reload runtime
+qualification remains open.
