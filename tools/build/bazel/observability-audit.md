@@ -8311,3 +8311,11 @@ three agents. No local DTrace provider or direct libbsm integration is declared.
 Lookup cache hit/miss/expiry, agent failures, credential boundaries and daemon
 lifecycle attribution require runtime review. Source/installation parity does
 not establish those behaviors; no host NSS configuration or cache state changed.
+
+### 2026-10-30: mptable and mlxcontrol
+
+Neither declares a local DTrace provider or direct audit-library integration.
+Native builds preserve source behavior and controller headers. Physical-memory
+access, controller administration and authorization/audit attribution remain
+runtime review items. Installation parity is the evidence available here; no
+host controller or memory operation ran.

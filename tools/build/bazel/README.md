@@ -44026,3 +44026,20 @@ with 16 jobs and existing explicit input settings.
   backend/signing/publication contract change. No daemon started or NSS state
   changed. Live cache/agent/protocol behavior, native Bazel runtime tests,
   cross-target and full-world/kernel/package/performance gates remain open.
+
+### 2026-10-30: mptable and mlxcontrol
+
+- Added native mptable and mlxcontrol with maintained source sets, manual
+  sections and installation policies. mlx controller ABI headers are explicit
+  inputs with narrow consumer visibility and preserved include paths.
+- Both fresh Make comparisons pass: five changed metadata records, three
+  regular payloads and one debug link each. Global/weak symbols, ordered dynamic
+  dependencies, manual bytes and debug CRCs match. No device or physical-memory
+  operations were executed.
+- Evidence under /usr/obj/usr/src: bazel-legacy-hardware-reference-20261030
+  per-tool scripts/results, bazel-legacy-hardware-20261030 native capture,
+  bazel-mptable-make-20261030 and bazel-mlxcontrol-make-20261030 fresh references.
+- Frontend review: maintained build-bsd bazel-test explicit targets with 16 jobs
+  handles both archives; no frontend C/backend/signing/publication contract
+  changes. Device behavior, native Bazel behavioral tests, cross builds and full
+  world/kernel/package/performance qualification remain open. Make stays default.

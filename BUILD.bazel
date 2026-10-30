@@ -435,3 +435,5 @@ exports_files(["sys/net80211/ieee80211_ioctl.h"], visibility = ["//usr.sbin/wlan
 exports_files(["sys/dev/firewire/fwcrom.c"], visibility = ["//usr.sbin/fwcontrol:__pkg__"])
 cc_library(name = "firewire_user_headers", hdrs = ["sys/dev/firewire/firewire.h", "sys/dev/firewire/iec13213.h", "sys/dev/firewire/fwphyreg.h", "sys/dev/firewire/iec68113.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/fwcontrol:__pkg__", "//usr.sbin/dconschat:__pkg__"])
 cc_library(name = "dcons_user_headers", hdrs = ["sys/dev/dcons/dcons.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/dconschat:__pkg__"])
+
+cc_library(name = "mlx_user_headers", hdrs = ["sys/dev/mlx/mlxio.h", "sys/dev/mlx/mlxreg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlxcontrol:__pkg__"])
