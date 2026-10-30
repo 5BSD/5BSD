@@ -7808,3 +7808,14 @@ formats PIN and full link-key bytes for LOG_DEBUG. This pre-existing diagnostic
 needs credential-redaction review before enabling that variant. The normal
 Makefile/native target does not add that define. No daemon behavior was changed
 in this build migration; neither pairing nor key storage was exercised.
+
+
+### Bluetooth HID daemon and control utility (2026-10-30)
+
+Maintained source behavior and daemon syslog versus control stderr diagnostics
+are preserved by separate parser compilation modes. Source scan found no direct
+DTRACE/SDT_PROBE/audit_ references in these program directories. Make artifact
+comparisons and parser action checks pass; no live input devices were accessed.
+Follow-up: malformed HID descriptors/maps, SDP failures, controller disconnect,
+reconnection, input-device authorization denial, keyboard/mouse events and
+cleanup of uinput devices. Build results do not prove runtime audit coverage.

@@ -43032,3 +43032,10 @@ compilation dependency and eight installation records pass selected amd64 Make
 comparison, including mode-0600 configuration. Evidence:
 /usr/obj/usr/src/bazel-hcsecd-reference-20261030. Pairing/key/reload runtime
 qualification remains open.
+
+
+Bluetooth HID coverage (2026-10-30): bthidd/bthidcontrol native builds each match
+five Make installation records and three regular payloads. Shared generated
+parser C is compiled separately with the appropriate BTHIDCONTROL definition.
+Evidence: /usr/obj/usr/src/bazel-bthid-reference-20261030. HID/uinput/controller
+runtime qualification remains open.

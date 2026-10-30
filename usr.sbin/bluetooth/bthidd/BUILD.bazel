@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+bsd_lex(name = "lexer", src = "lexer.l", output = "lexer.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4", visibility = ["//usr.sbin/bluetooth/bthidcontrol:__pkg__"])
+bsd_yacc(name = "parser", src = "parser.y", output = "parser.c", header = "parser.h", report = "parser.output", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source", visibility = ["//usr.sbin/bluetooth/bthidcontrol:__pkg__"])
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+cc_library(name = "shared_headers", hdrs = ["bthid_config.h", ":parser_header"], includes = ["."], visibility = ["//usr.sbin/bluetooth/bthidcontrol:__pkg__"])
+cc_binary(name = "bthidd", srcs = ["bthidd.c", "btuinput.c", "client.c", "hid.c", "kbd.c", "server.c", "session.c", "bthidd.h", "btuinput.h", "kbd.h", ":lexer", ":parser_source"], deps = [":shared_headers", "//lib/libbluetooth:bluetooth", "//lib/libusbhid:usbhid"], dynamic_deps = ["//lib/libbluetooth:bluetooth_shared", "//lib/libusbhid:usbhid_shared"], local_defines = [], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "bthidd", manual = "bthidd.8", package = "bluetooth", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bluetooth","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

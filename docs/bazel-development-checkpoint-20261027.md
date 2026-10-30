@@ -18625,3 +18625,27 @@ that logs PIN/key contents for separate security review. Existing build-bsd
 explicit targets and SDK inputs cover this work; no frontend/backend/signing/
 publication contract change. Full system/bootstrap/pkgbase/performance remain
 open and Make remains production/default.
+
+### Bluetooth HID daemon/control (2026-10-30)
+
+Added native bthidd and bthidcontrol. Lexer/parser generation is shared; generated
+parser C is separately compiled for each binary, with BTHIDCONTROL=1 only for
+the control utility. Each program keeps its own hid.c. Local/generated headers,
+Bluetooth/USB HID libraries and the control utility's SDP dependency are explicit.
+No daemon/control source behavior changed.
+
+Native run: /usr/obj/usr/src/bazel-bthid-20261030. Fresh Make references:
+bazel-bthidd-make-20261030 and bazel-bthidcontrol-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bthid-reference-20261030. Each program matches five
+installation records and three regular payloads, with symbol/dynamic dependency
+inventories, manual bytes and debuglink CRC passing. parser-variants.json checks
+two parser compile actions, exactly one BTHIDCONTROL definition, and declared
+bthid_config.h inputs. All builds exited zero. Reference runner progress text
+still says arp from its template; its recorded command paths and comparison
+inputs identify the actual bthidd/bthidcontrol builds. No runtime test was run.
+
+HID descriptor parsing, SDP discovery, reconnect/disconnect, keyboard/mouse event
+delivery, /dev/uinput and privilege/error paths require isolated runtime tests.
+Existing build-bsd target/SDK inputs cover these actions; no frontend/backend,
+signing or publication contract changed. Full world/kernel/bootstrap/pkgbase,
+alternate architectures and performance remain open. Make remains default.
