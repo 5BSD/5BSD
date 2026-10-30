@@ -10,6 +10,9 @@ BINDIR_mkaudittrail=	${TESTSDIR}
 MAN.mkaudittrail=
 SRCS.mkaudittrail=	mkaudittrail.c bsmgen.c
 
+# Synthetic audit pipe drop count, compiled and preloaded by the tests.
+${PACKAGE}FILES+=	auditdrops.c
+
 .PATH:		${.CURDIR:H}
 CFLAGS+=	-I${.CURDIR:H} -I${.CURDIR} -I${SRCTOP}/lib/libotelexport
 LIBADD.auditrec_test+=	otelexport bsm

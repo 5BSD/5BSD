@@ -495,8 +495,11 @@ watch_otel_spool_body()
 	while [ ! -s coll/port ]; do sleep 0.1; done
 	export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:$(cat coll/port)"
 	export OTEL_EXPORTER_OTLP_COMPRESSION=none
+	# --protocol beats OTEL_EXPORTER_OTLP_PROTOCOL; the collector reads JSON.
+	export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 	atf_check -s exit:0 -o empty -e match:'resent 2 spooled batches' \
-	    bsdinstruments watch mock-prof --format otel --spool spool.jsonl
+	    bsdinstruments watch mock-prof --format otel --spool spool.jsonl \
+	    --protocol http/json
 	wait $cpid
 	atf_check -o empty cat spool.jsonl
 	for f in coll/*.json; do
@@ -623,6 +626,12 @@ watch_usage_errors_body()
 	    bsdinstruments watch -f x.d --format otel --endpoint ''
 	atf_check -s exit:2 -e match:'otlp-json, or collapsed' \
 	    bsdinstruments watch -f x.d --format xml
+	atf_check -s exit:2 -e match:'--protocol expects grpc, http/protobuf or http/json' \
+	    bsdinstruments watch -f x.d --format otel --protocol grpcs
+	atf_check -s exit:2 -e match:'apply to --format otel only' \
+	    bsdinstruments watch -f x.d --format json --protocol grpc
+	atf_check -s exit:2 -e match:usage \
+	    bsdinstruments generate -f x.d --protocol grpc
 	atf_check -s exit:2 -e match:usage \
 	    bsdinstruments generate -f x.d --output f
 	atf_check -s exit:2 -e match:usage \

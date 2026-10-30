@@ -1822,6 +1822,11 @@ ATF_TC_BODY(config_protocol, tc)
 	ATF_CHECK_STREQ("grpc", e.protocol);
 	ATF_CHECK_STREQ("http://localhost:4317", e.endpoint);
 	oe_env_free(&e);
+	/* Every protocol name from the environment and the command line. */
+	config(NULL, "http/protobuf", "http/json", &e, 0);
+	ATF_CHECK_STREQ("http/json", e.protocol);
+	ATF_CHECK_STREQ("http://localhost:4318", e.endpoint);
+	oe_env_free(&e);
 
 	/* otel.conf, overridden by the environment, by the command line. */
 	config("protocol = \"grpc\";\nendpoint = \"http://c:1\";\n", NULL,

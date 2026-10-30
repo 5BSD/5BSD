@@ -343,6 +343,87 @@ live_pipe_file_target_body()
 	atf_check -o match:"^log .*AUE_(EXECVE|EXEC|FEXECVE)" cat lines.out
 }
 
+atf_test_case pipe_drops
+pipe_drops_head()
+{
+	atf_set "descr" "audit pipe drops are exported as the otelauditd.drops counter"
+	atf_set "require.user" "root"
+	atf_set "require.progs" "cc"
+	atf_set "timeout" "120"
+}
+pipe_drops_body()
+{
+	[ -c /dev/auditpipe ] || atf_skip "audit(4) is not available"
+	[ -f /usr/include/security/audit/audit_ioctl.h ] ||
+	    atf_skip "audit_ioctl.h not installed"
+	# A synthetic drop count (auditdrops.c): +3 at every pipe read.
+	atf_check cc -shared -fPIC -o auditdrops.so \
+	    "$(atf_get_srcdir)/auditdrops.c"
+	mkdir logs
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	env LD_PRELOAD="$(pwd)/auditdrops.so" "${OTELAUDITD}" -F ex -c 4 &
+	pid=$!
+	i=0
+	while kill -0 $pid 2>/dev/null && [ $i -lt 100 ]; do
+		/usr/bin/true; /usr/bin/true; /usr/bin/true; /usr/bin/true
+		sleep 0.2
+		i=$((i + 1))
+	done
+	if kill -0 $pid 2>/dev/null; then
+		kill $pid
+		atf_skip "no exec audit records arrived (auditing is off?)"
+	fi
+	wait $pid || atf_fail "otelauditd exited with $?"
+	validate_lines logs/otelauditd.jsonl
+	# The first read reports 3, every later one 3 more: a cumulative
+	# monotonic sum with the drop kind.
+	atf_check -o match:"^point otelauditd.drops \[otelauditd.drop.kind=auditpipe\] 3$" \
+	    cat lines.out
+	atf_check -o match:"^log .*AUE_(EXECVE|EXEC|FEXECVE)" cat lines.out
+}
+
+atf_test_case pipe_file_full cleanup
+pipe_file_full_head()
+{
+	atf_set "descr" "a file target that cannot be written is reported while the pipe idles"
+	atf_set "require.user" "root"
+	atf_set "timeout" "120"
+}
+pipe_file_full_body()
+{
+	[ -c /dev/auditpipe ] || atf_skip "audit(4) is not available"
+	mkdir logs
+	# A full file system under the target directory: opening the file
+	# succeeds, the idle flush fails with ENOSPC.
+	atf_check mount -t tmpfs -o size=1m tmpfs logs
+	# The file exists (the exporter opens it), then the space runs out.
+	touch logs/otelauditd.jsonl
+	dd if=/dev/zero of=logs/fill bs=4k 2>/dev/null
+	config "export { target = \"file\"; directory = \"$(pwd)/logs\"; }"
+	"${OTELAUDITD}" -F ex > full.err 2>&1 &
+	pid=$!
+	# Exec records until the first write fails, then a quiet pipe: the
+	# idle flush reports the unwritable file.
+	i=0
+	while ! grep -q "No space left" full.err && [ $i -lt 120 ]; do
+		for j in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/true; done
+		sleep 0.5
+		i=$((i + 1))
+	done
+	sleep 4
+	kill -TERM $pid
+	wait $pid
+	grep -q "cannot write the audit records" full.err || {
+		grep -q . full.err || atf_skip "no exec audit records arrived"
+	}
+	atf_check -o match:"cannot write the audit records" cat full.err
+	atf_check -o match:"No space left on device" cat full.err
+}
+pipe_file_full_cleanup()
+{
+	umount logs 2>/dev/null || true
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case replay_logs
@@ -354,4 +435,6 @@ atf_init_test_cases()
 	atf_add_test_case live_pipe
 	atf_add_test_case file_target
 	atf_add_test_case live_pipe_file_target
+	atf_add_test_case pipe_drops
+	atf_add_test_case pipe_file_full
 }

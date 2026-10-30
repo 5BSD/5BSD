@@ -351,6 +351,19 @@ file_target_body()
 	atf_check test "$(sort -n states | tail -1)" -eq \
 	    "$((99 + $(wc -l < states)))"
 
+	# A file the target cannot write (here: grown past RLIMIT_FSIZE, with
+	# SIGXFSZ ignored so write(2) fails with EFBIG) is reported for
+	# every later sample, and otelpfd keeps sampling.  The 1 MiB limit
+	# leaves room for a coverage profile; each sample is about 10 KiB.
+	# stderr goes through a pipe: the limit applies to regular files.
+	rm -f logs/*
+	mkstatus status.bin 150
+	atf_check -o save:full.err sh -c "(trap '' XFSZ; ulimit -f 2048;
+	    exec \"${OTELPFD}\" -f status.bin -i 0.1) 2>&1 | cat"
+	atf_check -o match:"write failed: File too large" cat full.err
+	atf_check -o match:"cannot write the pf metrics" cat full.err
+	atf_check test "$(stat -f %z logs/otelpfd.jsonl)" -le 1048576
+
 	# No export target at all: refused, with the way out named.
 	echo 'host_id_file = "";' > otel.conf
 	atf_check -s exit:1 -e match:"no export target: set endpoint or export.target" \

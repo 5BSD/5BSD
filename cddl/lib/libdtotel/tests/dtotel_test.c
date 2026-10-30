@@ -1716,6 +1716,9 @@ ATF_TC_BODY(session_options, tc)
 		{ "otelrotatetime", "2h", 1 }, { "otelrotatetime", "1y", -1 },
 		{ "otelrotatekeep", "3", 1 }, { "otelrotatekeep", "1000", -1 },
 		{ "otelrotatekeep", "3k", -1 }, { "otelbogus", "1", -1 },
+		{ "otelprotocol", "grpc", 1 }, { "otelprotocol", "http/json", 1 },
+		{ "otelprotocol", "http/protobuf", 1 },
+		{ "otelprotocol", "grpcs", -1 }, { "otelprotocol", "", -1 },
 	};
 	struct dtotel_options o;
 	char err[256];
@@ -1731,6 +1734,7 @@ ATF_TC_BODY(session_options, tc)
 	ATF_REQUIRE_EQ(1024 * 1024, o.rotate_size);
 	ATF_REQUIRE_EQ(7200, o.rotate_interval);
 	ATF_REQUIRE_EQ(3, o.rotate_keep);
+	ATF_REQUIRE_STREQ("http/protobuf", o.protocol);
 }
 
 ATF_TC_WITHOUT_HEAD(session_options_check);
@@ -1744,6 +1748,16 @@ ATF_TC_BODY(session_options_check, tc)
 	o.rotate_keep = 1;
 	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
 	ATF_REQUIRE(strstr(err, "need -x otel") != NULL);
+	/* -x otelprotocol alone, and with a format other than otlp. */
+	memset(&o, 0, sizeof(o));
+	o.protocol = "grpc";
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_REQUIRE(strstr(err, "need -x otel") != NULL);
+	o.format = DTOTEL_JSON;
+	ATF_REQUIRE_EQ(-1, dtotel_options_check(&o, NULL, err, sizeof(err)));
+	ATF_REQUIRE(strstr(err, "-x otelprotocol") != NULL);
+	o.format = DTOTEL_OTLP;
+	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
 	memset(&o, 0, sizeof(o));
 	o.format = DTOTEL_OTLP;
 	ATF_REQUIRE_EQ(0, dtotel_options_check(&o, NULL, err, sizeof(err)));
