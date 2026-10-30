@@ -1252,7 +1252,16 @@ _dtrace-cross-tool:
 	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
 	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
 	    MK_MAN=no MK_TESTS=no
-# dtrace(1) links the OpenTelemetry export libraries (-x otel).
+# dtrace(1) links the OpenTelemetry export libraries (-x otel), which encode
+# OTLP/protobuf with upb and speak OTLP/gRPC through nghttp2.
+.for _l in lib/protobuf/libupb lib/libnghttp2
+	${_+_}${MAKE} -C ${.CURDIR}/${_l} \
+	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
+	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
+	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
+	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
+	    MK_MAN=no MK_TESTS=no
+.endfor
 	${_+_}${MAKE} -C ${.CURDIR}/lib/libotelexport \
 	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
 	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
@@ -2834,6 +2843,27 @@ ${_bt}-usr.bin/clang/llvm-tblgen: ${_bt}-lib/clang/libllvmminimal
 ${_bt}-usr.bin/clang/llvm-tblgen: ${_bt}-usr.bin/clang/llvm-min-tblgen
 .endif
 
+# protoc and the upb code generators produce protobuf bindings at build time
+# (lib/protobuf/protoc-gen.mk), for example libotelexport's OTLP/protobuf and
+# OTLP/gRPC transports.  Generated code does not depend on the target, so
+# this host build also serves cross builds.  The libraries are built static
+# for these tools only and are not installed into the target here.
+_protoc=	lib/libabsl \
+		lib/protobuf/libprotobuf \
+		lib/protobuf/libprotoc \
+		lib/protobuf/libupb \
+		usr.bin/protoc \
+		libexec/protoc-gen-upb \
+		libexec/protoc-gen-upb_minitable \
+		libexec/protoc-gen-upbdefs
+${_bt}-lib/protobuf/libprotobuf: ${_bt}-lib/libabsl
+${_bt}-lib/protobuf/libprotoc: ${_bt}-lib/protobuf/libprotobuf
+${_bt}-usr.bin/protoc: ${_bt}-lib/protobuf/libprotoc
+${_bt}-libexec/protoc-gen-upb: ${_bt}-lib/protobuf/libupb ${_bt}-lib/libabsl
+${_bt}-libexec/protoc-gen-upb_minitable: ${_bt}-lib/protobuf/libupb \
+    ${_bt}-lib/libabsl
+${_bt}-libexec/protoc-gen-upbdefs: ${_bt}-lib/protobuf/libupb ${_bt}-lib/libabsl
+
 # C.UTF-8 is always built in share/ctypes and we need localedef for that.
 _localedef=	usr.bin/localedef
 ${_bt}-usr.bin/localedef: ${_bt}-usr.bin/yacc ${_bt_lex_depend}
@@ -3022,6 +3052,7 @@ bootstrap-tools: ${_bt}-links .PHONY
     lib/libmd \
     lib/libopenbsd \
     tools/build/fuchsia/fidlc \
+    ${_protoc} \
     lib/libucl \
     lib/libyaml \
     usr.bin/mandoc \
@@ -3496,6 +3527,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libkiconv lib/libkldelf lib/libkvm \
 		lib/liblzma lib/libmd lib/libnotify lib/libnv \
 		lib/libucl lib/libcapsulert lib/libcapimage \
+		lib/libabsl \
 		lib/libtrustedzfs lib/libfilesystemcmp lib/libbsdfilesystem \
 		lib/libzstd \
 		${_lib_casper} \
@@ -3549,6 +3581,8 @@ lib/libgeom__L: lib/libexpat__L lib/libsbuf__L
 lib/libkldelf__L: lib/libelf__L
 lib/libkvm__L: lib/libelf__L
 lib/libucl__L: lib/msun__L
+# libprivateprotobuf (lib/protobuf) links libprivateabsl.
+lib/libabsl__L: lib/libc++__L lib/libthr__L
 lib/libcapsulert__L: lib/libucl__L
 lib/libcapimage__L: secure/lib/libcrypto__L
 

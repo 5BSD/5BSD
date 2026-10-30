@@ -90,6 +90,8 @@ SUBDIR=	\
 	libalias \
 	libthread_db \
 	libucl \
+	libnghttp2 \
+	protobuf \
 	libyaml \
 	locales \
 	mandoc \

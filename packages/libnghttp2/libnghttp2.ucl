@@ -1,0 +1,10 @@
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+comment = "Private HTTP/2 library (nghttp2)"
+
+desc = <<EOD
+A private build of the nghttp2 HTTP/2 framing library for programs in the
+base system, such as the OTLP/gRPC transport of libotelexport(3).
+EOD

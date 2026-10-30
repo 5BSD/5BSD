@@ -13,6 +13,9 @@ SUBDIR=	${_atf} \
 	${_phttpget} \
 	${_pkgserve} \
 	${_pppoed} \
+	protoc-gen-upb \
+	protoc-gen-upb_minitable \
+	protoc-gen-upbdefs \
 	rc \
 	revnetgroup \
 	${_rlogind} \

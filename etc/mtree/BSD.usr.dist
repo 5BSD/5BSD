@@ -8,6 +8,92 @@
     ..
     include                   tags=package=clibs-dev
         private               tags=package=clibs-dev
+            absl              tags=package=protobuf-dev
+                algorithm     tags=package=protobuf-dev
+                ..
+                base          tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                cleanup       tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                container     tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                crc           tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                debugging     tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                functional    tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                hash          tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                log           tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                memory        tags=package=protobuf-dev
+                ..
+                meta          tags=package=protobuf-dev
+                ..
+                numeric       tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                profiling     tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                random        tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                status        tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                strings       tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                        str_format tags=package=protobuf-dev
+                        ..
+                    ..
+                ..
+                synchronization tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                time          tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                        cctz  tags=package=protobuf-dev
+                            include tags=package=protobuf-dev
+                                cctz tags=package=protobuf-dev
+                                ..
+                            ..
+                            src tags=package=protobuf-dev
+                            ..
+                        ..
+                    ..
+                ..
+                types         tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+                utility       tags=package=protobuf-dev
+                    internal  tags=package=protobuf-dev
+                    ..
+                ..
+            ..
             bsddialog         tags=package=utilities-dev
             ..
             bsdstat           tags=package=libbsdstat-dev
@@ -20,11 +106,31 @@
                     ..
                 ..
             ..
+            google            tags=package=protobuf-dev
+                protobuf      tags=package=protobuf-dev
+                    compiler  tags=package=protobuf-dev
+                    ..
+                    io        tags=package=protobuf-dev
+                    ..
+                    json      tags=package=protobuf-dev
+                        internal tags=package=protobuf-dev
+                        ..
+                    ..
+                    stubs     tags=package=protobuf-dev
+                    ..
+                    testing   tags=package=protobuf-dev
+                    ..
+                    util      tags=package=protobuf-dev
+                    ..
+                ..
+            ..
             gtest             tags=package=utilities-dev
                 internal      tags=package=utilities-dev
                     custom    tags=package=utilities-dev
                     ..
                 ..
+            ..
+            nghttp2           tags=package=libnghttp2-dev
             ..
             pkgconf           tags=package=pkgconf-dev
             ..
