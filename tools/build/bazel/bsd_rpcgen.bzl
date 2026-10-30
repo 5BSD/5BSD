@@ -32,7 +32,7 @@ bsd_rpcgen = rule(
     attrs = {
         "source": attr.label(allow_single_file = [".x"], mandatory = True),
         "output": attr.output(mandatory = True),
-        "mode": attr.string(values = ["-h", "-l", "-c"], mandatory = True),
+        "mode": attr.string(values = ["-h", "-l", "-c", "-m"], mandatory = True),
         "flags": attr.string_list(),
         "cpp_flags": attr.string_list(),
         "dependencies": attr.label_list(allow_files = True),

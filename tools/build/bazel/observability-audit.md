@@ -7739,3 +7739,11 @@ found in the scoped three-program scan. Review audit coverage for watchdog
 arming/disarming and power changes, and qualification of state-query access.
 Never execute watchdogd's old Make test target on the host as build validation;
 use an isolated VM watchdog with explicit recovery and timeout expectations.
+
+### RPC status and locking programs (2026-10-30)
+
+Native migration preserves generated dispatch and existing daemon syslog paths,
+including lock allocation, client/socket creation and unlock failures. Review
+kernel/userland correlation for lock recovery, monitor notifications and denied
+remote requests. No new hooks were introduced; packet validation, crash/restart
+persistence and live locking behavior remain runtime tests, not artifact claims.

@@ -42967,3 +42967,28 @@ Power/frequency behavior, watchdog timeout/recovery and matching-kernel state
 queries remain isolated runtime gates. Existing build-bsd explicit inputs suffice;
 no frontend/signing/publication contract changed. Full-world/bootstrap/pkgbase,
 cache and performance qualification remain outstanding.
+
+### RPC locking/status utilities (2026-10-30)
+
+Added native rpc.statd, rpc.lockd, clear_locks and spray targets. The maintained
+bsd_rpcgen rule now accepts -m for server dispatch generation. Daemons explicitly
+declare their protocol source, generator/preprocessor/runtime inputs, -L -C
+flags, generated dispatch C and headers. Native public protocol headers are
+explicit consumer dependencies; no Make-generated source is substituted.
+Source sm_inter.x/nlm_prot.x hashes match the staged Make SDK protocol inputs.
+
+Native run: /usr/obj/usr/src/bazel-rpc-tools-20261030. Fresh Make references:
+bazel-{rpc.statd,rpc.lockd,clear_locks,spray}-make-20261030. Evidence:
+/usr/obj/usr/src/bazel-rpc-tools-reference-20261030, including protocol-inputs.json
+and per-program comparison scripts/logs. Rpc.lockd matches six install records
+(including lockd manual alias); each other program matches five. All have three
+regular payloads and pass symbol inventories, ordered dependencies, exact manuals
+and debuglink CRC. No missing/extra destinations or metadata mismatches.
+
+No RPC daemon/client was run. Lock recovery, NSM notifications, malformed wire
+messages, crash/restart persistence, network authorization and matching-kernel
+NFS locking remain isolated runtime gates. Existing ad hoc daemon test programs
+also still require native integration. Generator invalidation/cross-compilation,
+world/bootstrap/pkgbase and performance qualification remain open. The new rule
+mode is exercised by both real daemon builds; existing build-bsd explicit inputs
+need no new option. No frontend/signing/publication contract changed.
