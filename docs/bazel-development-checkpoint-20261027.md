@@ -17500,3 +17500,29 @@ compilation reports missing/incompatible declarations. Evidence is preserved in
 bazel-libgssapi-make-20261030/all.log. No shim, fabricated header, weakened error
 check or legacy implementation change was introduced. Full legacy qualification
 requires a correctly configured SDK/header installation and remains outstanding.
+
+### Intel processor-trace library (2026-10-30)
+
+Added native libipt with 28 explicit POSIX sources, declared private/public
+headers, static/shared ABI 0 libraries and installation/debug metadata. Inspection
+found that maintained Make installed intel-pt.h with unresolved version template
+placeholders. Make now generates the header from intel-pt.h.in using the same
+version variables as compilation, and searches the object directory first. Bazel
+uses a declared expand_template action and a shared native version dictionary.
+No decoder algorithm or version number changed.
+
+Fresh corrected Make and native artifacts match ten installation destinations,
+eight regular payloads and one debug link: global/weak symbols, ordered dynamic
+metadata, archive members, all five header bytes and debug CRC. Evidence lives
+in bazel-libipt-reference-20261030/{install-audit,payload-audit}.json, native
+bazel-libipt-20261030 and Make bazel-libipt-make-20261030-r2 under /usr/obj/usr/src.
+The original Make reference is preserved separately.
+
+Bazel version_test passes in bazel-libipt-test-20261030: a consumer expands the
+public version macros and compares them with the native linked implementation.
+The same consumer fails compilation with the original unexpanded vendor header;
+header-regression.json and original-header-consumer.log preserve that evidence.
+This tests the corrected public-header contract, not trace decoding correctness
+or hardware capture. Existing build-bsd explicit targets/tests and staging flow
+handle the generated header; no frontend/backend contract changes are needed.
+Whole-world/bootstrap/pkgbase, real trace fixtures and performance remain open.

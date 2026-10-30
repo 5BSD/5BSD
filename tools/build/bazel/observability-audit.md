@@ -7513,3 +7513,10 @@ Review whether context establishment/rejection and credential lifecycle events
 need caller-level audit coverage when exercising authenticated RPC/NFS. Avoid
 recording credential or message secrets in any future instrumentation. Legacy
 GSS dispatcher qualification remains blocked on a matching SDK configuration.
+
+### libipt (2026-10-30)
+
+Native decoder artifact/install parity and public version consumer test pass.
+No decoder algorithms or tracing hooks changed. Intel PT packet decoding, corrupt
+trace handling, image/section resolution and capture-to-decoder integration still
+need runtime fixtures/hardware evidence. No throughput or memory claim is made.
