@@ -468,3 +468,6 @@ config_setting(name = "bhyve_snapshot_enabled", flag_values = {":bhyve_snapshot"
 # Installed services database follows MK_SERVICESDB.
 bool_flag(name = "servicesdb", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "servicesdb_enabled", flag_values = {":servicesdb": "true"}, visibility = ["//visibility:public"])
+
+# nscd Make PREFIX controls the compiled configuration search path.
+string_flag(name = "nscd_prefix", build_setting_default = "", visibility = ["//visibility:public"])

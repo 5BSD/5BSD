@@ -8303,3 +8303,11 @@ moused parser/quirks/evdev/list helpers. Device access, configuration changes,
 hotplug failures and daemon startup/shutdown attribution need runtime review.
 Installation parity and aggregate coverage do not establish those behaviors;
 no daemon was started on the host.
+
+### 2026-10-30: nscd
+
+Native integration preserves existing syslog and internal debug paths and all
+three agents. No local DTrace provider or direct libbsm integration is declared.
+Lookup cache hit/miss/expiry, agent failures, credential boundaries and daemon
+lifecycle attribution require runtime review. Source/installation parity does
+not establish those behaviors; no host NSS configuration or cache state changed.

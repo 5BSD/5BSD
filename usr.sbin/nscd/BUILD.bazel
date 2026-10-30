@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load(":config_path.bzl", "config_path_header")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress")
+config_path_header(name = "build_config", prefix = "//tools/build/bazel/config:nscd_prefix")
+cc_library(name = "headers", hdrs = ["agent.h", "nscdcli.h", "cachelib.h", "cacheplcs.h", "debug.h", "log.h", "config.h", "query.h", "mp_ws_query.h", "mp_rs_query.h", "singletons.h", "protocol.h", "parser.h", "hashtable.h", "agents/passwd.h", "agents/group.h", "agents/services.h", ":build_config"], strip_include_prefix = ".")
+cc_binary(name = "nscd", srcs = ["agent.c", "nscd.c", "nscdcli.c", "cachelib.c", "cacheplcs.c", "debug.c", "log.c", "config.c", "query.c", "mp_ws_query.c", "mp_rs_query.c", "singletons.c", "protocol.c", "parser.c", "agents/passwd.c", "agents/group.c", "agents/services.c"], deps = [":headers", "//lib/libutil:util", "//lib/libthr:thr"], dynamic_deps = ["//lib/libutil:util_shared", "//lib/libthr:thr_shared"], copts = ["-fPIE", "-include", "nscd_build_config.h"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_install_file(name = "config", src = "nscd.conf", destination = "/etc/nscd.conf", owner = "root", group = "wheel", mode = "0644", install_tags = ["package=utilities", "config"])
+bsd_compress(name = "config_manual", src = "nscd.conf.5", output = "nscd.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "config_manual_file", src = ":config_manual", destination = "/usr/share/man/man5/nscd.conf.5.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=utilities-man"], "//conditions:default": ["package=utilities"]}))
+utility_installation(name = "install_manifest", program = "nscd", manual = "nscd.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [":config", ":config_manual_file"])
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {"/etc": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

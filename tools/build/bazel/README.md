@@ -44001,3 +44001,28 @@ with 16 jobs and existing explicit input settings.
   contract change. Device input/hotplug/quirk runtime, daemon lifecycle, native
   Bazel behavioral tests and full world/kernel/package/performance gates remain
   open. Make stays production default.
+
+### 2026-10-30: nscd complete source and configuration inputs
+
+- Added native nscd with its checked-in parser and all passwd/group/services
+  agents, native util/pthread libraries, configuration and both manuals. Actual
+  compile records match all 17 Make source inputs with no duplicates/omissions.
+- Added typed nscd_prefix setting (default empty) matching Make PREFIX's compiled
+  CONFIG_PATH. A declared generated header encodes the value as a C string;
+  nonempty prefixes must be absolute and control characters are rejected.
+  Default and /opt/5bsd builds both match Make, including full metadata,
+  global/weak symbols, ordered dynamic dependencies, configuration/manual bytes
+  and debug link. Each has eight changed metadata records and five payloads.
+- Binary checks confirm /etc/nscd.conf versus /opt/5bsd/etc/nscd.conf and preserve
+  the separately installed /etc/nscd.conf path, as Make does. The relative fallback
+  remains unchanged. Initial Starlark invalid-escape failure was corrected using
+  supported string operations; its evidence remains retained.
+- Evidence under /usr/obj/usr/src: bazel-nscd-reference-20261030 and
+  bazel-nscd-prefix-reference-20261030 comparisons, source-audit.py/json and
+  prefix-audit.json; final native bazel-nscd-20261030-r2 and
+  bazel-nscd-prefix-20261030; corresponding fresh Make stages.
+- Frontend review: maintained build-bsd format-5 typed settings and 16-job
+  bazel-test handle both configurations; manual documents the setting. No C,
+  backend/signing/publication contract change. No daemon started or NSS state
+  changed. Live cache/agent/protocol behavior, native Bazel runtime tests,
+  cross-target and full-world/kernel/package/performance gates remain open.

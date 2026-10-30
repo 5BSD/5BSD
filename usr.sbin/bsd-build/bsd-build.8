@@ -4334,3 +4334,16 @@ Setting the boolean false omits database generation and installation while
 retaining the utility and configuration.
 This component archive does not establish installed NSS behavior or complete
 pkgbase ownership/update handling for the generated database.
+
+.Ss Native nscd configuration prefix
+.Cm //usr.sbin/nscd:install_archive
+includes the daemon, configuration and both manuals.
+The format-5 build-settings string
+.Cm //tools/build/bazel/config:nscd_prefix
+mirrors nscd's Make PREFIX for its compiled configuration path.
+It defaults to an empty string; a nonempty value must be an absolute path.
+A declared header defines CONFIG_PATH as the prefix followed by /etc/nscd.conf.
+As in maintained Make, this setting does not relocate the installed
+/etc/nscd.conf payload or change the relative fallback nscd.conf lookup.
+Default and /opt/5bsd configurations have artifact parity on amd64;
+this does not establish live NSS/cache or daemon runtime behavior.
