@@ -8099,3 +8099,13 @@ IPv6 address-selection policy add/delete/flush/install operations, including
 jail attribution, should have their kernel audit coverage checked before deciding
 whether additional userland instrumentation is necessary. No new probes/audit
 semantics were invented for migration. No live reconfiguration was performed.
+
+### 2026-10-30: console tools
+
+kbdmap/vidfont, vidcontrol, and kbdcontrol have no declared userland DTrace
+provider or direct audit-library integration in their maintained build/source
+inputs. Migration preserves that behavior. Review console ioctl audit coverage
+for keyboard map/function-key changes, font/video mode changes, and privilege
+failures during runtime qualification; do not infer an audit gap solely from
+absence of userland libbsm. Interactive device operations and live tracing were
+not run on the host. kbdcontrol's reduced bootstrap variant remains unqualified.

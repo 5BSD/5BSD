@@ -19384,3 +19384,26 @@ performance qualification. Make remains production/default.
   no new C frontend/backend/signing/publication changes are required. Make stays
   default. No live PCI/IPv6 policy changes, jail attachment, host installation,
   performance qualification, or complete-world claim follows from these checks.
+
+### 2026-10-30: native console utilities
+
+- Added kbdmap/vidfont, vidcontrol, and installed-system kbdcontrol native targets.
+  kbdmap links native libbsddialog; vidcontrol declares decode sources/headers;
+  kbdcontrol generates its lexer with native lex/m4 execution tools and carries
+  COMPAT_FREEBSD13 as maintained Make does for the installed program.
+- Fresh Make parity covers kbdmap seven changed installation records/three
+  regular payloads plus binary/manual vidfont hardlinks; vidcontrol five/three;
+  kbdcontrol seven/four including both manual sections and keymap.5 hardlink.
+  Full metadata, package tags, manual bytes, global/weak ELF symbols, ordered
+  dynamic dependencies and separated-debug CRC checks passed.
+- Evidence under `/usr/obj/usr/src`: `bazel-console-tools-reference-20261030`,
+  `bazel-console-tools-20261030`, `bazel-kbdcontrol-reference-20261030`,
+  `bazel-kbdcontrol-20261030`, and fresh per-utility Make stages.
+- The reduced BOOTSTRAPPING/BOOTSTRAP_KBDCONTROL program remains a separate
+  unimplemented native bootstrap contract; this installed-program result does
+  not qualify it. Console ioctl operations, interactive dialogs, keymap loading,
+  and font loading were not executed against the host.
+- Frontend integration reviewed: existing explicit targets/settings and the
+  maintained Bazel-built `build-bsd bazel-test` handle this scope with 16 jobs.
+  No new frontend C/backend/stage/signing/publication option is needed. The
+  staged SDK and full world/kernel/package/runtime/performance gates remain.

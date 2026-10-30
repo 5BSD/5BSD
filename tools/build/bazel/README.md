@@ -43579,3 +43579,19 @@ Evidence: `/usr/obj/usr/src/bazel-network-config-reference-20261030/` and
 maintained Bazel-built frontend with explicit configuration and 16 jobs. These
 are artifact comparisons against the staged SDK; live hardware/network changes
 and matching-kernel runtime behavior remain outside this qualification.
+
+### Console utility artifacts (2026-10-30)
+
+Native `//usr.sbin/{kbdmap,vidcontrol,kbdcontrol}:install_archive` targets retain
+console-tools package metadata, vidfont binary/manual aliases, and kbdcontrol's
+section 5 keymap manual alias. kbdcontrol's lexer is a declared action using
+native lex and m4 execution tools. It preserves COMPAT_FREEBSD13 for the
+installed program; the reduced Make BOOTSTRAPPING variant is still pending.
+
+Fresh Make comparison passed for kbdmap (seven records/three regular payloads),
+vidcontrol (five/three), and kbdcontrol (seven/four), including aliases, exact
+manual bytes, ELF symbols/dependencies, and debug CRCs. Evidence is under
+`/usr/obj/usr/src/bazel-console-tools-reference-20261030` and
+`/usr/obj/usr/src/bazel-kbdcontrol-reference-20261030`. The maintained Bazel-built
+frontend ran both captures with 16 jobs. Interactive/console device operations
+were not exercised; these results establish component artifact parity only.
