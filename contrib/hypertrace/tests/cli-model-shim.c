@@ -968,6 +968,8 @@ API_FAULT(int, dtrace_program_compiled_digest, (dtrace_hdl_t *h,
 API_FAULT(int, dtrace_getopt, (dtrace_hdl_t *h, const char *o,
     dtrace_optval_t *v), (h, o, v), -1)
 API_FAULT(int, dtrace_hypertrace_options_update, (dtrace_hdl_t *h), (h), -1)
+API_FAULT(int, dtrace_program_append, (dtrace_hdl_t *h, dtrace_prog_t *d,
+    dtrace_prog_t *s), (h, d, s), -1)
 API_FAULT(int, dtrace_compile_idents_set, (dtrace_hdl_t *h, char *i,
     size_t n), (h, i, n), -1)
 API_FAULT(int, dtrace_program_header, (dtrace_hdl_t *h, FILE *f,

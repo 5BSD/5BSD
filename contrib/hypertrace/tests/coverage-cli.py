@@ -45,9 +45,19 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def objdir_prefix(objtop):
+    """MAKEOBJDIRPREFIX of an object tree: OBJTOP is PREFIX/<source root>/<arch>.
+    The shared default tree was built from /usr/obj/5BSD-hypertrace; a tree
+    built from this worktree carries this worktree's path."""
+    for top in (str(ROOT), '/usr/obj/5BSD-hypertrace'):
+        if top + '/' in str(objtop):
+            return str(objtop).split(top + '/')[0]
+    raise SystemExit(f'{objtop}: not PREFIX/<source root>/<arch>')
+
+
 def maintained_commands(objtop):
     """Capture the maintained build's compile/link commands."""
-    prefix = str(objtop).split('/usr/obj/5BSD-hypertrace/')[0]
+    prefix = objdir_prefix(objtop)
     env = {k: v for k, v in os.environ.items() if k != 'CXXFLAGS'}
     env.update(PATH=f'{WRAPPERS}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
                MAKEOBJDIRPREFIX=prefix,
@@ -214,7 +224,7 @@ def build_harness(out, objtop, libtop):
     """Compile the preload shim and fake daemon (never instrumented)."""
     harness = out/'harness'
     harness.mkdir()
-    prefix = Path(str(objtop).split('/usr/obj/5BSD-hypertrace/')[0])
+    prefix = Path(objdir_prefix(objtop))
     snapshot = harness/'consume-ingestion.c'
     shutil.copyfile(TESTS/'consume-ingestion.c', snapshot)
     common = ROOT/'cddl/contrib/opensolaris/lib/libdtrace/common'
@@ -311,8 +321,21 @@ def load_cases():
 # now counted as changed (7 of those halves were covered).  Evidence
 # /usr/obj/5BSD-otel-validation/fix4-cli-run2 (531/531 in one run) and
 # fix4-work/cli-run2-newcode.txt.  Observed 3345/3523 and 1655/1889.
+# dtrace.c re-baselined 2026-10-30 (mp, HyperTrace -E multi-program) for
+# hypertrace_combine() and its call in main() (+20 executable lines, +14
+# branch halves, +1 function; the per-session "requires one DTrace program"
+# check was removed).  Review: the changed lines themselves are 24/24 lines
+# and 18/18 branch halves covered (lcov over the diff); the rest of the file
+# is 3306/3479 lines and 1632/1861 branch halves (old floors 3304 and 1627),
+# so nothing regressed.  Observed 3330/3503 and 1650/1879 with 546/546 cases;
+# the floors move by the added counts and keep the old tolerance.  Evidence
+# /usr/obj/5BSD-otel-validation/mp-cli-run2 (newcode.txt).
+# Combined after merging hypertrace/multi-program (both changes fully covered
+# on their own branches); confirmed on the merged tree: 547/547 in one run,
+# 3368/3543 lines, 1671/1903 branch halves, 88/88 functions
+# (/usr/obj/5BSD-otel-validation/merge4-cli-run1).
 REGRESSION = {
-    'dtrace.c': {'lines': (3339, 3523), 'branches': (1645, 1889), 'functions': (87, 87)},
+    'dtrace.c': {'lines': (3359, 3543), 'branches': (1659, 1903), 'functions': (88, 88)},
     'dtrace_identifiers.h': {'lines': (53, 57), 'branches': (33, 46), 'functions': (3, 3)},
     'hypertrace_frame.h': {'lines': (47, 48), 'branches': (47, 60), 'functions': (2, 2)},
 }

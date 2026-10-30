@@ -3199,10 +3199,8 @@ exec_prog(const dtrace_cmd_t *dcp)
 		 *      instance for further processing.
 		 */
 		uint8_t rx_session[16] = { 0 };
+		/* Every program is in this one (hypertrace_combine()). */
 		if (g_hypertrace_session_file != NULL) {
-			if (g_cmdc != 1)
-				fatal("HyperTrace consumer session requires one "
-				    "DTrace program\n");
 			if (dtrace_consumer_session_load(
 			    g_hypertrace_session_file, rx_session) != 0)
 				fatal("cannot load exclusive HyperTrace consumer "
@@ -3477,6 +3475,39 @@ again:
 
 	g_total += dpi.dpi_matches;
 	dtp_unlock();
+}
+
+/*
+ * A HyperTrace host (-E) forwards one ELF to dtraced and binds one compiled
+ * program digest to its consumer session, and each guest links, enables and
+ * returns that one program.  Every -s/-n/-P/-m/-f/-i program is therefore
+ * appended, in command-line order, to the first one, and exec_prog() serves
+ * the result once: guests run every program, with one session, one drain
+ * and one stop for all of them, as a local consumer enables every program
+ * before it starts tracing.  -e writes this same combined ELF.
+ */
+static void
+hypertrace_combine(dtrace_cmd_t *dcp)
+{
+	int i, err;
+
+	*dcp = g_cmdv[0];
+	if (g_cmdc == 1)
+		return;
+	dtp_lock();
+	for (i = 1, err = 0; i < g_cmdc && err == 0; i++)
+		err = dtrace_program_append(g_dtp, dcp->dc_prog,
+		    g_cmdv[i].dc_prog);
+	dtp_unlock();
+	/* dfatal() reads the handle's error under the handle lock. */
+	if (err != 0)
+		dfatal("failed to combine %s '%s' into the HyperTrace program",
+		    g_cmdv[i - 1].dc_desc, g_cmdv[i - 1].dc_name);
+	dcp->dc_desc = "HyperTrace";
+	dcp->dc_name = "program";
+	if (g_verbose)
+		notice("combined %d programs into one HyperTrace program\n",
+		    g_cmdc);
 }
 
 /*
@@ -5096,7 +5127,12 @@ main(int argc, char *argv[])
 		if (dtrace_oformat(g_dtp))
 			dtrace_set_outfp(g_ofp);
 
-		for (i = 0; i < g_cmdc; i++) {
+		if (g_elf && !g_guest && g_cmdc > 0) {
+			dtrace_cmd_t combined;
+
+			hypertrace_combine(&combined);
+			exec_prog(&combined);
+		} else for (i = 0; i < g_cmdc; i++) {
 			/* -y already ran its ELF in process_elf(); under -e it
 			 * only linked, and exec_prog() writes the ELF. */
 			if (g_cmdv[i].dc_func == process_elf && g_exec)

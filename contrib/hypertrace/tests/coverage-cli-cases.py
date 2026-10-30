@@ -693,9 +693,6 @@ host('receiver-thread-fails', 'hold\n', faults='pthread_create:3:35', status=1,
 host('verbose-dumps', BASE + STOP_OK + 'hold\n', extra=['-v', '-v'],
      stderr_has=['Initial program:\n', 'Processing new program from: \n'],
      daemon_has=['STOP-REPLY result=1'])
-host('session-requires-one-program', 'hold\n',
-     extra=['-x', 'hypertrace_session_file={d}/session'], prog=PROG + ['-n', 'END {}'],
-     status=1, stderr='dtrace: HyperTrace consumer session requires one DTrace program\n')
 host('session-file-missing', 'hold\n', extra=['-x', 'hypertrace_session_file={d}/session'],
      status=1, stderr='dtrace: cannot load exclusive HyperTrace consumer session: '
      'No such file or directory\n')
@@ -979,6 +976,146 @@ host('stop-reaper-query-fails', BASE + STOP_OK + 'hold\n', faults='procctl:3:5',
      stderr_re=MATCHED0, daemon_has=['STOP-REPLY result=0'], daemon_lacks=['COMMIT'])
 
 
+# ---------------------------------------------------------------------------
+# Several programs with -E.  The host appends every -s/-n/-P program to the
+# first (dtrace_program_append()) and serves that one program: one base ELF,
+# one HPI2 registration (one compiled-program digest), one consumer session,
+# one drain and one stop for all of them.  Statements keep command-line
+# order, so a later program's clause for a probe is that probe's later ECB.
+MATCHED = r'dtrace: matched {} probes \([0-9a-f]+\) from {}\n'
+TWO = ['-n', 'BEGIN { trace(1); }', '-n', ENTRY + ' { trace(arg0); }']
+TWO_FIRE = f'go 0 dtrace:::BEGIN n:1 ; go 0 {ENTRY} n:7'
+TWO_OUT = HDR + probe(0, 1, '', 'BEGIN') + t4(1) + '\n' + probe(0, 4, 'alpha', 'entry') + \
+    t8(7) + '\n'
+
+
+def one_delivery(sessions=None):
+    """One base ELF and one program registration for all programs; with
+    sessions=N, N connections carried the provisioned session."""
+    def check(d, stdout, stderr, shimlog, daemonlog):
+        errors = []
+        if daemonlog.count('location=base') != 1:
+            errors.append(f"{daemonlog.count('location=base')} base ELFs, expected one")
+        if sessions is None and daemonlog.count('magic=HPI2') != 1:
+            errors.append(f"{daemonlog.count('magic=HPI2')} registrations, expected one")
+        if sessions is not None and \
+                daemonlog.count('session=0102030405060708090a0b0c0d0e0f10') < sessions:
+            errors.append('the provisioned session was not kept')
+        return errors
+    return check
+
+
+def guest_matched(n):
+    """The real guest (-Y) linked and enabled every program's clauses."""
+    def check(d, stdout, stderr, shimlog, daemonlog):
+        text = (d/'guest'/'stderr.txt').read_text(errors='replace')
+        want = f"process_elf_hypertrace(): matched {n} probe{'' if n == 1 else 's'}\n"
+        errors = [] if want in text else [f'guest stderr lacks {want!r}']
+        return errors + one_delivery()(d, stdout, stderr, shimlog, daemonlog)
+    return check
+
+
+host('two-programs', BASE + 'sleep 200\n' + STOP_OK + 'hold\n', prog=TWO, script=TWO_FIRE,
+     stdout=TWO_OUT, stderr_re=MATCHED.format(2, 0),
+     daemon_has=['STOP-REPLY result=1', 'COMMIT'], check=one_delivery())
+host('three-programs', BASE + 'sleep 200\n' + STOP_OK + 'hold\n',
+     prog=['-s', '{d}/a.d', '-n', 'BEGIN { trace(1); }', '-P', 'test { trace(2); }'],
+     inputs={'a.d': ENTRY + ' { trace(arg0); }\n'},
+     script=f'go 0 dtrace:::BEGIN n:1 ; go 0 {ENTRY} n:7 ; go 0 {ENTRY}#1 n:2 ; '
+     'go 0 test:kernel:beta:entry n:2',
+     stdout=HDR + probe(0, 1, '', 'BEGIN') + t4(1) + '\n' + probe(0, 4, 'alpha', 'entry')
+     + t8(7) + '\n' + probe(0, 4, 'alpha', 'entry') + t4(2) + '\n'
+     + probe(0, 6, 'beta', 'entry') + t4(2) + '\n',
+     stderr_re=MATCHED.format(6, 0), daemon_has=['STOP-REPLY result=1'], check=one_delivery())
+host('verbose-two-programs', BASE + STOP_OK + 'hold\n', extra=['-v'], prog=TWO,
+     stdout_re='.*', stderr_has=['dtrace: combined 2 programs into one HyperTrace program\n'],
+     daemon_has=['STOP-REPLY result=1'], check=one_delivery())
+# Any program that fails to compile ends the command before anything is
+# sent, as without -E.
+host('second-program-compile-error', 'hold\n', prog=PROG + ['-n', 'BEGIN { trace(1) +; }'],
+     status=1, stderr_re=r'dtrace: invalid probe specifier BEGIN \{ trace\(1\) \+; \}: '
+     r'.*syntax error.*\n', daemon_lacks=['REGISTERED', 'location=base'])
+host('combine-fails', 'hold\n', prog=PROG + ['-n', 'END { trace(2); }'],
+     api_faults='dtrace_program_append:1:12', status=1,
+     stderr_re=r"dtrace: failed to combine description 'END ' into the HyperTrace "
+     r'program: .*\n', daemon_lacks=['REGISTERED', 'location=base'])
+# The first failure stops combining: the third program is never appended.
+host('combine-fails-first-of-three', 'hold\n', prog=PROG + ['-n', 'END { trace(2); }', '-n',
+                                                           'ERROR { trace(3); }'],
+     api_faults='dtrace_program_append:1:12', status=1,
+     stderr_re=r"dtrace: failed to combine description 'END ' into the HyperTrace "
+     r'program: .*\n', daemon_lacks=['REGISTERED', 'location=base'],
+     check=lambda d, out, err, slog, dlog: [] if slog.count('API-FAULT') == 1 and
+     'ERROR' not in err else ['combining continued after a failure'])
+# A drain certifies the combined program: the challenge's digest is the one
+# program digest the consumer registered, and both programs' records are
+# written before the reply.
+host('drain-two-programs', BASE + 'sleep 200\n' + f'drain token={TOKEN}\n' + STOP_OK
+     + 'hold\n', extra=NOTEMPORAL, prog=TWO, script=TWO_FIRE, stderr_re=MATCHED.format(2, 0),
+     files={'trace.out': TWO_OUT},
+     daemon_has=['DRAIN-REPLY result=1 echo=1', 'STOP-REPLY result=1'], check=one_delivery())
+host('drain-two-programs-digest-mismatch', BASE + f'drain token={TOKEN} digest=bad\n' + STOP_OK
+     + 'hold\n', extra=NOTEMPORAL, prog=TWO, stderr_re=MATCHED.format(2, 0),
+     daemon_has=['DRAIN-REPLY result=0', 'STOP-REPLY result=1'])
+# The provisioned session file now admits several programs (they are one
+# program); a daemon reconnect keeps the session and the one registration.
+host('session-file-two-programs', BASE + STOP_OK + 'hold\n', extra=SESSION,
+     setup=session_file(), prog=PROG + ['-n', 'END {}'], stderr_re=MATCHED.format(2, 0),
+     daemon_has=['session=0102030405060708090a0b0c0d0e0f10', 'STOP-REPLY result=1'],
+     check=one_delivery())
+host('session-file-three-programs-reconnect', BASE + 'close\nsend-elf base\nsleep 200\n' + STOP_OK
+     + 'hold\n', extra=SESSION, setup=session_file(),
+     prog=['-n', 'BEGIN {}', '-P', 'test', '-s', '{d}/e.d'], inputs={'e.d': 'END {}\n'},
+     stderr_re=all_of(MATCHED.format(6, 0), RECONNECTING + RECONNECTED),
+     daemon_has=['REGISTERED conn=3', 'STOP-REPLY result=1'], check=one_delivery(sessions=2))
+# Stop before any program came back: nothing ran, the stop still commits.
+host('stop-before-two-programs', 'wait-elf 1\n' + STOP_OK + 'hold\n', prog=TWO, stderr='',
+     daemon_has=['STOP-REPLY result=1', 'COMMIT'], check=one_delivery())
+# The identified flow with the real guest: the derived program carries every
+# program's clauses and the guest enables all of them.
+host('loop-two-programs', LOOP + 'sleep 200\n' + STOP_OK + 'hold\n', during=guest_runner(),
+     prog=TWO, stderr_re=MATCHED3,
+     daemon_has=['ACK delivery=5 vmid=3 epoch=9 outcome=2', 'STOP-REPLY result=1', 'COMMIT'],
+     log_has=['VPROBE_CREATE vmid 3 epoch 9', 'ENABLE-GUEST vmid 3 epoch 9'],
+     check=guest_matched(2))
+# The guest links the combined program: one program's global variable is
+# visible to the next, as when the programs run locally.
+ROUNDTRIP = ('wait-elf 1\nsave-elf base {d}/base.elf\nwait-file {d}/linked.elf\n'
+             'send-elf file:{d}/linked.elf\nwait-log {d}/shim.log GO\nsleep 200\n')
+host('roundtrip-two-programs', ROUNDTRIP + STOP_OK + 'hold\n',
+     prog=['-n', 'dtrace:::BEGIN { x = 1; }', '-n', 'dtrace:::END { trace(x); }'],
+     script='go 0 dtrace:::END n:1',
+     during=guest_runner(args=(), name='base.elf', response='linked.elf', target='host',
+                         direction='inbound', stop_guest=False, expect_installed=False),
+     stdout=HDR + probe(0, 2, '', 'END') + t4(1) + '\n', stderr_re=MATCHED.format(2, 0),
+     daemon_has=['ELF conn=2 location=base', 'STOP-REPLY result=1'], check=one_delivery())
+
+
+# A program the guest cannot link (no kernel CTF for strlen()'s type) fails
+# the whole delivery to that guest: the guest reports it and publishes
+# nothing, and the host enables nothing from it.
+def link_refused(ctx, d, env, deadline):
+    errors = guest_runner(args=(), name='base.elf', response='linked.elf', target='host',
+                          direction='inbound', stop_guest=False, expect_installed=False,
+                          guest_status=(1,))(ctx, d, env, deadline)
+    (d/'guest-done').write_text('')
+    errors = [e for e in errors if e != 'guest sent no response' and
+              not e.startswith("guest stderr lacks 'dtrace: send_elf(")]
+    text = (d/'guest'/'stderr.txt').read_text(errors='replace')
+    if 'strlen(): kernel type information is unavailable' not in text:
+        errors.append(f'guest did not report the link error: {text[-600:]!r}')
+    if 'send_elf(' in text:
+        errors.append('guest published a program it could not link')
+    return errors
+
+
+host('roundtrip-second-program-link-fails', 'wait-elf 1\nsave-elf base {d}/base.elf\n'
+     'wait-file {d}/guest-done\nsleep 1\nhold\n',
+     prog=['-n', 'dtrace:::BEGIN { x = 1; }', '-n', 'BEGIN { trace(strlen(execname)); }'],
+     during=link_refused, signals=[('STEP sleep 1', signal.SIGINT)], stdout_re='.*',
+     stderr_lacks=['matched'], log_lacks=['GO'], timeout=90, check=one_delivery())
+
+
 # Fixtures produced by real runs before the parallel cases: a derived guest
 # program (DT_PROG_EXEC) published by a host, and an ELF from -E -e.
 FIXTURES = []
@@ -1165,6 +1302,12 @@ case('elfrun-missing', ['-y', '{d}/absent.elf'], status=1, stdout='',
 # ELF creation for inspection (-E -e).
 case('elf-create-print-path', ['-E', '-e', '-n', 'BEGIN { trace(1); }'], open='nodev',
      stderr='', check=elf_path_check('created.elf'))
+# -E -e without a program: nothing to combine or write.
+case('elf-create-no-program', ['-E', '-e'], open='nodev', stdout='', stderr='')
+# Several programs: one combined ELF, the one -E would send.
+case('elf-create-two-programs', ['-E', '-e', '-n', 'BEGIN { trace(1); }', '-s', '{d}/e.d'],
+     inputs={'e.d': 'END { trace(2); }\n'}, open='nodev', stderr='',
+     check=elf_path_check('combined.elf'))
 case('elf-create-mkstemp-fails', ['-E', '-e', '-n', 'BEGIN { trace(1); }'], open='nodev',
      faults='mkstemp:1:24', status=1, stdout='',
      stderr='dtrace: failed to mkstemp(): Too many open files\n')
@@ -2404,6 +2547,28 @@ host('otel-guest-resource', LOOP + 'sleep 300\n' + STOP_OK + 'hold\n',
      daemon_has=['ACK delivery=5 vmid=3 epoch=9 outcome=2', 'STOP-REPLY result=1'],
      log_has=['VPROBE_CREATE vmid 3 epoch 9', 'ENABLE-GUEST vmid 3 epoch 9'],
      check=otel_check(check_guest_resource))
+# Several programs: every program's guest records export, each under the
+# guest's own resource.
+def check_guest_two_programs(d, stdout):
+    logs = otel_items(otlp_lines(d, d/'otel.jsonl'), 'logs')
+    guests = [(r, i) for r, _, i in logs if r.get('hypertrace.vm.name') == 'vm3']
+    bodies = sorted(i['body']['stringValue'] for _, i in guests)
+    if bodies != ['5', '6']:
+        return [f'guest record bodies {bodies}: {logs}']
+    if any(r.get('hypertrace.vm.id') != '3' or r.get('hypertrace.vm.epoch') != '9'
+           for r, _ in guests):
+        return [f'guest resources {[r for r, _ in guests]}']
+    return []
+
+
+host('otel-guest-two-programs', LOOP + 'sleep 300\n' + STOP_OK + 'hold\n',
+     during=guest_runner(), extra=['-x', 'otel=otlp-json', '-o', '{d}/otel.jsonl'],
+     prog=['-n', 'BEGIN { trace(5); }', '-n', 'BEGIN { trace(6); }'],
+     script=ANCHOR + ' ; go 0 dtrace:::BEGIN#1 n:5 ; go 0 dtrace:::BEGIN#2 n:6',
+     stderr_re=MATCHED3,
+     daemon_has=['ACK delivery=5 vmid=3 epoch=9 outcome=2', 'STOP-REPLY result=1'],
+     log_has=['VPROBE_CREATE vmid 3 epoch 9', 'ENABLE-GUEST vmid 3 epoch 9'],
+     check=otel_check(check_guest_two_programs))
 # A drain certifies once the exporter has taken (and synced) the records.
 host('otel-drain', BASE + f'drain token={TOKEN}\n' + STOP_OK + 'hold\n',
      extra=['-x', 'otel=otlp-json', '-o', '{d}/d.jsonl'], stderr_re=MATCHED0,

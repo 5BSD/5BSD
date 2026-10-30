@@ -377,7 +377,8 @@ ingress identity and remain queryable after either daemon or consumer exits.
 The DTrace client assigns each new consumer socket a nonzero random session
 ID and retains the ELF receiver's ID across a daemon reconnect. A supervised
 host consumer can instead use `-E -x hypertrace_session_file=/absolute/path`
-with one DTrace program. Its pre-provisioned 52-byte HCS1 record contains
+with any number of DTrace programs (dtrace(1) appends them into the one
+program the session registers). Its pre-provisioned 52-byte HCS1 record contains
 `HCS1`, a nonzero 16-byte session, and SHA-256 of those first 20 bytes. The
 client requires an owner-only regular file with one link, opens it without
 following a symlink, and holds an exclusive advisory lock for its lifetime.
