@@ -42539,3 +42539,28 @@ frontend input or publication contract change is needed.
 This qualifies the exercised team/barrier/reduction/task paths only. Nested
 teams, cancellation, locks, OMPT callbacks, oversubscription, exhaustive scheduler
 behavior and comparative CPU/memory/disk performance remain outstanding.
+
+### Native libunbound candidate (2026-10-30)
+
+Added all 77 ordinary sources plus native execution-platform lex/yacc actions,
+with ub_c_ symbol prefixes and declared generated parser header dependencies.
+The vendor .lex input is copied to .l through the maintained template action,
+matching Make's rename without invoking Make in Bazel. Configuration uses the
+maintained config.h and declared vendor/LDNS/TLS/thread headers and libraries.
+Compilation exposed util/iana_ports.inc, now explicitly declared as textual input.
+
+Private archive and ABI-5 shared library installation follow Make (the ABI comes
+from lib/Makefile.inc). Removed an unnecessary standalone PIE archive candidate;
+ordinary/PIC compilation already supplies the actual archive/shared consumers.
+Fresh Make comparison passes: six installation destinations, three regular
+payloads and one debug link, including archive member order, global/weak symbols,
+ordered dynamic dependencies, metadata and debug CRC. Evidence:
+install-audit.json/payload-audit.json under bazel-libunbound-reference-20261030;
+final native run bazel-libunbound-20261030-r3.
+
+No DNS lookup, DNSSEC validation, asynchronous resolver lifecycle, configuration
+parser runtime, cross-architecture or performance qualification is claimed.
+Native generated parsers participate in the verified archive/shared artifacts;
+this is not a byte-for-byte generated-C comparison or incremental mutation test.
+Frontend review: existing target inputs and lexer/parser/install helpers suffice;
+no new build-bsd option, signing or publication contract. Nothing installed on host.

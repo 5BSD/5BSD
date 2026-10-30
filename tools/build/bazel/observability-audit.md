@@ -7601,3 +7601,10 @@ CPU/memory behavior need execution qualification before claiming correctness.
 OpenMP runtime follow-up: native shared-library identity verified; 16 rounds of
 four-thread teams, barrier visibility, dynamic reduction and task dependencies
 pass. OMPT/ITT callback observation and comparative performance remain open.
+
+### libunbound (2026-10-30)
+
+Native archive/shared installation matches Make with lex/yacc-generated inputs.
+No resolver behavior or hooks changed. DNSSEC acceptance/rejection, cache behavior,
+resolver cancellation/shutdown and configuration failures need runtime coverage.
+Do not infer DNS security correctness from artifact parity.
