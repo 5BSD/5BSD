@@ -18672,3 +18672,26 @@ PPP invocation and malformed/disconnected-peer behavior remain runtime gates.
 Existing build-bsd target/SDK inputs cover this group; no frontend/backend,
 signing or publication contract changed. Full system/bootstrap/pkgbase and
 performance remain unqualified; Make remains the default production backend.
+
+### USB Bluetooth firmware loaders (2026-10-30)
+
+Added native ath3kfw, iwmbtfw and rtlbtfw with explicit three-source/header lists
+and native libusb linkage. Intel retains Make's NDEBUG definition. Intel/Realtek
+devd files are installed from maintained source with config tags, directory
+metadata and mode 0644. No loader source or device matching policy changed.
+
+Native output: /usr/obj/usr/src/bazel-bt-usbfw-20261030. Fresh Make references:
+bazel-{ath3kfw,iwmbtfw,rtlbtfw}-make-20261030. Evidence/scripts:
+/usr/obj/usr/src/bazel-bt-usbfw-reference-20261030. All builds completed.
+Atheros matches five install records and three regular payloads; Intel/Realtek
+each match seven records and four payloads. Symbol/dynamic dependency inventories,
+manual/configuration bytes and three debuglink CRCs pass without missing/extra
+paths or metadata mismatches. No hardware/runtime tests were selected.
+
+USB attach/detach, firmware lookup/transfer, malformed files, unsupported device
+revisions, permission denial and interrupted transfers remain runtime gates.
+No device was opened or firmware loaded. Existing build-bsd explicit targets
+and SDK inputs cover the work; no frontend/backend/signing/publication contract
+changed. World aggregation must retain Make's MK_USB selection for this group.
+Full system/bootstrap/pkgbase and performance qualification remain open; Make
+remains the production/default backend.

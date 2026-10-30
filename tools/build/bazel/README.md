@@ -43046,3 +43046,10 @@ each match five Make install records and three regular payloads. Shared RFCOMM
 SDP source is explicitly declared. Evidence:
 /usr/obj/usr/src/bazel-bt-network-reference-20261030. PAN/TAP/PPP runtime
 qualification remains pending; no host networking was changed.
+
+
+USB Bluetooth loader coverage (2026-10-30): ath3kfw, iwmbtfw and rtlbtfw native
+builds pass Make installation and payload comparisons, including Intel's NDEBUG
+selection and maintained Intel/Realtek devd files. Evidence:
+/usr/obj/usr/src/bazel-bt-usbfw-reference-20261030. Firmware/USB runtime checks
+and world MK_USB aggregation qualification remain open.

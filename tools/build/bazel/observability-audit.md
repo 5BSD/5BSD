@@ -7830,3 +7830,14 @@ coverage. Qualify BNEP malformed packets/filtering, SDP errors, peer disconnects
 TAP privilege denial and cleanup, PPP execution/argument handling and failed
 session setup in isolated fixtures. No PAN service, TAP device or PPP session
 was started during this migration.
+
+
+### USB Bluetooth firmware loaders (2026-10-30)
+
+ath3kfw/iwmbtfw/rtlbtfw source behavior and devd policies are unchanged. Local
+source scan found no direct DTRACE/SDT_PROBE/audit_ references. Artifact comparisons
+pass against Make; no USB or firmware operation ran. Follow-up cases include
+missing/truncated/malformed firmware, device revision mismatch, failed/short USB
+transfers, detach during loading, permission denial, devd invocation and retry
+behavior. Firmware-loading audit/logging adequacy remains a separate review;
+build comparison does not prove runtime audit coverage.
