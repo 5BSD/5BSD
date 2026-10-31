@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Trimmed Abseil import: declared sources, headers and licence for
+# lib/libabsl.  No upstream BUILD files are imported; Make adds -I for this
+# directory (lib/libabsl, lib/protobuf/Makefile.inc and their consumers).
+load("@rules_cc//cc:defs.bzl", "cc_library")
+_USERS = ["//lib/libotelexport/tests/pbcpp:__pkg__", "//lib/libabsl:__pkg__", "//lib/protobuf:__subpackages__", "//usr.bin/protoc:__pkg__",
+    "//libexec/protoc-gen-upb:__pkg__", "//libexec/protoc-gen-upb_minitable:__pkg__", "//libexec/protoc-gen-upbdefs:__pkg__"]
+exports_files(glob(["absl/**/*.cc", "absl/**/*.h", "absl/**/*.inc"]) + ["LICENSE"], visibility = ["//lib/libabsl:__pkg__"])
+cc_library(name = "headers", hdrs = glob(["absl/**/*.h"]), textual_hdrs = glob(["absl/**/*.inc"]),
+    includes = ["."], visibility = _USERS)

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# nghttp2 library sources (lib/libnghttp2: -I lib/includes -I lib).
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(glob(["lib/*.c"]) + ["lib/includes/nghttp2/nghttp2.h", "COPYING"], visibility = ["//lib/libnghttp2:__pkg__"])
+cc_library(name = "public_headers", hdrs = ["lib/includes/nghttp2/nghttp2.h"], includes = ["lib/includes"],
+    visibility = ["//lib/libnghttp2:__pkg__"])
+cc_library(name = "source_headers", hdrs = glob(["lib/*.h"]), includes = ["lib"], visibility = ["//lib/libnghttp2:__pkg__"])

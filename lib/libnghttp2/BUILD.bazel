@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# libprivatenghttp2 (lib/libnghttp2/Makefile): PRIVATELIB, SHLIB_MAJOR 14,
+# -DHAVE_CONFIG_H -DBUILDING_NGHTTP2 -I. -I lib/includes -I lib
+# -fvisibility=hidden, with the maintained config.h and nghttp2ver.h.
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "configuration", hdrs = ["config.h", "nghttp2/nghttp2ver.h"], includes = ["."])
+# Base consumers include <nghttp2/nghttp2.h> as the installed private header.
+cc_library(name = "headers", hdrs = ["nghttp2/nghttp2ver.h"], includes = ["."],
+    deps = ["//contrib/nghttp2:public_headers"], visibility = ["//visibility:public"])
+# Makefile SRCS order.
+SOURCES = [
+    "lib/nghttp2_alpn.c",
+    "lib/nghttp2_buf.c",
+    "lib/nghttp2_callbacks.c",
+    "lib/nghttp2_debug.c",
+    "lib/nghttp2_extpri.c",
+    "lib/nghttp2_frame.c",
+    "lib/nghttp2_hd.c",
+    "lib/nghttp2_hd_huffman.c",
+    "lib/nghttp2_hd_huffman_data.c",
+    "lib/nghttp2_helper.c",
+    "lib/nghttp2_http.c",
+    "lib/nghttp2_map.c",
+    "lib/nghttp2_mem.c",
+    "lib/nghttp2_option.c",
+    "lib/nghttp2_outbound_item.c",
+    "lib/nghttp2_pq.c",
+    "lib/nghttp2_priority_spec.c",
+    "lib/nghttp2_queue.c",
+    "lib/nghttp2_ratelim.c",
+    "lib/nghttp2_rcbuf.c",
+    "lib/nghttp2_session.c",
+    "lib/nghttp2_stream.c",
+    "lib/nghttp2_submit.c",
+    "lib/nghttp2_time.c",
+    "lib/nghttp2_version.c",
+    "lib/sfparse.c",
+]
+cc_library(name = "nghttp2", srcs = ["//contrib/nghttp2:" + source for source in SOURCES],
+    deps = [":headers"], implementation_deps = [":configuration", "//contrib/nghttp2:source_headers"],
+    local_defines = ["HAVE_CONFIG_H", "BUILDING_NGHTTP2"], copts = ["-fvisibility=hidden"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "static_archive", groups = [":nghttp2"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "nghttp2_shared", deps = [":nghttp2"],
+    shared_lib_name = "libprivatenghttp2.so.14", user_link_flags = ["-Wl,-soname,libprivatenghttp2.so.14", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load(":installation.bzl", "library_installation")
+library_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnghttp2","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]} |
+        {"/usr/share/licenses/nghttp2": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=libnghttp2"]}'},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)

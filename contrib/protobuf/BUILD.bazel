@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Trimmed protobuf import (C++ runtime, protoc library, upb and its code
+# generators): declared sources, headers, version scripts and .proto files.
+# No upstream BUILD files are imported.  Include roots follow
+# lib/protobuf/Makefile.inc (-I src -I third_party/utf8_range) and the upb
+# consumers (-I . -I upb/reflection/cmake, -I upb_generator/cmake).
+load("@rules_cc//cc:defs.bzl", "cc_library")
+_LIBS = ["//lib/protobuf:__subpackages__"]
+_PROGRAMS = ["//lib/libotelexport/tests/pbcpp:__pkg__", "//usr.bin/protoc:__pkg__", "//libexec/protoc-gen-upb:__pkg__",
+    "//libexec/protoc-gen-upb_minitable:__pkg__", "//libexec/protoc-gen-upbdefs:__pkg__"]
+# upb consumers: generated OTLP bindings and the components compiling them.
+_UPB_USERS = _LIBS + _PROGRAMS + ["//lib/libotelexport:__subpackages__", "//cddl/lib/libdtotel:__subpackages__",
+    "//cddl/usr.sbin/dtrace:__subpackages__", "//cddl/usr.sbin/bsdinstruments:__subpackages__",
+    "//usr.sbin/hwstat:__subpackages__", "//usr.sbin/otelconf:__subpackages__",
+    "//usr.sbin/otelpfd:__subpackages__", "//usr.sbin/otelauditd:__subpackages__"]
+exports_files(glob(["src/**/*.cc", "upb/**/*.c", "upb_generator/**/*.cc", "upb_generator/**/*.c",
+    "third_party/utf8_range/*.c", "third_party/utf8_range/*.cc", "src/*.map"]), visibility = _LIBS + _PROGRAMS)
+# Installed headers, .proto files and licences (lib/protobuf/libprotobuf, libupb).
+exports_files(glob(["src/google/protobuf/**/*.h", "src/google/protobuf/**/*.inc", "src/google/protobuf/**/*.proto"]) +
+    ["LICENSE", "third_party/utf8_range/LICENSE"], visibility = _LIBS)
+cc_library(name = "utf8_range_headers", hdrs = glob(["third_party/utf8_range/*.h"]),
+    includes = ["third_party/utf8_range"], visibility = _LIBS + _PROGRAMS)
+cc_library(name = "src_headers", hdrs = glob(["src/**/*.h"]), textual_hdrs = glob(["src/**/*.inc"]),
+    includes = ["src"], deps = [":utf8_range_headers"], visibility = _LIBS + _PROGRAMS)
+cc_library(name = "upb_headers", hdrs = glob(["upb/**/*.h", "upb/**/*.hpp"]), textual_hdrs = glob(["upb/**/*.inc"]),
+    includes = [".", "upb/reflection/cmake"], visibility = _UPB_USERS)
+cc_library(name = "upb_generator_headers", hdrs = glob(["upb_generator/**/*.h", "upb_generator/**/*.hpp"], allow_empty = True),
+    includes = ["upb_generator/cmake"], deps = [":upb_headers"], visibility = _PROGRAMS)
+# The well-known types on every protoc import path (lib/protobuf/protoc-gen.mk).
+filegroup(name = "well_known_protos", srcs = glob(["src/google/protobuf/**/*.proto"]), visibility = ["//visibility:public"])

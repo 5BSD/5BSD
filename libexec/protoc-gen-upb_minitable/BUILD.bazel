@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# protoc-gen-upb_minitable (libexec/protoc-gen-upb_minitable/Makefile): PROG_CXX in /usr/libexec, no manual,
+# -I upb_generator/cmake -I src -I . -I upb/reflection/cmake, LIBADD upb absl.
+# The static ":bootstrap" tool variant generates upb bindings in the build.
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_dtrace_bootstrap.bzl", "bsd_dtrace_bootstrap")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# Makefile SRCS order.
+SOURCES = [
+    "src/google/protobuf/compiler/code_generator_lite.cc",
+    "src/google/protobuf/port.cc",
+    "upb_generator/common.cc",
+    "upb_generator/common/names.cc",
+    "upb_generator/file_layout.cc",
+    "upb_generator/minitable/fasttable.cc",
+    "upb_generator/minitable/generator.cc",
+    "upb_generator/minitable/main.cc",
+    "upb_generator/minitable/names.cc",
+    "upb_generator/minitable/names_internal.cc",
+    "upb_generator/cmake/google/protobuf/compiler/plugin.upb_minitable.c",
+]
+_HEADERS = ["//contrib/protobuf:upb_generator_headers", "//contrib/protobuf:src_headers", "//contrib/abseil-cpp:headers",
+    "//contrib/llvm-project/libcxx/include:headers"]
+_CXXOPTS = ["-std=c++17", "-nostdinc++"]
+cc_binary(name = "protoc-gen-upb_minitable", srcs = ["//contrib/protobuf:" + source for source in SOURCES],
+    deps = _HEADERS + ["//lib/protobuf/libupb:upb_pie", "//lib/libabsl:absl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libabsl:absl_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    copts = ["-fPIE"], cxxopts = _CXXOPTS, linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_binary(name = "tool", srcs = ["//contrib/protobuf:" + source for source in SOURCES],
+    deps = _HEADERS + ["//lib/protobuf/libupb:upb", "//lib/libabsl:absl"],
+    cxxopts = _CXXOPTS, linkopts = ["-static"], linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_dtrace_bootstrap(name = "bootstrap", binary = ":tool", visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "protoc-gen-upb_minitable", manual = None, package = "protobuf", bindir = "/usr/libexec")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=protobuf","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec"]},
+    mtree_specs = {
+        "//etc/mtree:BSD.root.dist": "/",
+        "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include",
+        "//etc/mtree:BSD.debug.dist": "/usr/lib",
+    },
+    passwd = "//etc:master.passwd",
+    group = "//etc:group",
+    mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"],
+)
