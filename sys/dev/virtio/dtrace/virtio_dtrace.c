@@ -1378,7 +1378,8 @@ vtdtr_start_taskqueues(struct vtdtr_softc *sc)
 static void
 vtdtr_drain_taskqueues(struct vtdtr_softc *sc)
 {
-	struct virtio_dtrace_queue *rxq, *txq;
+	struct virtio_dtrace_queue *rxq;
+	struct virtio_dtrace_queue *txq __diagused;
 
 	rxq = &sc->vtdtr_rxq;
 	txq = &sc->vtdtr_txq;
