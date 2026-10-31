@@ -375,3 +375,77 @@ device		mac_veriexec_parser
 # which a trimmed module build can omit) into the trusted kernel too, so the
 # crypto capability can never be missing.
 device		cryptodev		# /dev/crypto (userland OpenCrypto access)
+
+# Subsystems every 5BSD system has.  The capability plane refuses kldload(2)
+# after boot, so these were preloaded from /boot/defaults/loader.conf; they
+# are compiled in instead so no loader setting can leave them out.  Modules
+# that cannot be built in (vmm, the Linux ABI, HyperTrace, kinst, fasttrap)
+# are loaded unconditionally by the loader; see stand/lua/config.lua.
+
+# DTrace: the framework and its kernel providers.  kinst, fasttrap and
+# hypertrace remain modules (the loader always loads them).
+device		dtrace			# DTrace framework (needs KDTRACE_HOOKS)
+device		dtrace_fbt		# Function boundary tracing
+device		dtrace_sdt		# Statically defined tracing
+device		dtrace_systrace		# System call tracing
+device		dtrace_profile		# Profile and tick probes
+device		dtmalloc		# malloc(9) type probes
+device		dtnfscl			# NFS client probes (NFSCL)
+device		dtaudit			# Audit event probes (AUDIT)
+
+# Hardware tracing (HWT_HOOKS above) and performance counters (HWPMC_HOOKS).
+device		hwt			# Hardware Trace framework
+device		hwpmc			# Hardware performance counters
+
+# Storage: ZFS backs /Capabilities storage (bsdfilesystem).
+options 	ZFS			# ZFS (needs crypto, cryptodev, ZSTDIO)
+
+# Packet filter (OpenBSD PF, with pflog, pfsync and pflow) and traffic
+# shaping for pf dnpipe/dnqueue (dnctl(8)).
+device		pf			# Packet filter
+options 	DUMMYNET		# Traffic shaping
+
+# Containers: VNET jails joined to a bridge by an epair, nullfs bind mounts.
+options 	NULLFS			# Null filesystem
+device		if_bridge		# Ethernet bridge (with bridgestp)
+device		epair			# Virtual Ethernet pairs
+
+# File systems and IPC used by the Linux ABI and ports.
+options 	FDESCFS			# /dev/fd
+options 	P1003_1B_MQUEUE		# POSIX message queues (mqueuefs)
+device		cuse			# Character devices in userland (virtual_oss, webcamd)
+
+# ntpd runs unprivileged under its MAC policy.
+options 	MAC_NTPD		# mac_ntpd(4)
+
+# USB audio, video and Ethernet.  uvideo claims UVC cameras; webcamd(8) can
+# only take a camera whose kernel driver is detached.
+device		snd_uaudio		# USB audio
+device		video			# Video capture framework
+device		uvideo			# USB video class cameras
+device		ure			# RealTek RTL8152/RTL8153 USB Ethernet
+
+# HID input: mice, consumer and system controls, multitouch.
+device		hidmap			# HID to evdev mapping
+device		hms			# HID mouse
+device		hcons			# HID consumer page controls
+device		hsctrl			# HID system controls
+device		hconf			# HID configuration (multitouch mode)
+device		hmt			# HID multitouch touchpads and screens
+device		vkbd			# Virtual keyboard (bthidd)
+
+# SMBus controllers and the I2C/SMBus userland interfaces.
+device		smbus			# System Management Bus
+device		intpm			# AMD and Intel PIIX4 SMBus
+device		ichsmb			# Intel ICH SMBus
+device		iic			# /dev/iic
+
+# Bluetooth (netgraph): HCI, L2CAP, sockets and USB transports.
+options 	NETGRAPH		# netgraph(4)
+options 	NETGRAPH_SOCKET		# ng_socket(4), used by ngctl(8)
+options 	NETGRAPH_BLUETOOTH	# ng_bluetooth(4)
+options 	NETGRAPH_BLUETOOTH_HCI	# ng_hci(4)
+options 	NETGRAPH_BLUETOOTH_L2CAP	# ng_l2cap(4)
+options 	NETGRAPH_BLUETOOTH_SOCKET	# ng_btsocket(4)
+options 	NETGRAPH_BLUETOOTH_UBT	# ng_ubt(4)
+options 	NETGRAPH_BLUETOOTH_UBTBCMFW	# ubtbcmfw(4)
