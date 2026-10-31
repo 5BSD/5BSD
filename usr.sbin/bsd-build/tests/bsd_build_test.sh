@@ -1441,20 +1441,30 @@ bazel_plan_body()
 {
     setup
     output=/usr/obj/usr/src/bazel-plan-$$
-    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan bazel-test --bazel /usr/bin/true --jobs 3 --output "$output" --format json
+    printf '{}\n' > modules.json
+    atf_check -s exit:0 -o save:plan.jsonl -e empty "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --jobs 3 --output "$output" --format json
     [ ! -e "$output" ] || atf_fail 'plan created output'
-    atf_check -s exit:0 -o empty -e empty python3.12 - "$output" <<'PYTHON'
+    atf_check -s exit:0 -o empty -e empty python3.12 - "$output" "$PWD/modules.json" <<'PYTHON'
 import json, sys
 rows = [json.loads(line) for line in open('plan.jsonl')]
 assert rows[0]['verification_scope'] == 'bazel-compile-comparison'
 assert rows[0]['make_install_reference'] == 'requested'
+assert rows[0]['bazel_minimum_major'] == 9
+assert rows[0]['module_resolution'] == 'offline-pinned-lockfile'
 assert rows[0]['build_backend'] == 'bsd-make'
 assert rows[0]['jobs'] == 3
 assert rows[0]['boot_verification'] == 'not-performed'
 assert len(rows) == 2
 assert rows[1]['name'] == 'bazel-qualification'
-assert rows[1]['argv'] == ['/usr/local/bin/python3.12', '/usr/src/tools/build/bazel/qualify.py', '--src', '/usr/src', '--objtop', '/usr/obj/usr/src/amd64.amd64', '--bazel', '/usr/bin/true', '--output', sys.argv[1], '--jobs', '3']
+assert rows[1]['argv'] == ['/usr/local/bin/python3.12', '/usr/src/tools/build/bazel/qualify.py', '--src', '/usr/src', '--objtop', '/usr/obj/usr/src/amd64.amd64', '--bazel', '/usr/bin/true', '--output', sys.argv[1], '--jobs', '3', '--bzlmod-inputs', sys.argv[2]]
 PYTHON
+    atf_check -s exit:0 -o match:'bazel=9-or-later module-resolution=offline-pinned-lockfile' -e empty "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json"
+    # Without --bazel the bazel9 package's /usr/local/bin/bazel is selected.
+    if [ -f /usr/local/bin/bazel ] && [ ! -L /usr/local/bin/bazel ]; then
+        atf_check -s exit:0 -o match:"--bazel /usr/local/bin/bazel " -e empty "$tool" plan bazel-test --bazel-modules "$PWD/modules.json"
+    elif [ ! -e /usr/local/bin/bazel ]; then
+        atf_check -s not-exit:0 -o empty -e match:'bazel9 package' "$tool" plan bazel-test --bazel-modules "$PWD/modules.json"
+    fi
     printf '{}\n' > native-inputs.json
     atf_check -s exit:0 -o save:native-plan.jsonl -e empty "$tool" plan bazel-test --bazel /usr/bin/true --bazel-inputs "$PWD/native-inputs.json" --jobs 3 --output "$output" --format json
     atf_check -s exit:0 -o empty -e empty python3.12 - "$PWD/native-inputs.json" <<'PYTEST'
@@ -1468,14 +1478,16 @@ assert rows[1]['argv'][-2:] == ['--inputs', sys.argv[1]]
 PYTEST
     [ ! -e "$output" ] || atf_fail 'native plan created output'
     atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel-inputs "$PWD/native-inputs.json"
-    atf_check -s not-exit:0 -o empty -e match:'requires --bazel' "$tool" plan bazel-test
-    atf_check -s not-exit:0 -o empty -e match:'native amd64' "$tool" plan bazel-test --bazel /usr/bin/true --arch arm64
+    atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel-modules "$PWD/modules.json"
+    atf_check -s not-exit:0 -o empty -e match:'requires --bazel-modules' "$tool" plan bazel-test --bazel /usr/bin/true
+    atf_check -s not-exit:0 -o empty -e match:'native --bazel-inputs names its own' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-inputs "$PWD/native-inputs.json" --bazel-modules "$PWD/modules.json"
+    atf_check -s not-exit:0 -o empty -e match:'native amd64' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --arch arm64
     atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel /usr/bin/true
-    atf_check -s not-exit:0 -o empty -e match:'fresh qualification' "$tool" plan bazel-test --bazel /usr/bin/true --incremental
-    atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --src-conf /dev/null
+    atf_check -s not-exit:0 -o empty -e match:'fresh qualification' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --incremental
+    atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --src-conf /dev/null
     cp /usr/bin/true noexec
     chmod 644 noexec
-    atf_check -s not-exit:0 -o empty -e match:'must be executable' "$tool" plan bazel-test --bazel "$(pwd)/noexec"
+    atf_check -s not-exit:0 -o empty -e match:'must be executable' "$tool" plan bazel-test --bazel "$(pwd)/noexec" --bazel-modules "$PWD/modules.json"
 }
 
 atf_test_case application_selection_plan

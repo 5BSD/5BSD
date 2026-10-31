@@ -2144,9 +2144,43 @@ This does not qualify the complete loader, kernel and installed-system chain.
 .Ss Bazel build qualification
 .Cm bazel-test
 runs the maintained native amd64 compile and artifact-comparison pilot.
-It requires an explicit executable
+Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
+Bazel 5 and the WORKSPACE mode are no longer supported.
 .Fl bazel Ar path
-and a matching development world SDK in the standard object tree.
+selects the executable; the default is
+.Pa /usr/local/bin/bazel ,
+where the bazel9 package installs it.
+Each qualification tool runs
+.Ql bazel --version
+before creating evidence output and refuses a version older than 9.
+The declared pilot also requires
+.Fl bazel-modules Ar file ,
+a JSON file naming its offline module inputs:
+.Dq repository_cache
+(a content-addressed repository cache whose entries must match their
+SHA-256 names),
+.Dq distdirs
+(an array of directories of regular files) and optionally
+.Dq java_home
+(the Bazel server JDK; omitted, the launcher's built-in default is used).
+The module versions and the
+.Pa MODULE.bazel.lock
+are pinned in
+.Pa tools/build/bazel
+and used with
+.Fl -lockfile_mode=error
+and downloads disabled; the repository cache is copied into the private
+output before Bazel runs, because Bazel writes to its repository cache.
+The lockfile cannot be regenerated offline
+.Po
+.Ql bazel mod deps
+evaluates every module extension, and rules_python's needs a Python 3.11
+toolchain
+.Pc ;
+.Pa tools/build/bazel/README.md
+describes refreshing the pins when network access is allowed.
+The action also requires a matching development world SDK in the standard
+object tree.
 .Fl jobs
 selects parallelism (all logical CPUs by default);
 .Fl output
@@ -2181,13 +2215,12 @@ probe
 .Pa tools/build/bazel/dtrace-probe.py
 and the Protocol Buffers, Abseil and nghttp2 probe
 .Pa tools/build/bazel/protobuf-probe.py
-are not part of this action.
-The action runs the probes in their WORKSPACE mode;
-their separate Bzlmod mode for Bazel 9 with rules_cc
-.Pq Fl -bzlmod-inputs ,
-described in
-.Pa tools/build/bazel/README.md ,
-is not selected by this action.
+are not part of this action; they take the same
+.Fl -bazel
+and
+.Fl -bzlmod-inputs
+arguments and are described in
+.Pa tools/build/bazel/README.md .
 The action also builds and stages a Make-only libmd installation reference
 under its private output directory, preserving the selected world profile,
 source layout, debug splitting and METALOG package metadata.
@@ -2234,8 +2267,11 @@ Bazel outputs.
 This invocation does not rebuild the Make reference, bootstrap a fresh SDK,
 qualify sandbox isolation or produce complete system packages.
 The default pilot remains available by omitting
-.Fl bazel-inputs .
-Neither path selects Bazel as the production backend.
+.Fl bazel-inputs ;
+.Fl bazel-modules
+applies only to it.
+Both paths require Bazel 9 or later and neither selects Bazel as the
+production backend.
 
 .Pp
 Input format 2 prepares a fresh workspace before running the same native

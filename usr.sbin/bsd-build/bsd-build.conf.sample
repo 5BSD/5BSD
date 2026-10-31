@@ -112,3 +112,10 @@ ports=/usr/obj/5BSD-ports
 
 # Transition staging also requires root_transition_version=1 in the pinned
 # loader-build receipt; use a fresh maintained loader-build result.
+
+# For bazel-test: Bazel 9 or later only (Bzlmod, rules_cc); older versions are
+# refused.  The default executable is where the bazel9 package installs it.
+# bazel=/usr/local/bin/bazel
+# Declared pilot: offline module inputs (repository_cache, distdirs, optional
+# java_home); module pins and MODULE.bazel.lock are in tools/build/bazel.
+# bazel_modules=/usr/obj/usr/src/bazel-offline/inputs.json
