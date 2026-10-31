@@ -119,6 +119,7 @@ resolve(struct policy_state *s)
 	size_t i;
 
 	memset(&s->effective, 0, sizeof(s->effective));
+	s->effective.device_drivers = s->base.device_drivers;
 	for (i = 0; i < s->base.nallow; i++)
 		if (allowed(s, s->base.allow[i]) &&
 		    add_name(&s->effective, s->base.allow[i]) == -1)
@@ -561,6 +562,25 @@ sysext_policy_info(struct sysext_policy *p, const char *name, bool next,
 done:
 	(void)pthread_mutex_unlock(&p->lock);
 	return (error == 0 ? 0 : (errno = error, -1));
+}
+
+bool
+sysext_policy_denied(struct sysext_policy *p, const char *name)
+{
+	const struct policy_state *s;
+	bool denied = true;
+	int i;
+
+	/* Fail closed: an unreadable policy denies the class grant too. */
+	if (policy_lock(p) != 0)
+		return (true);
+	s = &p->slots[p->active];
+	if (p->fault == 0) {
+		i = index_of(s, name);
+		denied = i >= 0 && s->entries[i].permission == 0;
+	}
+	(void)pthread_mutex_unlock(&p->lock);
+	return (denied);
 }
 
 int

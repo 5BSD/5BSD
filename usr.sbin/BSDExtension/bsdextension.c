@@ -52,6 +52,7 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/procdesc.h>
 #include <sys/stat.h>
 
@@ -188,6 +189,141 @@ extension_allowed(const struct sysext_config *cfg, const char *name)
 }
 
 /*
+ * Hardware-driver class.  kldxref(8) writes linker.hints as an int version
+ * followed by records: an int-aligned int length (covering the type and
+ * data), an int type, then data.  An MDT_MODULE record carries the module
+ * name and its file name as length-prefixed strings; the MDT_PNP_INFO
+ * records that follow describe the plug-and-play tables of that file.  This
+ * is the data devmatch(8) matches hardware against, so a file with such a
+ * record is exactly a module devmatch can select.  The kernel's own records
+ * ("kernel") are not loadable modules.  Bounds are checked on every field.
+ */
+int sysext_driver_dirfd = -1;
+
+static bool
+hints_str(const unsigned char *buf, size_t end, size_t *pos, char *out,
+    size_t outlen)
+{
+	size_t n;
+
+	if (*pos >= end)
+		return (false);
+	n = buf[*pos];
+	if (n >= outlen || end - *pos - 1 < n)
+		return (false);
+	memcpy(out, buf + *pos + 1, n);
+	out[n] = '\0';
+	*pos += 1 + n;
+	return (true);
+}
+
+bool
+sysext_hints_pnp_module(const void *image, size_t len, const char *name)
+{
+	const unsigned char *buf = image;
+	char lastmod[256], modname[256], want[SYSEXT_NAME_MAX + 3];
+	size_t pos, data, end;
+	int version, reclen, type;
+
+	if (buf == NULL || name == NULL || !valid_module_name(name))
+		return (false);
+	/* devmatch(8) and the rc script name modules with or without .ko. */
+	if (snprintf(want, sizeof(want), "%s%s", name,
+	    strlen(name) > 3 && strcmp(name + strlen(name) - 3, ".ko") == 0 ?
+	    "" : ".ko") >= (int)sizeof(want))
+		return (false);
+	if (len < sizeof(int))
+		return (false);
+	memcpy(&version, buf, sizeof(int));
+	if (version != LINKER_HINTS_VERSION)
+		return (false);
+	lastmod[0] = '\0';
+	pos = sizeof(int);
+	for (;;) {
+		pos = roundup2(pos, sizeof(int));
+		if (pos > len || len - pos < 2 * sizeof(int))
+			break;
+		memcpy(&reclen, buf + pos, sizeof(int));
+		data = pos + sizeof(int);
+		if (reclen < (int)sizeof(int) || (size_t)reclen > len - data)
+			break;
+		end = data + (size_t)reclen;
+		memcpy(&type, buf + data, sizeof(int));
+		data += sizeof(int);
+		if (type == MDT_MODULE) {
+			if (!hints_str(buf, end, &data, modname,
+			    sizeof(modname)) ||
+			    !hints_str(buf, end, &data, lastmod, sizeof(lastmod)))
+				lastmod[0] = '\0';
+		} else if (type == MDT_PNP_INFO && lastmod[0] != '\0' &&
+		    strcmp(lastmod, "kernel") != 0 &&
+		    strcmp(lastmod, want) == 0)
+			return (true);
+		pos = end;
+	}
+	return (false);
+}
+
+/* Read the delivered kernel directory's linker.hints and classify name. */
+bool
+sysext_driver_module(int dirfd, const char *name)
+{
+	struct stat st;
+	unsigned char *image;
+	size_t done = 0;
+	ssize_t n;
+	bool found = false;
+	int fd;
+
+	if (dirfd < 0)
+		return (false);
+	fd = openat(dirfd, "linker.hints", O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
+	    O_NONBLOCK);
+	if (fd == -1)
+		return (false);
+	if (fstat(fd, &st) == -1 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    st.st_size > SYSEXT_HINTS_MAX ||
+	    (image = malloc((size_t)st.st_size)) == NULL) {
+		(void)close(fd);
+		return (false);
+	}
+	while (done < (size_t)st.st_size) {
+		n = pread(fd, image + done, (size_t)st.st_size - done,
+		    (off_t)done);
+		if (n == -1 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			break;
+		done += (size_t)n;
+	}
+	if (done == (size_t)st.st_size)
+		found = sysext_hints_pnp_module(image, done, name);
+	free(image);
+	(void)close(fd);
+	return (found);
+}
+
+/*
+ * The complete load decision: the resolved allow-list, then the hardware
+ * driver class when the policy enables it and no administrator override
+ * denies the name.  *driver reports a class grant (for logging).
+ */
+static bool
+request_allowed(const struct sysext_config *cfg, const char *name,
+    bool *driver)
+{
+
+	*driver = false;
+	if (extension_allowed(cfg, name))
+		return (true);
+	if (!cfg->device_drivers || active_policy == NULL ||
+	    sysext_policy_denied(active_policy, name))
+		return (false);
+	*driver = sysext_driver_module(sysext_driver_dirfd, name);
+	return (*driver);
+}
+
+/*
  * The delivered descriptor's provenance is the caller's responsibility. These
  * checks validate syntax and bound reads; UNIX modes do not establish BIP trust.
  * A failed load/reload leaves the previous configuration untouched.
@@ -197,7 +333,7 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 {
 	struct sysext_config candidate;
 	ucl_object_t *root;
-	const ucl_object_t *arr, *ent;
+	const ucl_object_t *arr, *ent, *drivers;
 	ucl_object_iter_t it = NULL;
 	const char *name;
 	size_t i;
@@ -209,7 +345,15 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 	if (root == NULL)
 		return (-1);
 	memset(&candidate, 0, sizeof(candidate));
-	if (ucl_object_type(root) != UCL_OBJECT || root->len != 1)
+	if (ucl_object_type(root) != UCL_OBJECT || root->len < 1 || root->len > 2)
+		goto done;
+	/* Optional: the hardware-driver class (see struct sysext_config). */
+	drivers = ucl_object_lookup(root, "device_drivers");
+	if (root->len == 2 && (drivers == NULL || drivers->next != NULL ||
+	    drivers->keylen != strlen("device_drivers") ||
+	    ucl_object_type(drivers) != UCL_BOOLEAN))
+		goto done;
+	if (root->len == 1 && drivers != NULL)
 		goto done;
 	arr = ucl_object_lookup(root, "allowed_extensions");
 	if (arr == NULL || arr->next != NULL ||
@@ -228,6 +372,7 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 		strlcpy(candidate.allow[candidate.nallow++], name,
 		    SYSEXT_NAME_MAX);
 	}
+	candidate.device_drivers = drivers != NULL && ucl_object_toboolean(drivers);
 	*cfg = candidate;
 	error = 0;
 done:
@@ -330,9 +475,26 @@ ensure_extension(const char *name, bool *loaded_now)
 static int
 stat_extension(const char *name, int *loaded)
 {
+	char modname[SYSEXT_NAME_MAX];
+	size_t len;
 
 	*loaded = 0;
 	if (kldfind(name) != -1) {
+		*loaded = 1;
+		return (0);
+	}
+	if (errno != ENOENT)
+		return (errno);
+	/*
+	 * A module compiled into the kernel has no file of its own: kldfind
+	 * cannot see it, but modfind(2) (read-only, capability-mode enabled)
+	 * finds its module name.  Accept the ".ko" spelling as kldfind does.
+	 */
+	strlcpy(modname, name, sizeof(modname));
+	len = strlen(modname);
+	if (len > 3 && strcmp(modname + len - 3, ".ko") == 0)
+		modname[len - 3] = '\0';
+	if (modfind(modname) != -1) {
 		*loaded = 1;
 		return (0);
 	}
@@ -407,6 +569,7 @@ sysext_handle(const struct sysext_client *identity,
 {
 	const char *client = identity->label;
 	struct sysext_config cfg;
+	bool driver;
 	int loaded;
 
 	memset(rp, 0, sizeof(*rp));
@@ -448,6 +611,14 @@ sysext_handle(const struct sysext_client *identity,
 			rp->status = errno;
 			return (SYSEXT_REPLY_BASIC);
 		}
+		/*
+		 * The hardware-driver class grants without an allow-list entry;
+		 * report it as allowed unless an override denies the name.
+		 */
+		if ((irp->flags & SYSEXT_STATE_ALLOWED) == 0 &&
+		    sysext_policy_snapshot(active_policy, &cfg) == 0 &&
+		    request_allowed(&cfg, irp->name, &driver))
+			irp->flags |= SYSEXT_STATE_ALLOWED;
 		/* Do not disclose loaded state for a denied module. */
 		if ((irp->flags & SYSEXT_STATE_ALLOWED) != 0) {
 			rp->status = stat_extension(irp->name, &loaded);
@@ -524,13 +695,15 @@ sysext_handle(const struct sysext_client *identity,
 	}
 	/*
 	 * Default-deny by name, for BOTH operations: even a syntactically valid
-	 * module is refused unless it is on the allow-list.  This is the boundary
+	 * module is refused unless it is on the allow-list or, when the policy
+	 * enables device_drivers, the kernel's linker.hints records the file
+	 * with plug-and-play match data (request_allowed()).  This is the boundary
 	 * between "may reach bsdextension" (the domain gate) and "may act on THIS
 	 * kernel code".  A client may STAT only a module it could ENSURE, so a
 	 * non-allow-listed name is EPERM rather than a loaded/not-loaded answer —
 	 * denial leaks no information about the module set.
 	 */
-	if (!extension_allowed(&cfg, rq->name)) {
+	if (!request_allowed(&cfg, rq->name, &driver)) {
 		rp->status = EPERM;
 		syslog(LOG_WARNING,
 		    "%s %s (client %s) -> DENIED (not on allow-list)",
@@ -552,7 +725,8 @@ sysext_handle(const struct sysext_client *identity,
 	}
 
 	rp->status = managed_ensure(rq->name, identity->bundle);
-	syslog(LOG_INFO, "ENSURE %s (client %s): %s", rq->name, client,
+	syslog(LOG_INFO, "ENSURE %s (client %s%s): %s", rq->name, client,
+	    driver ? ", hardware driver" : "",
 	    rp->status == 0 ? "loaded" : strerror(rp->status));
 	return (SYSEXT_REPLY_BASIC);
 }
@@ -1166,6 +1340,17 @@ main(int argc, char **argv)
 		if (service_resource_dir(SYSEXT_POLICY_DIR, &dirfd) == -1 ||
 		    sysext_policy_attach(active_policy, dirfd) == -1)
 			err(1, "initialize administrator extension policy");
+	}
+	/*
+	 * The hardware-driver class reads the kernel's linker.hints through the
+	 * delivered kernel directory.  Soft: without it the class grants nothing
+	 * and only the allow-list applies.
+	 */
+	if (!conf_from_arg && sysext_conf.device_drivers &&
+	    service_resource_dir(SYSEXT_KERNEL_DIR, &sysext_driver_dirfd) == -1) {
+		sysext_driver_dirfd = -1;
+		syslog(LOG_WARNING, "device drivers: cannot open %s (%m); "
+		    "only allow-listed modules can load", SYSEXT_KERNEL_DIR);
 	}
 
 

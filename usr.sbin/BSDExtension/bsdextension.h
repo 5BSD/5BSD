@@ -43,6 +43,12 @@ struct ucl_object_s *sysext_config_object_fd(int, mode_t);
 struct sysext_config {
 	char	allow[SYSEXT_MAX_ALLOW][SYSEXT_NAME_MAX];
 	size_t	nallow;
+	/*
+	 * device_drivers: also permit a module the delivered kernel directory's
+	 * linker.hints records with plug-and-play match data (a hardware
+	 * driver devmatch(8) selects), unless an administrator denied it.
+	 */
+	bool	device_drivers;
 };
 
 struct sysext_policy;
@@ -66,6 +72,21 @@ int sysext_policy_change(struct sysext_policy *, uint32_t, const char *,
 int sysext_policy_info(struct sysext_policy *, const char *, bool,
     struct sysext_info_reply *);
 int sysext_policy_enabled(struct sysext_policy *, struct sysext_config *);
+/* True when an administrator override explicitly denies name. */
+bool sysext_policy_denied(struct sysext_policy *, const char *);
+
+/*
+ * Hardware-driver class.  The manifest delivers the kernel directory
+ * (/boot/kernel) by descriptor; sysext_driver_module() reads its linker.hints
+ * and reports whether name (with or without .ko) is a module file that
+ * carries MDT_PNP_INFO records.  sysext_hints_pnp_module() is the bounded
+ * parser over an in-memory hints image.
+ */
+#define	SYSEXT_KERNEL_DIR	"/boot/kernel"
+#define	SYSEXT_HINTS_MAX	(16 * 1024 * 1024)
+extern int sysext_driver_dirfd;
+bool sysext_hints_pnp_module(const void *, size_t, const char *);
+bool sysext_driver_module(int, const char *);
 
 /*
  * The held SYS_GATE_KLDLOAD/KLDUNLOAD "system" token (defined in

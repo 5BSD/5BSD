@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 12, 2026
+.Dd October 31, 2026
 .Dt BSDEXTENSION 8
 .Os
 .Sh NAME
@@ -108,12 +108,39 @@ gate.
 A query request
 .Pq Sy Stat
 instead reports whether the module is loaded, using
-.Xr kldfind 2 ,
-a read-only query; module enumeration is ungated, so no capability is
-needed for it.
+.Xr kldfind 2
+for a module file and
+.Xr modfind 2
+for a module compiled into the kernel, both read-only queries; module
+enumeration is ungated, so no capability is needed for it.
 Both operations are subject to the same allow-list: a client may query only a
 module it could load, so a name that is not allow-listed is refused rather than
 answered, and a query leaks nothing about modules a client may not load.
+.Pp
+When the policy sets
+.Cm device_drivers
+to true, a module that is not allow-listed is also permitted if the kernel's
+.Pa /boot/kernel/linker.hints
+records its file with plug-and-play match data
+.Pq Dv MDT_PNP_INFO ,
+which makes it a hardware driver that
+.Xr devmatch 8
+can select for an unattached device, unless an administrator
+.Cm deny
+override names it.
+.Nm
+reads the hints through the delivered
+.Pa /boot/kernel
+directory descriptor, bounded and on each such request, so a rebuilt
+.Pa linker.hints
+applies at once; without the directory the class permits nothing.
+Service modules, filesystems and modules under
+.Pa /boot/modules
+need an allow-list entry.
+INFO reports a class driver as allowed; boot activation
+.Pq Cm enable
+still needs an explicit
+.Cm allow .
 There is deliberately no unload operation; safe removal would require
 explicit consumer release semantics; the service conservatively retains
 session and boot claims until reboot.
@@ -211,10 +238,14 @@ capability bundle shipping
 .Nm
 .It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
 Required allow-list policy, read at daemon startup and on authorized reload.
-The allowed_extensions array specifies the complete base grant set.
+The allowed_extensions array specifies the complete base list of named
+modules; the optional boolean device_drivers enables the hardware-driver
+class described above.
 The executable contains no default module grants.
 Missing or malformed startup policy is fatal; a failed reload preserves the
-last accepted policy. An empty array explicitly denies all module requests.
+last accepted policy.
+An empty array, with device_drivers absent or false, denies all module
+requests.
 Both base policy and persisted overrides reject includes/macros, duplicate
 keys, unknown fields, embedded NULs and implicit arrays. Reads are bounded to
 one MiB and do not consume or reposition the caller's descriptor.
@@ -229,6 +260,8 @@ holder, and packaged GPU firmware is loaded as data from
 Use
 .Xr sysextctl 8
 to manage persistent permission and activation overrides, or reload defaults.
+.It Pa /boot/kernel/linker.hints
+kernel module hints, read for the device_drivers class
 .It Pa /etc/bsdextension/overrides.ucl
 Persistent administrator overrides, managed through sysextctl.
 .It Pa /var/run/BSDExtension/modules.meta
@@ -259,7 +292,9 @@ live, owned, orphaned, destroyed and failed counts.
 .Xr libextensioncmp 3 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
+.Xr devmatch 8 ,
 .Xr kldload 8 ,
+.Xr kldxref 8 ,
 .Xr switchboard 8 ,
 .Xr sysextctl 8
 .Sh HISTORY

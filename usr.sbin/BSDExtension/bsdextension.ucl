@@ -8,9 +8,18 @@
 # This is required startup policy. The executable contains no module grants.
 # Select the permitted modules here; the array is the complete base grant set.
 # Missing or malformed policy stops startup. Failed reloads keep the last
-# accepted policy. An empty array explicitly denies all module requests.
+# accepted policy. An empty array, with device_drivers absent or false,
+# explicitly denies all module requests.
 # Each entry must be a single, safe module name (no "/", not "." or "..").
 #
+# device_drivers = true also permits, without listing them, the hardware
+# drivers of the installed kernel: a module whose file /boot/kernel/linker.hints
+# records with plug-and-play match data, the tables devmatch(8) matches unbound
+# devices against at boot.  Other
+# modules, and any driver an administrator denies with "sysextctl deny", stay
+# refused.  Set it to false to require an explicit entry for every driver.
+#
+device_drivers = true;
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
@@ -30,4 +39,30 @@ allowed_extensions = [
     "amdtemp",     # hwstat: AMD temperature
     "dummynet",    # rc.d/dummynet: pf dnpipe/dnqueue traffic shaping
     "pf",          # rc.d/pf, pflog, pfsync: packet filter when not preloaded
+    # Modules the base rc.d scripts load after the broker has started.
+    "mac_ntpd",    # rc.d/ntpd: run ntpd unprivileged
+    "if_vlan",     # network.subr: vlans_<if>
+    "ipsec",       # rc.d/ipsec
+    "geom_md",     # rc.d/mdconfig, mdconfig2
+    "geom_uzip",   # rc.d/mdconfig, mdconfig2: compressed md images
+    "geom_eli",    # rc.d/geli
+    "geom_gate",   # rc.d/hastd
+    "nfscl",       # rc.d/nfsclient, mountcritremote
+    "nfsclrdma",   # rc.d/nfsclient: NFS over RDMA
+    "nfsd",        # rc.d/nfsd, mountd
+    "nfsrdma",     # rc.d/nfsd: NFS over RDMA
+    "cfumass",     # rc.d/cfumass: USB mass-storage target
+    "cuse",        # rc.d/virtual_oss; webcamd and other cuse(3) daemons
+    "kbdmux",      # rc.d/bthidd
+    "vkbd",        # rc.d/bthidd
+    "uinput",      # rc.d/bthidd
+    "ng_btsocket", # rc.d/bthidd
+    "sysvmsg",     # rc.d/sysvipc (restart after boot)
+    "sysvsem",     # rc.d/sysvipc
+    "sysvshm",     # rc.d/sysvipc
+    "wlan_xauth",  # rc.d/hostapd
+    "wlan_wep",    # rc.d/hostapd
+    "wlan_tkip",   # rc.d/hostapd
+    "wlan_ccmp",   # rc.d/hostapd
+    "wlan_gcmp",   # rc.d/hostapd
 ]

@@ -9,14 +9,14 @@ load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
         "//lib/libfidl:fidl", "//lib/libservice:service", "//lib/libchannel:channel",
         "//lib/libucl:ucl", "//lib/libcapreclaim:capreclaim", "//lib/liblogcmp:logcmp", "//lib/libthr:thr"] + (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
     local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
- for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test"]]
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test"]]
 [bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
     suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     tags = ["manual", "requires-matching-kernel"] if name in ["provider_test", "reclaim_test"] else [],
     size = "medium", visibility = ["//visibility:public"])
- for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test"]]
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test"]]
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")

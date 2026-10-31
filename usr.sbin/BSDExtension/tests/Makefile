@@ -55,6 +55,11 @@ SRCS.reclaim_test=	reclaim_test.c bsdextension.c policy.c reclaim.c
 ATF_TESTS_C+= policy_test
 SRCS.policy_test= policy_test.c bsdextension.c policy.c reclaim.c
 
+# drivers_test: pure unit — the device_drivers class (linker.hints PNP
+# classification, policy key, override deny) and the installed kernel hints.
+ATF_TESTS_C+= drivers_test
+SRCS.drivers_test= drivers_test.c bsdextension.c policy.c reclaim.c
+
 # Schema evolution: the real bsd:1 client and provider paired with next_peer,
 # built from evolution/extensioncmp_next.fidl at bsd:2 (its own bindings).
 ATF_TESTS_C+= evolution_test
