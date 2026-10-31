@@ -2379,9 +2379,17 @@ static moduledata_t vmm_kmod = {
 DECLARE_MODULE(vmm, vmm_kmod, MAX(SI_SUB_DRIVERS, SI_SUB_SMP) + 1,
     SI_ORDER_ANY);
 MODULE_VERSION(vmm, 1);
-#ifdef __amd64__
+/*
+ * Every vmm backend (amd64, arm64, riscv) calls into both modules: the VM
+ * identity comes from hypertrace_vm_alloc()/hypertrace_vm_release() and the
+ * guest-access hooks are published under dtrace_hypertrace_config_lock(),
+ * which lives in dtrace.ko.  The kernel linker resolves a module's symbols
+ * only against the kernel and the module's direct dependencies, so both must
+ * be declared; depending on hypertrace alone left the dtrace symbol
+ * undefined ("could not finalize loading").
+ */
 MODULE_DEPEND(vmm, hypertrace, 1, 1, 1);
-#endif
+MODULE_DEPEND(vmm, dtrace, 1, 1, 1);
 
 static int
 devmem_mmap_single(struct cdev *cdev, vm_ooffset_t *offset, vm_size_t len,
