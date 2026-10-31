@@ -26,15 +26,26 @@ load(":sources.bzl", "DTRACE_SOURCES")
 filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
 filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
 cc_library(name = "generated_headers", hdrs = [":parser_header"], deps = [":proc_compat_headers"], strip_include_prefix = ".")
-_LIBS = ["//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc", "//lib/librtld_db:rtld_db", "//lib/libxo/libxo:xo"]
-_SHARED = ["//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libxo/libxo:xo_shared"]
+# LIBADD ctf elf proc pthread rtld_db crypto xo, then LIB_CXX's -lc++ -lm;
+# the dynamic dependencies keep Make's NEEDED order (libthr after libxo).
+# Provider generation runs //cddl/usr.sbin/dtrace:bootstrap, so the
+# instrumented libthr never needs this library in its own configuration.
+_LIBS = ["//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc", "//lib/librtld_db:rtld_db", "//secure/lib/libcrypto:crypto", "//lib/libxo/libxo:xo",
+    "//lib/libthr:thr", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"]
+_SHARED = ["//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//lib/librtld_db:rtld_db_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libxo/libxo:xo_shared",
+    "//lib/libthr:thr_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"]
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
-cc_library(name = "implementation", srcs = DTRACE_SOURCES + [":lexer", ":parser_source", ":errtags", ":names"],
+# C and C++ (HyperTrace linker, ELF reader/writer, typing) in Makefile SRCS
+# order; CXXSTD c++20 with -fno-rtti and exceptions; cddl/Makefile.inc adds
+# NEED_SOLARIS_BOOLEAN, HAVE_STRLCAT and HAVE_STRLCPY.
+cc_library(name = "implementation", srcs = DTRACE_SOURCES,
     deps = ["//cddl/contrib/opensolaris:dtrace_headers"] + _LIBS,
-    implementation_deps = [":generated_headers", "//sys/cddl/dev/dtrace:layout_headers", "//sys/cddl/dev/dtrace/x86:headers", "//sys/cddl/dev/kinst:headers", "//sys/cddl/contrib/opensolaris:dtrace_intel_headers"],
-    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM"],
+    implementation_deps = [":generated_headers", "//sys/cddl/dev/dtrace:layout_headers", "//sys/cddl/dev/dtrace/x86:headers", "//sys/cddl/dev/kinst:headers", "//sys/cddl/contrib/opensolaris:dtrace_intel_headers",
+        "//usr.sbin/dtraced:headers", "//contrib/llvm-project/libcxx/include:headers", "//sys/sys:kernel_headers"],
+    local_defines = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "DIS_MEM", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"],
     copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"],
-    linkopts = ["-pthread"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+    cxxopts = ["-std=c++20", "-nostdinc++", "-fno-rtti"],
+    linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 # Compile internals with Solaris compatibility headers; expose only the public API.
 cc_library(name = "dtrace", deps = [":public_headers"], implementation_deps = [":implementation"],
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
@@ -76,7 +87,8 @@ cc_library(name = "proc_compat_headers", hdrs = ["libproc_compat.h"], strip_incl
 filegroup(name = "package_abi", srcs = [":install_manifest_stripped"], visibility = ["//packages/dtrace:__pkg__"])
 
 # Public consumers must not inherit SPL's replacement assert.h and libc headers.
-cc_library(name = "public_headers", hdrs = ["//cddl/contrib/opensolaris:lib/libdtrace/common/dtrace.h"],
+# Installed public headers: dtrace.h includes dt_hypertrace.h.
+cc_library(name = "public_headers", hdrs = ["//cddl/contrib/opensolaris:lib/libdtrace/common/dtrace.h", "//cddl/contrib/opensolaris:lib/libdtrace/common/dt_hypertrace.h"],
     strip_include_prefix = "/cddl/contrib/opensolaris/lib/libdtrace/common",
-    deps = ["//contrib/elftoolchain:elf_headers", "//lib/libproc:headers", "//lib/librtld_db:headers"],
+    deps = ["//sys/cddl/contrib/opensolaris:dtrace_public_headers", "//contrib/elftoolchain:elf_headers", "//lib/libproc:headers", "//lib/librtld_db:headers"],
     visibility = ["//visibility:public"])
