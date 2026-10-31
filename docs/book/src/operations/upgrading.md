@@ -2,9 +2,12 @@
 
 5BSD has no public package server. Base-system updates come from a pkgbase
 repository you build on disk and publish over `file://`; third-party
-software keeps coming from the FreeBSD ports repositories. That split is the
-whole upgrade model, and it has one rule that must never be broken: base
-packages come from a 5BSD repository, never from `FreeBSD-base`. This chapter
+software comes from the `5BSD-ports` catalogue (packages built from the 5BSD
+ports tree, published at `/usr/5bsd-packages/ports`) and, for everything 5BSD
+does not build itself, from the FreeBSD ports repositories. That split is the
+whole upgrade model, and it has two rules that must never be broken: base
+packages come from a 5BSD repository, never from `FreeBSD-base`; and a package
+installed from `5BSD-ports` is never replaced from `FreeBSD-ports`. This chapter
 covers configuring the local repository, the 5BSD-to-5BSD upgrade loop, the
 one-time migration from a FreeBSD pkgbase system, and what to verify after
 the reboot. Building the repository is in [Building](building.md); pkg(8)
@@ -41,8 +44,9 @@ unrelated to your `5BSD-*` ones; it would not overwrite them by name, but a
 FreeBSD kernel or libc beside the 5BSD one. There is no kernel without the
 plane compiled in, no `capability` identity in a foreign `master.passwd`,
 and no `/Capabilities` in a foreign runtime package. Disabling
-`FreeBSD-base` is therefore the first step everywhere below;
-`FreeBSD-ports` stays enabled. Keep `FreeBSD-ports-kmods` disabled;
+`FreeBSD-base` is therefore the first step everywhere below.
+`FreeBSD-ports` is shipped disabled and is selected explicitly with
+`-r FreeBSD-ports`; see [Third-party packages](#third-party-packages-5bsd-ports-first). Keep `FreeBSD-ports-kmods` disabled;
 kernel-bound drivers come from the combined `5BSD-base` repository.
 
 ## The standard repository needs no configuration
@@ -227,12 +231,50 @@ switchboardctl services
 
 To roll back, `bectl activate pre-upgrade && reboot`.
 
-Ports packages upgrade independently and at any time:
+Ports packages upgrade independently and at any time; follow the next
+section so that a FreeBSD-ports step cannot replace a 5BSD-ports package.
+
+## Third-party packages: 5BSD-ports first
+
+Some ports carry 5BSD changes that FreeBSD's binary packages lack, for
+example `net/containernetworking-plugins` (OpenBSD PF port redirections; the
+FreeBSD plugin's rules are refused by OpenBSD `pfctl`, so podman cannot
+publish ports), the podman suite, `java/openjdk21` and `devel/bazel9`.
+Several have the same package version in both repositories, so the version
+alone does not tell pkg which build is wanted. Build them from the 5BSD
+ports tree against the installed base, run `pkg repo` on the package
+directory and publish it at `/usr/5bsd-packages/ports`.
+
+`/etc/pkg/5BSD-ports.conf` enables that catalogue with `priority: 100`;
+`FreeBSD-ports` has the default priority 0. pkg then behaves as follows:
+
+* a package installed from `5BSD-ports` keeps upgrading from `5BSD-ports`
+  (pkg prefers the repository a package was installed from);
+* a package not yet installed, provided by both, comes from `5BSD-ports`
+  (higher priority wins under the default `CONSERVATIVE_UPGRADE`);
+* `-r FreeBSD-ports` restricts pkg to that repository, so neither rule
+  applies: `pkg upgrade -r FreeBSD-ports` or `pkg install -f -r
+  FreeBSD-ports NAME` replaces a 5BSD-ports package with the FreeBSD build.
+
+Lock the 5BSD-ports packages for every FreeBSD-ports step, and limit the step
+to packages that came from FreeBSD-ports:
 
 ```sh
-pkg upgrade -r FreeBSD-ports
-pkg upgrade -r FreeBSD-ports codex     # one package and its dependencies
+p5=$(pkg query '%R %n' | awk '$1 == "5BSD-ports" { print $2 }')
+fb=$(pkg query '%R %n' | awk '$1 == "FreeBSD-ports" { print $2 }')
+pkg lock -y pkg $p5
+pkg upgrade -n -r FreeBSD-ports $fb     # review, then without -n
+pkg unlock -y pkg $p5
 ```
+
+FreeBSD's packages are built for a newer `FreeBSD_version` than 5BSD base,
+so pkg asks whether to ignore that mismatch; 5BSD-ports packages built
+against the installed base do not need that. To move a package that was
+reinstalled from FreeBSD-ports back, take a boot environment and `/usr/local`
+snapshot, then `pkg install -f -r 5BSD-ports NAME` and confirm with
+`pkg query '%n %v %R' NAME`. The catalogue is unsigned and local unless a
+signing key is used with `pkg repo`; its trust is that of the disk and the
+builder, as for `5BSD-base`.
 
 ## Migrating from FreeBSD pkgbase
 
@@ -295,7 +337,7 @@ merging; local overrides continue to take precedence.
 
 ## What does not upgrade this way
 
-Applications upgrade separately from `FreeBSD-ports`. External kernel
+Applications upgrade separately, from `5BSD-ports` and `FreeBSD-ports`. External kernel
 modules come from the matching `5BSD-hardware` collection, not
 `FreeBSD-ports-kmods`. The `5BSD-*-tests` packages and `5BSD-set-tests` upgrade
 with the base but are not installed by default. A custom `KERNCONF` produces

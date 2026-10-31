@@ -76,7 +76,20 @@ The default
 .Em 5BSD-ports
 package repository is the local catalogue at
 .Pa /usr/5bsd-packages/ports .
-It must be populated before installing binary packages.
+It must be populated before installing binary packages:
+build the packages from this tree against the installed base and run
+.Cm pkg repo
+on the package directory.
+Its priority of 100 makes
+.Xr pkg 8
+prefer these native packages over
+.Em FreeBSD-ports
+for packages that both repositories provide.
+Lock installed
+.Em 5BSD-ports
+packages before upgrading with an explicit
+.Fl r Ar FreeBSD-ports ,
+which ignores repository priority.
 The Git source URL cannot be used as a binary package repository.
 A published package service may be configured in
 .Pa /usr/local/etc/pkg/repos/5BSD-ports.conf .

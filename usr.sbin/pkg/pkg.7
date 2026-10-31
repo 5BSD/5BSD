@@ -157,6 +157,7 @@ Repository configuration is stored in the following format:
   mirror_type: "none",
   signature_type: "none",
   fingerprints: "/usr/share/keys/pkg",
+  priority: 100,
   enabled: yes
 }
 .Ed
@@ -182,6 +183,17 @@ Refer to
 .Dv FINGERPRINTS
 in
 .Sx ENVIRONMENT
+.It priority
+Repository preference for
+.Xr pkg 8 ;
+higher values are preferred when several repositories provide a package.
+The shipped
+.Em 5BSD-ports
+entry uses 100, so native 5BSD packages take precedence over
+.Em FreeBSD-ports
+(priority 0).
+.Nm
+itself ignores this key.
 .It enabled
 Defines whether this repository should be used or not.
 Valid values are
