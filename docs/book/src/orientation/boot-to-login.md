@@ -12,21 +12,25 @@ mechanism.
 ## The loader
 
 The FreeBSD loader is unchanged in code; the difference is in
-`stand/defaults/loader.conf`. Two lines matter:
+`stand/defaults/loader.conf` and the 5BSD module list in
+`stand/lua/config.lua`. One line matters:
 
 ```sh
 init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"
-zfs_load="YES"
 ```
 
 `init_path` puts `/sbin/capsule` first, with the stock init(8) and the rescue
 init as fallbacks the kernel tries only if it cannot execute capsule at all.
 The capsule package repeats the same line in
 `/boot/loader.conf.d/capsule-loader.conf` so an upgrade of one without the
-other stays bootable. `zfs_load` is unconditional because the storage plane
+other stays bootable. ZFS is compiled into GENERIC because the storage plane
 assumes a pool: `/dev/zfs` must exist for BSDFilesystem before rc(8) runs,
-even on a host whose root is UFS. The same file loads `linux_common` and
-`linux64`, so the Linux ABI is available from the first multi-user moment.
+even on a host whose root is UFS. DTrace, pf, the container and desktop
+drivers are compiled in as well. The loader loads, on every boot and
+independently of `*_load` lines, the base modules that cannot be compiled in:
+`linux_common`, `linux64`, `linprocfs` and `linsysfs` (so the Linux ABI is
+available from the first multi-user moment), `vmm`, `hypertrace`, `kinst` and
+`fasttrap`; see `required_modules` in [Boot Knobs](../operations/boot-knobs.md).
 There are no `mac_capability` module loads: since the plane became `standard`
 in `sys/conf/files`, every 5BSD kernel carries it.
 

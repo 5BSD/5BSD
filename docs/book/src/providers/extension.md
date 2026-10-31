@@ -18,7 +18,7 @@ runtime for `linux64`) does not call kldload(2). It calls
 `service_ensure_extension(3)`, which opens `system.SystemExtension` over the
 process's private lookup channel and asks BSDExtension to make the named
 module resident. An already-loaded module is success; a module that is not
-on the allow-list is `EPERM` regardless of who asks.
+permitted (see [Policy](#policy)) is `EPERM` regardless of who asks.
 There is deliberately no UNLOAD operation on the wire. Safe removal needs
 per-consumer ownership that a request/reply broker does not have; an unload
 requested by one client could pull kernel code out from under another. The
@@ -66,7 +66,7 @@ Source: `usr.sbin/BSDExtension/capbundle/Bundle.ucl` and
 | User | `capability` |
 | Launch mode | born in capability mode (`ambient` absent) |
 | Declared gates | `capabilities { system = ["kldload", "kldunload"] }` |
-| Delivered directories | `/etc/bsdextension`, `/Capabilities/System`, `/Capabilities/Apps`, `/Capabilities/Run/live` |
+| Delivered directories | `/etc/bsdextension`, `/Capabilities/System`, `/Capabilities/Apps`, `/Capabilities/Run/live`, `/boot/kernel` (its `linker.hints` for the hardware-driver class) |
 | Control | `core` |
 | Restart | `on-failure` |
 | Protect | `ptrace`, `signal`, `wait`, `sigkill`, `sigcont`, `sched`, `core`, `ktrace` |
@@ -204,6 +204,9 @@ sysextctl restore              # apply all permitted boot activations now
 
 `list` shows each permitted module as `NAME: loaded, installed=yes` or
 `NAME: allowed, installed=no` (the two fields are independent).
+A module compiled into the kernel (most of the base subsystems on amd64
+GENERIC) reports `loaded` although it has no file: the broker checks
+kldfind(2) and then modfind(2).
 `allowed` means permitted but not currently loaded. `installed` checks for a
 regular file named `NAME` or `NAME.ko` in `kern.module_path`, as visible to the
 caller. It is `unknown` when a search path cannot be checked and no file is
@@ -220,55 +223,96 @@ The management commands (allow, deny, reset, enable, disable, reload, restore)
 require ADMIN rights on the service channel; UID 0 alone does not grant them.
 See [The Management Model](../plane/management-model.md).
 
+## Boot, services and hotplug
+
 With the capability plane enabled, the late `/etc/rc.d/kld` service invokes
 `sysextctl restore` after local filesystems mount, even when `kld_list` is
-empty. It then submits `kld_list` entries through the broker. `devmatch` also
-uses the broker for autoload requests. A denial is not retried with direct
-`kldload`. Early `load_kld` callers retain their direct path; explicitly
-disabling the capability plane retains direct loading in these startup services.
+empty, which starts the broker and with it the `kldload` gate claim. It then
+submits `kld_list` entries through the broker. From then on a direct
+kldload(2) by root fails (kldload(8) reports `Exec format error`), so:
+
+- `devmatch` submits every hardware driver it matches at boot through the
+  broker. The hardware-driver class below permits these drivers without a
+  list entry.
+- After boot no module can be loaded for a device attached later. rc reaches
+  the broker through a temporary authority
+  (`/Capabilities/Config/switchboard/boot-authority.ucl`) that ends when
+  `/etc/rc` exits, and devd(8) and its `nomatch` handler run with none.
+  devmatch reports `Cannot autoload NAME after boot` for such a device; its
+  driver loads at the next boot with the device attached. The drivers most
+  devices need are compiled into GENERIC (USB audio, video, Ethernet, HID,
+  mass storage, keyboards), so they attach on hotplug without a load.
+- rc.subr(8) `load_kld`, used by rc.d scripts (`mac_ntpd` for ntpd, `if_vlan`,
+  NFS, `geom_uzip`, the Bluetooth HID modules) and by `required_modules`,
+  tries the direct load first, which works before the broker starts, and
+  retries a failed direct load through the broker. `load_kld -b` uses only
+  the broker. Third-party rc scripts that use `load_kld` or
+  `required_modules` get the same behavior.
+
+A broker denial is final; it is never retried with a direct `kldload`.
+Explicitly disabling the capability plane (or running in a jail) keeps only
+the direct path in all of these.
 Neither disabling activation nor denying permission forcibly unloads shared
 kernel code; existing loads remain until reboot or normal ownership reclamation.
 
-For a USB mouse detected by `usbhid` but lacking an active input driver, see
+A driver denied by an administrator (`sysextctl deny`) is not loaded by
+devmatch either. For a USB mouse detected by `usbhid` but lacking an active
+input driver, see
 [USB mouse troubleshooting](../operations/troubleshooting.md#usb-mouse-is-detected-but-does-not-work-in-the-desktop)
 for the `hms` permission, immediate load, and persistent boot activation steps.
 
 ## Policy
 
-The allow-list is default-deny and global (not per label). It is read from
-`bsdextension.ucl` through the switchboard-delivered Config descriptor with
+The allow-list is default-deny and global (not per label). A module may
+load when it is permitted by the allow-list and administrator overrides, or
+when it belongs to the hardware-driver class.
+
+The policy key `device_drivers = true` (shipped) enables the class: a module
+whose file `/boot/kernel/linker.hints` records with plug-and-play match data
+(`MDT_PNP_INFO`, written by kldxref(8) from the driver's PNP tables) is
+permitted without a list entry. These are exactly the drivers devmatch(8)
+can select for a device, as installed by the kernel package. Service modules
+such as `mac_ntpd`, filesystems and protocol modules carry no such data and
+still need an entry; modules under `/boot/modules` are not in the class. An
+administrator `sysextctl deny NAME` override excludes a driver from the
+class, and `device_drivers = false` turns the class off. `Info` reports a
+class driver as allowed; `Enable` (boot activation) still needs an explicit
+`sysextctl allow`. The broker reads `linker.hints` through the delivered
+`/boot/kernel` descriptor on each request outside the list; without that
+directory the class permits nothing.
+
+The policy is read from `bsdextension.ucl` through the switchboard-delivered Config descriptor with
 `service_config_open(3)`, so the effective file for the base unit is
 `/Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl`
-(installed from `usr.sbin/BSDExtension/bsdextension.ucl`). When the file is
-absent the compiled-in set stands: `cryptodev`, `vhid`, `zfs`, `linux64`,
-`pty`, `fdescfs`, `linprocfs`, `linsysfs`, `drm`, `i915kms`, `amdgpu`,
-`radeonkms`. When present, `allowed_extensions`
-replaces those defaults. Administrator overrides are then applied.
+(installed from `usr.sbin/BSDExtension/bsdextension.ucl`). The executable
+grants nothing itself: a missing or invalid file stops startup, and
+`allowed_extensions` is the complete base list. Administrator overrides are
+then applied. An excerpt of the shipped file:
 
 ```ucl
+device_drivers = true;
 allowed_extensions = [
-    "cryptodev",   # BSDCrypto: /dev/crypto
-    "vhid",        # BSDBluetooth: virtual HID transport
-    "zfs",         # BSDFilesystem
-    "linux64",     # Linux application runtime
-    "pty",         # Linux /dev/ptmx and legacy BSD PTYs
-    "fdescfs",     # Linux /dev/fd (linrdlnk)
-    "linprocfs",   # Linux /proc
-    "linsysfs",    # Linux /sys
-    "drm",
-    "i915kms",
-    "amdgpu",
-    "radeonkms",
+    "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
+    "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
+    "linux64",     # sysextctl: Linux application runtime
+    "drm",         # graphics core
+    "pf",          # rc.d/pf, pflog, pfsync: packet filter when not preloaded
+    # Modules the base rc.d scripts load after the broker has started.
+    "mac_ntpd",    # rc.d/ntpd: run ntpd unprivileged
+    "nfscl",       # rc.d/nfsclient, mountcritremote
+    "cuse",        # rc.d/virtual_oss; webcamd and other cuse(3) daemons
 ]
 ```
 
-Rules the parser enforces: each entry is a single safe component; a file
-that is not an object, has a non-array `allowed_extensions`, or contains an
-invalid entry is rejected wholesale and the previous policy (or the
-built-in set) stays; the first array element must directly follow `[`
+Rules the parser enforces: the file is an object with exactly
+`allowed_extensions` and optionally a boolean `device_drivers`; each entry is
+a single safe component; any other key, a non-array `allowed_extensions`, a
+non-boolean `device_drivers` or an invalid entry rejects the file wholesale
+and the previous policy stays; the first array element must directly follow `[`
 because the bundled libucl mis-parses a leading comment inside an array. A
 reload replacement must be a regular file owned by the daemon's effective
-uid and not group- or world-writable; an empty array denies everything.
+uid and not group- or world-writable; an empty array with `device_drivers`
+absent or false denies everything.
 Updates are published atomically to all workers; requests already admitted
 finish. ADMIN permits changing the policy, but Ensure still checks the effective
 permission for every caller.
@@ -301,6 +345,7 @@ installed under `/usr/tests/usr.sbin/BSDExtension`):
 | `evolution_test` | real channel | the `bsd:1` libextensioncmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
 | `reclaim_test` | pure unit | owner-map round trip, dedup, unsafe names, unload only unshared own modules, busy module retried, unknown bundle no-op, epoch recorded, boot ownership retained |
 | `policy_test` | persistent policy | ADMIN enforcement, attachment, persistence and precedence, failed-write retention, corrupt-state rejection, concurrent updates and lexical discovery, writer-death recovery, real capability-mode persistence |
+| `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, an override deny beating the class, the installed kernel's hints and the packaged policy |
 
 `usr.sbin/sysextctl/tests/sysextctl_test.sh` drives the real CLI and client
 protocol implementation against a fake service (`commands`, `usage`, `protocol`
@@ -313,7 +358,9 @@ boot restoration on a release image; those require boot integration tests.
 `libexec/rc/tests/sysext_startup_test.sh` exercises the current startup scripts
 with command seams: restoration with an empty `kld_list`, multiple requested
 modules, ownership claims for already-loaded modules, denial without a direct
-loader retry, devmatch freeze/thaw, and the explicit plane-disabled path.
+loader retry, devmatch freeze/thaw, the explicit plane-disabled path, and
+`load_kld`'s broker retry after a refused direct load (also through
+`required_modules`), which a jail or a disabled plane never attempts.
 
 ## Status and gaps
 

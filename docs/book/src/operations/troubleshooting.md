@@ -19,10 +19,14 @@ produces no pointer movement. Kernel messages show the mouse attaching to
 `usbhid` and `hidbus`, with no `hms` attachment or corresponding mouse entry
 in `kern.evdev.input`.
 
-**Cause.** The HID mouse driver, `hms.ko`, can be installed but unloaded and
-excluded from the BSDExtension allow-list. USB detection alone does not mean
-the mouse input driver is active. A broker denial prevents `devmatch` from
-autoloading it. This was observed with a USB optical mouse on 5BSD; it is
+**Cause.** The HID mouse driver, `hms.ko`, is installed but was not loaded.
+USB detection alone does not mean the mouse input driver is active. Since
+the hardware-driver class (`device_drivers` in the BSDExtension policy),
+`devmatch` loads `hms` and other drivers that `/boot/kernel/linker.hints`
+matches to the device at boot (a device attached later gets its module at
+the next boot; hms itself is compiled into GENERIC now). A broker denial still
+prevents that: on a system built before the class, with the class turned
+off, or after `sysextctl deny hms`. This was observed with a USB optical mouse on 5BSD; it is
 separate from Plasma login or GPU configuration.
 
 **Check.**
@@ -345,6 +349,39 @@ A mount can also fail because its filesystem module is absent: the kernel's
 `vfs_byname_kld()` attempts a direct load and maps a failed load to `ENODEV`
 (`Operation not supported by device`). Load the module through the broker
 first, then retry the mount and inspect its actual error.
+
+## Boot reports `Cannot autoload` or `Unable to load kernel module`
+
+**Symptom.** `/etc/rc.d/devmatch` logs `Cannot autoload snd_uaudio` (or
+another hardware driver) and `/etc/rc` logs `Unable to load kernel module
+mac_ntpd`; a USB device plugged in later gets no driver either.
+
+**Cause.** Once rc.d/kld has started BSDExtension, a direct kldload(2) is
+refused. Builds before the hardware-driver class sent devmatch's drivers to
+a broker whose allow-list did not name them, and rc.subr `load_kld` used
+the direct load only, so late rc.d modules such as `mac_ntpd` failed.
+Current builds permit drivers listed with plug-and-play data in
+`/boot/kernel/linker.hints`, list the base rc.d service modules, retry
+a refused `load_kld` through the broker, and compile the common desktop
+drivers (snd_uaudio, uvideo, ure, hms, hmt and others) and mac_ntpd into
+GENERIC. Module loading is available only while `/etc/rc` runs: a device
+attached after boot whose driver is a module reports `Cannot autoload NAME
+after boot` and gets its driver at the next boot.
+
+**Check.**
+
+```sh
+sysextctl status snd_uaudio
+sysextctl config | grep -v ': denied'
+grep -E 'Cannot autoload|Unable to (load|claim) kernel module' /var/log/messages
+```
+
+**Fix.** Upgrade base and reboot. If you added `NAME_load="YES"` lines to a
+`/boot/loader.conf.d` file to work around this, remove the lines for
+drivers and modules the current policy permits and reboot; the loader would
+otherwise keep loading them for hardware that may not be present. A module
+the policy still denies (for example one from `/boot/modules`) needs
+`sysextctl allow NAME`, or a loader preload.
 
 ## Stale kernel modules versus packages
 

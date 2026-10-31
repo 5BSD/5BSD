@@ -45,7 +45,7 @@ The loader and rc(8) defaults differ from FreeBSD in a handful of lines.
 | File | Setting | Why |
 |---|---|---|
 | `stand/defaults/loader.conf` | `init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"` | capsule(8) is PID 1; stock init is the fallback |
-| `stand/defaults/loader.conf` | `zfs_load="YES"`, `linux64_load="YES"`, `hwt_load="YES"` | ZFS, Linux ABI and hardware trace are loaded at boot |
+| `sys/amd64/conf/GENERIC`, `stand/lua/config.lua` | ZFS, DTrace, hwt, pf and the base drivers compiled in; the loader always loads the Linux ABI, vmm, hypertrace, kinst and fasttrap | none of them is optional or left to a late kldload |
 | `stand/defaults/loader.conf` | `splash="/boot/images/5bsd-logo.png"` | branding |
 | `stand/efi/loader/main.c` | reads `/efi/5bsd/loader.env` from the ESP | install media sets `boot_policy=strict` there so the loader never falls back to a foreign boot pool |
 | `libexec/rc/rc.conf` | `zfs_enable="YES"` | the storage plane needs a pool at first boot; a UFS root still boots |

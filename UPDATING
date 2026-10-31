@@ -27,6 +27,45 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261031:
+	Base groups and users that an upgrade adds now appear even when pkg
+	cannot merge /etc/group or /etc/master.passwd and leaves .pkgnew
+	files: the runtime package runs base-accounts(8) after every install
+	or upgrade.  It creates missing entries with the shipped ids from
+	/usr/share/base-accounts, never changes existing local entries, and
+	refuses (and reports) an entry whose id a local account already
+	uses.  For a system upgraded with an older build, or from source,
+	run "base-accounts -nv" to see what is missing and "base-accounts"
+	(or "base-accounts -r /usr/src/etc") to create it.  Add users who
+	need sound to the audio group (pw groupmod audio -m USER); bsdinstall
+	now offers audio and video to the users it creates.
+
+	Hardware drivers and late rc.d modules load again with the
+	capability plane: the BSDExtension policy enables device_drivers,
+	which permits modules that /boot/kernel/linker.hints records with
+	plug-and-play data (what devmatch loads at boot), and lists the base rc.d service modules (mac_ntpd, if_vlan,
+	NFS, geom_uzip, cuse, the Bluetooth HID modules and others).
+	rc.subr load_kld and required_modules retry a refused direct load
+	through the broker.  Remove loader.conf *_load lines added only to
+	work around "Cannot autoload" and "Unable to load kernel module".
+
+	amd64 GENERIC now compiles in DTrace and its kernel providers, hwt,
+	hwpmc, ZFS, pf, dummynet, nullfs, fdescfs, mqueuefs, if_bridge,
+	epair, cuse, mac_ntpd, snd_uaudio, uvideo, ure, the HID mouse,
+	consumer, system-control and multitouch drivers, SMBus (intpm,
+	ichsmb), iic, vkbd and the Bluetooth netgraph stack.  The loader
+	loads linux_common, linux64, linprocfs, linsysfs, vmm, hypertrace,
+	kinst and fasttrap on every boot regardless of *_load lines
+	(required_modules="NO" skips them, for recovery), and their *_load
+	lines are gone from /boot/defaults/loader.conf.  vmm.ko now declares
+	its dtrace dependency, so it no longer fails with "symbol
+	dtrace_hypertrace_config_lock undefined".  DTrace scripts that name
+	a module compiled in now (fbt:zfs:, fbt:pf:) must use fbt:: or
+	fbt:kernel:.  Remove *_load lines for the compiled-in modules from
+	/boot/loader.conf and /boot/loader.conf.d; the loader reports them
+	as already loaded.  Rebuild out-of-tree kernel modules (drm-kmod and
+	the other hardware packages) against the new kernel.
+
 20261029:
 	The base system no longer carries a local OpenTelemetry agent: the
 	fluentbit rc.d script, its rc.conf variables, the agent section of

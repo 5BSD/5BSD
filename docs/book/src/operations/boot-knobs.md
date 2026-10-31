@@ -22,9 +22,8 @@ at the loader prompt with `set name="value"`.
 |---|---|---|---|
 | `init_path` | `/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init` | Candidate list for PID 1; the kernel execs the first that works (`kern.init_path` shows it). Capsule first, stock init as fallback. | Never for a normal system. To boot without the plane use `capability_plane`, not this: the memory of a failed capsule exec is not a plane-off boot, and capsule refuses to leave PID 1 dead. |
 | `capability_plane` | unset | `NO`, `off` or `0`: capsule reads the kenv at start, logs `capability_plane=NO: handing PID 1 to /sbin/init (plane-free boot)` and execs stock init, forwarding `-s`. The plane never starts; the kernel code is still present. | Recovery; running the kernel capability test suites; the installer media sets it. |
-| `zfs_load` | `YES` | Loads `zfs.ko` early on every boot so `/dev/zfs` exists for the PID 1 capability chain before rc runs, even when the root is UFS. | Never; the storage plane assumes it. |
-| `linux_common_load`, `linux64_load`, `pty_load`, `fdescfs_load`, `linprocfs_load`, `linsysfs_load` | `YES` | 64-bit Linux emulation, `/dev/ptmx` and the filesystem modules required by Linux startup. There is no 32-bit `linux_load` entry. | To disable default Linux startup, set all six to `NO` in `/boot/loader.conf` and `linux_enable="NO"` in `/etc/rc.conf`; also remove any explicit Linux module boot activations. Installer media disables these preloads. |
-| `hwt_load` | `YES` | Hardware-trace framework hwt(4). The Intel PT backend pt(4) is not preloaded; bsdtrace(8) needs `kldload pt` (or `pt_load="YES"`). | Set `NO` on machines that will never trace. |
+| `required_modules` | unset | The Lua loader loads the 5BSD base modules on every boot, whatever the `*_load` lines say: `linux_common`, `linux64`, `linprocfs`, `linsysfs`, `vmm`, `hypertrace`, `kinst` and `fasttrap` (no static build support), plus `dtraceall`, `hwt`, `zfs`, `pf`, `dummynet`, `nullfs`, `if_bridge`, `if_epair`, `fdescfs`, `mqueuefs`, `cuse` and `mac_ntpd` for a kernel that does not compile them in (amd64 GENERIC does). A module the kernel already provides, or whose file is absent, is skipped. `NO` skips them all. | Recovery only; the installer media sets `NO`. To disable Linux startup set `linux_enable="NO"` in `/etc/rc.conf` instead. |
+| `pt_load` | unset | The Intel PT backend pt(4) for hwt(4) is not loaded by default; bsdtrace(8) needs it (`pt_load="YES"`). | Machines that trace with Intel PT. |
 | `splash`, `shutdown_splash` | `/boot/images/5bsd-logo.png` | Boot and shutdown logo. | Cosmetic. |
 | `loader_brand` | `5bsd` (`5bsd-install` on media) | Loader menu branding (`stand/lua`). | Cosmetic. |
 | `kern.elf64.capmode_interp` | `1` | Lets a process in capability mode exec a dynamically linked binary by loading the brand's own ELF interpreter (`/libexec/ld-elf.so.1`); any other `PT_INTERP` still fails with `ECAPMODE`. Switchboard relies on it to `fexecve` units directly so they carry their own names in ps(1). | Set `0` only to reproduce the old behaviour; units will then fail to launch. Runtime-writable (`RWTUN`). |
@@ -35,10 +34,15 @@ at the loader prompt with `set name="value"`.
 | `hw.virtio_mem.allow_plug` | `0` | virtio-mem driver: issue PLUG requests toward `requested_size`. Plugged memory is not onlined (FreeBSD has no runtime memory add), so plugging only consumes host backing. Boot-only. | Exercising the full PLUG/UNPLUG contract in device tests. |
 | `hw.virtio_iommu.enable` | `0` | Attach the virtio-iommu driver. Boot-only. | Guests that need the device model. |
 
-Two notes on what is missing. First, there are no `mac_capability*_load`
+Three notes on what is missing. First, amd64 GENERIC compiles in DTrace and
+its kernel providers, hwt, hwpmc, ZFS, pf (with pflog, pfsync and pflow),
+dummynet, nullfs, fdescfs, mqueuefs, if_bridge, epair, cuse, mac_ntpd and the
+USB audio, video and Ethernet, HID, SMBus and Bluetooth drivers a desktop
+needs, so there are no `*_load` lines for them either. Second, there are no
+`mac_capability*_load`
 lines: every plane component is `standard` in `sys/conf/files`, the only
 loadable `mac_capability_*` modules are test fixtures, and preloading one
-at boot is wrong. Second, `oes`, `mac_abac`, `mac_veriexec`, `cryptodev` and
+at boot is wrong. Third, `oes`, `mac_abac`, `mac_veriexec`, `cryptodev` and
 `vsock` are likewise compiled in; do not add `_load` lines for them. A
 `kldload` of a module the kernel already contains fails with `EEXIST`, which
 is the expected answer.

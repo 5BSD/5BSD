@@ -227,6 +227,53 @@ switchboardctl services
 
 To roll back, `bectl activate pre-upgrade && reboot`.
 
+### Configuration files pkg could not merge
+
+pkg updates a package configuration file, such as `/etc/group`,
+`/etc/master.passwd` or `/etc/devfs.conf`, with a three-way merge between
+the version it installed before, the new version and your copy. When your
+changes touch the same lines as the release's changes, the merge fails: pkg
+keeps your file unchanged and writes the release's version beside it as
+`FILE.pkgnew`. A user or group you added next to a group the release adds,
+or a root password next to a changed root shell, is enough.
+
+Groups and users are handled for you. After every install or upgrade the
+`runtime` package runs base-accounts(8), which compares `/etc/group` and
+`/etc/master.passwd` with the shipped copies in `/usr/share/base-accounts`
+and creates each base group and user that is missing, with the shipped id.
+It never changes or removes an existing entry, never adds anyone to an
+existing group, and refuses (with a `REFUSED` line in the pkg output) an
+entry whose id is already used by a local account of another name; resolve
+such a conflict by hand. An account you deleted after it was created is not
+recreated. Check the result at any time:
+
+```sh
+base-accounts -nv      # what is missing, kept or refused; changes nothing
+```
+
+A new group grants nothing until you add the people who need it. Sound
+devices (`/dev/dsp*`, `/dev/mixer*`) are `root:audio` with mode 0660, and
+video capture and backlight devices are `root:video`:
+
+```sh
+pw groupmod audio -m alice
+pw groupmod video -m alice
+```
+
+Log in again for the membership to apply. The installer offers both groups
+to each user it creates.
+
+Review every other `.pkgnew` file, merge it by hand and then delete it:
+
+```sh
+find /etc /boot /root -name '*.pkgnew'
+diff -u /etc/devfs.conf /etc/devfs.conf.pkgnew
+```
+
+Do not copy `group.pkgnew` or `master.passwd.pkgnew` over the live files:
+they lack your accounts and passwords. Make any further change from them
+with pw(8) or vipw(8).
+
 Ports packages upgrade independently and at any time:
 
 ```sh
@@ -292,6 +339,7 @@ merging; local overrides continue to take precedence.
 | Upgrade base only from 5BSD | `pkg update -f -r 5BSD-base; pkg upgrade -r 5BSD-base` | Never from a FreeBSD repository |
 | Reboot at once | `reboot` | Kernel, capsule and switchboard binaries are only replaced at boot |
 | Verify | `uname -i`, `ps -p 1 -o comm=`, `switchboardctl services` | GENERIC, capsule, all expected units |
+| Review merges | `base-accounts -nv`; `find /etc /boot /root -name '*.pkgnew'` | New base accounts were created; other unmerged configuration needs a hand merge |
 
 ## What does not upgrade this way
 
