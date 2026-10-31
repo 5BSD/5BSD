@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: BSD-2-Clause
-"""C/C++ rule symbols for the probes' WORKSPACE mode (Bazel 5).
+"""C/C++ rule symbols for the probes (Bazel 9 or later, Bzlmod, rules_cc).
 
-The probes stage this file, or cc_compat_bzlmod.bzl for Bazel 9 with
-Bzlmod and rules_cc, as //toolchain:cc_compat.bzl.  Starlark files and
-BUILD overlays load every C/C++ symbol through it under the bsd_ names, so
-one set of files serves both modes.  Here the symbols are Bazel's native
-ones and the toolchain comes from --crosstool_top (no toolchain type).
+Staged as //toolchain:cc_compat.bzl.  Bazel 9 has no WORKSPACE and no
+native C/C++ rules; the symbols come from the rules_cc module pinned in the
+probe's MODULE.bazel, and the staged toolchain is selected by toolchain
+resolution (registered in MODULE.bazel, platform //toolchain:native).
+Probe .bzl files and targets/ BUILD overlays load the C/C++ symbols from
+here under their bsd_ names, so the rules_cc load paths live in one file.
 """
 
-load("@bazel_tools//tools/cpp:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set", "tool_path")
-load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
+load("@rules_cc//cc:cc_toolchain_config_lib.bzl", "feature", "flag_group", "flag_set", "tool_path")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:find_cc_toolchain.bzl", "CC_TOOLCHAIN_ATTRS", "find_cc_toolchain", "use_cc_toolchain")
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
 
-BSD_CC_MODE = "workspace"
 bsd_cc_common = cc_common
 bsd_CcInfo = CcInfo
 bsd_CcToolchainConfigInfo = CcToolchainConfigInfo
@@ -19,14 +23,12 @@ bsd_feature = feature
 bsd_flag_group = flag_group
 bsd_flag_set = flag_set
 bsd_tool_path = tool_path
-bsd_find_cc_toolchain = find_cpp_toolchain
-BSD_CC_TOOLCHAIN_ATTRS = {
-    "_cc_toolchain": attr.label(default = Label("@bazel_tools//tools/cpp:current_cc_toolchain")),
-}
-BSD_CC_TOOLCHAINS = []
+bsd_find_cc_toolchain = find_cc_toolchain
+BSD_CC_TOOLCHAIN_ATTRS = CC_TOOLCHAIN_ATTRS
+BSD_CC_TOOLCHAINS = use_cc_toolchain()
 
 def bsd_cc_library(**kwargs):
-    native.cc_library(**kwargs)
+    cc_library(**kwargs)
 
 def bsd_cc_binary(**kwargs):
-    native.cc_binary(**kwargs)
+    cc_binary(**kwargs)

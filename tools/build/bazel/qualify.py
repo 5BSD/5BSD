@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Bazel compile pilot and Make installation reference; no system backend selection."""
+"""Bazel compile pilot and Make installation reference; no system backend selection.
+
+Bazel 9 or later only (Bzlmod, rules_cc, offline module inputs); the
+executable defaults to /usr/local/bin/bazel and is version-checked before
+any evidence output is created.
+"""
 import argparse
 import hashlib
 import json
@@ -11,6 +16,9 @@ import re
 import shlex
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bsd_toolchain  # noqa: E402
 
 
 def sha(path):
@@ -50,8 +58,9 @@ def toolchain_identity(target, resource, sysroot):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('src', 'objtop', 'bazel', 'output'):
+    for name in ('src', 'objtop', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    bsd_toolchain.add_bazel_arguments(parser)
     parser.add_argument('--jobs', type=int, required=True)
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
     parser.add_argument('--readelf', type=Path, default=Path('/usr/bin/readelf'))
@@ -70,13 +79,20 @@ def main():
             output.is_relative_to(objtop / 'tmp')):
         parser.error('output must not overlap source or staged sysroot, or contain object inputs')
     bazel, make, readelf = (safe_path(p) for p in (args.bazel, args.make, args.readelf))
+    bzlmod_inputs = safe_path(args.bzlmod_inputs)
+    try:
+        bazel_version = bsd_toolchain.check_bazel_version(bazel)
+        offline = bsd_toolchain.load_bzlmod_inputs(bzlmod_inputs)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     scripts = src / 'tools/build/bazel'
     sysroot = objtop / 'tmp'
     clang = sysroot / 'usr/bin/clang'
     objdump = objtop / 'usr.bin/clang/llvm-objdump/llvm-objdump'
     awk = sysroot / 'legacy/usr/bin/awk'
-    required = [bazel, make, readelf, clang, objdump, awk,
-                scripts / 'declared-probe.py', scripts / 'elf-shared-check-test.py',
+    required = [bazel, make, readelf, clang, objdump, awk, bzlmod_inputs,
+                scripts / 'declared-probe.py', scripts / 'bsd_toolchain.py',
+                scripts / 'bzlmod/MODULE.bazel.lock', scripts / 'elf-shared-check-test.py',
                 scripts / 'install-reference.py', scripts / 'libmd_environment.py',
                 scripts / 'otel-probe.py', scripts / 'targets/sources.json',
                 objtop / '.src_opts',
@@ -126,10 +142,17 @@ def main():
                'compile_only': False, 'bazel_compile_only': True,
                'make_install_reference': 'pending', 'otel_targets': 'pending',
                'runtime_qualified': False, 'system_backend_qualified': False,
-               'bazel9_qualified': False, 'production_backend': 'bsd-make',
+               'bazel_version': bazel_version,
+               'bazel_minimum_major': bsd_toolchain.MINIMUM_BAZEL_MAJOR,
+               'bazel_modules': offline['modules'],
+               'bzlmod_inputs': str(bzlmod_inputs),
+               'repository_cache_digest': offline['repository_cache_digest'],
+               'distdir_digest': offline['distdir_digest'],
+               'production_backend': 'bsd-make',
                'remaining_inputs': ['host execution runtime and environment',
                                     'maintained Make configuration; not a hermetic build'],
-               'tool_hashes': {str(path): sha(path) for path in (bazel, make, readelf, clang, objdump, awk)},
+               'tool_hashes': {str(path): sha(path) for path in (bazel, make, readelf, clang, objdump, awk,
+                                                                 bzlmod_inputs)},
                'entrypoint_sha256': sha(Path(__file__)), 'source_hashes': source_hashes,
                'make_configuration': {'SRCCONF': '/dev/null', '__MAKE_CONF': '/dev/null'},
                'awk_resolved': str(awk.resolve(strict=True))}
@@ -143,6 +166,7 @@ def main():
                       '-j' + str(args.jobs), artifact])
         run([sys.executable, '-B', scripts / 'declared-probe.py', '--src', src,
              '--sysroot', sysroot, '--objdump', objdump, '--bazel', bazel,
+             '--bzlmod-inputs', bzlmod_inputs,
              '--output', output / 'pilot', '--target', target, '--cpu', 'k8',
              '--clang-version', version, '--jobs', str(args.jobs), '--readelf', readelf,
              '--awk', awk, '--make-library', output / 'make/samples/libbsd_samples.so.1',
@@ -152,7 +176,7 @@ def main():
         # artifact comparison only (host execution is left to explicit probe runs).
         run([sys.executable, '-B', scripts / 'otel-probe.py', '--src', src,
              '--sysroot', sysroot, '--objdump', objdump, '--awk', awk, '--bazel', bazel,
-             '--make', make, '--readelf', readelf, '--target', target, '--cpu', 'k8',
+             '--bzlmod-inputs', bzlmod_inputs, '--make', make, '--readelf', readelf, '--target', target, '--cpu', 'k8',
              '--clang-version', version, '--jobs', str(args.jobs), '--skip-host-runtime',
              '--output', output / 'otel'])
         otel_result = json.loads((output / 'otel/result.json').read_text())

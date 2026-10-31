@@ -14,6 +14,7 @@ import stage_verify
 import native_prepare
 import component_qualify
 import source_graph
+import bsd_toolchain
 
 PLAN_KEYS = ('plan', 'test-plan', 'install-plan', 'test-runtime', 'library-install-plan', 'compression-tools', 'directory-policy', 'install-tools')
 
@@ -34,6 +35,8 @@ def main():
     parser.add_argument('--jobs', type=int, required=True)
     args = parser.parse_args()
     if args.jobs < 1: raise ValueError('positive jobs required')
+    # Bazel 9 or later only; refused before any input is prepared or run.
+    bsd_toolchain.check_bazel_version(args.bazel)
     config = json.loads(args.inputs.read_text())
     if isinstance(config, dict) and type(config.get("format")) is int and config["format"] == 5:
         source_graph.qualify(config, args)
