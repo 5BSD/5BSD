@@ -772,6 +772,21 @@ class HardwarePackages(unittest.TestCase):
         self.assertIn('file:///usr/5bsd-packages/ports', output)
         self.assertRegex(output, r'enabled\s*:\s*yes')
 
+    def test_5bsd_ports_takes_precedence_over_freebsd_ports(self):
+        repos = self.base / 'repos'
+        repos.mkdir()
+        (repos / 'FreeBSD.conf').write_text(
+            (SRC / 'usr.sbin/pkg/FreeBSD.conf.latest').read_text())
+        (repos / '5BSD-ports.conf').write_text(
+            (SRC / 'usr.sbin/pkg/5BSD-ports.conf').read_text())
+        output = hw.run(PKG, '-C', '/dev/null', '-o',
+                        'REPOS_DIR=' + str(repos), '-vv',
+                        capture_output=True).stdout.split('Repositories:', 1)[1]
+        priority = {name: int(value) for name, value in re.findall(
+            r'^  ([\w-]+): \{[^}]*?priority\s*:\s*(\d+)', output, re.M | re.S)}
+        self.assertEqual(priority.get('5BSD-ports'), 100)
+        self.assertGreater(priority['5BSD-ports'], priority.get('FreeBSD-ports', 0))
+
     def test_gpu_wrapper_becomes_exact_raw_data(self):
         obj = self.base / 'firmware.o'
         assembly = ('.section .rodata\n.globl _binary_gpu_fw_start\n'
