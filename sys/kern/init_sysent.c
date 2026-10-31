@@ -351,7 +351,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(modnext_args), .sy_call = (sy_call_t *)sys_modnext, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 300 = modnext */
 	{ .sy_narg = AS(modstat_args), .sy_call = (sy_call_t *)sys_modstat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 301 = modstat */
 	{ .sy_narg = AS(modfnext_args), .sy_call = (sy_call_t *)sys_modfnext, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 302 = modfnext */
-	{ .sy_narg = AS(modfind_args), .sy_call = (sy_call_t *)sys_modfind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 303 = modfind */
+	{ .sy_narg = AS(modfind_args), .sy_call = (sy_call_t *)sys_modfind, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 303 = modfind */
 	{ .sy_narg = AS(kldload_args), .sy_call = (sy_call_t *)sys_kldload, .sy_auevent = AUE_MODLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 304 = kldload */
 	{ .sy_narg = AS(kldunload_args), .sy_call = (sy_call_t *)sys_kldunload, .sy_auevent = AUE_MODUNLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 305 = kldunload */
 	{ .sy_narg = AS(kldfind_args), .sy_call = (sy_call_t *)sys_kldfind, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 306 = kldfind */

@@ -188,7 +188,7 @@ emitters_refuse_body()
 		fake_program prog
 		rc_setup 'otel_enable="YES"' \
 		    "otel_dtrace_bin=\"$(pwd)/prog\""
-		atf_check -s exit:1 -e match:"dtraceall_load" \
+		atf_check -s exit:1 -e match:"required_modules" \
 		    ./rc_run otel_dtrace start
 	fi
 }

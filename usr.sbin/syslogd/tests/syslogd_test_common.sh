@@ -143,7 +143,8 @@ syslogd_check_req()
 {
     type=$1
 
-    if kldstat -q -n if_${type}.ko; then
+    # By module name: if_$type may be compiled into the kernel.
+    if kldstat -q -m if_${type}; then
         return
     fi
 

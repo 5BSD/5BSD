@@ -5,17 +5,17 @@
  * entry in the ZFS I/O pipeline. Aggregates latency as a
  * histogram by process. Uses the zio pointer to correlate
  * across threads (ZFS dispatches ZIOs asynchronously).
- * Requires zfs.ko loaded.
+ * Requires ZFS (compiled into GENERIC).
  */
 
-fbt:zfs:zio_execute:entry
+fbt::zio_execute:entry
 /* @bsdinstruments-predicate */
 {
     zio_start[arg0] = timestamp;
     zio_exec[arg0] = execname;
 }
 
-fbt:zfs:zio_done:entry
+fbt::zio_done:entry
 /zio_start[arg0]/
 {
     this->elapsed_us = (timestamp - zio_start[arg0]) / 1000;

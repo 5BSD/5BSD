@@ -29,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/filio.h>
 #include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/rtprio.h>
 #include <sys/nv.h>
 #include <sys/sndstat.h>
@@ -2564,7 +2565,6 @@ int
 main(int argc, char **argv)
 {
 	const char *ptrerr;
-	const char *cuse_mod = "cuse.ko";
 	struct sigaction sa;
 	struct cuse_dev *pdev = NULL;
 	struct virtual_profile *pvp;
@@ -2584,9 +2584,13 @@ main(int argc, char **argv)
 
 	atomic_init();
 
-	if ((kldfind(cuse_mod) < 0 && errno == ENOENT) &&
-	    (kldload(cuse_mod) < 0 && errno != EEXIST)) {
-		err(1, "Failed to load %s", cuse_mod);
+	/*
+	 * cuse may be compiled into the kernel (5BSD GENERIC) or be a module;
+	 * look the module up by name, which finds either.
+	 */
+	if ((modfind("cuse") < 0 && errno == ENOENT) &&
+	    (kldload("cuse") < 0 && errno != EEXIST)) {
+		err(1, "Failed to load cuse");
 	}
 
 	if (cuse_init() != 0)

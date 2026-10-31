@@ -170,10 +170,10 @@ receive_priority_check()
 	jexec priority pfctl -e
 	pft_set_rules priority 'pass no state'
 	cat > priority.d <<SCRIPT
-fbt:pf:pf_test:entry
+fbt::pf_test:entry
 /arg0 == 2 && arg1 == 1 && ((struct ifnet *)arg2)->if_index == $index/
 { self->pp = (struct mbuf **)arg3; }
-fbt:pf:pf_test:return
+fbt::pf_test:return
 /self->pp != 0/
 {
  this->m = *self->pp;

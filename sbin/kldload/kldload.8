@@ -61,7 +61,9 @@ in the current directory.
 The following options are available:
 .Bl -tag -width indent
 .It Fl n
-Do not try to load module if already loaded.
+Do not try to load module if already loaded, either as a module file or
+compiled into the kernel (checked by module name with
+.Xr modfind 2 ) .
 .It Fl v
 Be more verbose.
 .It Fl q

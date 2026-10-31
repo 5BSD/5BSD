@@ -1488,7 +1488,7 @@
 		    int modid
 		);
 	}
-303	AUE_NULL	STD {
+303	AUE_NULL	STD|CAPENABLED {
 		int modfind(
 		    _In_z_ const char *name
 		);

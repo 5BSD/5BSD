@@ -3,10 +3,10 @@
  *
  * Traces ZFS pool-level operations: sync, txg commit, and
  * scrub activity. Shows write amplification and sync
- * frequency. Requires zfs.ko loaded.
+ * frequency. Requires ZFS (compiled into GENERIC).
  */
 
-fbt:zfs:spa_sync:entry
+fbt::spa_sync:entry
 /* @bsdinstruments-predicate */
 {
     self->sync_ts = timestamp;
@@ -14,7 +14,7 @@ fbt:zfs:spa_sync:entry
     /* @bsdinstruments-ustack */
 }
 
-fbt:zfs:spa_sync:return
+fbt::spa_sync:return
 /self->sync_ts/
 {
     this->ms = (timestamp - self->sync_ts) / 1000000;
@@ -23,13 +23,13 @@ fbt:zfs:spa_sync:return
     self->sync_ts = 0;
 }
 
-fbt:zfs:txg_sync_thread:entry
+fbt::txg_sync_thread:entry
 /* @bsdinstruments-predicate */
 {
     @txg_syncs[execname] = count();
 }
 
-fbt:zfs:dsl_scan_sync:entry
+fbt::dsl_scan_sync:entry
 /* @bsdinstruments-predicate */
 {
     printf("%s[%d]: ZFS scrub sync\n", execname, pid);

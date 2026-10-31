@@ -29,6 +29,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/linker.h>
+#include <sys/module.h>
 #include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <err.h>
@@ -127,6 +128,31 @@ path_check(const char *kldname, int quiet)
 	return (0);
 }
 
+/*
+ * Is the named module already present, as a loaded file or compiled into the
+ * kernel?  -n asks this before loading: with the 5BSD capability plane the
+ * kernel refuses a late kldload(2) before it can report EEXIST, and a module
+ * compiled into the kernel has no file for kldfind(2) to find.
+ */
+static int
+already_loaded(const char *name)
+{
+	char modname[MAXPATHLEN];
+	const char *base;
+	size_t len;
+
+	if (kldfind(name) >= 0)
+		return (1);
+	base = strrchr(name, '/');
+	base = base != NULL ? base + 1 : name;
+	if (strlcpy(modname, base, sizeof(modname)) >= sizeof(modname))
+		return (0);
+	len = strlen(modname);
+	if (len > 3 && strcmp(modname + len - 3, ".ko") == 0)
+		modname[len - 3] = '\0';
+	return (modfind(modname) >= 0);
+}
+
 static void
 usage(void)
 {
@@ -174,6 +200,12 @@ main(int argc, char** argv)
 		usage();
 
 	while (argc-- != 0) {
+		if (check_loaded != 0 && already_loaded(argv[0])) {
+			if (verbose)
+				printf("%s is already loaded\n", argv[0]);
+			argv++;
+			continue;
+		}
 		if (path_check(argv[0], quiet) == 0) {
 			fileid = trace_kldload(argv[0]);
 			if (fileid < 0) {
