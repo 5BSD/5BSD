@@ -2168,13 +2168,32 @@ and their test programs
 and compares their compile and link flags, archive members, symbols
 and program ELF metadata with independent Make builds of the same sources.
 These programs are not executed by this action.
-The maintained native graph does not yet provide the OTLP protobuf
-closure (protoc with the upb plugins, libupb, nghttp2) that the current
-.Pa lib/libotelexport
-needs: its native archive targets fail analysis with that reason, as do
-native targets depending on them such as
-.Pa usr.sbin/hwstat ,
-while its native installation targets (manuals, licence) remain buildable.
+The same components are also ordinary maintained native targets, selected
+through format-5
+.Fl -bazel-inputs
+like any other component:
+the native graph provides the Protocol Buffers closure
+.Po
+.Pa lib/libabsl ,
+.Pa lib/protobuf ,
+.Pa lib/libnghttp2 ,
+.Pa usr.bin/protoc
+and the
+.Pa libexec/protoc-gen-upb*
+plugins
+.Pc ,
+generates the OTLP bindings with uninstrumented execution-platform
+.Dq :bootstrap
+variants of protoc and the plugins, and builds libdtrace,
+.Xr dtrace 1
+and the OpenTelemetry programs with their installation payloads.
+DTrace provider generation in the native graph uses
+.Dq //cddl/usr.sbin/dtrace:bootstrap
+and its
+.Dq bootstrap_runtime
+libraries, so the instrumented native libraries never need
+.Xr dtrace 1
+in their own configuration.
 The separate libdtrace and
 .Xr dtrace 1
 probe

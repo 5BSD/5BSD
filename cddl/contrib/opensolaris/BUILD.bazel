@@ -40,13 +40,68 @@ exports_files(["lib/libctf/common/ctf.5"], visibility = ["//cddl/lib/libctf:__pk
 
 exports_files(["lib/libdtrace/common/" + name for name in ["mkerrtags.sh", "mknames.sh", "dt_errtags.h", "dt_grammar.y", "dt_lex.l"]], visibility = ["//cddl/lib/libdtrace:__pkg__"])
 
-exports_files(['lib/libdtrace/common/dt_aggregate.c', 'lib/libdtrace/common/dt_as.c', 'lib/libdtrace/common/dt_buf.c', 'lib/libdtrace/common/dt_cc.c', 'lib/libdtrace/common/dt_cg.c', 'lib/libdtrace/common/dt_consume.c', 'lib/libdtrace/common/dt_decl.c', 'lib/libdtrace/common/dt_dis.c', 'lib/libdtrace/common/dt_dof.c', 'lib/libdtrace/common/dt_error.c', 'lib/libdtrace/common/dt_handle.c', 'lib/libdtrace/common/dt_ident.c', 'lib/libdtrace/common/dt_inttab.c', 'lib/libdtrace/common/dt_link.c', 'lib/libdtrace/common/dt_list.c', 'lib/libdtrace/common/dt_map.c', 'lib/libdtrace/common/dt_module.c', 'lib/libdtrace/common/dt_open.c', 'lib/libdtrace/common/dt_options.c', 'lib/libdtrace/common/dt_parser.c', 'lib/libdtrace/common/dt_pcb.c', 'lib/libdtrace/common/dt_pid.c', 'lib/libdtrace/common/dt_pq.c', 'lib/libdtrace/common/dt_pragma.c', 'lib/libdtrace/common/dt_print.c', 'lib/libdtrace/common/dt_printf.c', 'lib/libdtrace/common/dt_proc.c', 'lib/libdtrace/common/dt_program.c', 'lib/libdtrace/common/dt_provider.c', 'lib/libdtrace/common/dt_regset.c', 'lib/libdtrace/common/dt_string.c', 'lib/libdtrace/common/dt_strtab.c', 'lib/libdtrace/common/dt_subr.c', 'lib/libdtrace/common/dt_sugar.c', 'lib/libdtrace/common/dt_work.c', 'lib/libdtrace/common/dt_xlator.c', 'lib/libdtrace/i386/dt_isadep.c', 'lib/libgen/common/gmatch.c'], visibility = ["//cddl/lib/libdtrace:__pkg__"])
-cc_library(name = "dtrace_headers", hdrs = glob(["lib/libdtrace/common/*.h"]), includes = ["lib/libdtrace/common"],
+exports_files([
+    "lib/libdtrace/common/dt_aggregate.c",
+    "lib/libdtrace/common/dt_analysis.c",
+    "lib/libdtrace/common/dt_as.c",
+    "lib/libdtrace/common/dt_basic_block.cc",
+    "lib/libdtrace/common/dt_benchmark.c",
+    "lib/libdtrace/common/dt_buf.c",
+    "lib/libdtrace/common/dt_cc.c",
+    "lib/libdtrace/common/dt_cg.c",
+    "lib/libdtrace/common/dt_consume.c",
+    "lib/libdtrace/common/dt_decl.c",
+    "lib/libdtrace/common/dt_dis.c",
+    "lib/libdtrace/common/dt_dof.c",
+    "lib/libdtrace/common/dt_elf.cc",
+    "lib/libdtrace/common/dt_error.c",
+    "lib/libdtrace/common/dt_handle.c",
+    "lib/libdtrace/common/dt_hashmap.c",
+    "lib/libdtrace/common/dt_hypertrace_linker.cc",
+    "lib/libdtrace/common/dt_ident.c",
+    "lib/libdtrace/common/dt_dfg.cc",
+    "lib/libdtrace/i386/dt_isadep.c",
+    "lib/libdtrace/common/dt_inttab.c",
+    "lib/libdtrace/common/dt_link.c",
+    "lib/libdtrace/common/dt_linker_subr.cc",
+    "lib/libdtrace/common/dt_list.c",
+    "lib/libdtrace/common/dt_map.c",
+    "lib/libdtrace/common/dt_module.c",
+    "lib/libdtrace/common/dt_open.c",
+    "lib/libdtrace/common/dt_options.c",
+    "lib/libdtrace/common/dt_parser.c",
+    "lib/libdtrace/common/dt_pcb.c",
+    "lib/libdtrace/common/dt_pid.c",
+    "lib/libdtrace/common/dt_pq.c",
+    "lib/libdtrace/common/dt_pragma.c",
+    "lib/libdtrace/common/dt_print.c",
+    "lib/libdtrace/common/dt_printf.c",
+    "lib/libdtrace/common/dt_proc.c",
+    "lib/libdtrace/common/dt_program.c",
+    "lib/libdtrace/common/dt_provider.c",
+    "lib/libdtrace/common/dt_regset.c",
+    "lib/libdtrace/common/dt_resolver.c",
+    "lib/libdtrace/common/dt_string.c",
+    "lib/libdtrace/common/dt_strtab.c",
+    "lib/libdtrace/common/dt_subr.c",
+    "lib/libdtrace/common/dt_sugar.c",
+    "lib/libdtrace/common/dt_typefile.cc",
+    "lib/libdtrace/common/dt_typing.cc",
+    "lib/libdtrace/common/dt_typing_helpers.cc",
+    "lib/libdtrace/common/dt_typing_reg.cc",
+    "lib/libdtrace/common/dt_typing_stack.cc",
+    "lib/libdtrace/common/dt_typing_subr.cc",
+    "lib/libdtrace/common/dt_typing_var.cc",
+    "lib/libdtrace/common/dt_work.c",
+    "lib/libdtrace/common/dt_xlator.c",
+    "lib/libgen/common/gmatch.c",
+], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+cc_library(name = "dtrace_headers", hdrs = glob(["lib/libdtrace/common/*.h", "lib/libdtrace/common/*.hh"]), includes = ["lib/libdtrace/common"],
     deps = [":ctf_library_headers"], visibility = ["//visibility:public"])
 
-exports_files(["cmd/dtrace/dtrace.c"], visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])
+exports_files(["cmd/dtrace/dtrace.c", "cmd/dtrace/dtrace_identifiers.h", "cmd/dtrace/hypertrace_frame.h"], visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])
 
-exports_files(["lib/libdtrace/common/dtrace.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+exports_files(["lib/libdtrace/common/dtrace.h", "lib/libdtrace/common/dt_hypertrace.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
 
 exports_files(["cmd/dtrace/dtrace.1"], visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])
 
