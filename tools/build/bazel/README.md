@@ -550,9 +550,11 @@ source checksum and fresh application of existing FreeBSD patches passed;
 the later native bootstrap and libmd runtime checks also passed, as recorded
 below. Full system qualification remains pending. Port-input evidence is retained at
 `/usr/obj/bazel931-port-validation/port-validation.json`. Cached 9.2.0 packages
-are not evidence for the latest release. Qualify explicit rules_cc/Bzlmod inputs
-with the new release. Do not change the production default based on the Bazel5
-pilot results below.
+are not evidence for the latest release. Bazel 9 (9.3.1 today) is the only
+supported Bazel: every tool, pilot and probe here requires it with Bzlmod and
+rules_cc, and Bazel 5 and the WORKSPACE mode are removed (see "Bazel 9 only"
+below for what was re-qualified). Do not change the production default based
+on the pilot results below.
 
 `make packages` compatibility is required, not an optional follow-up:
 
@@ -631,8 +633,13 @@ output directory. Build products belong under `/usr/obj`, for example:
 
 ```
 python3.12 tools/build/bazel/native-probe.py --src /usr/src \
-  --output /usr/obj/usr/src/bazel-native-probe --bazel /usr/local/bin/bazel
+  --output /usr/obj/usr/src/bazel-native-probe --bazel /usr/local/bin/bazel \
+  --bzlmod-inputs /usr/obj/usr/src/bazel-offline/inputs.json
 ```
+
+Since "Bazel 9 only" it uses Bzlmod (MODULE.bazel with the pinned rules_cc and
+platforms, the pinned lockfile, offline inputs) and rules_cc's autodetected
+host toolchain instead of a WORKSPACE and native `cc_binary`.
 
 The default parallelism is all logical CPUs. This probe intentionally uses
 host headers/libraries. It does not establish hermeticity, source-tree sysroot
@@ -649,9 +656,9 @@ selected bazel9 update to 9.3.1 described above. The newer ports require OpenJDK
 The Bazel 9 distfile is cached, and that port includes FreeBSD toolchain patches;
 only OpenJDK 11 is currently installed on the host. Select and stage the supported
 version deliberately; do not silently fall back to the old installed executable.
-This first probe was qualified with 5.4.1 only. Newer versions need an explicit
-Bzlmod/rules_cc dependency set; the legacy native cc_binary workspace is not
-claimed portable across all those versions.
+This first probe was qualified with 5.4.1 only; it was converted to Bzlmod
+with rules_cc and passed on Bazel 9.3.1 (`b9-native-probe-r1`, "Bazel 9
+only"). Bazel 5 is no longer supported.
 
 ## Next integration gates
 
@@ -692,7 +699,12 @@ does not install or package Bazel.
 
 ## Pinned ports input and package composition
 
-`bazel9.json` is the candidate version contract, not a claim of qualification.
+`bazel9.json` is the version contract: devel/bazel9 (package bazel9-9.3.1)
+with java/openjdk21 is the only supported Bazel, installed as
+`/usr/local/bin/bazel` (the port's pkg-plist `bin/bazel`; `CONFLICTS_INSTALL=
+bazel[0-9]*` keeps a single Bazel per system, so bazel5 must be removed first).
+The tools default to that path and refuse a `bazel --version` older than 9.
+The contract pins the port, not a qualified system backend.
 `port-plan.py` evaluates a trusted selected ports checkout through Make without
 running a build or install target. It rejects package-version or Java-origin
 drift instead of choosing whatever executable happens to be in PATH:
@@ -813,12 +825,16 @@ invoke Make for compilation. Required inputs are explicit:
 python3.12 -B tools/build/bazel/declared-probe.py --src /usr/src \
   --sysroot /usr/obj/usr/src/amd64.amd64/tmp \
   --objdump /usr/obj/usr/src/amd64.amd64/usr.bin/clang/llvm-objdump/llvm-objdump \
-  --bazel /usr/local/bin/bazel --target x86_64-unknown-freebsd16.0 \
+  --bzlmod-inputs /usr/obj/usr/src/bazel-offline/inputs.json \
+  --target x86_64-unknown-freebsd16.0 \
   --cpu k8 --clang-version 21 \
   --readelf /usr/bin/readelf \
   --make-library /usr/obj/usr/src/amd64.amd64/tools/build/bazel/shared-reference/libbsd_samples.so.1 \
   --output /usr/obj/usr/src/bazel-declared-pilot
 ```
+
+`--bazel` defaults to `/usr/local/bin/bazel` and must report Bazel 9 or later;
+`--bzlmod-inputs` names the offline module inputs (see "Bazel 9 only").
 
 First build the independent Make reference described below. Use a fresh output path. The CPU name is Bazel's explicit toolchain key, while
 the target triple determines Clang's ABI. No cross-build qualification is implied.
@@ -844,10 +860,11 @@ not that failure as evidence of compatibility.
 
 The processwrapper sandbox does not establish full hermeticity. Bazel/Java,
 embedded tools, the host kernel, and any executable runtime dependencies remain
-host inputs. SDK hashing does not authenticate source provenance. The current
-qualification uses installed Bazel5.4.1; Bazel9/Bzlmod, full base targets, complete dynamic
-runtime/ABI coverage, cross builds, package manifests, output parity and performance remain
-unqualified. Build-bsd continues selecting Make.
+host inputs. SDK hashing does not authenticate source provenance. The pilot was
+first qualified with Bazel 5.4.1 and is now qualified on Bazel 9.3.1 with Bzlmod
+and rules_cc only, with byte-identical outputs ("Bazel 9 only"). Full base
+targets, complete dynamic runtime/ABI coverage, cross builds, package manifests,
+output parity and performance remain unqualified. Build-bsd continues selecting Make.
 
 `runtime_test.c` is a separately Make-built static ATF helper for matching-system
 qualification. It checks four echo cases against both Bazel and Make outputs,
@@ -1161,8 +1178,13 @@ runtime runner; no production backend selection changes in build-bsd.c.
 ```
 python3.12 tools/build/bazel/qualify.py --src /usr/src \
  --objtop /usr/obj/usr/src/amd64.amd64 --bazel /usr/local/bin/bazel \
+ --bzlmod-inputs /usr/obj/usr/src/bazel-offline/inputs.json \
  --output /usr/obj/usr/src/bazel-qualification-NEW --jobs 16
 ```
+
+`--bazel` defaults to `/usr/local/bin/bazel`; `qualify.py` runs `bazel --version`
+before creating evidence and refuses Bazel older than 9. build-bsd passes its
+`--bazel-modules` file as `--bzlmod-inputs`.
 
 The frontend supplies source, native objtop, Bazel executable, a new evidence
 output and selected job count explicitly. Optional `--make` and `--readelf`
@@ -1203,7 +1225,8 @@ Use the returned directory as Bazel's --repository_cache input. This is a
 cache seed, not proof that an arbitrary consumer's module graph can resolve
 offline. A consumer still needs explicit module versions, a lockfile, required
 registry metadata and extension inputs, followed by an actual offline build.
-The current Bazel5 pilot is not converted or qualified for Bazel9 by this helper.
+The declared pilot now runs on Bazel 9 with its own offline inputs ("Bazel 9
+only"); this helper did not produce them.
 Native corruption/escape/duplicate checks: python3.12 -B repository-cache-test.py.
 
 Bootstrap failure propagation
@@ -42838,7 +42861,8 @@ Results (status passed):
 and records `otel_targets` and the result hash; component directory files are
 hashed and rechecked with the other inputs. build-bsd.c is unchanged: the
 `bazel-test` argv, the `bazel-compile-comparison` scope and
-`runtime=not-performed` remain accurate, so its tests need no change. The
+`runtime=not-performed` remained accurate, so its tests needed no change at
+the time (Bazel 9 only later added `--bazel-modules`). The
 manual describes the added comparison. The full `qualify.py` entrypoint was
 not rerun against `/usr/src`; the probe was run with the exact arguments
 `qualify.py` passes (`bazel-otel-qualify-args-r1`).
@@ -42857,10 +42881,14 @@ not rerun against `/usr/src`; the probe was run with the exact arguments
 
 ### Bazel 9.3.1 with Bzlmod and VM runtime (2026-10-30)
 
+Superseded by "Bazel 9 only" below: the WORKSPACE mode and Bazel 5 were
+removed, `--bzlmod-inputs` is required, and `cc_compat_bzlmod.bzl` became
+`cc_compat.bzl`.  Historical record of the first Bazel 9 runs:
+
 The four probes (`declared-probe.py`, `otel-probe.py`, `dtrace-probe.py`,
 `protobuf-probe.py`) now also run under Bazel 9.3.1 with Bzlmod and rules_cc.
-WORKSPACE mode (Bazel 5) stays the default and is what `bazel-test` and
-`qualify.py` run; `--bzlmod-inputs FILE` selects the Bzlmod mode:
+WORKSPACE mode (Bazel 5) stayed the default at the time and was what
+`bazel-test` and `qualify.py` ran; `--bzlmod-inputs FILE` selected the Bzlmod mode:
 
 - `bsd_toolchain.py` writes `MODULE.bazel` (`bazel_dep` rules_cc and
   platforms at the versions the inputs file pins, `register_toolchains`) and
@@ -42941,8 +42969,129 @@ protoc's usage line, which prints argv[0].
 
 Not established: Bazel 9 as a build backend, cross builds of Bazel targets,
 installation and package parity, live OTLP network transports from the
-Bazel binaries in the VM, performance.  build-bsd's `bazel-test` continues to
-run the WORKSPACE mode; Make remains the production backend.
+Bazel binaries in the VM, performance.  build-bsd's `bazel-test` ran the
+WORKSPACE mode at the time; it runs Bazel 9 only since "Bazel 9 only" below.
+Make remains the production backend.
+
+### Bazel 9 only (2026-10-30)
+
+Bazel 9 or later, with Bzlmod and rules_cc, is the only supported Bazel for
+the declared pilot (`declared-probe.py`), `qualify.py`, `otel-probe.py`,
+`dtrace-probe.py`, `protobuf-probe.py`, `native-probe.py`, the staged
+toolchain (`bsd_toolchain.py`, `cc_compat.bzl` and the probe `.bzl` rules) and
+build-bsd's `bazel-test` action.  Bazel 5 and the WORKSPACE mode are removed:
+no `WORKSPACE` file, no native C/C++ rules, no `cc_toolchain_suite` or
+`--crosstool_top`/`--cpu`; `cc_compat_bzlmod.bzl` became `cc_compat.bzl`
+(rules_cc symbols only).
+
+- Version gate: every tool (and `native-qualify.py`) runs `bazel --version`
+  (answered by the client, no server) before creating evidence output and
+  refuses an unparsable version or a major version below 9, e.g.
+  `/usr/local/bin/bazel is Bazel 5.4.1; these tools require Bazel 9 or later
+  with Bzlmod (Bazel 5 and the WORKSPACE mode are no longer supported)`.
+- Executable: `--bazel` defaults to `/usr/local/bin/bazel`, which is where
+  the bazel9 package installs it (devel/bazel9 pkg-plist `bin/bazel`;
+  `CONFLICTS_INSTALL=bazel[0-9]*`, so it replaces bazel5 rather than
+  coexisting).  Until the host switches, pass `--bazel` to a Bazel 9 build.
+- Pinned module inputs, in-tree: `bsd_toolchain.PINNED_MODULES` (rules_cc
+  0.2.17, platforms 1.0.0) and `bzlmod/MODULE.bazel.lock` (sha256
+  `b740de99469ec391a88b4893c923fa754e0967281e46628f071f50fa69442297`, the lock
+  of the native libmd Bazel 9.3.1 qualification workspace, which the probes
+  already used).  Each probe workspace gets a `MODULE.bazel` with those
+  `bazel_dep`s and a copy of the lock; builds and queries use
+  `--lockfile_mode=error`, and every result records whether the lock stayed
+  unchanged.
+- Offline inputs, per host: `--bzlmod-inputs FILE` (required; build-bsd:
+  `--bazel-modules FILE`) is JSON with `repository_cache` (a content-addressed
+  cache: only `content_addressable/sha256/<hash>/file` entries whose SHA-256
+  equals `<hash>`, plus empty `id-*` markers, no links), `distdirs` (directories
+  of regular files) and optionally `java_home` (the Bazel server JDK; without
+  it the launcher's built-in default, `/usr/local/openjdk21` for the bazel9
+  package, is used).  Module pins and lockfile, if present in an older inputs
+  file, must equal the in-tree ones.  The tools verify every cache entry and
+  record digests of the cache and distdir contents.  Bazel writes to its
+  repository cache (downloaded archives and the repo contents cache
+  `contents/`), so the verified `content_addressable` tree is copied into each
+  run's output and only that copy is given to Bazel, together with every
+  distdir and `--repository_disable_download`.  (The earlier Bazel 9 probe
+  runs passed the libmd qualification's cache directly, and Bazel added
+  entries to it.)
+- `bazel mod deps` cannot run offline: it evaluates every module extension of
+  the graph, and rules_python's pip extension needs a Python 3.11 toolchain.
+  The lockfile is therefore used as pinned, in error mode; builds evaluate
+  only the extensions their targets need.
+
+Refreshing the pins (only when network access is allowed; not exercised here):
+
+1. Choose the new versions and update `PINNED_MODULES`.
+2. Run one probe (for example the declared pilot) with a fresh empty
+   repository cache, `--lockfile_mode=update` instead of `error` and without
+   `--repository_disable_download` (a one-off edit of
+   `bsd_toolchain.repository_flags`, or the same `bazel build` run by hand in
+   the probe's `workspace/`).  The build evaluates the extensions the probe
+   targets need and writes the lockfile and the cache.  `bazel mod deps
+   --lockfile_mode=update` covers every extension but needs rules_python's
+   Python 3.11 toolchain.
+3. Copy the new `MODULE.bazel.lock` to `bzlmod/`, keep only the cache's
+   `content_addressable/` tree (verify each entry against its name), and add
+   any archive fetched from a non-registry URL to a distdir named by its
+   SHA-256.
+4. Restore the error-mode, no-download flags and rerun all probes offline
+   against the new inputs file; record the new lock hash here.
+
+build-bsd `bazel-test`: `--bazel` defaults to `/usr/local/bin/bazel` (a missing
+default names the bazel9 package); the declared pilot requires
+`--bazel-modules FILE`, passed to `qualify.py` as `--bzlmod-inputs`, and
+rejects it together with the native `--bazel-inputs`.  The plan states
+`bazel=9-or-later module-resolution=offline-pinned-lockfile` (JSON:
+`bazel_minimum_major` 9, `module_resolution`).  The manual, sample
+configuration and the `bazel_plan` ATF case cover this.
+
+Re-qualified on Bazel 9.3.1 (offline; evidence in `/usr/obj/5BSD-otel-validation`,
+record `b9-record.md`; executable sha256 `ea06c3dc…e667ed` unless noted):
+
+- Version gate: `/usr/local/bin/bazel` (Bazel 5.4.1) is refused by the probes
+  and by `bazel-test` before any evidence output exists (`b9-refusals.log`,
+  `b9-buildbsd/e2e-bazel5-refused.txt`).
+- Declared pilot (`b9-declared-r1`, same SDK and Make reference as
+  `bazel-declared-pilot-r1`): passed, all nine outputs byte-identical to the
+  Bazel 5 run and to `hk-declared-bazel9-r2`; lockfile unchanged.  The pilot
+  run with the packaged `bin/bazel` from the bazel9 package built below
+  (`b9-declared-pkgbazel-r1`) gives the same nine hashes.  Because the outputs
+  equal the Bazel 5 hashes, no new VM runtime receipt was needed.
+- `native-probe.py` (`b9-native-probe-r1`): passed, four echo cases.
+- `otel-probe.py`, `dtrace-probe.py`, `protobuf-probe.py` (`b9-*-r2`) against
+  a fresh buildworld of this tree (`b9-world.sh`; the earlier merge2 SDK
+  predates this tree's libdtrace, so Make could not link its dtrace(1)):
+  all passed with every check (SRCS, ordered compile/link policy, per-object
+  comparison with explained differences, ELF/archive comparison, negative
+  dependency suites, restored outputs, generated-file parity, host runtime)
+  and the lockfile unchanged.  otel: 23 artifacts, 9 explained object
+  differences, 37 invalidation cases; protobuf: 765 objects, 467 explained
+  differences, 60 generated upb files byte-identical, 20 invalidation cases.
+- build-bsd `bazel-test` end to end (`b9-bazeltest-r1`, 660 s): passed
+  (declared pilot, OTel targets, Make libmd installation reference, inputs
+  rechecked).  It ran a scratch build-bsd compiled from this source with the
+  hard-coded `/usr/src`, `/usr/src` objtop and run-log paths pointed at this
+  worktree and the evidence directory (`b9-buildbsd/build-bsd-B.diff`).  Its
+  static pilot programs differ from `bazel-declared-pilot-r1` only because
+  this SDK's libc differs.
+- build-bsd's ATF cases (`b9-buildbsd/atf-*.txt`, the plan-only cases; five
+  cases that write below `/usr/obj/usr/src` excluded): per-case results
+  identical to HEAD, `bazel_plan` passing.
+
+bazel9 package: built without root from the selected ports checkout with
+cached distfiles and `STRICT_DEPENDS` (`b9-pkg/`).  `bazel9-9.3.1.pkg` sha256
+`20c681876d3bf3a62b863c10ab4fa8f6e118f7ab79781d7c0cdc7833b8d0fe80`, depends on
+bash-5.3.20, openjdk21-21.0.12+8.2_2 and python312-3.12.14_1; `bin/bazel`
+reports 9.3.1 and has `/usr/local/openjdk21` as its built-in JDK.  The
+`b9-root-commands.sh` root script (not run) checks that nothing is using
+`/usr/local/bin/bazel`, then installs openjdk21, replaces bazel5 with bazel9
+and verifies the result.
+
+Not established: Bazel as a build backend, cross builds of Bazel targets,
+installation/package parity, sandbox enforcement, performance, and refreshing
+the pins online.
 
 dtrace(1) and libdtrace under Bazel: design
 -------------------------------------------
