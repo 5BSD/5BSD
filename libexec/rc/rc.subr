@@ -2456,11 +2456,19 @@ mount_md()
 #   -e greps the output from `kldstat -v',
 #   -m uses `kldstat -m module'.
 # The default way is as though `-m file` was specified.
-# -b loads through the SystemExtension broker; callers must run after local
+#
+# With the capability plane, kldload(2) belongs to the SystemExtension broker
+# once it has started (rc.d/kld starts it): mac_capability then refuses a
+# direct load, which kldload(8) reports as "Exec format error".  So a direct
+# load that fails is retried once through the broker (sysextctl load), whose
+# policy decides; a broker refusal is final.  Before the broker starts, or
+# with the plane disabled or in a jail, the direct load is the only path.
+# -b loads through the broker only (it also records the broker's boot
+# ownership of an already-loaded module); callers must run after local
 # filesystems and the capability discovery channel are available.
 load_kld()
 {
-	local _loaded _mod _opt _re _x _loader
+	local _loaded _mod _opt _re _x _loader _broker
 	_loader=kldload
 
 	_x=0
@@ -2479,14 +2487,16 @@ load_kld()
 	fi
 	# Without the capability plane (capsule's loader knob, as rc.d/kld)
 	# there is no broker; a jail can neither load modules nor claim them.
-	# Both fall back to the plain check and kldload.
-	if [ "$_loader" = "sysextctl load" ]; then
-		case "$(kenv -q capability_plane 2>/dev/null)" in
-		[Nn][Oo]|[Oo][Ff][Ff]|0) _loader=kldload ;;
-		esac
-		if check_jail jailed; then
-			_loader=kldload
-		fi
+	# Both use only the plain check and kldload.
+	_broker=true
+	case "$(kenv -q capability_plane 2>/dev/null)" in
+	[Nn][Oo]|[Oo][Ff][Ff]|0) _broker=false ;;
+	esac
+	if check_jail jailed; then
+		_broker=false
+	fi
+	if ! $_broker; then
+		_loader=kldload
 	fi
 	_loaded=false
 	if [ -n "$_re" ]; then
@@ -2506,7 +2516,16 @@ load_kld()
 		fi
 	fi
 	if ! $_loaded; then
-		if ! ${_loader} "$1"; then
+		if [ "$_loader" = kldload ] && $_broker; then
+			# Direct first (early boot), then the broker (late boot).
+			if kldload "$1" 2>/dev/null || sysextctl load "$1" >/dev/null
+			then
+				_loaded=true
+			fi
+		elif ${_loader} "$1"; then
+			_loaded=true
+		fi
+		if ! $_loaded; then
 			warn "Unable to load kernel module $1"
 			return 1
 		else

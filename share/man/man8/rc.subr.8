@@ -355,17 +355,29 @@ variable
 Load
 .Ar file
 as a kernel module unless it is already loaded.
+By default the module is loaded directly with
+.Xr kldload 8 .
+When the capability plane is enabled and the direct load fails, as it does
+once the system-extension broker has claimed module loading late in boot,
+the load is retried once through
+.Xr sysextctl 8 ;
+without the plane, or in a jail, only the direct load is tried.
 With
 .Fl b ,
-request the load through
-.Xr sysextctl 8 .
+the load is requested only through
+.Xr sysextctl 8 ,
+which also records the broker's ownership of a module that is already
+loaded.
 The extension broker enforces its configured policy; a denied request is not
 retried using the raw kernel-loading syscall.
-This option requires mounted local filesystems and capability discovery
+.Fl b
+requires mounted local filesystems and capability discovery
 authority, and is used by the
 .Va kld_list
 startup service when the capability plane is enabled.
-Early boot callers retain the direct-loading default.
+Modules named by
+.Va required_modules
+are loaded the same way.
 .Pp
 For the purpose of checking the module status,
 either the exact module name can be specified using

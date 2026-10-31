@@ -83,7 +83,16 @@ devmatch_start()
 		esac
 		if [ "${_broker}" = YES ]; then
 			# ENSURE also records ownership when another consumer loaded it.
-			sysextctl load "${m}" || warn "Cannot autoload ${m}"
+			# rc holds the SystemExtension authority only until it exits
+			# (boot-authority.ucl), so a device attached later (devd
+			# nomatch) cannot have a module loaded: EX_UNAVAILABLE.
+			sysextctl load "${m}"
+			case $? in
+			0) ;;
+			69) warn "Cannot autoload ${m} after boot; it loads at" \
+			    "the next boot with the device attached (devmatch(8))" ;;
+			*) warn "Cannot autoload ${m}" ;;
+			esac
 		else
 			load_kld "${m}"
 		fi

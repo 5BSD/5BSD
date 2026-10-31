@@ -81,6 +81,11 @@ devmatch_broker_body()
 	atf_check -s exit:0 -e match:'Cannot autoload' \
 	    -o inline:'devctl freeze\nbroker load if_test\ndevctl thaw\n' \
 	    env BROKER_STATUS=1 sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
+	# After rc exits its SystemExtension authority is gone (EX_UNAVAILABLE):
+	# a hotplugged device's driver is reported for the next boot.
+	atf_check -s exit:0 -e match:'Cannot autoload if_test after boot' \
+	    -o inline:'devctl freeze\nbroker load if_test\ndevctl thaw\n' \
+	    env BROKER_STATUS=69 sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
 	atf_check -s exit:0 -e empty \
 	    -o inline:'devctl freeze\ndirect if_test\ndevctl thaw\n' \
 	    env PLANE=NO sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
@@ -143,10 +148,56 @@ linux_broker_body()
 	    sh -c '. ./linux-seams.sh; linux_start'
 }
 
+
+atf_test_case late_load_fallback
+late_load_fallback_head()
+{
+	atf_set "descr" "load_kld retries a refused direct load through the" \
+	    "SystemExtension broker, only with the capability plane"
+}
+late_load_fallback_body()
+{
+	setup
+	cat > late-seams.sh <<-'EOF2'
+	. ./seams.sh
+	kldload() { echo "direct $*"; return "${DIRECT_STATUS:-1}"; }
+	sysextctl() { echo "broker $*" >&2; return "${BROKER_STATUS:-0}"; }
+	EOF2
+	# After the broker has started a direct load is refused (ENOEXEC);
+	# the broker loads the module.
+	atf_check -s exit:0 -o inline:'direct mac_ntpd\n' \
+	    -e inline:'broker load mac_ntpd\n' \
+	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	# Before the broker starts the direct load succeeds; no broker call.
+	atf_check -s exit:0 -o inline:'direct mac_ntpd\n' -e empty \
+	    env DIRECT_STATUS=0 sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	# A broker refusal is final and reported.
+	atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
+	    -e match:'broker load mac_ntpd' \
+	    -e match:'Unable to load kernel module mac_ntpd' \
+	    env BROKER_STATUS=1 sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	# required_modules uses the same path.
+	atf_check -s exit:0 -o inline:'direct geom_uzip\n' \
+	    -e inline:'broker load geom_uzip\n' \
+	    sh -c '. ./late-seams.sh; required_modules=geom_uzip;
+	    check_required_after start'
+	# Without the plane, or in a jail, there is no broker to ask.
+	for plane in NO off 0; do
+		atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
+		    -e match:'Unable to load kernel module mac_ntpd' \
+		    -e not-match:broker env PLANE="$plane" \
+		    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	done
+	atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
+	    -e not-match:broker sh -c '. ./late-seams.sh;
+	    check_jail() { return 0; }; load_kld mac_ntpd'
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case restore_and_kld_list
 	atf_add_test_case loaded_claim_and_denial
 	atf_add_test_case linux_broker
 	atf_add_test_case devmatch_broker
+	atf_add_test_case late_load_fallback
 }
