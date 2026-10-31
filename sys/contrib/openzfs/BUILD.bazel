@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//cddl/lib/libspl:sources.bzl", "SPL_SOURCES")
+exports_files([s.split(":", 1)[1] for s in SPL_SOURCES], visibility = ["//cddl/lib/libspl:__pkg__"])
+cc_library(name = "spl_headers",
+    hdrs = glob(["include/**/*.h", "lib/libspl/include/**/*.h", "module/icp/include/**/*.h"]),
+    includes = ["include", "lib/libspl/include", "lib/libspl/include/os/freebsd", "module/icp/include"],
+    visibility = ["//visibility:public"])
+
+cc_library(name = "spl_private_headers", hdrs = glob(["lib/libspl/*.h"]), includes = ["lib/libspl"], visibility = ["//cddl/lib/libspl:__pkg__"])
+
+cc_library(name = "procstat_zfs_headers", hdrs = glob(["lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzpool/include", "include/os/freebsd/zfs"], deps = [":spl_headers"], visibility = ["//lib/libprocstat:__pkg__"])
+
+exports_files(["module/avl/avl.c"], visibility = ["//cddl/lib/libavl:__pkg__"])
+
+exports_files(["lib/libnvpair/libnvpair.c", "lib/libnvpair/libnvpair_json.c", "lib/libnvpair/nvpair_alloc_system.c", "module/nvpair/nvpair_alloc_fixed.c", "module/nvpair/nvpair.c", "module/nvpair/fnvpair.c", "include/libnvpair.h"], visibility = ["//cddl/lib/libnvpair:__pkg__"])
+
+exports_files(["lib/libzutil/zutil_device_path.c", "lib/libzutil/zutil_import.c", "lib/libzutil/zutil_nicenum.c", "lib/libzutil/zutil_pool.c", "lib/libzutil/os/freebsd/zutil_device_path_os.c", "lib/libzutil/os/freebsd/zutil_import_os.c", "lib/libzutil/zutil_import.h"], visibility = ["//cddl/lib/libzutil:__pkg__"])
+
+cc_library(name = "zutil_headers", hdrs = glob(["lib/libzutil/*.h", "lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzutil", "lib/libzpool/include", "include/os/freebsd/zfs"],
+    deps = [":spl_headers"], visibility = ["//cddl/lib/libzutil:__pkg__"])
+
+exports_files(["lib/libzfs_core/libzfs_core.c", "lib/libzfs_core/os/freebsd/libzfs_core_ioctl.c", "include/libzfs_core.h"], visibility = ["//cddl/lib/libzfs_core:__pkg__"])
+
+cc_library(name = "zfs_core_headers", hdrs = glob(["lib/libzfs_core/*.h", "lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzfs_core", "lib/libzpool/include", "include/os/freebsd/zfs"],
+    deps = [":spl_headers"], visibility = ["//cddl/lib/libzfs_core:__pkg__"])
+
+load("//cddl/lib/libzfs:sources.bzl", "ZFS_SOURCES", "ZFS_HIDDEN_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ZFS_SOURCES + ZFS_HIDDEN_SOURCES], visibility = ["//cddl/lib/libzfs:__pkg__"])
+cc_library(name = "zfs_headers", hdrs = glob(["lib/libzfs/**/*.h", "lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzfs", "lib/libshare", "lib/libzpool/include", "include/os/freebsd"],
+    deps = [":spl_headers"], visibility = ["//cddl/lib/libzfs:__pkg__", "//lib/libbe:__pkg__"])
+
+exports_files(["include/libzfs.h"], visibility = ["//cddl/lib/libzfs:__pkg__"])
+
+exports_files(['cmd/zpool/zpool_iter.c', 'cmd/zpool/zpool_main.c', 'cmd/zpool/zpool_util.c', 'cmd/zpool/zpool_vdev.c', 'cmd/zpool/os/freebsd/zpool_vdev_os.c'], visibility = ["//cddl/sbin/zpool:__pkg__"])
+cc_library(name = "zpool_headers", hdrs = glob(["cmd/zpool/*.h", "lib/libzpool/include/**/*.h"]),
+    includes = ["cmd/zpool", "lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/sbin/zpool:__pkg__"])
+
+load("//cddl/sbin/zpool:installation_data.bzl", "MANUALS")
+exports_files(["man/man" + m.split(".")[-1] + "/" + m for m in MANUALS], visibility = ["//cddl/sbin/zpool:__pkg__"])
+
+exports_files(["cmd/zfs/zfs_iter.c", "cmd/zfs/zfs_main.c", "cmd/zfs/zfs_project.c"], visibility = ["//cddl/sbin/zfs:__pkg__"])
+cc_library(name = "zfs_cli_headers", hdrs = glob(["cmd/zfs/*.h"]), includes = ["cmd/zfs", "include/os/freebsd"], deps = [":spl_headers"], visibility = ["//cddl/sbin/zfs:__pkg__"])
+load("//cddl/sbin/zfs:installation_data.bzl", ZFS_MANUALS = "MANUALS")
+exports_files(["man/man" + m.split(".")[-1] + "/" + m for m in ZFS_MANUALS], visibility = ["//cddl/sbin/zfs:__pkg__"])
+
+exports_files(["lib/libzfsbootenv/lzbe_device.c", "lib/libzfsbootenv/lzbe_util.c", "lib/libzfsbootenv/lzbe_pair.c", "include/libzfsbootenv.h"], visibility = ["//cddl/lib/libzfsbootenv:__pkg__"])
+cc_library(name = "zfsbootenv_headers", hdrs = glob(["lib/libzpool/include/**/*.h"]), includes = ["lib/libzpool/include", "include/os/freebsd/zfs"], deps = [":spl_headers"], visibility = ["//cddl/lib/libzfsbootenv:__pkg__"])
+
+load("//cddl/lib/libicp:sources.bzl", "ICP_C_SOURCES", "ICP_ASM_SOURCES")
+exports_files([s.split(":", 1)[1] for s in ICP_C_SOURCES + ICP_ASM_SOURCES], visibility = ["//cddl/lib/libicp:__pkg__", "//cddl/lib/libicp_rescue:__pkg__"])
+cc_library(name = "icp_headers", textual_hdrs = ["module/icp/include/generic_impl.c"], hdrs = glob(["lib/libzpool/include/**/*.h", "module/icp/algs/**/*.h", "module/icp/asm-x86_64/**/*.h"]),
+    includes = ["lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/lib/libicp:__pkg__", "//cddl/lib/libicp_rescue:__pkg__"])
+
+exports_files(["module/zfs/zfs_impl.c"], visibility = ["//cddl/lib/libicp_rescue:__pkg__"])
+
+load("//cddl/lib/libzpool:sources.bzl", "ZPOOL_SOURCES", "ZPOOL_COMPRESSION_SOURCES")
+filegroup(name = "zpool_build_sources", srcs = ZPOOL_SOURCES, visibility = ["//cddl/lib/libzpool:__pkg__"])
+filegroup(name = "zpool_compression_sources", srcs = ZPOOL_COMPRESSION_SOURCES, visibility = ["//cddl/lib/libzpool:__pkg__"])
+cc_library(name = "zpool_build_headers", hdrs = glob(["lib/libzpool/**/*.h", "module/zfs/*.h", "module/lua/*.h", "module/zstd/**/*.h"]),
+    includes = ["lib/libzpool/include", "include/os/freebsd/zfs"], deps = [":spl_headers"], visibility = ["//cddl/lib/libzpool:__pkg__"])
+
+exports_files(["lib/libzdb/libzdb.c", "include/libzdb.h"], visibility = ["//cddl/lib/libzdb:__pkg__"])
+cc_library(name = "zdb_headers", hdrs = glob(["lib/libzpool/include/**/*.h", "lib/libzutil/*.h"]),
+    includes = ["lib/libzpool/include", "include/os/freebsd/zfs", "lib/libzutil"], deps = [":spl_headers"], visibility = ["//cddl/lib/libzdb:__pkg__"])
+
+exports_files(["cmd/zdb/zdb.c", "cmd/zdb/zdb_il.c", "cmd/zdb/zdb.h", "man/man8/zdb.8"], visibility = ["//cddl/usr.sbin/zdb:__pkg__"])
+cc_library(name = "zdb_cli_headers", hdrs = glob(["cmd/zdb/*.h", "lib/libzpool/include/**/*.h"]),
+    includes = ["cmd/zdb", "lib/libzpool/include", "lib/libspl/include/os/freebsd/spl"], deps = [":spl_headers"], visibility = ["//cddl/usr.sbin/zdb:__pkg__"])
+
+exports_files(["cmd/zhack.c", "man/man1/zhack.1"], visibility = ["//cddl/usr.sbin/zhack:__pkg__"])
+cc_library(name = "zhack_headers", hdrs = glob(["lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/usr.sbin/zhack:__pkg__"])
+
+cc_library(name = "zfsd_headers", hdrs = glob(["lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/usr.sbin/zfsd:__pkg__", "//cddl/usr.sbin/zfsd/tests:__pkg__"])
+
+exports_files(["contrib/pam_zfs_key/pam_zfs_key.c"], visibility = ["//cddl/lib/pam_zfs_key:__pkg__"])
+cc_library(name = "pam_zfs_headers", hdrs = glob(["lib/libzpool/include/**/*.h", "lib/libzfs/*.h"]),
+    includes = [".", "lib/libzpool/include", "include/os/freebsd/zfs"], deps = [":spl_headers"], visibility = ["//cddl/lib/pam_zfs_key:__pkg__"])
+
+exports_files(['cmd/zstream/zstream.c', 'cmd/zstream/zstream_backtrace.c', 'cmd/zstream/zstream_byteswap.c', 'cmd/zstream/zstream_chain.c', 'cmd/zstream/zstream_decompress.c', 'cmd/zstream/zstream_drop_records.c', 'cmd/zstream/zstream_dump.c', 'cmd/zstream/zstream_fletcher4.c', 'cmd/zstream/zstream_io.c', 'cmd/zstream/zstream_queue.c', 'cmd/zstream/zstream_raw.c', 'cmd/zstream/zstream_recompress.c', 'cmd/zstream/zstream_redup.c', 'cmd/zstream/zstream_selftest.c', 'cmd/zstream/zstream_selftest_queue.c', 'cmd/zstream/zstream_token.c', 'cmd/zstream/zstream_util.c', 'cmd/zstream/zstream_validate.c', 'cmd/zstream/zstream.h', 'man/man8/zstream.8'], visibility = ["//cddl/usr.bin/zstream:__pkg__"])
+cc_library(name = "zstream_headers", hdrs = glob(["cmd/zstream/*.h", "lib/libzpool/include/**/*.h"]), includes = ["cmd/zstream", "lib/libzpool/include"], deps = [":spl_headers"], visibility = ["//cddl/usr.bin/zstream:__pkg__"])
+
+exports_files(['cmd/zinject/zinject.c', 'cmd/zinject/translate.c', 'cmd/zinject/zinject.h', 'man/man8/zinject.8'], visibility = ["//cddl/usr.bin/zinject:__pkg__"])
+cc_library(name = "zinject_headers", hdrs = glob(['lib/libzpool/include/**/*.h', 'cmd/zinject/*.h']), includes = ['lib/libzpool/include', 'cmd/zinject'], deps = [":spl_headers"], visibility = ["//cddl/usr.bin/zinject:__pkg__"])
+
+exports_files(['cmd/ztest.c', 'man/man1/ztest.1'], visibility = ["//cddl/usr.bin/ztest:__pkg__"])
+cc_library(name = "ztest_headers", hdrs = glob(['lib/libzpool/include/**/*.h']), includes = ['lib/libzpool/include'], deps = [":spl_headers"], visibility = ["//cddl/usr.bin/ztest:__pkg__"])
+
+exports_files(["cmd/zpool_influxdb/zpool_influxdb.c", "man/man8/zpool_influxdb.8"], visibility = ["//cddl/usr.libexec/zpool_influxdb:__pkg__"])
+
+load("//cddl/share/zfs/compatibility.d:installation_data.bzl", "PROFILES")
+exports_files(["cmd/zpool/compatibility.d/" + p for p in PROFILES], visibility = ["//cddl/share/zfs/compatibility.d:__pkg__"])
+
+exports_files(["scripts/zfs_prepare_disk", "man/man8/zfs_prepare_disk.8.in"], visibility = ["//cddl/usr.libexec/zfs_prepare_disk:__pkg__"])
