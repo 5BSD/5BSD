@@ -427,8 +427,9 @@ coll_start(struct collector *co, int port, int tls, const char *certfile)
 	sin.sin_len = sizeof(sin);
 	sin.sin_port = htons((uint16_t)port);
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	/* Served one at a time; see gsrv_start() on the queue length. */
 	if (bind(co->lfd, (struct sockaddr *)&sin, sizeof(sin)) != 0 ||
-	    listen(co->lfd, 16) != 0)
+	    listen(co->lfd, SOMAXCONN) != 0)
 		return (-1);
 	slen = sizeof(sin);
 	getsockname(co->lfd, (struct sockaddr *)&sin, &slen);

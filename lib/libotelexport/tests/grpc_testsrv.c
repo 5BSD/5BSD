@@ -512,8 +512,13 @@ gsrv_start(struct gsrv *s, int tls, const char *certfile, const char *alpn)
 	sin.sin_family = AF_INET;
 	sin.sin_len = sizeof(sin);
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	/*
+	 * Connections are served one at a time; allocation-failure sweeps
+	 * open them faster than a starved guest drains them, and a full
+	 * queue drops new SYNs until the client's connect times out.
+	 */
 	if (bind(s->lfd, (struct sockaddr *)&sin, sizeof(sin)) != 0 ||
-	    listen(s->lfd, 16) != 0)
+	    listen(s->lfd, SOMAXCONN) != 0)
 		return (-1);
 	slen = sizeof(sin);
 	getsockname(s->lfd, (struct sockaddr *)&sin, &slen);
