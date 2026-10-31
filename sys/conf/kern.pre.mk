@@ -261,10 +261,13 @@ ZLIB_CFLAGS=	-Wno-cast-qual ${NO_WDEPRECATED_NON_PROTOTYPE} ${NO_WSTRICT_PROTOTY
 ZLIB_C=		${CC} -c ${CFLAGS} ${WERROR} ${ZLIB_CFLAGS} ${.IMPSRC}
 
 # Special flags for managing the compat compiles for DTrace/FBT
-FBT_CFLAGS=	-DBUILDING_DTRACE -nostdinc -I$S/cddl/dev/fbt/${MACHINE_CPUARCH} -I$S/cddl/dev/fbt ${CDDL_CFLAGS} -I$S/cddl/compat/opensolaris -I$S/cddl/contrib/opensolaris/uts/common  
+# As sys/modules/dtrace/fbt: x86 shares one directory (there is no fbt/amd64).
 .if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
-FBT_CFLAGS+=	-I$S/cddl/dev/fbt/x86
+FBT_ARCH=	x86
+.else
+FBT_ARCH=	${MACHINE_CPUARCH}
 .endif
+FBT_CFLAGS=	-DBUILDING_DTRACE -nostdinc -I$S/cddl/dev/fbt/${FBT_ARCH} -I$S/cddl/dev/fbt ${CDDL_CFLAGS} -I$S/cddl/compat/opensolaris -I$S/cddl/contrib/opensolaris/uts/common
 FBT_C=		${CC} -c ${FBT_CFLAGS}		${WERROR} ${.IMPSRC}
 
 .if ${MK_CTF} != "no"

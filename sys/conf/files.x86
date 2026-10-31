@@ -17,8 +17,9 @@ atkbdmap.h			optional	atkbd_dflt_keymap	\
 	no-obj no-implicit-rule before-depend				\
 	clean		"atkbdmap.h"
 cddl/dev/fbt/x86/fbt_isa.c				optional dtrace_fbt | dtraceall compile-with "${FBT_C}"
-cddl/dev/dtrace/x86/dis_tables.c			optional dtrace_fbt | dtraceall compile-with "${DTRACE_C}"
-cddl/dev/dtrace/x86/instr_size.c			optional dtrace_fbt | dtraceall compile-with "${DTRACE_C}"
+# dtrace_subr.c calls dtrace_instr_size(): the core needs these as well.
+cddl/dev/dtrace/x86/dis_tables.c			optional dtrace | dtrace_fbt | dtraceall compile-with "${DTRACE_C}"
+cddl/dev/dtrace/x86/instr_size.c			optional dtrace | dtrace_fbt | dtraceall compile-with "${DTRACE_C}"
 crypto/aesni/aesni.c		optional aesni
 aesni_ghash.o			optional aesni				\
 	dependency	"$S/crypto/aesni/aesni_ghash.c"			\

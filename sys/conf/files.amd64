@@ -82,6 +82,7 @@ amd64/amd64/uio_machdep.c	standard
 amd64/amd64/vm_machdep.c	standard
 amd64/pci/pci_cfgreg.c		optional	pci
 cddl/dev/dtrace/amd64/dtrace_asm.S			optional dtrace compile-with "${DTRACE_S}"
+cddl/dev/dtrace/amd64/dtrace_isa.c			optional dtrace compile-with "${DTRACE_C}"
 cddl/dev/dtrace/amd64/dtrace_subr.c			optional dtrace compile-with "${DTRACE_C}"
 crypto/aesni/aeskeys_amd64.S	optional aesni
 crypto/openssl/amd64/aes-gcm-avx512.S	optional ossl

@@ -95,7 +95,14 @@ system_taskq_init(void *arg)
 	system_delay_taskq = taskq_create("system_delay_taskq", mp_ncpus,
 	    minclsyspri, 0, 0, 0);
 }
-SYSINIT(system_taskq_init, SI_SUB_CONFIGURE, SI_ORDER_ANY, system_taskq_init,
+/*
+ * Before SI_SUB_DTRACE: a kernel with DTrace compiled in (5BSD GENERIC)
+ * shares this taskq implementation, and dtrace_load() creates its taskq,
+ * whose threads set the taskq TSD key as they start.  Initializing at
+ * SI_SUB_CONFIGURE left the key unregistered (osd_get() fault in
+ * taskq_tsd_set()).  The taskqueue framework is ready at SI_SUB_TASKQ.
+ */
+SYSINIT(system_taskq_init, SI_SUB_TASKQ, SI_ORDER_ANY, system_taskq_init,
     NULL);
 
 static void
@@ -114,7 +121,7 @@ system_taskq_fini(void *arg)
 	free(tqenthashtbl_lock, M_TASKQ);
 	free(tqenthashtbl, M_TASKQ);
 }
-SYSUNINIT(system_taskq_fini, SI_SUB_CONFIGURE, SI_ORDER_ANY, system_taskq_fini,
+SYSUNINIT(system_taskq_fini, SI_SUB_TASKQ, SI_ORDER_ANY, system_taskq_fini,
     NULL);
 
 #ifdef __LP64__
