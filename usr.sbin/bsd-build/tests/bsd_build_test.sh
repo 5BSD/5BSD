@@ -874,6 +874,11 @@ construction_execution_body()
     atf_check -s exit:0 -o ignore -e match:'OK' env BSD_BUILD_CONSTRUCTION_HELPER="$helper" python3.12 "$tests"
 }
 atf_test_case loader_build_configuration
+loader_build_configuration_head()
+{
+    atf_set descr 'Loader build configuration is derived from the source tree'
+    atf_set require.progs python3.12
+}
 loader_build_configuration_body()
 {
     atf_check -s exit:0 -o save:configuration.json -e empty python3.12 -B \
