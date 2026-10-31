@@ -3,7 +3,8 @@
 PACKAGE=	bsdinstall-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/bsdinstall
 
-ATF_TESTS_SH=	config_test \
+ATF_TESTS_SH=	adduser_test \
+		config_test \
 		documentation_test \
 		firmware_fetch_test \
 		hostname_test \

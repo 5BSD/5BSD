@@ -33,4 +33,8 @@ echo "$OSNAME Installer"
 echo "========================"
 echo "Add Users"
 echo
-chroot $BSDINSTALL_CHROOT adduser 2>&1
+# Offer the local hardware groups as the default additional groups: sound
+# (audio) and video/backlight (video) devices are group-owned, mode 0660.
+# The prompt shows the default; an empty BSDINSTALL_ADDUSER_GROUPS offers none.
+chroot $BSDINSTALL_CHROOT adduser \
+    -G "${BSDINSTALL_ADDUSER_GROUPS-audio video}" 2>&1

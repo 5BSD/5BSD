@@ -5,7 +5,7 @@ load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_man
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_fixture_tree.bzl", "bsd_fixture_tree")
 
-_TESTS = ['config_test', 'documentation_test', 'firmware_fetch_test', 'hostname_test', 'jail_test', 'pkgbase_selection_test', 'ports_test', 'repository_test', 'storage_requirement_test', 'tzfspool_test']
+_TESTS = ['adduser_test', 'config_test', 'documentation_test', 'firmware_fetch_test', 'hostname_test', 'jail_test', 'pkgbase_selection_test', 'ports_test', 'repository_test', 'storage_requirement_test', 'tzfspool_test']
 _HEADERS = ['capsicum.h', 'event.h', 'fcntl.h', 'file.h', 'filedesc.h', 'mbuf.h', 'procctl.h', 'procdesc.h', 'ptrace.h', 'socket.h', 'sysent.h', 'un.h', 'user.h', 'wait.h']
 _SOURCES = {"//docs/book:src/" + path: "docs/book/src/" + path for path in BOOK_FILES} | {
     "//sys/sys:" + name: "sys/sys/" + name for name in _HEADERS

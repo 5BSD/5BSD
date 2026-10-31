@@ -304,6 +304,12 @@ in the new system to set the root user's password.
 Interactively invokes
 .Xr adduser 8
 in the new system.
+The additional groups offered by default are
+.Sy audio
+and
+.Sy video ,
+which own the sound, video capture and backlight devices; see
+.Ev BSDINSTALL_ADDUSER_GROUPS .
 .It Cm time
 Interactively sets the time, date, and time zone of the new system.
 .It Cm services
@@ -462,6 +468,14 @@ target
 will not invoke the
 .Cm time
 target.
+.It Ev BSDINSTALL_ADDUSER_GROUPS
+The additional groups
+.Cm adduser
+offers by default to each new user, separated by spaces.
+The user can change them at the prompt.
+If set but empty, no additional groups are offered.
+Default:
+.Dq Li audio video
 .It Ev BSDINSTALL_SKIP_USERS
 If not empty, the
 .Cm auto
