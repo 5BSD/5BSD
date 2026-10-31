@@ -1525,6 +1525,8 @@
         ..
         BSDVM
         ..
+        base-accounts
+        ..
         bluetooth
             BSDBluetooth
             ..

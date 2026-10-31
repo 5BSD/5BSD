@@ -2,6 +2,7 @@
 
 SUBDIR=	adduser \
 	arp \
+	base-accounts \
 	BSDAudit \
 	binmiscctl \
 	boottrace \

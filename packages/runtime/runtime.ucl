@@ -41,6 +41,18 @@ EOD
         /usr/sbin/pwd_mkdb -p -d "$rootdir/etc" \
             "$rootdir/etc/master.passwd" || exit 1
     fi
+    # Create the base groups and users this system is missing.  pkg leaves
+    # /etc/group and /etc/master.passwd as .pkgnew when local changes keep
+    # it from merging a release, so accounts a release adds (audio, service
+    # identities) would otherwise never appear.  Local entries are never
+    # changed; a name or id conflict is refused and reported, not fatal.
+    /bin/sh "$rootdir/usr/sbin/base-accounts" -R "$rootdir"
+    case $? in
+    0) ;;
+    2) echo "WARNING: base groups or users could not be created;" \
+        "see base-accounts(8) and run: base-accounts -nv" >&2 ;;
+    *) exit 1 ;;
+    esac
     if ! /usr/sbin/pw -R "$rootdir" groupshow capability \
         >/dev/null 2>&1; then
         /usr/sbin/pw -R "$rootdir" groupadd capability -g 976 || exit 1
@@ -196,6 +208,14 @@ annotations: {
       "type": "directory",
       "lifetime": "persistent",
       "purpose": "Default update directory selected by pw_defaultdir: use /etc/accounts when present and valid, otherwise /etc. Explicit -d and input paths retain their meanings. This declaration grants no write authority"
+    },
+    {
+      "name": "base-account-reconciliation",
+      "program": "/usr/sbin/base-accounts",
+      "path": "/var/db/base-accounts",
+      "type": "file",
+      "lifetime": "persistent",
+      "purpose": "Record the shipped group and user names already reconciled, through a temporary .new file renamed into place, so an account the administrator removed is not recreated; accounts themselves are changed only through pw"
     },
     {
       "name": "crash-dump-storage",

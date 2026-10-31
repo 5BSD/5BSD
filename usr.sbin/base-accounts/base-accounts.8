@@ -1,0 +1,152 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd October 31, 2026
+.Dt BASE-ACCOUNTS 8
+.Os
+.Sh NAME
+.Nm base-accounts
+.Nd create missing base-system groups and users
+.Sh SYNOPSIS
+.Nm
+.Op Fl anqv
+.Op Fl R Ar rootdir
+.Op Fl r Ar refdir
+.Sh DESCRIPTION
+.Pa /etc/group
+and
+.Pa /etc/master.passwd
+are configuration files of the
+.Sy runtime
+base package.
+When the local files have been changed, for example by adding a user, a
+port's service account or a group membership,
+.Xr pkg 8
+cannot always merge a new release into them and leaves the release's
+versions beside them as
+.Pa /etc/group.pkgnew
+and
+.Pa /etc/master.passwd.pkgnew .
+Groups and users introduced by the release are then missing, and whatever
+depends on them fails; for example sound devices are created with group
+.Sy audio
+.Pq gid 43 .
+.Pp
+The runtime package installs a pristine copy of the shipped account files in
+.Pa /usr/share/base-accounts
+and runs
+.Nm
+after every install and upgrade.
+.Nm
+compares the local files with that copy and creates each group, then each
+user, that is missing by name, with the shipped numeric id, password field,
+class, comment, home directory and shell.
+It uses
+.Xr pw 8
+without
+.Xr pw.conf 5
+defaults, so the account databases are rebuilt and locked exactly as for any
+other account change, and no default group memberships are added.
+.Pp
+.Nm
+only adds entries:
+.Bl -bullet
+.It
+An existing local group or user is never modified or removed, even when its
+id differs from the shipped one.
+Membership of existing groups is never changed; a group created by
+.Nm
+lists only shipped members that exist.
+.It
+An entry whose name is missing but whose id is used by a local entry of
+another name is refused with a message on standard error; it is not
+renumbered, and it is reported again on every run until the administrator
+resolves the conflict.
+A user whose primary group does not exist is refused in the same way.
+.It
+Superuser aliases (uid 0, such as
+.Sy toor )
+and accounts without a password field are never created.
+.It
+Each shipped name that exists locally, was created or was deliberately
+skipped is recorded in
+.Pa /var/db/base-accounts ;
+refused entries are not.
+An entry recorded there that is later missing was removed by the
+administrator and is not recreated unless
+.Fl a
+is given.
+.El
+.Pp
+Running
+.Nm
+again is harmless.
+Creating a group does not grant anyone access: add the people who need a
+device group, for example with
+.Dl pw groupmod audio -m alice
+and log in again.
+.Pp
+The options are as follows:
+.Bl -tag -width "-R rootdir"
+.It Fl a
+Also recreate entries recorded in
+.Pa /var/db/base-accounts
+that were removed locally.
+.It Fl n
+Report what would be created without changing anything.
+.It Fl q
+Do not report created entries.
+.It Fl R Ar rootdir
+Operate on the system installed under
+.Ar rootdir ,
+as
+.Xr pw 8
+.Fl R
+does.
+.It Fl r Ar refdir
+Read the reference
+.Pa group
+and
+.Pa master.passwd
+from
+.Ar refdir
+instead of
+.Ar rootdir Ns Pa /usr/share/base-accounts ,
+for example
+.Pa /usr/src/etc
+on a system upgraded from source.
+.It Fl v
+Also report kept, skipped and removed entries.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/base-accounts" -compact
+.It Pa /usr/share/base-accounts
+shipped
+.Pa group
+and
+.Pa master.passwd
+reference copies
+.It Pa /var/db/base-accounts
+names reconciled by the last run
+.El
+.Sh EXIT STATUS
+.Nm
+exits 0 when every shipped account exists or was created or deliberately
+skipped, 2 when at least one entry was refused or could not be created, 64
+for a usage error and 66 when a reference or account file cannot be read.
+.Sh EXAMPLES
+Show what an upgraded system is missing:
+.Dl base-accounts -nv
+.Sh SEE ALSO
+.Xr group 5 ,
+.Xr passwd 5 ,
+.Xr pkg 8 ,
+.Xr pw 8 ,
+.Xr pwd_mkdb 8
+.Sh HISTORY
+The
+.Nm
+utility appeared in
+.Fx 5BSD .

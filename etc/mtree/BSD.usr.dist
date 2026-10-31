@@ -313,6 +313,8 @@
     share
         atf             tags=package=atf
         ..
+        base-accounts   tags=package=runtime
+        ..
         bhyve
             gdb
             ..
