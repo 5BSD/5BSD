@@ -74,6 +74,15 @@ lua_has_command(lua_State *L)
 	return 2;
 }
 
+/* Is a module of this name already provided (by the kernel or a loaded file)? */
+static int
+lua_module_present(lua_State *L)
+{
+
+	lua_pushboolean(L, file_module_present(luaL_checkstring(L, 1)));
+	return 1;
+}
+
 static int
 lua_has_feature(lua_State *L)
 {
@@ -407,6 +416,7 @@ static const struct luaL_Reg loaderlib[] = {
 	REG_SIMPLE(has_command),
 	REG_SIMPLE(has_feature),
 	REG_SIMPLE(interpret),
+	REG_SIMPLE(module_present),
 	REG_SIMPLE(parse),
 	REG_SIMPLE(perform),
 	REG_SIMPLE(printc),	/* Also registered as the global 'printc' */

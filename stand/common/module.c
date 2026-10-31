@@ -1046,6 +1046,17 @@ file_findmodule(struct preloaded_file *fp, char *modname,
 	return (best);
 }
 /*
+ * Is a module of this name provided by any loaded file, the kernel included
+ * (its statically compiled modules are registered from its metadata)?
+ */
+bool
+file_module_present(const char *modname)
+{
+
+	return (file_findmodule(NULL, __DECONST(char *, modname), NULL) != NULL);
+}
+
+/*
  * Make a copy of (size) bytes of data from (p), and associate them as
  * metadata of (type) to the module (mp).
  */

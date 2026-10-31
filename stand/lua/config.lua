@@ -839,6 +839,81 @@ function config.reload(file)
 	hook.runAll("config.reloaded")
 end
 
+-- 5BSD: base subsystems every 5BSD system has at boot, whatever loader.conf
+-- says.  The capability plane refuses kldload(2) after boot, so anything not
+-- compiled into the kernel must be loaded here.  amd64 GENERIC compiles in all
+-- of these except the ones that have no static build support (marked).  Each
+-- is loaded only when the selected kernel does not already provide it and
+-- its file is present beside the kernel, so every kernel configuration and
+-- architecture gets the same set without duplicate loads.
+-- required_modules="NO" (loader prompt or loader.conf) skips them, for
+-- recovery only.
+local REQUIRED_MODULES = {
+	"linux_common",		-- Linux ABI, 64-bit only (module only)
+	"linux64",		-- (module only)
+	"linprocfs",		-- Linux /proc (module only)
+	"linsysfs",		-- Linux /sys (module only)
+	"vmm",			-- bhyve and WASPNest (module only)
+	"dtraceall",		-- DTrace framework and kernel providers
+	"hypertrace",		-- HyperTrace (module only)
+	"kinst",		-- DTrace instruction tracing (module only)
+	"fasttrap",		-- DTrace pid and USDT providers (module only)
+	"hwt",			-- Hardware Trace framework
+	"zfs",			-- ZFS (backs /Capabilities storage)
+	"pf",			-- Packet filter
+	"dummynet",		-- Traffic shaping for pf
+	"nullfs",		-- Containers
+	"if_bridge",
+	"if_epair",
+	"fdescfs",		-- /dev/fd
+	"mqueuefs",		-- POSIX message queues
+	"cuse",			-- Userland character devices
+	"mac_ntpd",		-- ntpd privilege policy
+}
+
+-- Modules amd64 GENERIC compiles in, for a loader binary that predates
+-- loader.module_present() (an EFI loader is not replaced by a package
+-- upgrade).
+local AMD64_STATIC = {
+	dtraceall = true, hwt = true, zfs = true, pf = true, dummynet = true,
+	nullfs = true, if_bridge = true, if_epair = true, fdescfs = true,
+	mqueuefs = true, cuse = true, mac_ntpd = true,
+}
+
+-- dtraceall.ko registers no module of its own name; ask for the framework.
+local PROVIDES = { dtraceall = "dtrace" }
+
+local function requiredModules()
+	local value = loader.getenv("required_modules")
+	local kernel_path = loader.getenv("kernel_path")
+
+	if value ~= nil and value:upper() == "NO" then
+		return
+	end
+	-- The selected kernel's directory: kernel_path, else the first
+	-- module_path entry (where the default kernel was found).
+	if kernel_path == nil then
+		kernel_path = (loader.getenv("module_path") or ""):match("^([^;]+)")
+	end
+	if kernel_path == nil then
+		return
+	end
+	for _, name in ipairs(REQUIRED_MODULES) do
+		local present
+		if loader.module_present ~= nil then
+			present = loader.module_present(PROVIDES[name] or name)
+		else
+			present = loader.machine_arch == "amd64" and
+			    AMD64_STATIC[name] == true
+		end
+		local file = kernel_path .. "/" .. name .. ".ko"
+		if not present and lfs.attributes(file, "mode") == "file" then
+			config.enableModule(name)
+		end
+	end
+end
+
+
 function config.loadelf()
 	local xen_kernel = loader.getenv('xen_kernel')
 	local kernel = config.kernel_selected or config.kernel_loaded
@@ -856,6 +931,7 @@ function config.loadelf()
 		return false
 	end
 	hook.runAll("kernel.loaded")
+	requiredModules()
 
 	print(MSG_MODLOADING)
 	status = loadModule(modules, not config.verbose)

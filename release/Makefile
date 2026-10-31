@@ -461,12 +461,9 @@ disc1:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo vmm_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
+	# DTrace user providers); see stand/lua/config.lua.
+	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -529,12 +526,9 @@ bootonly:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo vmm_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
+	# DTrace user providers); see stand/lua/config.lua.
+	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -611,12 +605,9 @@ dvd:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo vmm_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo fdescfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linprocfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	echo linsysfs_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
+	# DTrace user providers); see stand/lua/config.lua.
+	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
