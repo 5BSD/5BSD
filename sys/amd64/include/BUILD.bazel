@@ -7,8 +7,9 @@ cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
     strip_include_prefix = ".", include_prefix = "machine", visibility = ["//visibility:public"])
 
 # Source-tree header closure used by the amd64 libvmmapi build.
+# vmm_dev.h includes <sys/hypertrace.h> (HyperTrace ioctls).
 cc_library(name = "vmmapi_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_snapshot.h'],
-    strip_include_prefix = "/sys", visibility = ["//lib/libvmmapi:__pkg__"])
+    strip_include_prefix = "/sys", deps = ["//sys/sys:hypertrace_header"], visibility = ["//lib/libvmmapi:__pkg__"])
 
 # Explicit source-header closure for the amd64 bhyve engine.
-cc_library(name = "bhyve_engine_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_snapshot.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "bhyve_engine_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_snapshot.h'], strip_include_prefix = "/sys", deps = ["//sys/sys:hypertrace_header"], visibility = ["//usr.sbin/bhyve:__pkg__"])

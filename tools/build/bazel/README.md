@@ -45066,9 +45066,23 @@ lists formed a cycle (libthr provider → libdtrace → libthr).  The generator'
 runtime excludes the source libthr: it requires the matching libc
 (`__uexterr_set_ue@FBSDprivate_1.0`), so the execution host's pair is used.
 All 226 provider targets of those call sites build (n9 run callsites-r3; the
-two bhyve targets were left out because bhyve's own HyperTrace headers
-(`hypertrace_session.h`) are not in its native graph yet — an existing gap,
-independent of this change).
+two bhyve targets were left out because bhyve's own HyperTrace sources and
+headers were not in its native graph yet).  That gap is closed: bhyve's
+native graph now has the HyperTrace sources Make builds (`hypertrace.c`,
+`migration_receiver.c`, `pci_virtio_dtrace.c`, and `migration_tls.c` with
+snapshots and OpenSSL, which also adds libssl), their headers (bhyve's
+HyperTrace and migration headers, `//usr.sbin/dtraced:headers`,
+`//sys/dev/virtio:hypertrace_headers`, `sys/mbufid.h`,
+`dev/virtio/network/virtio_net_5bsd.h`, and `sys/hypertrace.h` for
+`machine/vmm_dev.h`, which libvmmapi needs too), and Make's extra link
+libraries (libproc, libctf, libelf, librtld_db) as link-only dependencies, so
+that libproc's header closure (openzfs libspl's `assert.h`) does not reach the
+compiles.  bhyvectl gets the migration headers and libz that it includes and
+links with snapshots.  Run final2-n9-runs/callsites-r8 builds all 228
+provider targets plus `//usr.sbin/bhyve:bhyve` and
+`//usr.sbin/bhyvectl:bhyvectl`; their NEEDED sets equal Make's (bhyvectl in
+the same order; bhyve keeps libz, libutil and libthr at their LIBADD
+positions, where Make's `LDFLAGS -l` lists them first).
 
 Dynamic dependency order: rules_cc keeps BUILD dependency order, so programs
 list their libraries in Make's first-appearance (NEEDED) order; libthr is a
