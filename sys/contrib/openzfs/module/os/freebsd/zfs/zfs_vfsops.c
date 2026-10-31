@@ -149,6 +149,12 @@ VFS_SET(zfs_vfsops, zfs, VFCF_DELEGADMIN | VFCF_JAIL
 	| VFCF_FILEREVINC
 #endif
 );
+/*
+ * The loader learns module names from MDT_VERSION records; without one it
+ * cannot tell that a kernel built with "options ZFS" already provides zfs and
+ * would preload zfs.ko again (5BSD stand/lua/config.lua required modules).
+ */
+MODULE_VERSION(zfs, 1);
 
 /*
  * We need to keep a count of active fs's.

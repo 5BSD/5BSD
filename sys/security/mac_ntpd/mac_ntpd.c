@@ -72,3 +72,5 @@ static struct mac_policy_ops ntpd_ops =
 
 MAC_POLICY_SET(&ntpd_ops, mac_ntpd, "MAC/ntpd",
     MPC_LOADTIME_FLAG_UNLOADOK, NULL);
+/* Lets the loader see that a kernel with "options MAC_NTPD" provides it. */
+MODULE_VERSION(mac_ntpd, 1);

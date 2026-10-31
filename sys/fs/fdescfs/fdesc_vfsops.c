@@ -239,3 +239,5 @@ static struct vfsops fdesc_vfsops = {
 };
 
 VFS_SET(fdesc_vfsops, fdescfs, VFCF_SYNTHETIC | VFCF_JAIL);
+/* Lets the loader see that a kernel with "options FDESCFS" provides it. */
+MODULE_VERSION(fdescfs, 1);
