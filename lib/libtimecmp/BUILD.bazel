@@ -30,10 +30,10 @@ _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "headers", hdrs = ["timecmp.h", "timecmp_protocol.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 bsd_dtrace_spec(name = "provider", source = "diagnostics_provider.d", output = "diagnostics_provider.o",
     flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti",
-    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "objects", srcs = ["timecmp.c", "timecmp_legacy.c", "diagnostics.h"], copts = ["-fPIC"], deps = [":headers", ":generated_headers", "//lib/libservice:headers", "//lib/libfidl:headers"], local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}), linkstatic = True, target_compatible_with = _PLATFORM)

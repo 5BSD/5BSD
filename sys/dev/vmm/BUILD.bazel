@@ -7,3 +7,6 @@ cc_library(name = "vmmapi_headers", hdrs = ['vmm_dev.h', 'vmm_dirty_log.h', 'vmm
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['vmm_address_range.h', 'vmm_dirty_log_request.h', 'vmm_mem.h', 'vmm_param.h', 'vmm_startup_event.h', 'vmm_startup_mode.h', 'vmm_startup_request.h', 'vmm_startup_run_request.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# dtrace(1) reads VM_MAXCPU-sized state (Make: -I sys).
+cc_library(name = "param_header", hdrs = ["vmm_param.h"], strip_include_prefix = "/sys", visibility = ["//cddl/usr.sbin/dtrace:__pkg__"])

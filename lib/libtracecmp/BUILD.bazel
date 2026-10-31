@@ -30,10 +30,10 @@ _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 cc_library(name = "headers", hdrs = ["tracecmp.h", "tracecmp_protocol.h", "tracecmp_server.h"], deps = ["//cddl/lib/libdtrace:public_headers"], strip_include_prefix = ".", visibility = ["//visibility:public"])
 bsd_dtrace_header(name = "provider", source = "tracecmp_provider.d", output = "tracecmp_provider.h",
     flags = ["-C", "-x", "nolibs"], static_anchor = False, object_path_mode = "relative",
-    dtrace = "//cddl/usr.sbin/dtrace:dtrace", cpp = "@bsd_sdk//toolchain:bin/cpp",
+    dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
     drti = "//cddl/lib/drti:drti",
-    runtime_libraries = ["//cddl/lib/libdtrace:dtrace_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libz:z_shared", "//lib/libkvm:kvm_shared"],
+    runtime_libraries = ["//cddl/usr.sbin/dtrace:bootstrap_runtime"],
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"])
 cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")

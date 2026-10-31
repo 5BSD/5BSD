@@ -20,6 +20,6 @@ def library_installation(name):
             target = name + "_" + alias
             bsd_install_link(name = target, destination = "/usr/share/man/man3/" + alias + ".3.gz", target = "/usr/share/man/man3/" + manual + ".3.gz", kind = "hardlink", owner = "root", group = "wheel", mode = "0444", install_tags = man_tags)
             entries.append(":" + target)
-    bsd_install_file(name = name + "_otlp_license", src = "//:contrib/opentelemetry-proto/LICENSE", destination = "/usr/share/licenses/opentelemetry-proto/LICENSE", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
+    bsd_install_file(name = name + "_otlp_license", src = "//contrib/opentelemetry-proto:LICENSE", destination = "/usr/share/licenses/opentelemetry-proto/LICENSE", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=utilities"])
     entries.append(":" + name + "_otlp_license")
     bsd_install_manifest(name = name, entries = entries, visibility = ["//visibility:public"])

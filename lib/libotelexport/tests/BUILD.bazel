@@ -1,10 +1,83 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+# lib/libotelexport/tests/Makefile (PACKAGE libotelexport-tests): ATF C and
+# shell tests, helper programs and golden OTLP JSON requests installed in
+# /usr/tests/lib/libotelexport; -I.. reaches the library's private headers.
+# Dependencies follow Make's NEEDED first-appearance order; WRAP_ALLOC
+# programs link with the allocator --wrap flags.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-cc_binary(name = "otelexport_test", srcs = ["otelexport_test.c"],
-    deps = ["//lib/libotelexport:otelexport", "//lib/libotelexport:private_headers", "//lib/atf/libatf-c:atf_c"],
-    linkopts = ["-static"], linkstatic = True)
-_CASES = ['buf_basic', 'json_escaping', 'frame_format', 'env_parsing', 'url_parse', 'text_exporter', 'text_exporter_empty_body', 'jsonl_exporter', 'collapsed_exporter', 'iso8601_shape', 'otlp_config_validation']
-[bsd_atf_test(name = case, case_name = case, body = ":otelexport_test", interface = "program",
-    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small", timeout = "moderate") for case in _CASES]
-test_suite(name = "native_tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_DIR = "/usr/tests/lib/libotelexport"
+_PACKAGE = "libotelexport-tests"
+_WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc", "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"]
+# Shared test helpers; cddl/lib/libdtotel/tests reuses them through .PATH.
+cc_library(name = "test_headers", hdrs = ["failalloc.h", "grpc_testsrv.h", "otel_testutil.h", "otlp_validate.h"], strip_include_prefix = ".",
+    visibility = ["//cddl/lib/libdtotel/tests:__pkg__"])
+exports_files(["otlp_validate.c", "otel_testutil.c"], visibility = ["//cddl/lib/libdtotel/tests:__pkg__"])
+_HEADERS = [":test_headers", "//lib/libotelexport:headers", "//lib/libotelexport:private_headers"]
+_OE = ["//lib/libotelexport:otelexport_pie", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2", "//lib/libthr:thr"]
+_OE_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared", "//lib/libthr:thr_shared"]
+_ATF = ["//lib/atf/libatf-c:atf_c"]
+_ATF_SHARED = ["//lib/atf/libatf-c:atf_c_shared"]
+_TLS = ["//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libthr:thr"]
+_TLS_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"]
+_GRPC = ["grpc_testsrv.c", "otel_testutil.c"]
+# name: (sources, static deps, shared deps, link flags)
+PROGRAMS = {
+    "otelexport_test": (["otelexport_test.c", "otlp_validate.c", "otel_testutil.c"], _ATF + _OE, _ATF_SHARED + _OE_SHARED, _WRAP_ALLOC),
+    "otlp_validate": (["otlp_validate.c", "otlp_validate_main.c"], [], [], []),
+    "otlp_collector": (["otlp_collector_main.c", "otel_testutil.c"], _TLS, _TLS_SHARED, _WRAP_ALLOC),
+    "otlppb_encode": (["otlppb_encode.c"], _OE, _OE_SHARED, []),
+    "sysconf_test": (["sysconf_test.c"], _ATF + _OE, _ATF_SHARED + _OE_SHARED, []),
+    "sysconf_oom_test": (["sysconf_oom_test.c", "failalloc.c"], _ATF + _OE, _ATF_SHARED + _OE_SHARED, _WRAP_ALLOC + ["-Wl,--wrap=reallocarray"]),
+    "otlppb_test": (["otlppb_test.c"] + _GRPC, _ATF + _OE, _ATF_SHARED + _OE_SHARED, _WRAP_ALLOC),
+    "otlpprof_test": (["otlpprof_test.c"] + _GRPC + ["otlp_validate.c"], _ATF + _OE, _ATF_SHARED + _OE_SHARED, _WRAP_ALLOC),
+    "signals_test": (["signals_test.c"] + _GRPC, _ATF + _OE, _ATF_SHARED + _OE_SHARED, _WRAP_ALLOC),
+    "otlp_pb_receiver": (["otlp_pb_receiver.c"] + _GRPC, ["//lib/libnghttp2:nghttp2"] + _TLS, ["//lib/libnghttp2:nghttp2_shared"] + _TLS_SHARED, _WRAP_ALLOC),
+}
+[cc_binary(name = name, srcs = sources, deps = _HEADERS + ["//lib/libnghttp2:headers"] + static, dynamic_deps = shared,
+    copts = ["-fPIE"], linkopts = ["-pie"] + flags, linkstatic = True, target_compatible_with = _PLATFORM)
+ for name, (sources, static, shared, flags) in PROGRAMS.items()]
+[utility_installation(name = "install_" + name, program = name, manual = None, package = _PACKAGE, bindir = _DIR) for name in PROGRAMS]
+bsd_script_wrapper(name = "otlppb_oracle_test", body = "otlppb_oracle_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_shell", src = ":otlppb_oracle_test", destination = _DIR + "/otlppb_oracle_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
+GOLDEN = ["otlpjson-basic.jsonl", "otlpjson-spans.jsonl", "otlpjson-semconv.jsonl", "otlpjson-native.jsonl", "otlpjson-profiles.jsonl"]
+[bsd_install_file(name = "install_golden_" + name.removesuffix(".jsonl"), src = "golden/" + name, destination = _DIR + "/golden/" + name, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE]) for name in GOLDEN]
+_NAMES = ["otelexport_test", "otlppb_oracle_test", "otlppb_test", "otlpprof_test", "signals_test", "sysconf_oom_test", "sysconf_test"]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _NAMES, interfaces = {n: "atf" for n in _NAMES})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _DIR + "/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"] + [":install_golden_" + name.removesuffix(".jsonl") for name in GOLDEN], visibility = ["//visibility:public"])
+
+# Registered ATF cases (Make's case inventory; every case of each program).
+CASES = {
+    "otelexport_test": ["buf_basic", "json_escaping", "frame_format", "env_parsing", "url_parse", "text_exporter", "text_exporter_empty_body", "jsonl_exporter", "collapsed_exporter", "iso8601_shape", "otlp_config_validation", "env_malformed", "text_snapshot", "jsonl_observed_probe", "sink_stream_default", "sink_rotate_size", "sink_rotate_interval", "sink_poll_external_writer", "sink_append_existing", "sink_open_errors", "sink_unwritable", "sink_write_efbig", "sink_stream_enospc", "exporters_alloc_failure", "otlpjson_golden", "otlpjson_batching", "otlpjson_errors", "otlp_http_matches_file", "otlp_http_sender", "otlp_http_statuses", "otlp_spool_resend", "otlp_spool_previous_run", "otlp_spool_bounded", "otlp_spool_idle_replay", "otlp_spool_errors", "otlp_spool_rewrite_fail", "otlp_spool_lock", "severity_text", "log_severity_attrs", "http_transport_errors", "http_chunked_bodies", "id_derive_wide", "host_name_small", "jsonl_metrics", "otlp_tls", "otlp_alloc_failure", "span_ids", "span_otlpjson_golden", "span_doubles", "span_jsonl_text", "span_http", "validator_rejects", "validator_accepts", "semconv_golden", "semconv_jsonl", "host_detection", "utf8_all_formats", "collapsed_edges", "text_every_kind", "jsonl_edges", "otlp_encoding_edges", "otlp_http_edges", "otlp_job_queue", "otlp_spool_edges", "sink_edges", "util_edges", "alloc_sweeps", "failure_edges", "exporter_small_edges", "otlp_batch_alloc", "sink_follow_rename", "sink_follow_edges", "file_target_exporter", "native_mapping_golden", "traceparent_parsing", "native_jsonl_text", "native_edges"],
+    "sysconf_test": ["builtin_defaults", "standard_paths", "missing_files", "layering", "disable_switch", "malformed", "accepted_forms", "oversized_values", "too_many_attrs", "file_faults", "wrong_owner", "headers_file", "headers_faults", "host_id", "env_layering", "config_load", "service_open"],
+    "sysconf_oom_test": ["load_sweep", "init_sweep", "env_sweep", "config_sweep", "config_file_sweep"],
+    "otlppb_test": ["protocol_names", "base64", "retryable", "rpc_status", "partial_success", "gzip", "transcode_fixtures", "transcode_depth", "transcode_encoder_output", "grpc_ok", "grpc_statuses", "grpc_details_and_messages", "grpc_transport_failures", "grpc_tls", "export_grpc", "export_grpc_failures", "export_http_protobuf", "spool_replay_grpc", "spool_replay_http_protobuf", "spool_untranscodable", "open_protocols", "config_protocol", "grpc_edges", "export_edges", "oom"],
+    "otlpprof_test": ["profdict_tables", "profdict_shapes", "profdict_bounds", "profdict_oom", "profile_request", "profile_golden", "profile_values", "profile_dropped", "profile_large_keys", "profdict_forms", "profdict_growth_oom", "export_oom", "export_http_protobuf", "export_grpc", "export_http_json", "export_spool", "otlpjson_line", "exemplar_points"],
+    "signals_test": ["env_signal_vars", "config_precedence", "config_sysconf", "sysconf_signal_errors", "exporter_routing", "exporter_from_env", "exporter_destinations", "exporter_bad_signal", "url_rawpath"],
+}
+# Cases that cannot run in a Bazel action sandbox; they run under Kyua on the
+# installed suite (VM runtime check).  ORACLE: exec srcdir/otlp_pb_oracle (the
+# dynamically linked C++ protobuf oracle) as a child, outside the declared
+# loader/runtime.  CWD: the case builds paths from getcwd() into a 256-byte
+# buffer, which the sandbox's execroot path exceeds.  PRIVILEGE: chown(2) to
+# another account.
+HOST_EXCLUDED = {
+    "otlppb_test": {c: "ORACLE" for c in ["export_grpc", "export_http_protobuf", "grpc_ok", "oom", "spool_replay_grpc", "spool_replay_http_protobuf", "transcode_depth", "transcode_encoder_output", "transcode_fixtures"]},
+    "otlpprof_test": {c: "ORACLE" for c in ["exemplar_points", "export_grpc", "export_http_protobuf", "export_spool", "profile_request", "profile_values"]},
+    "signals_test": {"config_sysconf": "CWD"},
+    "sysconf_oom_test": {c: "CWD" for c in ["config_sweep", "env_sweep", "load_sweep"]},
+    "sysconf_test": {c: "CWD" for c in ["config_load", "env_layering", "headers_file", "host_id", "service_open"]} | {"wrong_owner": "PRIVILEGE"},
+}
+SANDBOX_CASES = {program: [case for case in cases if case not in HOST_EXCLUDED.get(program, {})] for program, cases in CASES.items()}
+_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"] + _OE_SHARED
+[bsd_atf_test(name = program + "_" + case, case_name = case, interface = "program", body = ":" + program,
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _RUNTIME,
+    data_paths = {"golden/" + name: "golden/" + name for name in GOLDEN},
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small", timeout = "moderate")
+ for program in SANDBOX_CASES for case in SANDBOX_CASES[program]]
+test_suite(name = "native_tests", tests = [":" + program + "_" + case for program in SANDBOX_CASES for case in SANDBOX_CASES[program]], visibility = ["//visibility:public"])

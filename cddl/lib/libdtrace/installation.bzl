@@ -21,6 +21,7 @@ def library_installation(name):
     files.append((":privileges", "/usr/lib/dtrace/priv.d", ["package=dtrace"]))
     for source, destination in [
         ("//cddl/contrib/opensolaris:lib/libdtrace/common/dtrace.h", "/usr/include/dtrace.h"),
+        ("//cddl/contrib/opensolaris:lib/libdtrace/common/dt_hypertrace.h", "/usr/include/dt_hypertrace.h"),
         ("//sys/cddl/contrib/opensolaris:uts/common/sys/dtrace.h", "/usr/include/sys/dtrace.h"),
         ("//sys/cddl/contrib/opensolaris:uts/common/sys/ctf_api.h", "/usr/include/sys/ctf_api.h"),
     ]:

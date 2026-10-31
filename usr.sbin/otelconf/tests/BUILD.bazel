@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc", "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"]
+_OE = ["//lib/libotelexport:otelexport_pie", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2"]
+_OE_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared"]
+_BASE_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+# usr.sbin/otelconf/tests/Makefile (PACKAGE otel-tests): three ATF shell tests,
+# otlp_fake_receiver (LIBADD z), otlp_json_validate (LIBADD ucl,
+# -I contrib/libucl/include), otel.conf.defaults and otel.conf.sample (a copy
+# of ../otel.conf) as test files.
+cc_binary(name = "otlp_fake_receiver", srcs = ["otlp_fake_receiver.c"], deps = ["//lib/libz:z"], dynamic_deps = ["//lib/libz:z_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_binary(name = "otlp_json_validate", srcs = ["otlp_json_validate.c"], deps = ["//contrib/libucl:headers", "//lib/libucl:ucl"], dynamic_deps = ["//lib/libucl:ucl_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM)
+_DIR = "/usr/tests/usr.sbin/otelconf"
+_PACKAGE = "otel-tests"
+[utility_installation(name = "install_" + name, program = name, manual = None, package = _PACKAGE, bindir = _DIR) for name in ["otlp_fake_receiver", "otlp_json_validate"]]
+bsd_script_wrapper(name = "otelconf_test", body = "otelconf_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_otelconf_test", src = ":otelconf_test", destination = _DIR + "/otelconf_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
+bsd_script_wrapper(name = "otel_rc_test", body = "otel_rc_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_otel_rc_test", src = ":otel_rc_test", destination = _DIR + "/otel_rc_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
+bsd_script_wrapper(name = "otel_emitters_test", body = "otel_emitters_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_otel_emitters_test", src = ":otel_emitters_test", destination = _DIR + "/otel_emitters_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
+bsd_install_file(name = "install_file_0", src = "//usr.sbin/otelconf:otel.conf.defaults", destination = _DIR + "/otel.conf.defaults", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_file(name = "install_file_1", src = "//usr.sbin/otelconf:otel.conf", destination = _DIR + "/otel.conf.sample", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["otel_emitters_test", "otel_rc_test", "otelconf_test"], interfaces = {n: "atf" for n in ["otel_emitters_test", "otel_rc_test", "otelconf_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _DIR + "/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_manifest(name = "install_manifest", entries = [":install_otelconf_test", ":install_otel_rc_test", ":install_otel_emitters_test", ":install_file_0", ":install_file_1", ":install_kyuafile"], manifests = [":install_" + name for name in ["otlp_fake_receiver", "otlp_json_validate"]], visibility = ["//visibility:public"])

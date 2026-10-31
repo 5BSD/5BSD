@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# OTLP .proto inputs of lib/libotelexport's generated bindings, and the licence.
+exports_files(glob(["opentelemetry/**/*.proto"]) + ["LICENSE"], visibility = ["//lib/libotelexport:__subpackages__"])

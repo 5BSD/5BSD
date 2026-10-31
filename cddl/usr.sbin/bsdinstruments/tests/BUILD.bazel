@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc", "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"]
+_OE = ["//lib/libotelexport:otelexport_pie", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2"]
+_OE_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared"]
+_BASE_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+# cddl/usr.sbin/bsdinstruments/tests/Makefile (PACKAGE bsdinstruments-tests):
+# bsdinstruments_unit_test (profile.c and filter.c from .., -I.., WRAP_ALLOC),
+# bsdinstruments_test.sh and the mockdtrace.c fixture source.
+cc_binary(name = "bsdinstruments_unit_test", srcs = ["bsdinstruments_unit_test.c", "//cddl/usr.sbin/bsdinstruments:profile.c", "//cddl/usr.sbin/bsdinstruments:filter.c"],
+    deps = ["//cddl/usr.sbin/bsdinstruments:headers", "//lib/atf/libatf-c:atf_c"], dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"] + _WRAP_ALLOC, linkstatic = True, target_compatible_with = _PLATFORM)
+_DIR = "/usr/tests/cddl/usr.sbin/bsdinstruments"
+_PACKAGE = "bsdinstruments-tests"
+[utility_installation(name = "install_" + name, program = name, manual = None, package = _PACKAGE, bindir = _DIR) for name in ["bsdinstruments_unit_test"]]
+bsd_script_wrapper(name = "bsdinstruments_test", body = "bsdinstruments_test.sh", interpreter = "/usr/libexec/atf-sh", cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_bsdinstruments_test", src = ":bsdinstruments_test", destination = _DIR + "/bsdinstruments_test", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=" + _PACKAGE])
+bsd_install_file(name = "install_file_0", src = "mockdtrace.c", destination = _DIR + "/mockdtrace.c", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsdinstruments_test", "bsdinstruments_unit_test"], interfaces = {n: "atf" for n in ["bsdinstruments_test", "bsdinstruments_unit_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _DIR + "/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_manifest(name = "install_manifest", entries = [":install_bsdinstruments_test", ":install_file_0", ":install_kyuafile"], manifests = [":install_" + name for name in ["bsdinstruments_unit_test"]], visibility = ["//visibility:public"])
+
+# filter_alloc_exit and filter_grow_exit expect exit(1) (atf_tc_expect_exit);
+# //tools/build/bazel:atf_runner accepts passed/skipped/expected_failure only,
+# so they run under Kyua on the installed suite.
+EXPECT_EXIT = ["filter_alloc_exit", "filter_grow_exit"]
+ALL_CASES = ["origin_names", "descriptions", "load_dir_entries", "load_file_names", "load_alloc_failure", "params", "render_markers", "span_markers", "render_alloc_failure", "filters", "filter_alloc_exit", "filter_grow_exit"]
+CASES = [case for case in ALL_CASES if case not in EXPECT_EXIT]
+[bsd_atf_test(name = "bsdinstruments_unit_test_" + case, case_name = case, interface = "program", body = ":bsdinstruments_unit_test",
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _BASE_RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small") for case in CASES]
+test_suite(name = "native_tests", tests = [":bsdinstruments_unit_test_" + case for case in CASES], visibility = ["//visibility:public"])

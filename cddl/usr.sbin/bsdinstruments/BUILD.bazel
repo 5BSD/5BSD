@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# bsdinstruments (cddl/usr.sbin/bsdinstruments/Makefile): the libdtrace include
+# set, -I lib/libotelexport -I cddl/lib/libdtotel -I lib/libtracecmp, LIBADD
+# dtotel tracecmp dtrace ctf elf proc spl xo pthread otelexport jail m; the
+# PROFILES group installs every profiles/*.d.  Shared libraries are listed in
+# Make's NEEDED order.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "headers", hdrs = ["bsdinstruments.h"], strip_include_prefix = ".",
+    deps = ["//cddl/contrib/opensolaris:dtrace_headers", "//cddl/compat/opensolaris/include:headers", "//sys/sys:kernel_headers"],
+    visibility = ["//cddl/usr.sbin/bsdinstruments/tests:__pkg__"])
+SOURCES = ["main.c", "filter.c", "profile.c", "probes.c", "watch.c"]
+exports_files(SOURCES, visibility = ["//cddl/usr.sbin/bsdinstruments/tests:__pkg__"])
+_DEFINES = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"]
+cc_binary(name = "bsdinstruments", srcs = SOURCES,
+    deps = [":headers", "//cddl/lib/libdtotel:headers", "//lib/libtracecmp:headers", "//lib/libotelexport:headers",
+        "//cddl/lib/libdtotel:dtotel_pie", "//lib/libotelexport:otelexport_pie",
+        "//cddl/lib/libdtrace:dtrace", "//lib/libjail:jail", "//lib/msun:m", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto",
+        "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2", "//lib/libtracecmp:tracecmp", "//cddl/lib/libctf:ctf", "//lib/libelf:elf", "//lib/libproc:proc",
+        "//cddl/lib/libspl:spl", "//lib/libxo/libxo:xo", "//lib/libthr:thr"],
+    dynamic_deps = ["//cddl/lib/libdtrace:dtrace_shared", "//lib/libjail:jail_shared", "//lib/msun:m_shared", "//lib/libz:z_shared",
+        "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared",
+        "//lib/libtracecmp:tracecmp_shared", "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared",
+        "//cddl/lib/libspl:spl_shared", "//lib/libxo/libxo:xo_shared", "//lib/libthr:thr_shared"],
+    local_defines = _DEFINES, copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "bsdinstruments", manual = "bsdinstruments.8", package = "bsdinstruments",
+    bindir = "/usr/sbin", man_section = "8")
+_TESTS = "//tools/build/bazel/config:tests_enabled"
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest", "//cddl/usr.sbin/bsdinstruments/profiles:install_manifest"] +
+        select({_TESTS: ["//cddl/usr.sbin/bsdinstruments/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstruments","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} |
+        {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstruments"]}' for d in ["/usr/share/bsdinstruments/profiles"]} |
+        select({_TESTS: {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstruments-tests","dbg"]}' for d in ["/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/cddl", "/usr/lib/debug/usr/tests/cddl/usr.sbin", "/usr/lib/debug/usr/tests/cddl/usr.sbin/bsdinstruments"]} |
+            {"/usr/tests/cddl/usr.sbin/bsdinstruments": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstruments-tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

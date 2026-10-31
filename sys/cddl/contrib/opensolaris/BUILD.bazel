@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "ctf_headers", hdrs = glob(["uts/common/**/*.h"]), includes = [".", "uts/common"], visibility = ["//visibility:public"])
+cc_library(name = "ctf_headers", hdrs = glob(["uts/common/**/*.h"]), includes = [".", "uts/common"], deps = ["//sys/sys:hypertrace_header"], visibility = ["//visibility:public"])
 
 exports_files(["uts/common/sys/dtrace.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
 
 cc_library(name = "dtrace_intel_headers", hdrs = glob(["uts/intel/**/*.h"]), includes = ["uts/intel"], deps = [":ctf_headers"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
 
 exports_files(["uts/common/sys/ctf_api.h"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+# The installed <sys/dtrace.h> and <sys/ctf_api.h> (cddl/lib/libdtrace SYSINCS)
+# for public libdtrace consumers; HyperTrace extended both after the staged SDK.
+cc_library(name = "dtrace_public_headers", hdrs = ["uts/common/sys/dtrace.h", "uts/common/sys/ctf_api.h"],
+    strip_include_prefix = "uts/common", deps = ["//sys/sys:hypertrace_header"], visibility = ["//cddl/lib/libdtrace:__pkg__"])

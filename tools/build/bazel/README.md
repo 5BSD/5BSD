@@ -43226,6 +43226,10 @@ tags; `static_archive` and `hwstat` fail at analysis with the message.
 Making the archives native again needs native protobuf/upb/nghttp2 targets
 (the probe's `targets/` are the reference) and the generated-source rules.
 
+Superseded (2026-10-31): the native graph now has the protobuf closure and the
+generation rule; see "Native protobuf, OpenTelemetry and HyperTrace DTrace graph
+(2026-10-31)" below.  The `bsd_unavailable` targets are gone.
+
 ### Local-Unbound program group (2026-10-30)
 
 Native targets now build local-unbound, local-unbound-anchor,
@@ -44859,3 +44863,97 @@ Heimdal and runtime performance remain unqualified. Existing build-bsd explicit
 targets and typed mitkrb5 configuration handle this addition; no new frontend C,
 manual option, staging/signing/verification or publication contract is required.
 Make remains production/default; full-system gates remain open.
+
+### Native protobuf, OpenTelemetry and HyperTrace DTrace graph (2026-10-31)
+
+The protobuf closure, libotelexport, libdtotel, HyperTrace libdtrace/dtrace(1)
+and the OpenTelemetry programs are now ordinary in-tree native Bazel 9.3.1
+targets, built through `build-bsd bazel-test` format 5 (native-qualify.py →
+source_graph.py) and compared with a fresh Make reference.
+
+Components and targets:
+
+- `contrib/abseil-cpp`, `contrib/protobuf`, `contrib/nghttp2`,
+  `contrib/opentelemetry-proto`: new BUILD files exporting declared sources,
+  headers and licences (no upstream BUILD files exist in these trimmed imports;
+  same convention as contrib/unbound).  The OTLP licence moved from the root
+  package to `//contrib/opentelemetry-proto:LICENSE`.
+- `lib/libabsl` (libprivateabsl.so.2501, randen_hwaes.cc as its own group for
+  `-maes -msse4.1`, archive order kept), `lib/protobuf/libprotobuf-lite`,
+  `lib/protobuf/libprotobuf` (version scripts, private headers, well-known
+  .proto files, licences), `lib/protobuf/libprotoc` and `lib/protobuf/libupb`
+  (INTERNALLIB, plain and `_pie`), `lib/libnghttp2` (libprivatenghttp2.so.14),
+  `usr.bin/protoc` (/usr/libexec/protoc), `libexec/protoc-gen-{upb,upb_minitable,upbdefs}`.
+- `tools/build/bazel/bsd_protobuf.bzl`: `bsd_protoc_generate`, the native
+  `lib/protobuf/protoc-gen.mk` (languages upb, upbdefs, cpp; suffix-major
+  source order as PROTOGEN_SRCS).  protoc and the plugins run as static
+  `:bootstrap` tools (bsd_dtrace_bootstrap transition: exec configuration
+  without DTrace instrumentation), the counterpart of buildworld's bootstrap
+  protoc.
+- `lib/libotelexport` (17 sources + 20 generated OTLP upbdefs/mini-table
+  sources; `bsd_unavailable` targets removed), `cddl/lib/libdtotel`,
+  `cddl/lib/libdtrace` (all 61 Make sources incl. the C++20 HyperTrace linker,
+  ELF and typing code, `-fno-rtti`, cddl/Makefile.inc defines, `-I sys` via
+  `//sys/sys:kernel_headers`, dt_hypertrace.h installed), `cddl/lib/drti`,
+  `cddl/usr.sbin/dtrace` (libdtotel/libotelexport closure),
+  `cddl/usr.sbin/bsdinstruments` (460 profiles), `usr.sbin/hwstat`,
+  `usr.sbin/otelconf` (CONFS/DEFAULTS), `usr.sbin/otelpfd`, `usr.sbin/otelauditd`,
+  and all their test packages (including `lib/libotelexport/tests/pbcpp`, the
+  C++ OTLP oracle from the `cpp` binding set).
+- Header plumbing: `//sys/sys:hypertrace_header`,
+  `//sys/cddl/contrib/opensolaris:dtrace_public_headers` (the installed
+  sys/dtrace.h and sys/ctf_api.h for public libdtrace consumers),
+  `//sys/dev/vmm:param_header`, `//usr.sbin/dtraced:headers`.
+- `sys/contrib/openzfs/BUILD.bazel` was never committed on dev: openzfs's own
+  `.gitignore` (`*`) hides it, so every checkout fails to analyse libspl and
+  dtrace.  It is added here and must be committed with `git add -f`.
+
+DTrace provider generation: dtrace(1) now links libotelexport (and so the
+OTLP bindings and protoc) and the instrumented native libthr.  All 114 provider
+call sites therefore use `//cddl/usr.sbin/dtrace:bootstrap` with
+`runtime_libraries = [":bootstrap_runtime"]` (the pattern libc, libutil and
+rtld-elf already used); plain exec-configuration dtrace with explicit runtime
+lists formed a cycle (libthr provider → libdtrace → libthr).  The generator's
+runtime excludes the source libthr: it requires the matching libc
+(`__uexterr_set_ue@FBSDprivate_1.0`), so the execution host's pair is used.
+All 226 provider targets of those call sites build (n9 run callsites-r3; the
+two bhyve targets were left out because bhyve's own HyperTrace headers
+(`hypertrace_session.h`) are not in its native graph yet — an existing gap,
+independent of this change).
+
+Dynamic dependency order: rules_cc keeps BUILD dependency order, so programs
+list their libraries in Make's first-appearance (NEEDED) order; libthr is a
+native dependency where Make places `-lpthread`.
+
+Qualification (Bazel 9.3.1, offline: copies of the libmd workspace repository
+cache and 47 distdirs, `--repository_disable_download`, `--lockfile_mode=error`,
+SDK bazel-bc-exec-sdk-20261029; evidence `/usr/obj/5BSD-otel-validation/n9-*`,
+record `n9-record.md`):
+
+- Fresh Make reference (`n9-make-ref`, buildenv on the merge3 WORLDTMP, NO_ROOT
+  METALOG per component, installconfig for otelconf).
+- Final run `n9-runs/final-r1` (default settings, dtrace on): 38 targets, 236
+  native ATF cases passed under `bazel test` (libotelexport 126, libdtotel 57,
+  bsdinstruments 10, otelpfd 4, otelauditd 6, hwstat 33).
+- Install audits against METALOG + stage (records, owner/group/mode, package
+  tags, symlink targets; ELF global/weak symbols, archive member order, ordered
+  NEEDED/SONAME/FLAGS, debuglink CRCs; other payloads byte-identical): all 19
+  components pass, e.g. libabsl 330 records, libprotobuf 147, bsdinstruments 476,
+  libotelexport 104 (with tests).
+- INTERNALLIB archives (libprotoc, libupb, libotelexport, libdtotel, plain and
+  PIE) match Make's member order and symbols (Make's `.pieo` member names are
+  normalised to `.o`); the 50 generated OTLP files are byte-identical to Make's
+  `protogen/otlp` (Make additionally leaves ten undeclared empty `NAME.upb.c`).
+- Negative dependency checks: removing libupb from libotelexport fails the
+  dtrace link (undefined `upb_DefPool_New`); removing the generated-header
+  library fails compilation; mutating common.proto regenerates both
+  configurations' bindings and recompiles only libotelexport (74 objects, no
+  libdtrace objects), and restoring it recompiles only the 4 changed generated
+  objects.
+
+Not registered as Bazel tests (run in the VM instead): cases that exec the
+dynamically linked oracle, use getcwd() into 256-byte buffers longer than the
+sandbox execroot, need another account, or use `atf_tc_expect_exit` (not
+supported by `atf_runner`), and all ATF shell suites.  Make remains the
+production backend; build-bsd needs no new option (format-5 targets select
+these components); bsd-build.8 updated.

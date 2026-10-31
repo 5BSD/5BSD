@@ -2,3 +2,12 @@
 
 # Source fixtures shipped with Switchboard contract tests.
 exports_files(['capability-services.d'], visibility = ["//usr.sbin/BSDSysctl/tests:__pkg__", "//usr.sbin/BSDNotify/tests:__pkg__", "//usr.sbin/switchboard/tests:__pkg__"])
+
+# PROFILES (cddl/usr.sbin/bsdinstruments/Makefile: every *.d, `ls` order),
+# installed under /usr/share/bsdinstruments/profiles by bsdinstruments.
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+PROFILES = glob(["*.d"])
+[bsd_install_file(name = "install_" + profile.removesuffix(".d"), src = profile, destination = "/usr/share/bsdinstruments/profiles/" + profile,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstruments"]) for profile in PROFILES]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + profile.removesuffix(".d") for profile in PROFILES],
+    visibility = ["//cddl/usr.sbin/bsdinstruments:__pkg__"])

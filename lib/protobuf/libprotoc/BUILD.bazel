@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# protoc's compiler library (lib/protobuf/libprotoc/Makefile): INTERNALLIB
+# LIB_CXX, CXXSTD c++17; libprotoc.a and the PIE variant libprotoc_pie.a
+# that the installed protoc links.  Nothing is installed.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# Makefile SRCS order.
+SOURCES = [
+    "src/google/protobuf/compiler/code_generator.cc",
+    "src/google/protobuf/compiler/code_generator_lite.cc",
+    "src/google/protobuf/compiler/command_line_interface.cc",
+    "src/google/protobuf/compiler/cpp/enum.cc",
+    "src/google/protobuf/compiler/cpp/extension.cc",
+    "src/google/protobuf/compiler/cpp/field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/cord_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/enum_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/map_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/message_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/primitive_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/string_field.cc",
+    "src/google/protobuf/compiler/cpp/field_generators/string_view_field.cc",
+    "src/google/protobuf/compiler/cpp/file.cc",
+    "src/google/protobuf/compiler/cpp/generator.cc",
+    "src/google/protobuf/compiler/cpp/helpers.cc",
+    "src/google/protobuf/compiler/cpp/ifndef_guard.cc",
+    "src/google/protobuf/compiler/cpp/message.cc",
+    "src/google/protobuf/compiler/cpp/namespace_printer.cc",
+    "src/google/protobuf/compiler/cpp/padding_optimizer.cc",
+    "src/google/protobuf/compiler/cpp/parse_function_generator.cc",
+    "src/google/protobuf/compiler/cpp/service.cc",
+    "src/google/protobuf/compiler/cpp/tracker.cc",
+    "src/google/protobuf/compiler/plugin.cc",
+    "src/google/protobuf/compiler/plugin.pb.cc",
+    "src/google/protobuf/compiler/retention.cc",
+    "src/google/protobuf/compiler/subprocess.cc",
+    "src/google/protobuf/compiler/versions.cc",
+    "src/google/protobuf/compiler/zip_writer.cc",
+    "src/google/protobuf/testing/file.cc",
+]
+[cc_library(name = "protoc" + suffix, srcs = ["//contrib/protobuf:" + source for source in SOURCES],
+    deps = ["//contrib/protobuf:src_headers", "//contrib/abseil-cpp:headers", "//contrib/llvm-project/libcxx/include:headers",
+        "//lib/protobuf/libprotobuf:protobuf", "//lib/libabsl:absl"],
+    cxxopts = ["-std=c++17", "-nostdinc++"] + copts, linkstatic = True, target_compatible_with = _PLATFORM,
+    visibility = ["//usr.bin/protoc:__pkg__"])
+ for suffix, copts in [("", []), ("_pie", ["-fpie"])]]
+bsd_component_archive(name = "static_archive", groups = [":protoc"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+bsd_component_archive(name = "pie_archive", groups = [":protoc_pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])

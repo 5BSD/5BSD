@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# dtraced's wire/IO declarations, which libdtrace and dtrace(1) include
+# (their Makefiles add -I usr.sbin/dtraced).  The daemon itself is not a
+# native target yet.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."],
+    visibility = ["//cddl/lib/libdtrace:__pkg__", "//cddl/usr.sbin/dtrace:__pkg__", "//cddl/usr.sbin/bsdinstruments:__subpackages__"])
