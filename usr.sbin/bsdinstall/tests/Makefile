@@ -22,14 +22,11 @@ ATF_TESTS_SH=	config_test \
 #   byte for byte with the installed /usr/share/doc/5bsd;
 # - docs/book/tools/check-book.sh and the code the book's claims are checked
 #   against: the system call table and the sys/sys headers the system call
-#   appendix names (plus file.h, user.h and socket.h, as check-book.sh does).
+#   appendix names plus the constant-family headers selected by check-book.sh.
 #   The manual page and sysctl inventories of the tree are collected at build
 #   time by check-book.sh itself.
 BOOK_FILES!=	cd ${SRCTOP} && find docs/book/src -type f | LC_ALL=C sort
-BOOK_HEADERS!=	cd ${SRCTOP} && { grep -ohE 'sys/sys/[A-Za-z0-9_]+\.h' \
-		    docs/book/src/appendix/syscalls-and-sysctls.md; \
-		    echo sys/sys/file.h; echo sys/sys/user.h; \
-		    echo sys/sys/socket.h; } | LC_ALL=C sort -u
+BOOK_HEADERS!=	sh ${SRCTOP}/docs/book/tools/check-book.sh -g headers ${SRCTOP}
 
 SRCTREE_FILES=	docs/book/tools/check-book.sh \
 		release/tools/vmimage.subr \

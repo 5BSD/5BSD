@@ -7,17 +7,25 @@ import sys
 
 
 def materialize(records, output):
-    output.mkdir(exist_ok=True)
+    # Validate the complete namespace before writing. Checking each destination
+    # against every earlier destination makes large source fixtures quadratic.
     destinations = set()
     for record in records:
         name = record["destination"]
         parts = name.split("/")
         if any(part in ("", ".", "..") for part in parts) or "\\" in name:
             raise ValueError("fixture destination must be normalized and relative")
-        if any(name == other or name.startswith(other + "/") or
-               other.startswith(name + "/") for other in destinations):
+        if name in destinations:
             raise ValueError("conflicting fixture destination")
         destinations.add(name)
+    for name in destinations:
+        parts = name.split("/")
+        for index in range(1, len(parts)):
+            if "/".join(parts[:index]) in destinations:
+                raise ValueError("conflicting fixture destination")
+    output.mkdir(exist_ok=True)
+    for record in records:
+        name = record["destination"]
         source = Path(record["source"])
         if not source.is_file():
             raise ValueError("fixture source must be a regular file")

@@ -37,3 +37,5 @@ cc_test(name = "signature_test", srcs = ["//usr.sbin/pkg/tests:signature_test.c"
     dynamic_deps = ["//secure/lib/libcrypto:crypto_shared", "//secure/lib/libssl:ssl_shared", "//lib/libmd:md_shared"],
     copts = ["-UNDEBUG"], features = ["bsd_test_runtime_paths"], linkstatic = True,
     size = "small", visibility = ["//visibility:public"])
+
+exports_files(["5BSD.conf.in"], visibility = ["//usr.sbin/bsdinstall:__pkg__"])

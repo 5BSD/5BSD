@@ -483,3 +483,6 @@ config_setting(name = "mpsutil_debug_enabled", flag_values = {":mpsutil_debug": 
 # mfiutil Make DEBUG variant.
 bool_flag(name = "mfiutil_debug", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "mfiutil_debug_enabled", flag_values = {":mfiutil_debug": "true"}, visibility = ["//visibility:public"])
+
+# Installer OSNAME, shared by the maintained dialog helpers.
+string_flag(name = "installer_osname", build_setting_default = "5BSD", visibility = ["//visibility:public"])

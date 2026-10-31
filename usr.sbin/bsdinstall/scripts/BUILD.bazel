@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_template.bzl", "bsd_template")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+# bsd.compat.pre.mk currently declares _ALL_LIBCOMPATS := 32 unconditionally.
+# This lists supported package suffixes, not enabled target ABIs.
+bsd_template(name = "pkgbase_script", template = "pkgbase.in", output = "pkgbase", substitutions = {"%%_ALL_libcompats%%": "32"})
+_SCRIPTS = ['auto', 'adduser', 'bootconfig', 'checksum', 'config', 'docsinstall', 'entropy', 'fetchmissingdists', 'finalconfig', 'firmware', 'firmware-fetch', 'hardening', 'hostname', 'jail', 'keymap', 'mirrorselect', 'mount', 'mount_aux', 'netconfig', 'netconfig_ipv4', 'netconfig_ipv6', 'pkgbase', 'ports', 'rootpass', 'script', 'services', 'time', 'tzfspool', 'umount', 'verify-image', 'wlanconfig', 'zfsboot']
+[bsd_install_file(name = "install_" + name,
+    src = ":pkgbase_script" if name == "pkgbase" else "//tools/build/capimage:verify-stage.sh" if name == "verify-image" else name,
+    destination = "/usr/libexec/bsdinstall/" + name, owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsdinstall"]) for name in _SCRIPTS]
+[bsd_install_file(name = "install_" + name, src = name, destination = "/usr/libexec/bsdinstall/" + name, owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstall"]) for name in ["hostname.subr", "repository.subr"]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_" + name for name in _SCRIPTS + ["hostname.subr", "repository.subr"]], visibility = ["//usr.sbin/bsdinstall:__pkg__"])

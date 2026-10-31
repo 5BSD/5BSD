@@ -8397,3 +8397,202 @@ Makefile. Native MIT builds preserve all RPC sources and byte-identical generate
 protocol code. Kernel GSS upcalls, credential-cache/keytab lifecycle, principal
 mapping, authentication failures and NFS security-context observability require
 runtime qualification. No daemon or credential operation was executed here.
+
+### 2026-10-30: networkcmpctl
+
+The command declares no local provider/direct libbsm linkage. Shared production
+linkage preserves libnetworkcmp. Its static test helper exposes the unresolved
+archive DOF difference: 79 native versus 26 Make schemas; all 26 unchanged,
+53 extra native schemas; instruction/function-bound checks pass. Live service,
+policy attribution, state/resolve tracing and audit behavior remain unqualified.
+Twelve of fourteen maintained host ATF executions pass. Both unavailable cases
+SIGSYS at cap_process (source syscall 1011 versus installed host header 636).
+Matching-kernel qualification is required; the expectation was not weakened.
+
+### 2026-10-30: sndctl, prometheus_sysctl_exporter and mld6query
+
+No local DTrace providers or direct libbsm linkage are declared by these Make
+components. Native targets preserve their sources, libraries and IPSEC definition.
+Read-only exporter metric/filter/HTTP checks pass; sound-device changes, multicast
+transmission/response handling, socket privilege attribution and latency require
+separate runtime review. No such device/network operations were performed here.
+
+### 2026-10-30: Hyper-V KVP and VSS daemons
+
+No local DTrace provider or direct libbsm dependency is declared by these daemon
+Makefiles. Native targets retain vendor source and utility protocol headers.
+KVP persistent-pool/network-script failures and VSS filesystem freeze/thaw/error
+recovery need runtime observability and audit review in a suitable Hyper-V guest.
+No daemon/device operation was performed during the artifact checks.
+
+### 2026-10-30: crunchgen and crunchide
+
+No local DTrace providers/direct libbsm integration are declared. Native tools
+retain both ELF classes and the maintained skeleton generator. Private symbol
+transformation/generated-output checks pass; a complete rescue build must still
+verify preservation of its constituent programs' probes and audit paths. These
+tool checks do not establish instrumentation retention in a linked rescue image.
+
+### 2026-10-30: installer helper binaries
+
+The four helper Makefiles declare no local DTrace provider or direct libbsm
+linkage. Native sources preserve archive extraction, download, GEOM partitioning
+and console-child logic, but artifact checks do not qualify these operations.
+Disk changes/rollback and error attribution, archive paths, fetch integrity and
+child/terminal lifecycle require disposable installation/runtime tests. None of
+these operations was executed against the host.
+
+### 2026-10-30: installer scripts/data
+
+Native installation preserves every maintained tests-disabled installer script,
+repository/configuration input and verification helper byte-for-byte. This does
+not qualify script logging, failure propagation, storage/network changes, or
+security enforcement. Installed ATF fixtures and full installation/upgrade runtime
+remain pending; tests=true is explicitly rejected by the aggregate target.
+
+### Installer test reference (2026-10-30)
+
+Fresh maintained Make build/install/installconfig with MK_TESTS=yes completed
+under /usr/obj/usr/src/bazel-bsdinstall-tests-make-20261030. Installed test
+fixtures contain 111 files, including 98 srctree files; generated manual and
+sysctl inventories contain 19127 and 7940 lines respectively. Evidence and
+SHA-256 inventory: /usr/obj/usr/src/bazel-installer-tests-reference-20261030/
+fixture-audit.json, book-check.stdout and book-check.stderr.
+
+Running the installed check-book.sh against its installed source fixtures and
+inventories exits 1: persistent-state-contract.md links to a missing architecture
+heading; network-provenance.md names PF_XTAG_LOOP and PF_XTAG_ICMP_ERROR which
+are absent from the checker-selected headers. Two dynamic sysctl patterns are
+reported unverified separately. These are observed Make-reference failures,
+not successful runtime qualification or a reason to weaken the checker.
+
+Bazel installer tests remain explicitly incompatible pending complete declared
+fixture and inventory inputs. No frontend input or packaging contract changed;
+build-bsd integration needs no change for this reference-only qualification.
+
+Installer reference follow-up: fixed the stale historical BIP link without
+restoring BIP scope. PF_XTAG_LOOP and PF_XTAG_ICMP_ERROR are real definitions in
+sys/sys/mbuf.h. check-book.sh now exposes `-g headers`; both the checker and
+Make test staging consume that shared inventory, including mbuf.h. The fresh
+r2 Make build/install/installconfig succeeded and installed 112 test files.
+The installed book checker reports zero failures and two explicitly unverified
+dynamic sysctl patterns. Private-copy negative cases reject a removed constant
+and a removed header. Evidence: bazel-installer-tests-reference-20261030/fixed/
+audit.json under /usr/obj/usr/src. An initial negative-test attempt encountered
+the copied installed header's 0444 mode; only the private copy was made writable
+for the completed checks. This qualifies the reference fixture correction, not
+the still-pending Bazel fixture graph or full installer runtime.
+Frontend review: build-bsd and backend packaging use the maintained test Makefile;
+no new frontend option or staging override is required by this correction.
+
+### Native book installation (2026-10-30)
+
+Added //docs/book native source ownership and //share/doc/5bsd:install_archive.
+The reviewed 81-file source inventory is reusable by installer test fixtures;
+package evaluation rejects missing or unlisted files against a native glob.
+Metadata resides outside docs/book/src, so it is not accidentally installed as
+book content. Installation derives directory paths from chapter paths and uses
+runtime package ownership, with declared mtree/account policy for ancestors.
+
+Fresh Make build/install/installconfig and native build through build-bsd match
+all 91 installation records (including directory package tags) and all 81
+regular payloads byte for byte. Evidence: /usr/obj/usr/src/bazel-book-reference-
+20261030/book/{install-audit.json,payload-audit.json}, native capture
+/usr/obj/usr/src/bazel-book-20261030, Make stage
+/usr/obj/usr/src/bazel-book-make-20261030. No generated manual/sysctl test
+inventories or installed installer tests are claimed migrated by this change.
+The full installer tests=true restriction remains until its graph is complete.
+Frontend review: existing format-5 explicit targets support the new archive;
+no frontend/backend option change is required. The manual documents its scope.
+
+### Native installer source fixtures and shell tests (2026-10-30)
+
+Added usr.sbin/bsdinstall/tests native ownership: ten maintained ATF shell
+programs, their Kyuafile, and 99 source fixtures (81 shared book chapters,
+14 real kernel headers, the checker, syscall table, vmimage helper and manual).
+The srctree directory artifact declares every input; file exports have scoped
+visibility. No Make invocation occurs in these native actions.
+
+The deliberately partial fixture_archive matches all 132 corresponding Make
+installation records and 110 payload files byte for byte. Its comparator names
+book-man-pages and book-sysctls as the two pending generated files; full-suite
+parity is NOT claimed. The parent installer tests=true incompatibility remains.
+Native and Make wrappers enumerate identical metadata for all 47 ATF cases
+across ten programs using host atf-sh. Test bodies were not run. The native
+source fixtures pass check-book using the two Make-generated inventories;
+this mixed-input check does not qualify native inventory generation.
+Evidence: /usr/obj/usr/src/bazel-installer-fixtures-reference-20261030/tests/
+{install-audit.json,payload-audit.json,runtime-audit.json}; native capture:
+/usr/obj/usr/src/bazel-installer-fixtures-20261030. The full Make reference is
+bazel-bsdinstall-tests-make-20261030-r2 under /usr/obj/usr/src.
+Frontend review: maintained format-5 targets handle these fixture targets;
+no new frontend option or bypass is needed. Manual describes the partial scope.
+
+### Fixture namespace scaling and inventory sizing (2026-10-30)
+
+Both bsd_fixture_tree.bzl and fixture_tree.py previously compared every fixture
+path with every preceding path, making conflict checks quadratic. Replaced
+those pairwise scans with complete-name membership and parent-prefix checks.
+Duplicates, ancestor conflicts in either input order, invalid paths, and
+existing-file overwrite protection remain tested by fixture-tree-test.py
+(four tests passed). Namespace validation now completes before materialization.
+The maintained build-bsd rebuild of installer fixtures succeeded; all 103
+captured outputs have unchanged SHA-256 hashes against the prior candidate.
+
+Sizing prototype selected the exact input classes scanned by check-book.sh:
+manual-name source files, Make metadata, and sys/ C/header files, excluding
+symlinks and .git as the existing find scans do. The 29615 regular files total
+422928046 logical bytes. Corrected materialization measured 3.44 s wall,
+1.35 s user, 1.41 s system, 33036 KiB maximum RSS, 5814 block input operations,
+30604 block output operations, and 272993 KiB allocated disk on this host.
+Maintained man/sysctl generators over that staged set took 0.681/2.717 s and
+matched the fresh Make inventories byte for byte. These are warm-host,
+one-run prototype measurements, not end-to-end Bazel performance qualification
+or a baseline speedup measurement. The source-discovery prototype is not wired
+into Bazel; tracked source membership, mutation tests, and cache behavior
+remain necessary before removing the installer tests=true restriction.
+
+Evidence: /usr/obj/usr/src/bazel-book-inventory-prototype-20261030/
+(discovery.json, materialize.time, comparison.json, unit-tests.log,
+native-output-parity.json); native rebuild:
+/usr/obj/usr/src/bazel-installer-fixtures-linear-20261030.
+Frontend review: fixture helper behavior and output contract are preserved;
+existing format-5 targets exercised the change, so no frontend option/manual
+change is required. Repository-design reference consulted:
+https://bazel.build/rules/lib/builtins/path (readdir membership watching) and
+https://bazel.build/rules/lib/builtins/repository_ctx (watch/watch_tree).
+
+### Book inventory repository experiment rejected (2026-10-30)
+
+Added book_inventory_sources.py and its two regression tests. Discovery matches
+the maintained regular-file selection, ignores .git and directory symlinks,
+and records directory/entry membership for later invalidation integration.
+Tests cover manual/sysctl selection, cyclic and file symlinks, ignored metadata,
+and unselected-file-to-directory transitions. These are Python utility checks,
+not proof of Bazel mutation invalidation.
+
+The first native repository candidate failed: ctx.watch_tree followed the
+existing contrib/zsh/Doc/Doc -> /usr/src/contrib/zsh/Doc cycle. Inspection of
+the actual Bazel 9.3.1 bootstrap source found that RepoRecordedInput.Dirents
+hashes only Dirent::getName, so readdir(watch="yes") alone cannot safely detect
+same-name entry-type replacement. The alternative watched all 10932 directory
+listings and 144104 entries. It was intentionally interrupted after 266.924 s
+with no build actions executed: broad content invalidation and this analysis
+cost are not accepted for the intended incremental design. Client time output
+is not server CPU/RSS measurement and must not be reported as total resources.
+
+Removed the candidate repository rule, MODULE registration, and generator
+wiring from the working source. Exact candidate sources and rejection decision
+are retained in /usr/obj/usr/src/bazel-installer-inventories-reference-20261030/
+rejected-watch-candidate; first and second run evidence are
+bazel-installer-inventories-20261030 and -r2 under /usr/obj/usr/src.
+Discovery test output is discovery-tests.log in the reference directory.
+Next requirement: efficient type-aware source membership tracking (including
+same-name regular-file/directory/symlink changes), then actual Bazel mutation,
+cache and complete inventory parity tests. Consider a narrowly reviewed Bazel
+watching improvement before adopting broad per-file repository watches.
+The installer aggregate remains tests=true incompatible. No generated outputs
+are substituted and no source-change class is silently ignored.
+Frontend review: rejected wiring has been removed; the discovery utility is
+not a new build input or user-facing option, so no frontend/backend change is
+required by this committed diagnostic step.

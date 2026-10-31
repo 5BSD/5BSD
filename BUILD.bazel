@@ -443,3 +443,5 @@ cc_library(name = "mpt_user_headers", hdrs = ["sys/dev/mpt/mpilib/mpi_type.h", "
 cc_library(name = "mps_user_headers", hdrs = ["sys/dev/mps/mpi/mpi2_type.h", "sys/dev/mps/mpi/mpi2.h", "sys/dev/mps/mpi/mpi2_cnfg.h", "sys/dev/mps/mpi/mpi2_raid.h", "sys/dev/mps/mpi/mpi2_ioc.h", "sys/dev/mps/mpi/mpi2_init.h", "sys/dev/mps/mpi/mpi2_tool.h", "sys/dev/mps/mpi/mpi2_sas.h", "sys/dev/mpr/mpi/mpi2_type.h", "sys/dev/mpr/mpi/mpi2.h", "sys/dev/mpr/mpi/mpi2_cnfg.h", "sys/dev/mpr/mpi/mpi2_sas.h", "sys/dev/mps/mps_ioctl.h", "sys/dev/mpr/mpr_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mpsutil:__pkg__"])
 
 cc_library(name = "mfi_user_headers", hdrs = ["sys/dev/mfi/mfireg.h", "sys/dev/mfi/mfi_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mfiutil:__pkg__"])
+
+cc_library(name = "hyperv_utility_headers", hdrs = ["sys/dev/hyperv/utilities/hv_kvp.h", "sys/dev/hyperv/utilities/hv_utilreg.h", "sys/dev/hyperv/utilities/hv_snapshot.h"], strip_include_prefix = "/sys/dev/hyperv/utilities", visibility = ["//usr.sbin/hyperv:__subpackages__"])

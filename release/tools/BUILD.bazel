@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["vmimage.subr"], visibility = ["//usr.sbin/bsdinstall/tests:__pkg__"])

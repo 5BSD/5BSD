@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load(":sources.bzl", "book_sources")
+book_sources()
+exports_files(["tools/check-book.sh"], visibility = ["//usr.sbin/bsdinstall/tests:__pkg__"])

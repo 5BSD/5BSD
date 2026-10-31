@@ -45,7 +45,7 @@ cc_library(name = "envfd_header", hdrs = ["envfd.h"], strip_include_prefix = "/s
 
 cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
 
-exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__"])
+exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__", "//usr.sbin/bsdinstall/tests:__pkg__"])
 
 exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__"])
 
@@ -80,3 +80,4 @@ cc_library(name = "pmc_user_headers", hdrs = ['_align.h', '_bitset.h', '_callout
 
 # HyperTrace ABI; uts/common/sys/dtrace.h includes <sys/hypertrace.h> (Make: -I sys).
 cc_library(name = "hypertrace_header", hdrs = ["hypertrace.h", "hypertrace_wire.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+exports_files(['capsicum.h', 'event.h', 'fcntl.h', 'file.h', 'filedesc.h', 'mbuf.h', 'procctl.h', 'procdesc.h', 'ptrace.h', 'sysent.h', 'un.h', 'user.h', 'wait.h'], visibility = ["//usr.sbin/bsdinstall/tests:__pkg__"])

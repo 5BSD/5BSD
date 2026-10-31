@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//docs/book:sources.bzl", "BOOK_FILES")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_fixture_tree.bzl", "bsd_fixture_tree")
+
+_TESTS = ['config_test', 'documentation_test', 'firmware_fetch_test', 'hostname_test', 'jail_test', 'pkgbase_selection_test', 'ports_test', 'repository_test', 'storage_requirement_test', 'tzfspool_test']
+_HEADERS = ['capsicum.h', 'event.h', 'fcntl.h', 'file.h', 'filedesc.h', 'mbuf.h', 'procctl.h', 'procdesc.h', 'ptrace.h', 'socket.h', 'sysent.h', 'un.h', 'user.h', 'wait.h']
+_SOURCES = {"//docs/book:src/" + path: "docs/book/src/" + path for path in BOOK_FILES} | {
+    "//sys/sys:" + name: "sys/sys/" + name for name in _HEADERS
+} | {
+    "//docs/book:tools/check-book.sh": "docs/book/tools/check-book.sh",
+    "//release/tools:vmimage.subr": "release/tools/vmimage.subr",
+    "//sys/kern:syscalls.master": "sys/kern/syscalls.master",
+    "//usr.sbin/bsdinstall:bsdinstall.8": "usr.sbin/bsdinstall/bsdinstall.8",
+}
+
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for name in _TESTS]
+[bsd_install_file(name = "install_" + name, src = ":" + name,
+    destination = "/usr/tests/usr.sbin/bsdinstall/" + name, owner = "root", group = "wheel",
+    mode = "0555", install_tags = ["package=bsdinstall-tests"]) for name in _TESTS]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _TESTS, interfaces = {name: "atf" for name in _TESTS})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/bsdinstall/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstall-tests"])
+[bsd_install_file(name = "fixture_" + path.replace("/", "_"), src = label,
+    destination = "/usr/tests/usr.sbin/bsdinstall/srctree/" + path,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstall-tests"])
+    for label, path in _SOURCES.items()]
+bsd_fixture_tree(name = "srctree", sources = _SOURCES,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+# This manifest deliberately excludes the two pending generated inventories.
+# It is not yet wired into the parent install_archive or advertised as a full
+# installed suite. Keep the parent's tests=true rejection until both are native.
+bsd_install_manifest(name = "fixture_manifest",
+    entries = [":install_" + name for name in _TESTS] + [":install_kyuafile"] +
+        [":fixture_" + path.replace("/", "_") for path in _SOURCES.values()])
+_DIRECTORIES = {"/usr/tests/usr.sbin/bsdinstall": True, "/usr/tests/usr.sbin/bsdinstall/srctree": True} | {
+    "/usr/tests/usr.sbin/bsdinstall/srctree/" + "/".join(path.split("/")[:i]): True
+    for path in _SOURCES.values() for i in range(1, len(path.split("/")))
+}
+bsd_install_archive(name = "fixture_archive", manifests = [":fixture_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall-tests"]}' for d in _DIRECTORIES},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
