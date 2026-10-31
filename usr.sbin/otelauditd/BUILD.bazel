@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+# otelauditd (usr.sbin/otelauditd/Makefile): PACKAGE otel, -I lib/libotelexport, LIBADD otelexport bsm.
+cc_library(name = "headers", hdrs = ["auditrec.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/otelauditd/tests:__pkg__"])
+exports_files(["otelauditd.c", "auditrec.c"], visibility = ["//usr.sbin/otelauditd/tests:__pkg__"])
+# Explicit final libthr dependency preserves Make's deferred pthread link order.
+cc_binary(name = "otelauditd", srcs = ["otelauditd.c", "auditrec.c"], deps = [":headers", "//lib/libotelexport:headers", "//lib/libotelexport:otelexport_pie", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2", "//lib/libbsm:bsm", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared", "//lib/libbsm:bsm_shared", "//lib/libthr:thr_shared"],
+    copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "otelauditd", manual = "otelauditd.8", package = "otel", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/otelauditd/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=otel","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=otel-tests","dbg"]}' for d in ['/usr/lib/debug/usr/tests', '/usr/lib/debug/usr/tests/usr.sbin', '/usr/lib/debug/usr/tests/usr.sbin/otelauditd']} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=otel-tests"]}' for d in ['/usr/tests/usr.sbin/otelauditd']}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

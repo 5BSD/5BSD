@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# otlp_pb_oracle (lib/libotelexport/tests/pbcpp/Makefile): PROG_CXX, CXXSTD
+# c++17, the OTLP set generated for C++ (PROTO_LANG cpp: NAME.pb.{cc,h}, which
+# adds LIBADD protobuf), LIBADD absl; installed in /usr/tests/lib/libotelexport.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_protobuf.bzl", "bsd_protoc_generate")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+OTLP_PROTOS = [
+    "opentelemetry/proto/common/v1/common.proto",
+    "opentelemetry/proto/resource/v1/resource.proto",
+    "opentelemetry/proto/logs/v1/logs.proto",
+    "opentelemetry/proto/metrics/v1/metrics.proto",
+    "opentelemetry/proto/trace/v1/trace.proto",
+    "opentelemetry/proto/profiles/v1development/profiles.proto",
+    "opentelemetry/proto/collector/logs/v1/logs_service.proto",
+    "opentelemetry/proto/collector/metrics/v1/metrics_service.proto",
+    "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+    "opentelemetry/proto/collector/profiles/v1development/profiles_service.proto",
+]
+bsd_protoc_generate(name = "otlpcpp", srcs = ["//contrib/opentelemetry-proto:" + proto for proto in OTLP_PROTOS],
+    proto_root = "contrib/opentelemetry-proto", language = "cpp")
+filegroup(name = "otlpcpp_sources", srcs = [":otlpcpp"], output_group = "sources")
+filegroup(name = "otlpcpp_headers", srcs = [":otlpcpp"], output_group = "headers")
+cc_library(name = "otlpcpp_bindings", hdrs = [":otlpcpp_headers"], includes = ["otlpcpp"])
+cc_binary(name = "otlp_pb_oracle", srcs = ["otlp_pb_oracle.cc", ":otlpcpp_sources"],
+    deps = [":otlpcpp_bindings", "//contrib/protobuf:src_headers", "//contrib/abseil-cpp:headers", "//contrib/llvm-project/libcxx/include:headers",
+        "//lib/protobuf/libprotobuf:protobuf", "//lib/libabsl:absl", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt", "//lib/msun:m"],
+    dynamic_deps = ["//lib/protobuf/libprotobuf:protobuf_shared", "//lib/libabsl:absl_shared", "//lib/libc++:cxx_shared",
+        "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    copts = ["-fPIE"], cxxopts = ["-std=c++17", "-nostdinc++"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//lib/libotelexport/tests:__pkg__"])
+utility_installation(name = "install_manifest", program = "otlp_pb_oracle", manual = None, package = "libotelexport-tests", bindir = "/usr/tests/lib/libotelexport")

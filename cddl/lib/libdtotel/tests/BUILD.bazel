@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_WRAP_ALLOC = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc", "-Wl,--wrap=strdup", "-Wl,--wrap=strndup"]
+_OE = ["//lib/libotelexport:otelexport_pie", "//lib/libz:z", "//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto", "//lib/libucl:ucl", "//lib/libnghttp2:nghttp2"]
+_OE_SHARED = ["//lib/libz:z_shared", "//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libucl:ucl_shared", "//lib/libnghttp2:nghttp2_shared"]
+_BASE_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared"]
+# cddl/lib/libdtotel/tests/Makefile (PACKAGE libotelexport-tests): dtotel_test
+# with dtrace_stub.c and libotelexport's test helpers (.PATH), the libdtrace
+# include set, WRAP_ALLOC; LIBADD dtotel otelexport z ssl crypto pthread m.
+cc_library(name = "stub_headers", hdrs = ["dtrace_stub.h"], strip_include_prefix = ".")
+_DEFINES = ["IN_BASE", "SKIP_SPL_SYS_CONDVAR_H", "HAVE_ISSETUGID", "NEED_SOLARIS_BOOLEAN", "HAVE_STRLCAT", "HAVE_STRLCPY"]
+cc_binary(name = "dtotel_test", srcs = ["dtotel_test.c", "dtrace_stub.c", "//lib/libotelexport/tests:otlp_validate.c", "//lib/libotelexport/tests:otel_testutil.c"],
+    deps = [":stub_headers", "//cddl/lib/libdtotel:headers", "//cddl/lib/libdtotel:private_headers", "//lib/libotelexport/tests:test_headers",
+        "//lib/libotelexport:private_headers", "//cddl/contrib/opensolaris:dtrace_headers", "//cddl/compat/opensolaris/include:headers", "//sys/sys:kernel_headers",
+        "//lib/atf/libatf-c:atf_c", "//cddl/lib/libdtotel:dtotel_pie", "//cddl/lib/libdtrace:dtrace", "//lib/libjail:jail", "//lib/msun:m"] + _OE + ["//lib/libthr:thr"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//cddl/lib/libdtrace:dtrace_shared", "//lib/libjail:jail_shared", "//lib/msun:m_shared"] + _OE_SHARED + ["//lib/libthr:thr_shared"],
+    local_defines = _DEFINES, copts = ["-fPIE"], linkopts = ["-pie"] + _WRAP_ALLOC, linkstatic = True, target_compatible_with = _PLATFORM)
+_DIR = "/usr/tests/cddl/lib/libdtotel"
+_PACKAGE = "libotelexport-tests"
+[utility_installation(name = "install_" + name, program = name, manual = None, package = _PACKAGE, bindir = _DIR) for name in ["dtotel_test"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["dtotel_test"], interfaces = {n: "atf" for n in ["dtotel_test"]})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _DIR + "/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + _PACKAGE])
+bsd_install_manifest(name = "install_manifest", entries = [":install_kyuafile"], manifests = [":install_" + name for name in ["dtotel_test"]], visibility = ["//visibility:public"])
+
+# dtrace_stub.c replaces the consumer-side libdtrace calls.  The session cases
+# below build paths from getcwd() into a fixed buffer that the Bazel sandbox's
+# execroot path exceeds; they run under Kyua on the installed suite instead.
+CWD_CASES = ["session_open_errors", "session_tick", "session_formats", "session_file_target", "session_system_config"]
+ALL_CASES = ["clock_program_shape", "probe_time_anchor", "malformed_records", "lines_and_stacks", "frame_forms", "exporter_failure_aborts", "open_and_handle_errors", "agg_scalars", "agg_key_names", "agg_key_actions", "agg_histograms", "agg_errors", "span_records", "span_explicit_keys", "span_ids_salted", "span_unanchored_and_limits", "span_malformed", "context_records", "context_malformed", "context_jail_cache", "span_context", "guest_routing", "guest_resource_records", "guest_fallbacks", "guest_aggregations", "dtrace_records", "session_options", "session_options_check", "session_guest_resources", "session_formats", "session_tick", "session_drops_and_aggregations", "session_open_errors", "buffered_edges", "record_edges", "keyname_edges", "key_action_edges", "histogram_edges", "bridge_alloc_failure", "session_edges", "keynames_clause_local", "agg_growth", "firing_identity", "session_system_config", "session_file_target", "agg_series_resets", "drop_and_error_counters", "trace_context_records", "span_trace_context", "typed_print_and_actions", "profile_firings", "profile_periods", "profile_aggregations", "profile_guests", "profile_bounds", "profile_edges", "profile_many_series", "profile_alloc_failure", "exemplar_records", "exemplar_malformed", "session_profiles_option", "session_profiles_json"]
+CASES = [case for case in ALL_CASES if case not in CWD_CASES]
+_RUNTIME = _BASE_RUNTIME + ["//cddl/lib/libdtrace:dtrace_shared", "//lib/libjail:jail_shared", "//lib/msun:m_shared"] + _OE_SHARED + ["//lib/libthr:thr_shared",
+    "//cddl/lib/libctf:ctf_shared", "//lib/libelf:elf_shared", "//lib/libproc:proc_shared", "//lib/librtld_db:rtld_db_shared", "//lib/libxo/libxo:xo_shared",
+    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libutil:util_shared", "//lib/libprocstat:procstat_shared", "//lib/libkvm:kvm_shared",
+    "//cddl/lib/libspl:spl_shared"]
+[bsd_atf_test(name = "dtotel_test_" + case, case_name = case, interface = "program", body = ":dtotel_test",
+    loader = "//libexec/rtld-elf:rtld_binary", runtime_lib = _RUNTIME,
+    runner = "//tools/build/bazel:atf_runner", body_timeout_seconds = 60, size = "small", timeout = "moderate") for case in CASES]
+test_suite(name = "native_tests", tests = [":dtotel_test_" + case for case in CASES], visibility = ["//visibility:public"])
