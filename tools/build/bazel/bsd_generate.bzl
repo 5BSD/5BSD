@@ -180,8 +180,8 @@ bsd_mixed_shared_library = rule(
     implementation = _mixed_shared_impl,
     doc = """LIB_CXX shared library: C and C++ objects with separate flag lists.
 
-    Bazel 5 cc rules have one copts list for C and C++; Make compiles .c with
-    CFLAGS and .cc with CXXFLAGS, so this rule compiles them in two groups
+    rules_cc rules apply target-wide flags to every source; Make compiles .c
+    with CFLAGS and .cc with CXXFLAGS (and per-file flags), so this rule compiles them in two groups
     and links the .pico-equivalent objects in Make's SRCS order (`order`).
     """,
     attrs = dict({

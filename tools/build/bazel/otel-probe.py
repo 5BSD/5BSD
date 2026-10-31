@@ -37,15 +37,15 @@ EXPLAINED_BAZEL_TOKENS = {
                      'object/section comparison).',
     '-iquote': 'Bazel workspace quote-include roots (".", bazel-out/<cfg>/bin, external/bazel_tools); '
                'Make relies on the including file\'s directory, which clang searches first in both.',
-    '-isystem bazel-out': 'generated-file twin of each declared include directory; empty for the OTel '
-                          'targets; for libdtrace it holds dt_grammar.h, where Make has -I${.OBJDIR} '
-                          '(recorded as outside the source tree and also left out of the comparison). '
-                          'Bazel 9 passes the same twin as -Ibazel-out/<cfg>/bin/<dir>.',
+    'bazel-out include directories': 'generated-file directories under bazel-out/<cfg>/bin: the twin '
+                                      '(-I) that rules_cc adds after each declared `includes` directory, '
+                                      'and -isystem directories of generated headers (the protoc-gen '
+                                      'bindings, protogen/otlp). For libdtrace the twin holds '
+                                      'dt_grammar.h; Make reaches these files through -I${.OBJDIR} '
+                                      'paths, which are outside the source tree and also left out of '
+                                      'the comparison.',
     '-nostdinc/-isystem SDK': 'explicit staged clang resource and sysroot include directories; '
                               'Make reaches the same directories through --sysroot defaults.',
-    '-I vs -isystem': 'Bazel 5 `includes` produces -isystem (Bazel 9 with rules_cc: -I, as Make); '
-                      'with Make policy -Wsystem-headers the diagnostics are unchanged and the '
-                      'search order is preserved and verified.',
     '-fdebug-compilation-dir=.': 'toolchain feature: Bazel sandboxes each action in a numbered '
                                  'directory that would otherwise be recorded as DW_AT_comp_dir, making '
                                  'debug output differ between identical rebuilds. Make records its '
@@ -219,11 +219,11 @@ def normalize_bazel_compile(tokens):
         if t == '-I' or t.startswith('-I'):
             path = tokens[i + 1] if t == '-I' else t[2:]
             if path.startswith('bazel-out/'):
-                # Bazel 9 (rules_cc) passes `includes` as -I, with the same
-                # generated-file twin that Bazel 5 passed with -isystem.
+                # rules_cc passes each `includes` directory as -I together
+                # with its generated-file twin under bazel-out.
                 dropped.append('-I' + path)
             else:
-                # Bazel 9 `includes`, or copts -I: a component's own include
+                # `includes`, or copts -I: a component's own include
                 # directory that Make adds for its objects only.
                 includes.append(path)
             i += 2 if t == '-I' else 1
@@ -257,9 +257,10 @@ def link_summary(tokens, archive_dirs=()):
 def params_file(bazel_bin, artifact, link_arguments=None):
     """Arguments of the link/archive action that writes `artifact`.
 
-    Bazel 5 materialized a params file for every link and archive action.
-    Bazel 9 (rules_cc) passes short archive command lines directly, so the
-    arguments then come from the action graph (`link_arguments`).
+    Long link/archive command lines use a params file, which
+    --materialize_param_files writes next to the output; rules_cc passes
+    short archive command lines directly, so their arguments come from the
+    action graph (`link_arguments`).
     """
     found = sorted(bazel_bin.glob(artifact + '-*.params'))
     if len(found) == 1:
@@ -310,7 +311,7 @@ def key_shape(value):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ('src', 'sysroot', 'objdump', 'awk', 'bazel', 'output'):
+    for name in ('src', 'sysroot', 'objdump', 'awk', 'output'):
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
     p.add_argument('--readelf', type=Path, default=Path('/usr/bin/readelf'))
@@ -319,10 +320,9 @@ def main():
     p.add_argument('--jobs', type=int, default=os.cpu_count())
     p.add_argument('--skip-host-runtime', action='store_true',
                    help='do not execute the built programs on this host')
-    bsd_toolchain.add_bazel_mode_arguments(p)
+    bsd_toolchain.add_bazel_arguments(p)
     a = p.parse_args()
-    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
-    bsd_toolchain.apply_bazel_environment(bzlmod)
+    bzlmod = bsd_toolchain.prepare(p, a)
     if platform.system() != 'FreeBSD' or platform.machine() != 'amd64':
         p.error('native FreeBSD amd64 only; cross compilation is unqualified')
     if a.jobs < 1:
@@ -354,7 +354,7 @@ def main():
     checker = load('elf_artifact_check', 'elf-artifact-check.py')
     probe_inputs = sorted([Path(__file__).resolve(), HERE / 'bsd_toolchain.py',
                            HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
-                           HERE / 'cc_compat.bzl', HERE / 'cc_compat_bzlmod.bzl',
+                           HERE / 'cc_compat.bzl', bsd_toolchain.PINNED_LOCKFILE,
                            HERE / 'bsd_generate.bzl',
                            HERE / 'elf-artifact-check.py', HERE / 'elf-artifact-check-test.py',
                            manifest_path,
@@ -365,7 +365,7 @@ def main():
               'probe_input_sha256': {str(x): sha(x) for x in probe_inputs},
               'tool_sha256': {str(x): sha(x) for x in (bazel, make, readelf, objdump, awk, clang,
                                                         *tools.values())},
-              'system_backend_qualified': False, 'bazel9_qualified': False,
+              'system_backend_qualified': False,
               'cross_compilation_qualified': False, 'system_runtime_qualified': False,
               'installation_package_parity': False}
 
@@ -438,7 +438,8 @@ def main():
         ws = out / 'workspace'
         ws.mkdir()
         bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
-                                      a.target, a.cpu, a.clang_version, bzlmod)
+                                      a.target, a.cpu, a.clang_version)
+        bsd_toolchain.stage_repository_cache(bzlmod, out / 'repository-cache')
         for component in manifest['components']:
             shutil.copytree(src / component['path'], ws / component['path'],
                             symlinks=False, dirs_exist_ok=True,
@@ -468,16 +469,14 @@ def main():
         result['inputs_sha256'] = sha(out / 'inputs.json')
 
         prefix = [bazel, '--batch', '--output_user_root=' + str(out / 'cache'), '--ignore_all_rc_files']
-        flags = bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
+        flags = bsd_toolchain.build_flags(a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
         artifacts = [dict(x, component=c['name']) for c in manifest['components'] for x in c['artifacts']]
         labels = [x['label'] for x in artifacts]
         build = prefix + ['build'] + flags + labels
         result['bazel_version'] = rec.run(prefix + ['version'], cwd=ws)[1]
         result['bazel_mode'] = bsd_toolchain.mode_record(bzlmod)
         rec.run(build, cwd=ws)
-        if bzlmod:
-            result['bazel_mode']['lockfile_unchanged'] = (
-                sha(ws / 'MODULE.bazel.lock') == sha(Path(bzlmod['lockfile'])))
+        result['bazel_mode']['lockfile_unchanged'] = bsd_toolchain.lockfile_unchanged(ws, bzlmod)
         bazel_bin = ws / 'bazel-bin'
         outputs = {x['bazel']: sha(bazel_bin / x['bazel']) for x in artifacts}
         result['bazel_outputs'] = outputs

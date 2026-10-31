@@ -225,7 +225,7 @@ def link_summary(tokens, src):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ('src', 'sysroot', 'objdump', 'awk', 'bazel', 'output'):
+    for name in ('src', 'sysroot', 'objdump', 'awk', 'output'):
         p.add_argument('--' + name, type=Path, required=True)
     p.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
     p.add_argument('--readelf', type=Path, default=Path('/usr/bin/readelf'))
@@ -234,10 +234,9 @@ def main():
     p.add_argument('--jobs', type=int, default=os.cpu_count())
     p.add_argument('--skip-negative', action='store_true',
                    help='skip the negative dependency suite (development only)')
-    bsd_toolchain.add_bazel_mode_arguments(p)
+    bsd_toolchain.add_bazel_arguments(p)
     a = p.parse_args()
-    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
-    bsd_toolchain.apply_bazel_environment(bzlmod)
+    bzlmod = bsd_toolchain.prepare(p, a)
     if platform.system() != 'FreeBSD' or platform.machine() != 'amd64':
         p.error('native FreeBSD amd64 only')
     if a.jobs < 1:
@@ -271,7 +270,7 @@ def main():
     checker = load('elf_artifact_check', 'elf-artifact-check.py')
     probe_inputs = sorted([Path(__file__).resolve(), HERE / 'otel-probe.py', HERE / 'bsd_toolchain.py',
                            HERE / 'cc_toolchain_config.bzl', HERE / 'bsd_component.bzl',
-                           HERE / 'cc_compat.bzl', HERE / 'cc_compat_bzlmod.bzl',
+                           HERE / 'cc_compat.bzl', bsd_toolchain.PINNED_LOCKFILE,
                            HERE / 'bsd_generate.bzl', HERE / 'bsd_cc.bzl',
                            HERE / 'elf-artifact-check.py',
                            *sorted((HERE / 'targets').rglob('BUILD.bazel'))])
@@ -282,7 +281,7 @@ def main():
               'tool_sha256': {str(x): sha(x) for x in (bazel, make, readelf, objdump, awk,
                                                         *tools.values(), *legacy.values())},
               'make_generator_tools': {k: str(v) for k, v in legacy.items()},
-              'system_backend_qualified': False, 'bazel9_qualified': False,
+              'system_backend_qualified': False,
               'cross_compilation_qualified': False, 'system_runtime_qualified': False,
               'installation_package_parity': False}
 
@@ -331,7 +330,8 @@ def main():
         ws = out / 'workspace'
         ws.mkdir()
         bsd_toolchain.stage_toolchain(ws / 'toolchain', sysroot, objdump, awk,
-                                      a.target, a.cpu, a.clang_version, bzlmod)
+                                      a.target, a.cpu, a.clang_version)
+        bsd_toolchain.stage_repository_cache(bzlmod, out / 'repository-cache')
         for directory in COPY_DIRS:
             shutil.copytree(src / directory, ws / directory, symlinks=False, dirs_exist_ok=True,
                             ignore=shutil.ignore_patterns('tests', *bsd_toolchain.SOURCE_BAZEL_FILES))
@@ -353,15 +353,13 @@ def main():
         result['inputs_sha256'] = sha(out / 'inputs.json')
 
         prefix = [bazel, '--batch', '--output_user_root=' + str(out / 'cache'), '--ignore_all_rc_files']
-        flags = bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
+        flags = bsd_toolchain.build_flags(a.jobs, bzlmod) + ['--compilation_mode=opt', '--strip=never']
         labels = [x[0] for x in ARTIFACTS] + [GEN_LABEL]
         build = prefix + ['build'] + flags + ['--output_groups=+manifest'] + labels
         result['bazel_version'] = rec.run(prefix + ['version'], cwd=ws)[1]
         result['bazel_mode'] = bsd_toolchain.mode_record(bzlmod)
         rec.run(build, cwd=ws)
-        if bzlmod:
-            result['bazel_mode']['lockfile_unchanged'] = (
-                sha(ws / 'MODULE.bazel.lock') == sha(Path(bzlmod['lockfile'])))
+        result['bazel_mode']['lockfile_unchanged'] = bsd_toolchain.lockfile_unchanged(ws, bzlmod)
         bazel_bin = ws / 'bazel-bin'
         manifests = {}
         for label, kind, *_ in ARTIFACTS:

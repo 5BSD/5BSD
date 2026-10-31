@@ -4,7 +4,7 @@
 # search order and is relative to this package (no absolute -I paths).
 # The probes share this package but each stages only its own header trees,
 # so a pattern may match nothing in one probe (Bazel 9 rejects empty globs
-# unless allow_empty is set; Bazel 5 accepted them).
+# unless allow_empty is set).
 load("//toolchain:cc_compat.bzl", cc_library = "bsd_cc_library")
 package(default_visibility = ["//visibility:public"])
 

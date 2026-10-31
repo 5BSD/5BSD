@@ -22,15 +22,14 @@ def sha(path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    for name in ('src', 'sysroot', 'objdump', 'bazel', 'output', 'readelf', 'make-library', 'awk', 'make-sbuf-library', 'make-sbuf-map'):
+    for name in ('src', 'sysroot', 'objdump', 'output', 'readelf', 'make-library', 'awk', 'make-sbuf-library', 'make-sbuf-map'):
         p.add_argument('--' + name, type=Path, required=True)
     for name in ('target', 'cpu', 'clang-version'):
         p.add_argument('--' + name, required=True)
     p.add_argument('--jobs', type=int, default=os.cpu_count())
-    bsd_toolchain.add_bazel_mode_arguments(p)
+    bsd_toolchain.add_bazel_arguments(p)
     a = p.parse_args()
-    bzlmod = bsd_toolchain.load_bzlmod_inputs(a.bzlmod_inputs)
-    bsd_toolchain.apply_bazel_environment(bzlmod)
+    bzlmod = bsd_toolchain.prepare(p, a)
     if a.jobs < 1:
         p.error('--jobs must be positive')
     if not a.target.startswith('x86_64-'):
@@ -43,7 +42,8 @@ def main():
     workspace.mkdir()
     tc = workspace / 'toolchain'
     bsd_toolchain.stage_toolchain(tc, sysroot, objdump, a.awk.resolve(strict=True),
-                                  a.target, a.cpu, a.clang_version, bzlmod)
+                                  a.target, a.cpu, a.clang_version)
+    bsd_toolchain.stage_repository_cache(bzlmod, root / 'repository-cache')
     bsd_toolchain.write_workspace(workspace, 'bsd_declared_pilot', bzlmod)
     (workspace / 'BUILD.bazel').write_text(
         'load(":version_map.bzl", "bsd_version_map")\n'
@@ -87,7 +87,7 @@ def main():
     records = []
     prefix = [str(bazel), '--batch', '--output_user_root=' + str(root / 'cache'),
               '--ignore_all_rc_files']
-    build = prefix + ['build'] + bsd_toolchain.build_flags(a.cpu, a.jobs, bzlmod) + [
+    build = prefix + ['build'] + bsd_toolchain.build_flags(a.jobs, bzlmod) + [
                       '//:echo', '//:cpp_runtime', '//:archive_runtime', '//:libbsd_samples.so.1', '//:shared_runtime', '//:sbuf_runtime', '//:libsbuf.so.6']
 
     def run(argv, expect_success=True):
@@ -200,7 +200,8 @@ def main():
     version_result['make_map_sha256'] = sha(a.make_sbuf_map)
     (root / 'libsbuf-versioned.json').write_text(json.dumps(version_result, indent=2) + '\n')
     result = {'scope': 'native-amd64-archive-assembly-shared-pilot', 'bazel_version': version,
-              'bazel_mode': bsd_toolchain.mode_record(bzlmod),
+              'bazel_mode': dict(bsd_toolchain.mode_record(bzlmod),
+                                 lockfile_unchanged=bsd_toolchain.lockfile_unchanged(workspace, bzlmod)),
               'bazel_sha256': sha(bazel), 'jobs': a.jobs, 'target': a.target,
               'inputs_sha256': sha(root / 'inputs.json'),
               'source_root': str(src), 'sysroot': str(sysroot), 'objdump': str(objdump),
@@ -225,7 +226,7 @@ def main():
                                   str(src / 'lib/libc/amd64/stdlib/div.S')],
               'assembly_source_and_header_invalidation': 'passed', 'shared_target_rejected': True,
               'system_backend_qualified': False, 'runtime_qualified': False,
-              'cross_compilation_qualified': False, 'bazel9_qualified': False}
+              'cross_compilation_qualified': False}
     (root / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
     print(root / 'result.json')
 

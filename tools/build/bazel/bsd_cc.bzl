@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Per-source compile groups, archives, shared objects, programs and protoc.
 
-Bazel 5 cc rules have one copts list per target and name objects after the
-source basename, while bsd.lib.mk/bsd.prog.mk compile .c with CFLAGS and .cc
-with CXXFLAGS, add per-file flags (CFLAGS.<file>, CXXFLAGS.<file>,
-CWARNFLAGS.<file>), keep objects in subdirectories when SRCS name them
-(bsd.obj.mk) and build several object kinds from one SRCS list (.o for
+rules_cc cc_library/cc_binary apply target-wide compile options to every
+source of the target and name objects after the source basename, while
+bsd.lib.mk/bsd.prog.mk compile .c with CFLAGS and .cc with CXXFLAGS, add
+per-file flags (CFLAGS.<file>, CXXFLAGS.<file>, CWARNFLAGS.<file>), keep
+objects in subdirectories when SRCS name them (bsd.obj.mk) and build several object kinds from one SRCS list (.o for
 lib<name>.a, .pico for the shared object, .pieo for an INTERNALLIB _pie.a or
 a PIE program).  These rules compile every source in its own declared
 action with an explicit, Make-ordered flag list, keep Make's SRCS order for

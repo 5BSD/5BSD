@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Probe Bazel's native C toolchain; this is not a BSD system backend."""
+"""Probe Bazel's native C toolchain; this is not a BSD system backend.
+
+Bazel 9 or later with Bzlmod: rules_cc's autodetected host toolchain,
+offline module inputs (--bzlmod-inputs) and the pinned lockfile.
+"""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bsd_toolchain  # noqa: E402
 
 
 def digest(path):
@@ -17,9 +25,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--src', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--bazel', type=Path, required=True)
     parser.add_argument('--jobs', type=int, default=os.cpu_count())
+    bsd_toolchain.add_bazel_arguments(parser)
     args = parser.parse_args()
+    bzlmod = bsd_toolchain.prepare(parser, args, host_toolchain=True)
     if args.jobs < 1:
         parser.error('--jobs must be positive')
     source = (args.src / 'bin/echo/echo.c').resolve(strict=True)
@@ -28,8 +37,10 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     workspace = output / 'workspace'
     workspace.mkdir()
-    (workspace / 'WORKSPACE').write_text('workspace(name = "bsd_native_probe")\n')
+    bsd_toolchain.stage_repository_cache(bzlmod, output / 'repository-cache')
+    bsd_toolchain.write_workspace(workspace, 'bsd_native_probe', bzlmod, staged_toolchain=False)
     (workspace / 'BUILD.bazel').write_text(
+        'load("@rules_cc//cc:defs.bzl", "cc_binary")\n'
         'cc_binary(name = "echo", srcs = ["echo.c"], linkopts = ["-static"])\n')
     (workspace / 'echo.c').write_bytes(source.read_bytes())
     commands = []
@@ -47,7 +58,8 @@ def main():
     prefix = [str(bazel), '--batch', '--output_user_root=' + str(output / 'cache'),
               '--ignore_all_rc_files']
     version = run(prefix + ['version'])
-    run(prefix + ['build', '--jobs=' + str(args.jobs), '--noshow_progress', '//:echo'])
+    run(prefix + ['build', '--jobs=' + str(args.jobs), '--noshow_progress'] +
+        bsd_toolchain.repository_flags(bzlmod) + ['//:echo'])
     executable = workspace / 'bazel-bin/echo'
     cases = [([], '\n'), (['hello', 'world'], 'hello world\n'),
              (['-n', 'hello'], 'hello'), (['-e', 'hello'], '-e hello\n')]
@@ -62,6 +74,8 @@ def main():
         'system_backend_qualified': False, 'cross_compilation_qualified': False,
         'source': str(source), 'source_sha256': digest(source),
         'bazel': str(bazel), 'bazel_sha256': digest(bazel), 'version': version,
+        'bazel_mode': dict(bsd_toolchain.mode_record(bzlmod),
+                           lockfile_unchanged=bsd_toolchain.lockfile_unchanged(workspace, bzlmod)),
         'executable_sha256': digest(executable), 'runtime_cases': len(cases),
         'jobs': args.jobs,
     }, indent=2) + '\n')
