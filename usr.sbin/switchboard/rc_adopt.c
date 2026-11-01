@@ -126,6 +126,7 @@ const char rc_adopt_service_prog[] = "/usr/sbin/service";
 const char rc_adopt_status_verb[] = "onestatus";
 const char rc_adopt_start_verb[] = "onestart";
 const char rc_adopt_stop_verb[] = "onestop";
+const char rc_adopt_restart_verb[] = "onerestart";
 
 void
 rc_adopt_verb_argv(const char *label, const char *verb, const char *out[4])
@@ -142,6 +143,13 @@ rc_adopt_launch_argv(const char *label, const char *out[4])
 {
 
 	rc_adopt_verb_argv(label, rc_adopt_start_verb, out);
+}
+
+void
+rc_adopt_restart_argv(const char *label, const char *out[4])
+{
+
+	rc_adopt_verb_argv(label, rc_adopt_restart_verb, out);
 }
 
 void

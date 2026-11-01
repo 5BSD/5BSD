@@ -1056,6 +1056,11 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 
 		errno = saved_errno;
 		syslog(LOG_WARNING, "rc bootstrap authority unavailable: %m");
+	} else if (!svc->want_console && !for_stop && svc->rc_service_grant &&
+	    svc_authority_issue_service(svc, &authority_fd) == -1) {
+		/* The daemon still starts; it just cannot reach its endpoints. */
+		syslog(LOG_WARNING, "unit %s: starting without its service "
+		    "authority: %m", m->label);
 	}
 	pid = pdfork(&pd_fd, PD_CLOEXEC | PD_NOWAITPID);
 	if (pid == -1) {
@@ -1199,6 +1204,22 @@ svc_exec_rc(struct svc_runtime *svc, int kq)
 	 * onestart.  supervisor_command_exited() turns a successful probe into
 	 * RUNNING and follows a negative probe with svc_exec_rc_start().
 	 */
+	/*
+	 * A unit with a lasting grant (service-authority.ucl) must run under
+	 * that grant.  An instance /etc/rc started holds only rc's temporary
+	 * authority, which ends when rc exits, so restart it instead of adopting
+	 * it; "onerestart" also starts an absent instance.
+	 */
+	if (svc_authority_service_policy(svc->manifest.label) != NULL) {
+		rc_adopt_restart_argv(svc->manifest.label, launch);
+		for (i = 0; i < 4; i++)
+			argv[i] = (char *)(uintptr_t)launch[i];
+		svc->rc_checking = false;
+		svc->rc_service_grant = true;
+		error = svc_exec_command(svc, kq, argv, false);
+		svc->rc_service_grant = false;
+		return (error);
+	}
 	rc_adopt_status_argv(svc->manifest.label, launch);
 	for (i = 0; i < 4; i++)
 		argv[i] = (char *)(uintptr_t)launch[i];

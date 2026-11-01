@@ -1020,6 +1020,36 @@ Capsule channel closed unexpectedly.
 System capability bundles.
 .It Pa /Capabilities/
 User-installed capability bundles.
+.It Pa /Capabilities/Config/switchboard/rc_adopt.conf
+rc.d services supervised as RC units, one name per line.
+.It Pa /Capabilities/Config/switchboard/boot-authority.ucl
+Temporary authority of
+.Pa /etc/rc
+and its descendants: an endpoint list, attributes and administrative rights,
+revoked when
+.Pa /etc/rc
+exits.
+.It Pa /Capabilities/Config/switchboard/service-authority.ucl
+Lasting grants of adopted rc.d services.
+Each object is named by an adopted service and lists
+.Va endpoints
+and the executable
+.Va images
+the grant may survive exec into; it has no attributes or administrative rights.
+Such a unit is started with
+.Dq service NAME onerestart ,
+replacing an instance
+.Pa /etc/rc
+started, and the grant ends with that launch.
+Exec of an unlisted image drops it in that process.
+The packaged file gives
+.Xr devd 8
+.Dq system.SystemExtension
+so that drivers of devices attached after boot load through
+.Xr devmatch 8 ;
+see
+.Xr BSDExtension 8 .
+An absent file grants nothing; an invalid file grants nothing and is logged.
 .El
 .Pp
 Both bundle directories and all loaded bundle contents must be root-owned and

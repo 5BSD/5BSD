@@ -9,6 +9,22 @@ struct svc_authority_scope {
 	unsigned count;
 	char endpoints[SVC_AUTHORITY_SCOPE_MAX][64];
 };
+
+/*
+ * A lasting grant for one adopted rc.d service (service-authority.ucl).  It is
+ * issued to the unit's start command, held by the daemon it starts for as long
+ * as that launch lasts, survives exec only into the listed images, reaches only
+ * the listed endpoints, and carries no attributes or administrative rights.
+ */
+#define SVC_SERVICE_AUTHORITY_MAX 8
+#define SVC_SERVICE_IMAGES_MAX CAP_AUTH_EXEC_MAX
+#define SVC_SERVICE_IMAGE_MAX 128
+struct svc_service_authority {
+	char label[64];
+	struct svc_authority_scope scope;
+	unsigned nimages;
+	char images[SVC_SERVICE_IMAGES_MAX][SVC_SERVICE_IMAGE_MAX];
+};
 struct svc_domain;
 struct svc_runtime;
 struct channel_message;
@@ -32,5 +48,9 @@ void svc_authority_policy_init(void);
 int svc_authority_parse_boot(int, struct svc_domain *, struct svc_authority_scope *);
 int svc_authority_boot_policy(struct svc_domain *, const struct svc_authority_scope **);
 int svc_authority_issue_boot(struct svc_runtime *, int *);
+int svc_authority_parse_services(int, struct svc_service_authority *, unsigned,
+    unsigned *);
+const struct svc_service_authority *svc_authority_service_policy(const char *);
+int svc_authority_issue_service(struct svc_runtime *, int *);
 bool svc_authority_permits(const struct svc_domain *, const char *);
 #endif

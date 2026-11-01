@@ -691,3 +691,80 @@ svc_authority_permits(const struct svc_domain *domain, const char *name)
 			return (true);
 	return (false);
 }
+
+/*
+ * Lasting grant for an adopted rc.d service (service-authority.ucl).  The
+ * start command and the daemon it starts hold it for the life of this launch:
+ * resolve() requires the unit's current launch_id, so a stop, restart or
+ * removal of the unit ends it, and the kernel revokes it with the record.  The
+ * kernel keeps it across exec only into the pinned images; exec of any other
+ * image drops it in that process.  It reaches only the listed endpoints and
+ * carries no attributes or administrative rights.
+ */
+int
+svc_authority_issue_service(struct svc_runtime *svc, int *out)
+{
+	const struct svc_service_authority *policy;
+	struct svc_domain domain = { .kind = SVC_DOMAIN_SYSTEM, .uid = (uid_t)-1 };
+	struct cap_authority_constraint constraint = { 0 };
+	struct authority_record *r;
+	struct stat st;
+	const char *what = "grant";
+	unsigned i, opened = 0;
+	int grant = -1, saved;
+
+	*out = -1;
+	policy = svc_authority_service_policy(svc->manifest.label);
+	if (policy == NULL || svc->kind != SVC_KIND_RC ||
+	    svc->owner_uid != (uid_t)-1)
+		return (errno = ENOENT, -1);
+	if (svc_authority_issue(0, &domain, svc, &grant) == -1)
+		goto fail;
+	/* Fail closed: a record without its scope would reach every endpoint. */
+	r = find(domain.authority_issuer, domain.authority_identity);
+	if (r == NULL) {
+		errno = ESRCH;
+		goto fail;
+	}
+	constraint.token_fd = grant;
+	constraint.nexec = policy->nimages;
+	for (i = 0; i < policy->nimages; i++) {
+		what = policy->images[i];
+		constraint.executable_fds[i] = open(what,
+		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+		if (constraint.executable_fds[i] < 0)
+			goto fail;
+		opened++;
+		if (fstat(constraint.executable_fds[i], &st) == -1)
+			goto fail;
+		if (!S_ISREG(st.st_mode) || st.st_uid != 0 ||
+		    (st.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
+		    (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+			errno = EPERM;
+			goto fail;
+		}
+	}
+	what = "image constraint";
+	if (authority_call(CAP_AUTH_CONSTRAIN, sd.authority_issuer_fd,
+	    &constraint) == -1 ||
+	    set_loader_directories(&svc->manifest, grant, false) == -1)
+		goto fail;
+	for (i = 0; i < opened; i++)
+		close(constraint.executable_fds[i]);
+	r->scope = &policy->scope;
+	syslog(LOG_NOTICE, "unit %s: lasting service authority issued "
+	    "(%u endpoint(s), %u image(s))", svc->manifest.label,
+	    policy->scope.count, policy->nimages);
+	*out = grant;
+	return (0);
+fail:
+	saved = errno;
+	syslog(LOG_ERR, "unit %s: service authority %s: %s", svc->manifest.label,
+	    what, strerror(saved));
+	for (i = 0; i < opened; i++)
+		close(constraint.executable_fds[i]);
+	if (grant >= 0)
+		close(grant);
+	svc_authority_revoke_unit(svc);
+	return (errno = saved, -1);
+}

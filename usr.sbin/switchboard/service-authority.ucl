@@ -1,0 +1,22 @@
+# Lasting authority for adopted rc.d services (rc_adopt.conf).
+#
+# Each entry names an adopted service.  switchboard starts that service with
+# "service NAME onerestart" under a grant that reaches only the listed
+# endpoints and carries no attributes or administrative rights.  The kernel
+# keeps the grant across exec only into the listed executable images (pinned
+# when the grant is issued); exec of any other image drops it in that process.
+# The grant ends when the unit is stopped, restarted or removed.  An entry
+# whose service is not in rc_adopt.conf is inactive.  This file is separate
+# from UNIX UID 0: a root login shell holds no grant.
+#
+# devd: hot-plugged devices.  devd runs devmatch.conf's nomatch action
+# ("service devmatch quietstart ...") through sh, service(8) (sh and env), and
+# rc.d/devmatch (sh), which asks system.SystemExtension to load the driver with
+# sysextctl.  BSDExtension admits the "devd" client only for hardware drivers
+# (bsdextension.ucl driver_clients): modules /boot/kernel/linker.hints records
+# with plug-and-play data that no "sysextctl deny" override refuses.
+devd {
+    endpoints = ["system.SystemExtension"];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/sbin/devd",
+        "/usr/sbin/sysextctl"];
+}
