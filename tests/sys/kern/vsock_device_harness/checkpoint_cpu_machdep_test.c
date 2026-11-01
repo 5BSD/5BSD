@@ -28,6 +28,8 @@ int vm_get_cpu_compat(struct vcpu *, struct vm_cpu_compat *);
 
 #include "checkpoint_cpu.c"
 #include "checkpoint_cpu_machdep.c"
+/* The kernel CPUID policy shared with sys/amd64/vmm/x86.c. */
+#include "amd64/vmm/x86_cpuid.c"
 
 #define TEST_CPU_PLATFORM UINT32_C(0xfffffffd)
 #define TEST_CPU_POLICY UINT32_C(0xfffffffe)
@@ -41,6 +43,10 @@ static int cache_initial_empty;
 static int extended_cache_records;
 static int extended_max_invalid;
 static int topology_initial_empty;
+static int host_local_leaf;
+static int host_local_masked;
+static uint32_t host_cpu_query;
+static uint32_t leaf7_ebx_flip;
 static struct vm_cpu_compat mock_compat;
 
 static const struct checkpoint_cpu_record *find_record(
@@ -65,6 +71,19 @@ vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax,
 	*ebx = parameter ^ UINT32_C(0x02020202);
 	*ecx = parameter;
 	*edx = selector ^ UINT32_C(0x04040404);
+	/*
+	 * Simulate a host-logical-CPU leaf: the kernel answers on whichever
+	 * host thread runs the ioctl, so EDX (extended APIC ID) changes.
+	 */
+	if (host_local_leaf && selector == 0x80000026U) {
+		*edx = host_cpu_query++;
+		if (host_local_masked &&
+		    x86_cpuid_leaf_host_cpu_local(selector))
+			*eax = *ebx = *ecx = *edx = 0;
+		return (0);
+	}
+	if (selector == 7 && parameter == 0)
+		*ebx ^= leaf7_ebx_flip;
 	switch (selector) {
 	case 0:
 		*eax = 0x1f;
@@ -93,7 +112,8 @@ vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax,
 		break;
 	case 0x80000000:
 		*eax = extended_max_invalid ? 0 :
-		    (extended_cache_records ? 0x8000001dU : 0x80000001U);
+		    (host_local_leaf ? 0x80000026U :
+		    (extended_cache_records ? 0x8000001dU : 0x80000001U));
 		break;
 	default:
 		break;
@@ -128,6 +148,10 @@ reset_oracle(void)
 	extended_cache_records = 0;
 	extended_max_invalid = 0;
 	topology_initial_empty = 0;
+	host_local_leaf = 0;
+	host_local_masked = 0;
+	host_cpu_query = 0;
+	leaf7_ebx_flip = 0;
 	memset(&mock_compat, 0, sizeof(mock_compat));
 	mock_compat.version = VM_CPU_COMPAT_VERSION;
 	mock_compat.flags = VM_CPU_COMPAT_F_NESTED_VMX;
@@ -331,6 +355,93 @@ ATF_TC_BODY(nested_svm_contract_rejects_capability_or_schema_change, tc)
 	    EXDEV);
 }
 
+/*
+ * The real-host failure: checkpoint and restore on the same AMD host refused
+ * because CPUID 8000_0026H EDX (extended APIC ID of the host logical CPU that
+ * ran the query) was passed through.  Two captures for the same VM must match
+ * once the kernel reports host-CPU-local leaves as absent.
+ */
+ATF_TC_WITHOUT_HEAD(same_host_contract_ignores_host_cpu_local_leaves);
+ATF_TC_BODY(same_host_contract_ignores_host_cpu_local_leaves, tc)
+{
+	struct checkpoint_cpu_contract destination, source;
+	struct vcpu vcpu;
+	char detail[192];
+
+	ATF_CHECK(x86_cpuid_leaf_host_cpu_local(0x80000026U));
+	ATF_CHECK(x86_cpuid_leaf_host_cpu_local(0x1aU));
+	ATF_CHECK(!x86_cpuid_leaf_host_cpu_local(0x8000001eU));
+	ATF_CHECK(!x86_cpuid_leaf_host_cpu_local(0x0bU));
+	ATF_CHECK(!x86_cpuid_leaf_host_cpu_local(0x1fU));
+	ATF_CHECK(!x86_cpuid_leaf_host_cpu_local(0x80000008U));
+
+	/* Unmasked: the pre-fix kernel behaviour refuses its own host. */
+	reset_oracle();
+	host_local_leaf = 1;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "CPUID 0x80000026.0 edx: source 0x00000000, "
+	    "destination 0x00000001");
+
+	/* Masked by the kernel policy: create-then-restore matches. */
+	reset_oracle();
+	host_local_leaf = 1;
+	host_local_masked = 1;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), 0);
+	ATF_CHECK_STREQ(detail, "");
+}
+
+ATF_TC_WITHOUT_HEAD(genuine_difference_still_refuses_and_is_named);
+ATF_TC_BODY(genuine_difference_still_refuses_and_is_named, tc)
+{
+	struct checkpoint_cpu_contract destination, source;
+	struct vcpu vcpu;
+	char detail[192];
+
+	reset_oracle();
+	host_local_leaf = 1;
+	host_local_masked = 1;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
+
+	/* A destination lacking a structured-extended feature bit. */
+	leaf7_ebx_flip = 1U << 5;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "CPUID 0x7.0 ebx: source 0x02020202, "
+	    "destination 0x02020222");
+
+	/* A destination configured without x2APIC. */
+	leaf7_ebx_flip = 0;
+	mock_compat.x2apic_state = X2APIC_DISABLED;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
+	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "x86 platform x2apic_state: source 0x00000001, "
+	    "destination 0x00000000");
+
+	/* A destination whose nested-SVM schema differs. */
+	mock_compat.x2apic_state = X2APIC_ENABLED;
+	mock_compat.nested_schema_signature ^= UINT64_C(1) << 32;
+	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK(strstr(detail, "x86 nested nested_schema_signature[63:32]") ==
+	    detail);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -340,5 +451,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, extended_cache_subleaves_are_captured);
 	ATF_TP_ADD_TC(tp, failures_leave_destination_unchanged);
 	ATF_TP_ADD_TC(tp, nested_svm_contract_rejects_capability_or_schema_change);
+	ATF_TP_ADD_TC(tp, same_host_contract_ignores_host_cpu_local_leaves);
+	ATF_TP_ADD_TC(tp, genuine_difference_still_refuses_and_is_named);
 	return (atf_no_error());
 }
