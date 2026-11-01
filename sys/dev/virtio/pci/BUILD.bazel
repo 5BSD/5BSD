@@ -25,3 +25,34 @@ amd64_generic_module_objects(name = "generic_interface", srcs = [":virtio_pci_if
     deps = [":kernel_headers", ":interface_headers", "//sys/dev/virtio:driver_headers"],
     copts = ["-fmacro-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c",
         "-fdebug-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_driver",
+    srcs = [
+        "virtio_pci.c",
+        "virtio_pci_legacy.c",
+        "virtio_pci_modern.c",
+    ],
+    deps = [
+        ":kernel_headers",
+        ":shmem_headers",
+        ":interface_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/dev/pci:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_interface",
+    srcs = [":virtio_pci_if_source"],
+    deps = [
+        ":kernel_headers",
+        ":interface_headers",
+        "//sys/dev/virtio:driver_headers",
+    ],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c", "-fdebug-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c"],
+) for arch in ["arm64", "riscv"]]

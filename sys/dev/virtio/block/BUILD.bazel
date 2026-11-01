@@ -9,3 +9,16 @@ amd64_generic_module_objects(srcs = ["virtio_blk.c"],
     deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
         "//sys/geom:disk_headers",
         "//sys/vm:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_blk.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/geom:disk_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

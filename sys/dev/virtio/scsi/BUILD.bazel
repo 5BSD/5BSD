@@ -14,3 +14,20 @@ amd64_generic_module_objects(srcs = ["virtio_scsi.c"],
         "//sys/amd64/conf:generic_opt_cam_header",
         "//sys/contrib/ck:kernel_headers",
         "//sys/vm:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_scsi.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/cam:headers",
+        "//sys/netinet:address_headers",
+        "//sys/" + arch + "/conf:generic_opt_scsi_header",
+        "//sys/" + arch + "/conf:generic_opt_cam_header",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

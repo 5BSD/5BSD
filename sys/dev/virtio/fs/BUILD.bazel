@@ -11,3 +11,17 @@ amd64_generic_module_objects(srcs = ["virtio_fs.c"],
         "//sys/fs/fuse:transport_headers",
         "//sys/contrib/ck:kernel_headers",
         "//sys/vm:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_fs.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/fs/fuse:transport_headers",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

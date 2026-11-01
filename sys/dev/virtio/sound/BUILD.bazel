@@ -15,3 +15,21 @@ amd64_generic_module_objects(name = "generic_module", srcs = ["virtio_snd.c"], d
     "//sys/kern:device_if_headers",
     "//sys/vm:kernel_headers",
 ])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_module",
+    srcs = ["virtio_snd.c"],
+    deps = [
+        ":virtio_snd_headers",
+        "//sys/" + arch + "/conf:generic_opt_snd_header",
+        "//sys/dev/sound/pcm:virtio_snd_headers",
+        "//sys/dev/virtio:virtio_headers",
+        "//sys/dev/virtio:virtio_if_headers",
+        "//sys/kern:bus_if_headers",
+        "//sys/kern:device_if_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

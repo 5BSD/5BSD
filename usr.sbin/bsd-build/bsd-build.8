@@ -4552,3 +4552,12 @@ CUSE and cryptodev module candidates, using the same kernel profile, generated
 options/interfaces, CTF/debug settings and file installation metadata.
 Shared export-all and multi-object module linking are included in their
 independent Make artifact comparisons. Runtime loading remains unqualified.
+
+.Pp
+The ARM64 and RISC-V64 kernel profiles also cover the nineteen VirtIO modules
+selected by their GENERIC Make inventories, with explicit module and install
+targets and target-generated options.
+The PMEM module remains amd64-only, matching its NVDIMM dependency.
+Independent comparisons cover CTF/debug disabled and enabled artifacts and file
+installation records; matching-kernel module loading and device operation remain
+unqualified.

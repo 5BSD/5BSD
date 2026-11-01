@@ -8828,3 +8828,15 @@ semantics, audit delivery or overhead. Matching-kernel firmware load/error/wait,
 CUSE command/copy/unload, crypto ioctl/KDF success/error and backlight registration/
 get/set/failure tests remain open. See
 [cohort evidence](CROSS-FACILITIES-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 VirtIO family (2026-11-01)
+
+The nineteen selected modules preserve original source and generated interface
+inputs. The bounded scan records core virtio (four schemas), virtqueue (two),
+block (two), network (six), and vsock (four). No C/probe/audit path was changed.
+All installed SDT/code/relocation/CTF sections match independent target Make
+builds in both CTF modes. The retained source scan distinguishes direct markers
+from subsystem observation. This proves artifact preservation, not live probe
+firing, argument semantics, audit delivery, HyperTrace operation or overhead.
+Matching-kernel device, failure and resource tests remain open. See
+[cross VirtIO evidence](CROSS-VIRTIO-QUALIFICATION.md).

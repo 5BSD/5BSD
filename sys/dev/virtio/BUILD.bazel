@@ -41,3 +41,28 @@ amd64_generic_module_objects(name = "generic_virtio_if", srcs = [":virtio_if_sou
     deps = [":driver_headers"],
     copts = ["-fmacro-prefix-map=$(execpath :virtio_if_source)=virtio_if.c",
         "-fdebug-prefix-map=$(execpath :virtio_if_source)=virtio_if.c"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_driver",
+    srcs = ["virtio.c", "virtqueue.c"],
+    deps = [":driver_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_virtio_bus_if",
+    srcs = [":virtio_bus_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c", "-fdebug-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_virtio_if",
+    srcs = [":virtio_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_if_source)=virtio_if.c", "-fdebug-prefix-map=$(execpath :virtio_if_source)=virtio_if.c"],
+) for arch in ["arm64", "riscv"]]

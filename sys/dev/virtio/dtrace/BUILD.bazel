@@ -13,3 +13,17 @@ amd64_generic_module_objects(srcs = ["virtio_dtrace.c"],
         "//sys/contrib/ck:kernel_headers"])
 
 exports_files(["virtio_dtrace_wire.h"], visibility = ["//sys/dev/virtio:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_dtrace.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/dev/dttransport:kernel_headers",
+        "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
