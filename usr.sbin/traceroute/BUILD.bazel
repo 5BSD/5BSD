@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Maintained Make's TRACEROUTE_NO_IPSEC override, expressed positively.
+bool_flag(name = "ipsec", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ipsec_enabled", flag_values = {":ipsec": "true"})
+_CASPER = "//tools/build/bazel/config:casper_enabled"
+_PLATFORM = ["@platforms//os:freebsd"]
+cc_library(name = "as_header", hdrs = ["as.h"], strip_include_prefix = ".",
+    visibility = ["//usr.sbin/traceroute6:__pkg__"])
+exports_files(["as.c"], visibility = ["//usr.sbin/traceroute6:__pkg__"])
+cc_binary(
+    name = "traceroute",
+    srcs = ["as.c", "traceroute.c", "ifaddrlist.c", "findsaddr-udp.c", "findsaddr.h", "ifaddrlist.h", "traceroute.h"],
+    deps = [":as_header"] + select({":ipsec_enabled": ["//lib/libipsec:ipsec"], "//conditions:default": []}) +
+        select({_CASPER: ["//lib/libcasper/libcasper:casper", "//lib/libcasper/services/cap_dns:cap_dns"], "//conditions:default": []}),
+    dynamic_deps = select({":ipsec_enabled": ["//lib/libipsec:ipsec_shared"], "//conditions:default": []}) +
+        select({_CASPER: ["//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_dns:cap_dns_shared"], "//conditions:default": []}),
+    local_defines = select({":ipsec_enabled": ["IPSEC"], "//conditions:default": []}) +
+        select({_CASPER: ["WITH_CASPER"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "traceroute", manual = "traceroute.8",
+    package = "runtime", bindir = "/usr/sbin", man_section = "8", binary_mode = "4555")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({
+        "//tools/build/bazel/config:tests_enabled": ["//usr.sbin/traceroute/tests:install_manifest"],
+        "//conditions:default": [],
+    }),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({
+        "//tools/build/bazel/config:tests_enabled": {
+            "/usr/tests/usr.sbin/traceroute": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}',
+        }, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"],
+)
