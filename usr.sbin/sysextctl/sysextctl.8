@@ -9,7 +9,7 @@
 .Nm
 .Cm status | list | config | reload | restore
 .Nm
-.Cm status | load | allow | deny | reset | enable | disable
+.Cm status | load | unload | allow | deny | reset | enable | disable
 .Ar module
 .Sh DESCRIPTION
 .Nm
@@ -35,8 +35,20 @@ after
 exits
 .Pq Pa /Capabilities/Config/switchboard/root-query.ucl .
 The view has no operation that loads a module or changes policy.
-Other users reach neither endpoint and get nothing.
-The load and policy commands never use the read-only view.
+For the same callers,
+.Xr switchboard 8
+also resolves
+.Dq system.SystemExtension.RootLoad
+.Pq Pa /Capabilities/Config/switchboard/root-load.ucl ,
+which has two operations,
+.Cm load
+and
+.Cm unload ,
+limited to modules of installed 5BSD base packages; see
+.Sx ROOT LOADS .
+Other users reach none of these endpoints and get nothing.
+The load and policy commands never use the read-only view, and the policy
+commands never use the root-load endpoint.
 .Pp
 The commands are:
 .Bl -tag -width disable
@@ -55,6 +67,14 @@ not on the allow-list and not a hardware driver of this kernel;
 client may load hardware drivers only; denied by an administrator override;
 or the load failed with an error
 .Pc .
+Root loads and unloads appear as
+.Dq root load
+and
+.Dq root unload
+with the client
+.Dq root (uid 0)
+and their own refusal reasons
+.Pq see Sx ROOT LOADS .
 The broker keeps the 64 most recent decisions in memory since it started.
 Requests that never reach the broker, such as a direct
 .Xr kldload 8
@@ -106,10 +126,36 @@ runs, and, after boot,
 .Xr devd 8
 and its actions
 .Pq hardware drivers only; see Xr BSDExtension 8 .
-A login shell has no such grant, and the service is unavailable to it
-.Pq Dv EX_UNAVAILABLE ;
-as root it can inspect with
-.Cm status .
+A login shell has no such grant.
+As root, outside a jail,
+.Cm load
+then uses the root-load endpoint instead
+.Pq see Sx ROOT LOADS ;
+for other users the service is unavailable
+.Pq Dv EX_UNAVAILABLE .
+A module name, never a path, is accepted; a name containing
+.Ql /
+is refused with
+.Dv EX_USAGE .
+.It Cm unload Ar module
+Unload a module that
+.Cm load
+loaded through the root-load endpoint since the broker started, from a root
+login shell.
+Nothing else is unloaded: not a module that rc, devd or another client
+loaded or has asked for since, not a module compiled into the kernel, and
+never a security policy
+.Pq Pa mac_* ,
+tracing
+.Pq DTrace, HyperTrace, kinst ,
+filesystem
+.Pq ZFS ,
+packet filter or hypervisor
+.Pq vmm
+module.
+The kernel still refuses a module that is in use or that another loaded
+module depends on
+.Pq Er EBUSY .
 .It Cm allow Ar module
 Persist an administrator permission to load this module.
 Permission does not install, authenticate, or load module code.
@@ -165,6 +211,91 @@ There is no force-unload command.
 Disabling activation or denying permission leaves existing kernel code loaded
 until reboot or normal ownership reclamation permits removal.
 Session and boot loads carry a boot-long ownership claim.
+.Sh ROOT LOADS
+A root login shell has no software grant, and
+.Xr kldload 8
+from it stays refused by the module-loading gate.
+It can still load a kernel module that a 5BSD base package installed:
+.Nm Cm load Ar module
+from such a shell asks the broker, over
+.Dq system.SystemExtension.RootLoad ,
+to load
+.Pa /boot/kernel/ Ns Ar module Ns Pa .ko .
+The broker loads it, by that absolute path, only when all of these hold:
+.Bl -bullet
+.It
+.Pa /boot/kernel/ Ns Ar module Ns Pa .ko
+is a regular file in
+.Pa /boot/kernel ,
+not a symbolic link; files in
+.Pa /boot/modules
+or elsewhere are refused.
+.It
+The local package database
+.Pq Pa /var/db/pkg/local.sqlite
+records that path in a package whose origin is
+.Pa base/...
+and that was installed from the repository the broker's policy names
+.Po
+.Va root_load_repository
+in
+.Pa bsdextension.ucl ;
+shipped:
+.Dq 5BSD-base
+.Pc .
+.It
+The file's current content matches the checksum
+.Xr pkg 8
+recorded at installation
+.Po
+pkg records a BLAKE2b-512 checksum, not SHA-256; the broker computes the same
+.Pc .
+.It
+No administrator override denies the module
+.Pq Nm Cm deny .
+.It
+Every module file the kernel linker loads with it to satisfy its
+dependencies passes the same checks, and the file did not change while it
+was checked and loaded; otherwise the load is undone.
+.El
+.Pp
+Each refusal has its own message and exit status
+.Dv EX_NOPERM :
+not a file of an installed 5BSD base package; the file does not match the
+checksum its package recorded; no regular module file of that name in
+.Pa /boot/kernel ;
+denied by an administrator override; root loads are not configured; the
+package database could not be read; the file changed during the load.
+A load the kernel itself fails exits with
+.Dv EX_OSERR .
+Every request, granted or refused, is kept in the broker's decision list
+.Pq Nm Cm status ,
+logged by the broker with the reason, and logged by
+.Nm
+to the
+.Dq auth
+facility with the login name, terminal, and the audit user and session
+identifiers when the kernel has audit support.
+The broker's own record carries the switchboard label and the program
+instance identifier; the kernel stamp carries no login session.
+.Pp
+What this protects against: a root login shell loading an arbitrary file,
+a module copied into
+.Pa /boot/kernel
+by hand, a module modified after installation, or a third-party module, by
+mistake or by a careless script; and it leaves a record of every attempt.
+What it does not protect against: a root that is itself compromised.
+Root can install or replace packages, edit the package database, replace a
+file between the check and the load, mount over
+.Pa /boot/kernel ,
+or add the module to
+.Xr loader.conf 5
+and reboot.
+The package database and
+.Pa /boot/kernel
+are writable by root, so they are not a trust anchor.
+.Xr mac_veriexec 4
+fingerprint verification is the defence against a compromised root.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /Capabilities/System/SystemExtension.cap/Units/bsdextension.unit/Config/bsdextension.ucl
@@ -174,9 +305,16 @@ Versioned administrator state.
 Manage it through this command rather than editing storage internals.
 .It Pa /Capabilities/Config/switchboard/root-query.ucl
 Read-only endpoints switchboard resolves for UID 0 sessions without a grant.
+.It Pa /Capabilities/Config/switchboard/root-load.ucl
+The root-load endpoint switchboard resolves for the same sessions.
+.It Pa /var/db/pkg/local.sqlite
+The package database root loads check, read by the broker.
 .El
 .Sh EXIT STATUS
-Zero indicates success.
+Zero indicates success, including a root load of a module that is already
+loaded.
+A refused root load or unload exits with
+.Dv EX_NOPERM .
 .Cm status
 returns 1 for a denied or unloaded module.
 Persistent operations return
@@ -193,7 +331,19 @@ if_axge: allowed, boot=disabled, loaded=yes, installed=yes, policy=default
   2026-11-01 05:12:09 load if_axge (client devd): loaded
 # sysextctl status
 .Ed
+.Pp
+Load a base system module from a root login shell, and remove it again:
+.Bd -literal -offset indent
+# sysextctl load ext2fs
+ext2fs: loaded
+# sysextctl unload ext2fs
+ext2fs: unloaded
+# cp /tmp/x.ko /boot/kernel/x.ko; sysextctl load x
+sysextctl: x: refused: not a file of an installed 5BSD base package
+.Ed
 .Sh SEE ALSO
+.Xr mac_veriexec 4 ,
 .Xr BSDExtension 8 ,
 .Xr kldload 8 ,
+.Xr pkg 8 ,
 .Xr switchboard 8
