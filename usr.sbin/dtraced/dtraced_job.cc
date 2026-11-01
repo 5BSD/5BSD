@@ -413,9 +413,12 @@ job::send_elf(void)
 		}
 	}
 
-	/* The guest device consumes a bare ELF; only host peers use SHA framing. */
-	const size_t prefix = ne.nosha || guest_forwarder ? 0 :
-	    SHA256_DIGEST_LENGTH;
+	/* Forwarders carry a bare ELF (after an optional VM target envelope):
+	 * bhyve's virtio-dtrace device (pci_vtdtr_elf_target()) fails any other
+	 * frame without an ACK, and the guest's local forwarder feeds the host
+	 * ingress, which takes the same framing. Only consumers use SHA framing. */
+	const size_t prefix = ne.nosha || dfd.kind == DTRACED_KIND_FORWARDER ?
+	    0 : SHA256_DIGEST_LENGTH;
 	if ((!replay_host && (!S_ISREG(stat.st_mode) || stat.st_size <= 0 ||
 	    (uint64_t)stat.st_size > max_request_bytes - prefix)) ||
 	    (replay_host && (replay_payload.empty() ||
