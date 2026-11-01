@@ -1,2 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["pf_ruleset.c"], visibility = ["//sbin/pfctl:__subpackages__"])
+exports_files(["pf_ruleset.c"], visibility = ["//sbin/pfctl:__subpackages__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+exports_files(["pf.c", "pf_if.c", "pf_ioctl.c", "pf_lb.c", "pf_norm.c", "pf_osfp.c", "pf_syncookies.c", "pf_table.c", "radix.c", "if_pflog.c", "if_pflow.c", "if_pfsync.c"], visibility = ["//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "packet_filter_headers", hdrs = ["fq_codel.h", "hfsc.h", "if_pflog.h", "if_pflow.h", "if_pfsync.h", "pfvar.h", "pfvar_priv.h", "radix.h"], visibility = ["//sys/netpfil/openbsd-pf:__pkg__"])

@@ -77,3 +77,6 @@ amd64_generic_module_objects(name = "carp_module", srcs = ["ip_carp.c", "//sys/c
 [cross_generic_module_objects(arch = arch, name = "carp_module", srcs = ["ip_carp.c", "//sys/crypto:sha1.c"],
     deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/crypto:sha1_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_carp", "opt_bpf", "opt_inet", "opt_inet6", "opt_ofed"]])
  for arch in ["arm64", "riscv"]]
+
+cc_library(name = "packet_filter_headers", hdrs = ["icmp6.h", "icmp_var.h", "if_ether.h", "igmp.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_dn_flow.h", "ip_dummynet.h", "ip_icmp.h", "ip_var.h", "sctp.h", "sctp_constants.h", "sctp_crc32.h", "sctp_header.h", "sctp_uio.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "udp.h", "udp_var.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])

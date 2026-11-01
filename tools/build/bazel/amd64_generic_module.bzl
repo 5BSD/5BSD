@@ -2,6 +2,7 @@
 """GENERIC amd64 module artifacts, with declared CTF and export processing."""
 
 load(":kernel_module_artifacts.bzl", "kernel_module_artifacts")
+load(":kernel_source_paths.bzl", "module_source_path_maps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_WARNING_FLAGS", "AMD64_KERNEL_DEBUG_FLAGS", "AMD64_KERNEL_HEADER_DEPS")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
@@ -17,35 +18,17 @@ def amd64_generic_module(module, objects, exports = [], export_all = False, pack
         export_all = export_all, package = package,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
-def _module_source_path_map(source):
-    """Normalize repository source paths to the paths used by Make builds."""
-    if source.startswith("@"):
-        return []
-    if source.startswith("//"):
-        label = source
-        package, target = source[2:].split(":", 1)
-    else:
-        package = native.package_name()
-        target = source[1:] if source.startswith(":") else source
-        label = "//%s:%s" % (package, target)
-    source_path = (package + "/" if package else "") + target
-    mappings = ["-fmacro-prefix-map=$(execpath %s)=/usr/src/%s" % (label, source_path)]
-    if package:
-        mappings.append("-fdebug-prefix-map=%s=/usr/src/%s" % (package, package))
-    mappings.append("-fdebug-prefix-map=$(execpath %s)=/usr/src/%s" % (label, source_path))
-    return mappings
-
-def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = []):
-    """Compile a named source group with its own GENERIC headers and flags."""
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None):
+    """Compile a source group; explicit compatibility headers precede native headers."""
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         # rules_cc permits execpath expansion in copts for these inputs.
         additional_compiler_inputs = textual_hdrs,
-        deps = AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
-        copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + AMD64_KERNEL_WARNING_FLAGS + AMD64_KERNEL_DEBUG_FLAGS +
+        deps = header_overrides + AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
+        copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + (AMD64_KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags) + AMD64_KERNEL_DEBUG_FLAGS +
             # Inline code in declared transitive headers also embeds __FILE__.
             # Use the same canonical source paths as the individual sources.
             ["-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
-            [mapping for source in srcs + textual_hdrs for mapping in _module_source_path_map(source)] + copts,
+            [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source)] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",

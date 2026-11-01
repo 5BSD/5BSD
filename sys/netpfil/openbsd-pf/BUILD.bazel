@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+# Physical wrapper layout preserves its relative includes of vendor headers.
+bsd_source_headers(name = "compatibility_headers", hdrs = ["include/bpfilter.h", "include/carp.h", "include/crypto/md5.h", "include/crypto/sha2.h", "include/crypto/siphash.h", "include/kstat.h", "include/net/fq_codel.h", "include/net/hfsc.h", "include/net/if_pflog.h", "include/net/if_pflow.h", "include/net/if_pfsync.h", "include/net/pfvar.h", "include/net/pfvar_priv.h", "include/net/radix.h", "include/net/toeplitz.h", "include/netinet/ip_carp.h", "include/netinet/ip_divert.h", "include/netinet/ip_ipsp.h", "include/pflog.h", "include/pflow.h", "include/pfsync.h", "include/sys/ioctl.h", "include/sys/kstat.h", "include/sys/pclock.h", "include/sys/percpu.h", "include/sys/pool.h", "include/sys/refcnt.h", "include/sys/smr.h", "include/sys/specdev.h", "include/sys/timeout.h", "include/uvm/uvm_extern.h", "openbsd_compat.h"],
+    includes = ["include"], deps = ["//contrib/openbsd-pf/sys/net:packet_filter_headers"])
+
+_PF_DEPS = ["//sys/netpfil/dummynet:packet_headers", "//sys/net:packet_filter_headers", "//sys/netinet:packet_filter_headers", "//sys/netinet/cc:packet_filter_headers", "//sys/netinet6:packet_filter_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/crypto/sha2:packet_filter_headers", "//sys/crypto/siphash:packet_filter_headers"]
+_PF_COPTS = ["-include", "$(execpath :openbsd_compat.h)", "-DOPENBSD_PF"]
+# CWARNFLAGS is defined before kern.mk, replacing its default warning list.
+_PF_WARNING_FLAGS = ["-Werror"] + ["-Wno-missing-prototypes", "-Wno-strict-prototypes", "-Wno-format", "-Wno-incompatible-pointer-types-discards-qualifiers", "-Wno-cast-qual", "-Wno-unused-but-set-variable", "-Wno-pointer-sign", "-Wno-sign-compare", "-Wno-address-of-packed-member", "-Wno-constant-conversion"] + ["-Wno-format-zero-length"]
+
+_PF_VENDOR_SOURCES = ["//contrib/openbsd-pf/sys/net:pf.c", "//contrib/openbsd-pf/sys/net:pf_if.c", "//contrib/openbsd-pf/sys/net:pf_ioctl.c", "//contrib/openbsd-pf/sys/net:pf_lb.c", "//contrib/openbsd-pf/sys/net:pf_norm.c", "//contrib/openbsd-pf/sys/net:pf_osfp.c", "//contrib/openbsd-pf/sys/net:pf_ruleset.c", "//contrib/openbsd-pf/sys/net:pf_syncookies.c", "//contrib/openbsd-pf/sys/net:pf_table.c", "//contrib/openbsd-pf/sys/netinet:inet_nat64.c", "//contrib/openbsd-pf/sys/netinet:in4_cksum.c", "//contrib/openbsd-pf/sys/net:if_pflog.c", "//contrib/openbsd-pf/sys/net:if_pflow.c", "//contrib/openbsd-pf/sys/net:if_pfsync.c"]
+amd64_generic_module_objects(name = "vendor_module", srcs = _PF_VENDOR_SOURCES,
+    deps = _PF_DEPS + ["//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_bpf_header"], header_overrides = [":compatibility_headers"],
+    textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS)
+[cross_generic_module_objects(arch = arch, name = "vendor_module", srcs = _PF_VENDOR_SOURCES,
+    deps = _PF_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_bpf"]],
+    header_overrides = [":compatibility_headers"], textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS)
+ for arch in ["arm64", "riscv"]]
+
+_PF_RADIX_SOURCES = ["//contrib/openbsd-pf/sys/net:radix.c"]
+amd64_generic_module_objects(name = "radix_module", srcs = _PF_RADIX_SOURCES,
+    deps = _PF_DEPS + ["//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_bpf_header"], header_overrides = [":compatibility_headers"],
+    textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS + ["-DOBSD_RADIX_IMPL"])
+[cross_generic_module_objects(arch = arch, name = "radix_module", srcs = _PF_RADIX_SOURCES,
+    deps = _PF_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_bpf"]],
+    header_overrides = [":compatibility_headers"], textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS + ["-DOBSD_RADIX_IMPL"])
+ for arch in ["arm64", "riscv"]]
+
+_PF_GLUE_SOURCES = ["openbsd_compat.c", "openbsd_net.c", "openbsd_ifq.c", "pf_freebsd.c", "pf_sdt.c", "pf_divert.c", "pf_dummynet.c", "pf_ether.c", "pf_jail.c", "pf_pfsync.c", "pf_sctp.c", "pf_quota.c", "pf_sysctl.c"]
+amd64_generic_module_objects(name = "glue_module", srcs = _PF_GLUE_SOURCES,
+    deps = _PF_DEPS + ["//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_bpf_header"], header_overrides = [":compatibility_headers"],
+    textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS + ["-DOPENBSD_PF_GLUE"])
+[cross_generic_module_objects(arch = arch, name = "glue_module", srcs = _PF_GLUE_SOURCES,
+    deps = _PF_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_bpf"]],
+    header_overrides = [":compatibility_headers"], textual_hdrs = ["openbsd_compat.h"], warning_flags = _PF_WARNING_FLAGS, copts = _PF_COPTS + ["-DOPENBSD_PF_GLUE"])
+ for arch in ["arm64", "riscv"]]
+
+# Compile with three distinct policies, then retain the maintained final link order.
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+_PF_OBJECT_SEGMENTS = [
+    ("vendor_before_radix", "vendor", ["pf.o", "pf_if.o", "pf_ioctl.o", "pf_lb.o", "pf_norm.o", "pf_osfp.o", "pf_ruleset.o", "pf_syncookies.o", "pf_table.o"]),
+    ("radix", "radix", ["radix.o"]),
+    ("vendor_after_radix", "vendor", ["inet_nat64.o", "in4_cksum.o", "if_pflog.o", "if_pflow.o", "if_pfsync.o"]),
+    ("glue", "glue", ["openbsd_compat.o", "openbsd_net.o", "openbsd_ifq.o", "pf_freebsd.o", "pf_sdt.o", "pf_divert.o", "pf_dummynet.o", "pf_ether.o", "pf_jail.o", "pf_pfsync.o", "pf_sctp.o", "pf_quota.o", "pf_sysctl.o"]),
+]
+[bsd_component_selected_objects(name = prefix + segment + "_objects",
+    group = ":" + prefix + group + "_module_ctf", object_names = names,
+    visibility = ["//sys/modules/pf:__pkg__"])
+ for prefix in ["", "arm64_", "riscv_"]
+ for segment, group, names in _PF_OBJECT_SEGMENTS]

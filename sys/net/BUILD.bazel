@@ -203,3 +203,6 @@ amd64_generic_module_objects(name = "if_vlan_module", srcs = ["if_vlan.c"],
 [cross_generic_module_objects(arch = arch, name = "if_vlan_module", srcs = ["if_vlan.c"],
     deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_ipsec", "opt_kern_tls", "opt_vlan", "opt_ratelimit"]])
  for arch in ["arm64", "riscv"]]
+
+cc_library(name = "packet_filter_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])

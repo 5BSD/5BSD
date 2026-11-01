@@ -47040,3 +47040,16 @@ PAM and Zsh inputs. Resource observations stayed within the declared disk-backed
 [MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md) for exact reports,
 input bindings, retained failures and remaining original-timeout, full-system,
 cross-architecture and controlled performance limits.
+
+### Native OpenBSD PF and dummynet modules (2026-11-01)
+
+Native PF/dummynet module/install targets now cover amd64, ARM64 and RISC-V64.
+All twelve independent Make/native comparisons and eighteen file/debug install
+records pass; six plain modules are byte-identical, installed CTF sections match
+except build-ID/debuglink and both actual debuglinks validate. The audit covers
+240 target compiles, source-owned compatibility header precedence, exact PF
+warning policies and all twelve actual link object orders. Existing generated
+kgssapi modules also remain byte-identical on all three architectures. See
+[PACKET-FILTER-MODULES-QUALIFICATION.md](PACKET-FILTER-MODULES-QUALIFICATION.md)
+for source ownership, retained attempts/cache provenance, debug limits and open
+runtime/full-system/performance gates.

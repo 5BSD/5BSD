@@ -9019,3 +9019,46 @@ installation and the help path that exits before clock calls. Isolated
 privileged clock-adjustment behavior and its syscall/security-audit coverage
 remain a separate review/runtime gate. No new instrumentation or tracing
 performance claim is made. See NTP-QUALIFICATION.md for artifact evidence.
+
+### PF/dummynet source and wrapper audit (2026-11-01)
+
+Forty original C sources remain unchanged across amd64, ARM64 and RISC-V64.
+The bounded scan records 134 direct SDT/KDTRACE/audit/CTR marker lines, plus
+44 PF wrapper marker lines and 49 marker/configuration lines in the forced
+openbsd_compat.h header. Categories can overlap and do not count active probes.
+Installed compiled sections match independent Make references. Live provider
+registration/arguments and runtime filtering, flow export, VNET/jails, MAC/audit
+denials, state/queue recovery and failure/concurrency paths remain unqualified.
+
+The following sources have no matches for these audited marker patterns. This
+is a review queue, not a requirement to add a probe indiscriminately: review
+interface/rule lifecycle and NAT64, queue/AQM/drop decisions, quota/pfsync and
+jail boundaries as their runtime tests are implemented.
+
+- `contrib/openbsd-pf/sys/net/pf_if.c`
+- `contrib/openbsd-pf/sys/net/pf_osfp.c`
+- `contrib/openbsd-pf/sys/net/pf_ruleset.c`
+- `contrib/openbsd-pf/sys/net/radix.c`
+- `contrib/openbsd-pf/sys/netinet/in4_cksum.c`
+- `contrib/openbsd-pf/sys/netinet/inet_nat64.c`
+- `sys/netpfil/dummynet/dn_aqm_codel.c`
+- `sys/netpfil/dummynet/dn_aqm_pie.c`
+- `sys/netpfil/dummynet/dn_heap.c`
+- `sys/netpfil/dummynet/dn_sched_fifo.c`
+- `sys/netpfil/dummynet/dn_sched_fq_codel.c`
+- `sys/netpfil/dummynet/dn_sched_fq_pie.c`
+- `sys/netpfil/dummynet/dn_sched_prio.c`
+- `sys/netpfil/dummynet/dn_sched_qfq.c`
+- `sys/netpfil/dummynet/dn_sched_rr.c`
+- `sys/netpfil/dummynet/dn_sched_wf2q.c`
+- `sys/netpfil/dummynet/ip_dummynet.c`
+- `sys/netpfil/openbsd-pf/openbsd_compat.c`
+- `sys/netpfil/openbsd-pf/openbsd_ifq.c`
+- `sys/netpfil/openbsd-pf/openbsd_net.c`
+- `sys/netpfil/openbsd-pf/pf_divert.c`
+- `sys/netpfil/openbsd-pf/pf_pfsync.c`
+- `sys/netpfil/openbsd-pf/pf_quota.c`
+- `sys/netpfil/openbsd-pf/pf_sysctl.c`
+
+Evidence and exact scans: bazel-packet-filter-review-20261101. Scope and remaining
+gates: PACKET-FILTER-MODULES-QUALIFICATION.md.
