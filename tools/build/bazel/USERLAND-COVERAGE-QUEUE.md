@@ -87,24 +87,29 @@ ELF/dependency order and debug CRC checks, and eleven original safe ATF passes.
 Its two installed-path cases, live hardware, cross-userland and wider package/
 performance gates remain open; see BSDTRACE-QUALIFICATION.md.
 
-The next selected source gap is base-accounts: the original runtime script,
-shipped reference account data, manual and complete eleven-case ATF suite.
-Its independent maintained Make build/install reference passes. The first
-native attempt passed four environment API analysis tests and a previous ATF
-regression, but both selected account cases failed before their bodies because
-an ATF pathname helper was missing from the declared runtime. The declarations
-were corrected, with real libm/libmd runtime dependencies added after source
-inspection. No successful native component qualification is claimed yet.
-The retry did not start: the disk-reserve preflight rejected insufficient space.
+The base-accounts default component now passes native build/install and all
+eleven original ATF cases at their normal installed paths in a disposable
+guest. Its nine component installation records and all six literal payloads
+match independent Make output. UID/GID/group checks, private test-root removal,
+fixture input integrity and wrapper mount cleanup pass; no source cases were
+dropped or rewritten. The actual native pw/pwd_mkdb absolute-helper chain is
+exercised. See BASE-ACCOUNTS-QUALIFICATION.md for the bootstrap boundary,
+resource evidence and preserved failed host attempts. The unused generic ATF
+environment/text-helper experiment was removed from active source.
 
-Eight mutating original cases call native pw -R against private roots, but pw
-and libutil still exec /usr/sbin/pwd_mkdb by its normal absolute path. They need
-a disposable guest to qualify the entire native chain without a host helper.
-The shipped_reference case also needs actual installed guest data. Two cases
-(dry_run and missing_reference) can use the declared native runtime without
-entering that absolute-helper path. Preserve all eleven original case bodies
-and installed names. Do not rewrite production paths, account policy or shell
-selection to manufacture a pass.
+The separate test-disabled/manpage-split selector also passes: six component
+records and four literal payloads equal independent Make output, component
+tests are absent and the manual belongs to runtime-man. The next inspected
+ordinary source gap is mailwrapper, whose one C unit also requires the genuine
+conditional MTA configuration and symlink/package graph, not just a binary
+target.
+
+Parent-export review found no directory-specific exports/SUBDIR_ENV in
+usr.sbin/Makefile, usr.sbin/Makefile.inc or base-accounts/test Makefiles. The
+maintained world traversal uses real Make buildenv; broader per-directory
+export/action completeness remains a review gate. The separate module inventory
+correction is not evidence that these world observations establish complete
+action or source coverage.
 
 ## Completion gates
 

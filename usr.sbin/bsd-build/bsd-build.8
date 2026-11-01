@@ -4933,3 +4933,19 @@ See
 for exact evidence and resource guards.
 These are component build gates; hardware operation and full system builds
 remain unqualified. The existing format-5 action is used.
+
+.Pp
+The native base-accounts component uses the existing format-5 action for
+literal script/reference/manual/test installation and native guest helpers.
+Its nine default component installation records match Make, and all eleven
+original ATF cases pass at normal paths in a bounded disposable guest,
+including the absolute pw/pwd_mkdb helper chain and shipped reference files.
+A separate test-disabled, manpage-split profile matches all six component
+installation records and four literal payloads against Make.
+The maintained explicit-input fixture assembler and daemon-runtime VM harness
+preserve original test bodies, unprivileged identities and cleanup.
+See
+.Pa tools/build/bazel/BASE-ACCOUNTS-QUALIFICATION.md
+for bootstrap, configuration and system-level limits.
+This component gate does not qualify normal startup, host account migration,
+full pkgbase creation or system upgrades; Make remains production/default.

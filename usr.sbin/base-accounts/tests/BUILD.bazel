@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "base_accounts_test", body = "base_accounts_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["base_accounts_test"], interfaces = {"base_accounts_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = ":" + source, destination = "/usr/tests/usr.sbin/base-accounts/" + dest,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=tests"])
+ for name, source, dest, mode in [("script", "base_accounts_test", "base_accounts_test", "0555"), ("kyuafile", "kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_kyuafile"], visibility = ["//usr.sbin/base-accounts:__pkg__"])
+
+# All eleven original cases run at normal installed paths in a disposable guest.
+# pw keeps its genuine /usr/sbin/pwd_mkdb path; no host helper or interpreter
+# substitution qualifies this suite. Runtime artifacts are captured for audit.
+_TOOLS = ["//usr.sbin/base-accounts:base-accounts", "//usr.sbin/pw:pw", "//usr.sbin/pwd_mkdb:pwd_mkdb", "//usr.sbin/chroot:chroot", "//usr.bin/id:id", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/mkdir:mkdir", "//bin/cp:cp", "//bin/chmod:chmod", "//usr.bin/grep:grep", "//usr.bin/awk:awk", "//usr.bin/sort:sort", "//usr.bin/cmp:cmp", "//bin/test:test", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/sed:sed", "//bin/mv:mv", "//bin/rm:rm"]
+_LIBS = ["//lib/msun:m_shared", "//lib/libmd:md_shared", "//lib/libcrypt:crypt_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared", "//lib/libthr:thr_shared", "//lib/libregex:regex_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libgcc_s:gcc_s_shared"]
+# Freeze the complete declared ELF runtime for independent closure audit.
+filegroup(name = "native_runtime", srcs = _TOOLS + _LIBS, visibility = ["//visibility:public"])
+
+cc_binary(name = "guest_driver", srcs = ["guest_driver.c"], deps = ["//lib/atf/libatf-c:atf_c"],
+    linkopts = ["-static"], linkstatic = True, testonly = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+bsd_python_test(name = "guest_checker_test", src = "guest_check_test.py", data = ["guest_check.py"])

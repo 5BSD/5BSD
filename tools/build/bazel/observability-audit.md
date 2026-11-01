@@ -9377,3 +9377,14 @@ not establish missing transitive network/MII instrumentation. Review firmware,
 reset, link transitions, ring allocation/exhaustion, interrupts and error paths
 with network-stack callers. No probes were added solely to satisfy the scan.
 See PCI-ETHERNET-QUALIFICATION.md and the retained compile/observability audit.
+
+## 2026-11-01: base-accounts
+
+The literal production shell script is unchanged and contains no direct
+DTrace/SDT/BSM/syslog calls. All eleven original private-root cases now exercise
+the native installed script/pw/pwd_mkdb chain, including creation/refusal,
+locally modified/removed entries and reference errors. This does not establish
+account-change audit delivery or transitive pw/libutil instrumentation; review
+those privileged account-write/error paths with their audit consumers. No
+probes were added solely for a scan. See BASE-ACCOUNTS-QUALIFICATION.md for
+unchanged source/test payload parity, guest identity and cleanup evidence.

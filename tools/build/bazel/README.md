@@ -47314,3 +47314,15 @@ Original USB/MII generated headers match, and object orders are hash-bound.
 See [Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md) for preserved query
 and capture corrections, disk reserve guards and runtime/performance limits.
 No complete world/kernel/package build is claimed.
+
+### Native base-accounts (2026-11-01)
+
+The default component's nine install records and six literal payloads match
+Make, and all eleven original cases pass at native installed paths in a
+2 GiB disposable guest, with checked unprivileged identities, private account
+roots, unchanged fixture inputs and cleanup. A separate tests-disabled,
+manpage-split profile matches all six Make records and four payloads. Existing
+format-5 build-bsd is
+used; no shared ATF environment API or production script changes were needed.
+See [base-accounts evidence](BASE-ACCOUNTS-QUALIFICATION.md) for retained host
+failures, matching bootstrap inputs and system-level qualification limits.
