@@ -1375,7 +1375,9 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
                 proc.send_signal(signal.SIGTERM)
         stop_started = time.monotonic()
         try:
-            stdout, stderr = proc.communicate(timeout=30)
+            # A non-live start may legitimately wait out the daemon's 30 s
+            # identity deadline before failing.
+            stdout, stderr = proc.communicate(timeout=30 if live_run else 60)
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
@@ -1419,6 +1421,15 @@ minion('minion-prompt-shutdown', '0,42,99,0,0', answer=True,
 minion('minion-identity-busy', '0,42,99,0,0', busy=3, expect_records=[])
 minion('minion-identity-not-ready', '0,42,99,0,0', busy=2, busy_errno='ENXIO',
        expect_records=[])
+# Regression (nested hosttest, gsv-record.md): a guest whose virtio-dtrace
+# device never receives NODE_ID logged only "failed to open daemon
+# directories: Operation timed out".  It must name the missing identity.
+minion('minion-identity-never-assigned', '0,42,99,0,0', busy=1000000,
+       busy_errno='ENXIO', expect_status=1, live_run=False,
+       expect_err='no VM identity from /dev/dttransport within 30 s')
+minion('minion-identity-never-assigned-step', '0,42,99,0,0', busy=1000000,
+       expect_status=1, live_run=False,
+       expect_err='failed to open daemon directories: guest startup identity: ')
 minion('minion-invalid-identity', '0,0,99,0,0', expect_status=1,
        live_run=False, expect_err='failed to open daemon directories')
 minion('minion-identity-unavailable', 'bogus', expect_status=1, live_run=False,

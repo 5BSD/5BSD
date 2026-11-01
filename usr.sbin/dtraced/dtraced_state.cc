@@ -497,9 +497,20 @@ state::initialize(int ctrlmachine, int nosha, int n_threads, const char **argv,
 		if (this->ctrlmachine == 0) {
 			dtt_vm_identity startup{};
 			if (!validate_guest_recovery_identity(this->dtt_fd,
-			    {}, {}, {}, &startup))
+			    {}, {}, {}, &startup)) {
+				/* Not a directory problem: the transport never
+				 * reported a node identity, i.e. no virtio-dtrace
+				 * device, or the host side never sent NODE_ID. */
+				if (errno == ETIMEDOUT) {
+					int error = errno;
+					ERR("no VM identity from /dev/dttransport "
+					    "within 30 s: no HyperTrace device, or the "
+					    "host never assigned a node ID");
+					errno = error;
+				}
 				throw std::system_error(errno, std::generic_category(),
 				    "guest startup identity");
+			}
 			if (startup.flags == DTT_IDENTITY_FRESH_PENDING ||
 			    startup.flags == DTT_IDENTITY_FRESH_READY ||
 			    startup.flags == DTT_IDENTITY_FRESH_ACTIVE) {
@@ -690,7 +701,9 @@ state::initialize(int ctrlmachine, int nosha, int n_threads, const char **argv,
 		ERR("failed to allocate daemon directories: %m");
 	} catch (const std::system_error &e) {
 		errno = e.code().value();
-		ERR("failed to open daemon directories: %m");
+		/* what() names the failed step ("open", "mkdir", "guest
+		 * startup identity", ...) and its error. */
+		ERR("failed to open daemon directories: %s", e.what());
 	}
 	if (!directories_ready) {
 		this->outbounddir = nullptr;
