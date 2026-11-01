@@ -22,4 +22,4 @@ cc_library(name = "kernel_headers", hdrs = [
     "platform/acfreebsd.h",
     "platform/acgcc.h",
     "platform/acgccex.h",
-], strip_include_prefix = "/sys", visibility = ["//sys/dev/virtio/pmem:__pkg__"])
+], strip_include_prefix = "/sys", visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])

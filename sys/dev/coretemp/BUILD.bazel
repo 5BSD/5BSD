@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(
+    srcs = ["coretemp.c"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+)

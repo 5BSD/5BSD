@@ -6,7 +6,7 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current status (2026-11-01):** the recursive Make inventory counts 729
-selected amd64 GENERIC kernel modules; 78 have direct Bazel module declarations.
+selected amd64 GENERIC kernel modules; 86 have direct Bazel module declarations.
 All 17 converted Netgraph modules currently pass `build-bsd` compilation and
 byte/installation-metadata parity against tied GENERIC Make output. The Bazel
 9.3.1 port bootstrap with output-query error-propagation fixes passed, but a
@@ -46686,3 +46686,44 @@ both module outputs were byte-identical to tied Make builds (SHA-256
 `77a03a03567b78d6209d23e272566e6a179e4fe7399232e46fdee4277ce77478` and
 `affb2c360f62c7c9c493225425a79fd762774030017efb7e5d8575a1f78df114`), and
 install metadata matched the Make dry runs. No module was installed or loaded.
+
+### Fresh GEOM Make comparisons and processor monitoring drivers (2026-11-01)
+
+The dependency corrections above now also have fresh independent Make output
+comparisons. Both `geom_label.ko` and `geom_uzip.ko` are byte-identical to the
+consolidated Bazel outputs and their installation records match Make dry runs.
+Evidence, complete commands and logs are retained under
+`/usr/obj/usr/src/bazel-geom-closure-make-reference-r2-20261101/evidence/`.
+The first comparison attempt defined an empty `DEBUG_FLAGS`, which Make treats
+as enabling split debug. That added `.gnu_debuglink` and invalidated a whole
+file comparison against the selected no-debug Bazel profile. The final run
+leaves `DEBUG_FLAGS` undefined, matching that profile; the initial failed
+comparison remains at `bazel-geom-closure-make-reference-20261101`.
+
+Native targets for `coretemp`, `amdtemp`, `amdsmn` and `amdsmu` now compile the
+maintained driver sources directly, using the existing generated bus/device/PCI
+interfaces and GENERIC headers. `amdsmu` retains the config-derived ACPI option
+and declared ACPICA headers. `amdsmn` retains Make's `EXPORT_SYMS=YES`; the other
+three retain Make's default export policy. The first analysis caught missing
+ACPICA visibility for `amdsmu`; the header targets now grant that consumer
+access explicitly. No driver source was changed.
+
+The maintained `build-bsd bazel-test` action built all four modules and their
+installation manifests with 16 jobs. Fresh tied GENERIC Make references using
+the selected SDK compiler/linker/objcopy produced byte-identical module files;
+all four installation records match destination, owner, group, mode and pkgbase
+tag. The effective profile has CTF and split debug disabled. Evidence is in
+`/usr/obj/usr/src/bazel-temperature-modules-qualification-r2-20261101/` and
+`/usr/obj/usr/src/bazel-temperature-modules-make-reference-20261101/evidence/`.
+These declarations use the existing format-5 build-bsd input contract, so no
+frontend/backend interface or manual change is required. Make stays production.
+No module was installed or loaded; hardware behavior, live tracing/audit,
+CTF/debug variants and comparative performance remain unqualified.
+
+A fresh recursive Make module inventory completed without query errors and
+finds 729 selected leaf KMODs, 87 selected module directories with BUILD files,
+86 direct native module declarations and 643 without direct declarations.
+The report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-postcommit-20261101.json`
+(SHA-256 `fb965bb54aa8f21afdcf2cd3a871189b907c3bef89d2d45561a7cc9174430154`).
+Declaration counts do not establish full kernel, module runtime or world coverage.

@@ -10,3 +10,10 @@ cc_library(name = "register_headers", hdrs = ["pcireg.h"], includes = ["../.."],
 cc_library(name = "bhyve_engine_headers", hdrs = ['pcireg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 cc_library(name = "acpi_register_headers", hdrs = ["pcireg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/einj:__pkg__"])
+
+filegroup(name = "pci_if_header_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "pci_if_headers", hdrs = [":pci_if_header_file"],
+    strip_include_prefix = "pci_if.generated", visibility = ["//visibility:public"])
+cc_library(name = "kernel_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    strip_include_prefix = "/sys", deps = [":pci_if_headers"],
+    visibility = ["//visibility:public"])

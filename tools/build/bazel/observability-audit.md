@@ -8737,3 +8737,15 @@ or audit markers in the source scan. Both tied amd64 GENERIC modules match
 fresh Make output byte for byte. Neither module was loaded; driver/iconv
 runtime behavior, live probe firing and audit event coverage remain
 unqualified.
+
+### Processor monitoring module source review (2026-11-01)
+
+Scanned `sys/dev/coretemp`, `sys/dev/amdtemp`, `sys/dev/amdsmn` and
+`sys/dev/amdsmu` while adding their native module graphs. None contains direct
+SDT/DTrace or audit markers. Existing hardware accesses, sysctl interfaces and
+kernel module metadata are unchanged. All four no-CTF/no-split-debug modules
+are byte-identical to fresh tied GENERIC Make outputs, with matching install
+metadata, at
+`/usr/obj/usr/src/bazel-temperature-modules-make-reference-20261101/evidence/`.
+No module was loaded, and hardware monitoring, management writes, live probe
+firing and audit event coverage remain open runtime checks.
