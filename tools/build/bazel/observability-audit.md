@@ -9334,3 +9334,14 @@ capture authorization, BPF/drop failures, interface control and privileged
 operation visibility with actual callers. Existing direct 5BSD privsep glue is
 preserved; offline packet tests do not qualify a new isolation design, live
 capture, runtime probes or complete audit coverage. See TCPDUMP-QUALIFICATION.md.
+
+## 2026-11-01: virtiofsd and shared filesystem backend
+
+All nine unchanged production translation units and Make source/header inputs
+are checked. Three original daemon ATF cases retain the real source integration
+and timeout; no direct DTrace/SDT or explicit BSM marker was found by the bounded
+compiled-source scan. Review peer credentials, export/path/handle denials,
+malformed frames, resource limits, disconnect/timeout and state-transfer failures
+with actual callers. Original local daemon tests passing does not establish live
+hypervisor/guest instrumentation, broad audit coverage or performance. See
+VIRTIOFSD-QUALIFICATION.md.

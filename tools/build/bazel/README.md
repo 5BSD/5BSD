@@ -47252,3 +47252,13 @@ compiles and 2,754 original Make source/header hash checks. Five offline packet
 methods pass per profile; the initial SDK/source-wrapper mismatch and correction
 are retained. Live capture/security controls and performance remain open. See
 [TCPDUMP-QUALIFICATION.md](TCPDUMP-QUALIFICATION.md). Make remains the default.
+
+### Native virtiofsd and original daemon cases (2026-11-01)
+
+All nine daemon C sources have native amd64 program/install ownership. Five
+installation records, actual debug links, original Make source/header hashes
+and ELF contracts pass. A safe usage test plus all three original daemon ATF
+cases passed, including sandboxed local operation/state transfer and cleanup.
+The original tests compile in production sources; they do not exec the installed
+binary or qualify a guest. Full WASPNest harness packaging, live bhyve/guest and
+performance remain open. See [VIRTIOFSD-QUALIFICATION.md](VIRTIOFSD-QUALIFICATION.md).

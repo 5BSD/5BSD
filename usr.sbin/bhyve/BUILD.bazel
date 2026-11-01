@@ -74,3 +74,11 @@ bsd_install_archive(name = "install_archive", visibility = ["//visibility:public
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+# Shared backend implementation owned by bhyve and consumed by virtiofsd.
+exports_files(["virtio_fs_backend.c", "virtio_fs_backend_io.c", "virtio_fs_outbox.c"], visibility = ["//usr.sbin/virtiofsd:__pkg__"])
+cc_library(name = "virtiofsd_headers", hdrs = ["virtio_fs_backend.h", "virtio_fs_backend_io.h", "virtio_fs_outbox.h", "virtio_state_range.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/virtiofsd:__pkg__"])
+# Maintained ATF sources textually include the implementation, as in Make.
+cc_library(name = "virtiofsd_test_inputs", hdrs = ["virtio_fs_backend.h", "virtio_fs_backend_io.h", "virtio_fs_outbox.h", "virtio_state_range.h"],
+    textual_hdrs = ["virtio_fs_backend.c", "virtio_fs_backend_io.c", "virtio_fs_outbox.c"], strip_include_prefix = ".",
+    visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])

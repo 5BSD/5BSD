@@ -4886,3 +4886,10 @@ The existing typed inet6_support setting and normal format-5 inputs select
 program/install/offline-test targets.
 Offline tests consume private PCAP files; they do not qualify live capture,
 interface controls or privilege separation.
+
+.Pp
+Native virtiofsd program/install targets and the original daemon ATF cases use
+normal format-5 qualification inputs.
+The unchanged tests embed production sources and exercise private local sockets;
+they do not establish a complete guest filesystem or execution of the installed
+daemon binary.
