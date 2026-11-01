@@ -4677,3 +4677,14 @@ Tarfs comparisons cover both values of the existing kernel_zstdio setting.
 The maintained msdosfs_iconv Makefile also declares its missing vnode interface.
 Artifact/metadata checks do not qualify live filesystem behavior, storage
 performance or complete kernels/module sets.
+
+.Pp
+Native NFS client, common, server, locking and nfssvc module/install candidates
+cover amd64, ARM64 and RISC-V64.
+The format-5 build-settings boolean
+.Dq //tools/build/bazel/config:kernel_nfs_root
+selects both actual target NFS_ROOT configuration and the optional diskless
+object group; GENERIC defaults true and comparisons cover both values.
+Kernel NLM RPC C/headers retain their maintained source-controlled contract.
+Artifact checks do not qualify NFS traffic, RPC authentication, lock recovery,
+NFS-root boot or complete kernels/module sets.

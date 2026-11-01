@@ -46973,3 +46973,13 @@ msdosfs_iconv Make generated-vnode dependency and FUSE textual input are declare
 See [filesystem module qualification](FILESYSTEM-MODULES-QUALIFICATION.md) for
 compiler/cache attribution, fresh inventory, failed attempts, startup overhead
 and explicit remaining kernel/runtime/performance gates.
+
+### NFS module candidates and typed NFS-root selection (2026-11-01)
+
+Native nfscl, nfscommon, nfsd, nfslockd and nfssvc module/install candidates cover
+amd64, ARM64 and RISC-V64. All 30 default Make/native comparisons and 45 install
+records pass. Six additional root-disabled client comparisons and nine install
+records pass. The typed kernel_nfs_root setting connects actual target config
+with optional diskless-object selection; existing kernel NLM RPC sources remain
+source-controlled inputs. See [NFS module qualification](NFS-MODULES-QUALIFICATION.md)
+for failed attempts, compiler/tracing evidence and remaining protocol/runtime gates.

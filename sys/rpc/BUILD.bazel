@@ -7,3 +7,6 @@ cc_library(name = "kernel_auth_headers", hdrs = ["types.h", "xdr.h", "auth.h", "
     includes = [".."], visibility = ["//sys/kern:__pkg__"])
 
 exports_files(["rpcsec_tls/rpctlscd.x", "rpcsec_tls/rpctlssd.x"], visibility = ["//usr.sbin/rpc.tlsclntd:__pkg__", "//usr.sbin/rpc.tlsservd:__pkg__"])
+
+cc_library(name = "nfs_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])

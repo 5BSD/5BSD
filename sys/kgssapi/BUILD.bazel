@@ -4,3 +4,7 @@ load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
 
 exports_files(["gssd.x", "gssd_prot.c"], visibility = ["//usr.sbin/gssd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "nfs_module_headers", hdrs = glob(["*.h", "krb5/*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])

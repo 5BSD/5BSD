@@ -8,7 +8,8 @@ filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.ba
 
 [bsd_kernel_config(
     name = name, config = "GENERIC", debug = debug,
-    option_settings = {"//tools/build/bazel/config:kernel_zstdio": "ZSTDIO"},
+    option_settings = {"//tools/build/bazel/config:kernel_zstdio": "ZSTDIO",
+        "//tools/build/bazel/config:kernel_nfs_root": "NFS_ROOT"},
     inputs = [":configuration_inputs", "//sys/conf:configuration_inputs"],
     source_anchor = "//sys/conf:files",
     python = "@bsd_sdk//toolchain:extra_python",
@@ -47,7 +48,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 
 # Filesystem module option contents come from the target config tree.
@@ -83,7 +84,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["ipsec", "kern_tls", "rss"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__", "//sys/netinet/cc:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__"])
  for option in ["ipsec", "kern_tls", "rss"]]
 
 # Storage option contents come from the target config tree.
@@ -127,3 +128,12 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
  for option in ["directio", "ffs", "quota", "suiddir", "tarfs", "ufs"]]
+
+# NFS option contents are generated from the selected target configuration.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["bootp", "kgssapi", "nfs", "nfsroot"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+ for option in ["bootp", "kgssapi", "nfs", "nfsroot"]]

@@ -8974,3 +8974,14 @@ branches compare separately. Live mount/IO/control authorization, corruption,
 credential/namespace and concurrency cases, probe/audit arguments and storage
 performance remain unqualified. See FILESYSTEM-MODULES-QUALIFICATION.md and
 `bazel-filesystem-modules-review-20261101/observability.json` for bounded evidence.
+
+## NFS modules on three architectures (2026-11-01)
+
+The bounded thirty-two-source scan retains 92 SDT/KDTRACE/audit/CTR marker lines
+in eleven files; a separate nfs_kdtrace.h scan retains nineteen wrapper/config
+lines. Original C and existing server SDT schemas/client callback paths are
+unchanged. Default artifacts compare with Make including SDT sections and
+relocations where present; NFS-root enabled/disabled selections compare separately.
+These textual/artifact checks do not establish live client/server/provider probes,
+lock/authentication/TLS/GSS paths, credential/MAC/audit denials or NFS-root boot.
+See NFS-MODULES-QUALIFICATION.md and retained source/header scan JSON for scope.

@@ -52,3 +52,6 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     for arch in ["arm64", "riscv"]
     for name, deps in _CC_MODULES
 ]
+
+cc_library(name = "nfs_headers", hdrs = ["cc.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netinet:__pkg__"])
