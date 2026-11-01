@@ -37,10 +37,12 @@ four above and twelve additional file/label cases at installed paths. All pass
 with native iconv modules and complete conversion data; no host data fallback is
 used. This resolves those label-conversion gates for the tested amd64 fixture.
 
-Six cases remain runtime gates: five need native makefs, and one root-only case
-creates an md device and runs newfs. Their original requirements and cleanup
-remain installed. Cross compilation, non-little-endian selection, live device
-behavior and complete system/pkgbase test products remain unqualified.
+The [makefs follow-up](MAKEFS-QUALIFICATION.md) closes the remaining six cases:
+five makefs image cases and the original root-only md/newfs case all pass in a
+fresh disposable guest. Original requirements, bodies and cleanup stay intact;
+before/after md inventory matches. All 22 original cases now have concrete amd64
+guest evidence. Cross compilation, non-little-endian selection, physical device
+behavior and complete system/pkgbase products remain unqualified.
 
 ## Build/install evidence
 

@@ -64,9 +64,9 @@ CTF/debug installed sections pass the scoped Make comparisons; loading and
 runtime qualification remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).
 
 **fstyp** now has native ZFS/iconv options and complete 22-case suite installation.
-Sixteen original cases now pass in a bounded disposable guest with native iconv
-modules and complete default-path data; makefs and the privileged device case
-remain open. See [fstyp evidence](FSTYP-QUALIFICATION.md) and
+All 22 original cases now pass in a bounded disposable guest with native iconv
+modules/data and native makefs/newfs/mdconfig, including original privileged
+md cleanup. See [makefs/full-suite evidence](MAKEFS-QUALIFICATION.md). See [fstyp evidence](FSTYP-QUALIFICATION.md) and
 [iconv runtime evidence](ICONV-RUNTIME-QUALIFICATION.md) for exact artifact
 comparisons, explicit fixture inputs, bootstrap boundaries and resource limits.
 

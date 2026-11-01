@@ -47,7 +47,7 @@ ATF_TC_BODY(default_paths, tc)
 		char *const args[] = { "/runtime/python", "-B", "/runtime/iconv-chroot-check.py",
 		    "--root", "/fixture", "--manifest", "/runtime/fixture-manifest.json",
 		    "--output", "/tmp/iconv-runtime-results.json", "--uid", "1001", "--gid", "1001",
-		    "--fstyp-tests", NULL };
+		    "--fstyp-tests", "--fstyp-complete", NULL };
 		execve(args[0], args, env);
 		perror("exec native iconv runtime checker");
 		_exit(127);

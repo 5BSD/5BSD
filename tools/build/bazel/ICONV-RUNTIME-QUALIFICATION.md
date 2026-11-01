@@ -117,7 +117,8 @@ recognizer source changes. Each attempt uses a fresh disk and its own results.
 No normal Capsule/PID1 startup, login, SSH, network services, full pkgbase image,
 all encodings, device-based fstyp behavior, cross-architecture userland runtime,
 live tracing/audit behavior or performance is established by this fixture.
-The five fstyp makefs cases and one privileged md/newfs case remain open.
+The later MAKEFS-QUALIFICATION.md tranche records passing guest evidence for
+the five makefs and one privileged md/newfs case, completing all 22 fstyp cases.
 The generic Bazel test runner still does not provide a privileged chroot; the
 VM-only adapter is an explicit harness case, not an automatically running host
 test. No frontend/backend change is needed: maintained format-5 target/test

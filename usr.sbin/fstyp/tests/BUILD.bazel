@@ -18,8 +18,9 @@ load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 # bzip2's maintained bzcat alias selects decompression through argv[0].
 copy_file(name = "bzcat_runtime", src = "//usr.bin/bzip2:bzip2", out = "bzcat", is_executable = True)
-# These cases need neither native makefs (not yet migrated), a root md device,
-# nor iconv's not-yet-declared runtime modules/data needed by every -l call.
+# These unprivileged Bazel cases do not need installed absolute iconv paths
+# or a root md device. The full original suite is exercised by the explicit
+# guest harness; see tools/build/bazel/FSTYP-QUALIFICATION.md.
 # The installed script above retains every one of the 22 maintained cases.
 _CASES = ["dir", "empty", "exfat", "zeros"]
 _TOOLS = ["//usr.sbin/fstyp:fstyp", ":bzcat_runtime", "//bin/mkdir:mkdir", "//usr.bin/touch:touch", "//usr.bin/truncate:truncate",

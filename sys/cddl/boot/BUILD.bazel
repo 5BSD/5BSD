@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Included implementation files are inputs to vdev.c, not separate objects.
+cc_library(name = "makefs_zfs_inputs", hdrs = ["zfs/zfsimpl.h", "zfs/fletcher.c", "zfs/sha256.c"], strip_include_prefix = ".", visibility = ["//usr.sbin/makefs:__pkg__"])

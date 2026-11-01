@@ -8883,3 +8883,17 @@ probe or audit path changed. Exact no-debug bytes and installed enabled code,
 CTF, relocations and SDT match Make. Matching-kernel traffic/control/error/security
 behavior, live probes, audit delivery and TCP/congestion/resource performance
 remain open. See [network evidence](CROSS-NETWORK-QUALIFICATION.md).
+
+## makefs and fstyp device-test helpers (2026-11-01)
+
+The bounded 42-translation-unit scan (38 makefs, 3 newfs, 1 mdconfig) finds no
+direct DTrace/SDT provider/probe or explicit audit submission. Included headers,
+libc/GEOM/kernel observation and live events remain separate. No production C,
+probe or audit behavior changed. Review image creation and privileged device
+creation/format/detach policy and error paths against existing system coverage;
+leaf-marker absence alone does not determine which new probes belong there.
+Native newfs/mdconfig installed sections match Make except debug links; makefs
+retains documented path/layout differences. All 22 original fstyp cases pass in
+a disposable guest, including original md cleanup, but live probes, audit
+delivery, full helper suites and overhead remain open. See
+[makefs/full-suite evidence](MAKEFS-QUALIFICATION.md).

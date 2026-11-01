@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(["pack_dev.c"], visibility = ["//usr.sbin/nmtree:__pkg__"])
-cc_library(name = "headers", hdrs = ["pack_dev.h"], includes = ["."], visibility = ["//usr.sbin/nmtree:__pkg__"])
+exports_files(["pack_dev.c"], visibility = ["//usr.sbin/nmtree:__pkg__", "//usr.sbin/makefs:__pkg__"])
+cc_library(name = "headers", hdrs = ["pack_dev.h"], includes = ["."], visibility = ["//usr.sbin/nmtree:__pkg__", "//usr.sbin/makefs:__pkg__"])

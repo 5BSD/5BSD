@@ -19,7 +19,11 @@ def main():
     parser.add_argument('--gid', type=int, required=True)
     parser.add_argument('--fstyp-tests', action='store_true',
                         help='run the sixteen maintained fstyp cases without makefs or device access')
+    parser.add_argument('--fstyp-complete', action='store_true',
+                        help='also run makefs cases and the original root-only md/newfs case in a disposable guest')
     args = parser.parse_args()
+    if args.fstyp_complete and not args.fstyp_tests:
+        parser.error('--fstyp-complete requires --fstyp-tests')
     if os.geteuid() != 0 or args.uid <= 0 or args.gid <= 0:
         parser.error('root is required for chroot; test uid/gid must be nonzero')
     root = args.root.resolve(strict=True)
@@ -37,12 +41,14 @@ def main():
               '-G', str(args.gid), str(root)]
     results = []
 
-    def run(name, command, data=b'', expected=None, failure=False, directory=None):
+    def run(name, command, data=b'', expected=None, failure=False, directory=None, privileged=False):
         if directory is not None:
             command = ['/bin/sh', '-c', 'cd "$1" && shift && exec "$@"',
                        'iconv-runtime', directory] + command
         try:
-            result = subprocess.run(prefix + command, input=data, capture_output=True,
+            active_prefix = (['/usr/sbin/chroot', '-u', '0', '-g', '0', '-G', '0', str(root)]
+                             if privileged else prefix)
+            result = subprocess.run(active_prefix + command, input=data, capture_output=True,
                                     env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}, timeout=30)
         except subprocess.TimeoutExpired as error:
             result = subprocess.CompletedProcess(prefix + command, 124,
@@ -83,6 +89,8 @@ def main():
     if args.fstyp_tests:
         cases = ['befs', 'dir', 'empty', 'exfat', 'exfat_label', 'ext2', 'ext3', 'ext4',
                  'ext4_label', 'fat12', 'fat16', 'fat32', 'fat32_label', 'ntfs', 'ntfs_with_label', 'zeros']
+        if args.fstyp_complete:
+            cases += ['cd9660', 'cd9660_label', 'ufs1', 'ufs2', 'ufs2_label']
         for case in cases:
             work = root / 'tmp' / ('fstyp-' + case)
             work.mkdir(mode=0o700)
@@ -98,6 +106,28 @@ def main():
             # Match Kyua's work-directory cleanup; bound live image storage to one case.
             if results[-1]['passed']:
                 shutil.rmtree(work)
+        if args.fstyp_complete:
+            # Keep the maintained root requirement and cleanup body intact.
+            # Only this explicit device case runs as guest root.
+            before = run('md devices before fstyp', ['/sbin/mdconfig', '-l'], privileged=True)
+            work = root / 'tmp/fstyp-ufs_on_device'
+            work.mkdir(mode=0o700)
+            command = ['/usr/tests/usr.sbin/fstyp/fstyp_test', '-s', '/usr/tests/usr.sbin/fstyp']
+            try:
+                body = run('fstyp:ufs_on_device', command + ['-r', 'atf.result', 'ufs_on_device'],
+                           directory='/tmp/' + work.name, privileged=True)
+                result_file = work / 'atf.result'
+                results[-1]['passed'] = (results[-1]['passed'] and result_file.exists()
+                                         and result_file.read_text().strip() == 'passed')
+                results[-1]['stdout'] = body.stdout.decode(errors='replace')
+                results[-1]['atf_result'] = result_file.read_text() if result_file.exists() else None
+            finally:
+                cleanup = run('fstyp:ufs_on_device cleanup',
+                              command + ['-r', 'cleanup.result', 'ufs_on_device:cleanup'],
+                              directory='/tmp/' + work.name, privileged=True)
+                results[-1]['stdout'] = cleanup.stdout.decode(errors='replace')
+                run('md devices restored after fstyp', ['/sbin/mdconfig', '-l'],
+                    expected=before.stdout, privileged=True)
     report = {'passed': all(item['passed'] for item in results), 'checks': results,
               'limitations': ['kernel and loader supplied by the execution harness', 'selected conversion cases, not every encoding']}
     args.output.write_text(json.dumps(report, indent=2) + '\n')
