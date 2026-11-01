@@ -87,4 +87,4 @@ cc_library(name = "wlan_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "i
 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["in.h"],
-    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

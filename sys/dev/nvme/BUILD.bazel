@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = glob(["*.h"]), strip_include_prefix = ".", include_prefix = "dev/nvme", visibility = ["//visibility:public"])
-exports_files(["nvme_util.c"], visibility = ["//lib/libcam:__pkg__", "//sbin/camcontrol:__pkg__", "//sbin/nvmecontrol:__pkg__"])
+exports_files(["nvme_util.c"], visibility = ["//sys/cam:__pkg__", "//lib/libcam:__pkg__", "//sbin/camcontrol:__pkg__", "//sbin/nvmecontrol:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
@@ -11,7 +11,7 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['nvme.h'], strip_include_prefi
 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["nvme.h", "nvme_linux.h", "nvme_private.h"],
-    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
 
 filegroup(name = "nvme_if_header_file", srcs = [":nvme_if"], output_group = "header")
 cc_library(name = "nvme_if_headers", hdrs = [":nvme_if_header_file"],

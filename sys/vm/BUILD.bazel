@@ -13,4 +13,4 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['vm.h'], strip_include_prefix 
 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h"],
-    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

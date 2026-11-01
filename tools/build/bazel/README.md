@@ -47115,3 +47115,14 @@ and corrected sntp math/digest ordering are preserved. See
 [NTP-REMAINING-CLIENTS-QUALIFICATION.md](NTP-REMAINING-CLIENTS-QUALIFICATION.md).
 Six of seven programs and all four private libraries have candidates; ntpd,
 documentation, package aggregation, protocol/runtime and performance remain open.
+
+### Native CAM core and peripheral module (2026-11-01)
+
+CAM's thirty maintained C sources now have native GENERIC-tied module/install
+candidates on amd64, ARM64 and RISC-V64. Six build-bsd profiles passed six module
+artifact comparisons and nine installed-file comparisons against fresh Make.
+Audits verify 180 C compilations, 4,680 real option-header hashes and all six
+original link orders. The module's previously implicit opt_kdtrace.h dependency
+is now explicit in both Make and Bazel; genuine config contents preserve tracing.
+See [CAM-MODULE-QUALIFICATION.md](CAM-MODULE-QUALIFICATION.md) for evidence and
+open transport/peripheral, recovery, runtime and performance gates.

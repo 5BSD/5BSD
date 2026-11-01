@@ -9175,3 +9175,41 @@ plus actual private-library dependencies and option branches. This does not
 prove transitive instrumentation or protocol/clock/key-generation runtime.
 ntpd's maintained timediscipline provider/static anchor/coverage selection is
 still open. See NTP-REMAINING-CLIENTS-QUALIFICATION.md for bounded evidence.
+
+## 2026-11-01: CAM core and peripheral module
+
+Thirty original C inputs retain eighteen direct textual SDT/DTRACE/audit/CTR
+marker lines. The opt_kdtrace.h input is explicit and extracted from genuine
+GENERIC config output; no tracing option was disabled. Matching module sections
+establish retention, not runtime probe counts or argument coverage. Review
+transport/SIM/peripheral discovery, scheduling/queue pressure, command lifecycle,
+errors/timeouts/retries/reset and audit policy with matching-kernel runtime tests.
+Sources without a directly matched marker are contextual review candidates:
+
+- `sys/cam/ata/ata_all.c`
+- `sys/cam/ata/ata_pmp.c`
+- `sys/cam/ata/ata_xpt.c`
+- `sys/cam/cam_compat.c`
+- `sys/cam/cam_iosched.c`
+- `sys/cam/cam_queue.c`
+- `sys/cam/cam_sim.c`
+- `sys/cam/nvme/nvme_all.c`
+- `sys/cam/nvme/nvme_xpt.c`
+- `sys/cam/scsi/scsi_all.c`
+- `sys/cam/scsi/scsi_cd.c`
+- `sys/cam/scsi/scsi_ch.c`
+- `sys/cam/scsi/scsi_enc.c`
+- `sys/cam/scsi/scsi_enc_safte.c`
+- `sys/cam/scsi/scsi_enc_ses.c`
+- `sys/cam/scsi/scsi_pass.c`
+- `sys/cam/scsi/scsi_pt.c`
+- `sys/cam/scsi/scsi_sa.c`
+- `sys/cam/scsi/scsi_sg.c`
+- `sys/cam/scsi/scsi_targ_bh.c`
+- `sys/cam/scsi/scsi_target.c`
+- `sys/cam/scsi/scsi_xpt.c`
+- `sys/cam/scsi/smp_all.c`
+- `sys/dev/nvme/nvme_util.c`
+
+Exact scan: bazel-cam-review-20261101/observability.json. Scope and remaining
+gates: CAM-MODULE-QUALIFICATION.md.

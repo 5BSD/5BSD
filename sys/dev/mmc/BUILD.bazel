@@ -13,4 +13,4 @@ cc_library(name = "cam_headers", hdrs = ["mmcreg.h", "bridge.h"], strip_include_
 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["bridge.h", "mmcreg.h"],
-    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

@@ -19,3 +19,25 @@ exports_files(['ctl/ctl_util.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_ses.h"],
     visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+cc_library(name = "module_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_compat.h", "cam_debug.h", "cam_iosched.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_internal.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_ch.h", "scsi/scsi_da.h", "scsi/scsi_enc.h", "scsi/scsi_enc_internal.h", "scsi/scsi_message.h", "scsi/scsi_pass.h", "scsi/scsi_pt.h", "scsi/scsi_sa.h", "scsi/scsi_ses.h", "scsi/scsi_sg.h", "scsi/scsi_targetio.h", "scsi/smp_all.h"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+_CAM_SOURCES = ["ata/ata_all.c", "ata/ata_da.c", "ata/ata_pmp.c", "ata/ata_xpt.c", "cam.c", "cam_compat.c", "cam_iosched.c", "cam_periph.c", "cam_queue.c", "cam_sim.c", "cam_xpt.c", "nvme/nvme_all.c", "nvme/nvme_da.c", "//sys/dev/nvme:nvme_util.c", "nvme/nvme_xpt.c", "scsi/scsi_all.c", "scsi/scsi_cd.c", "scsi/scsi_ch.c", "scsi/scsi_da.c", "scsi/scsi_enc.c", "scsi/scsi_enc_safte.c", "scsi/scsi_enc_ses.c", "scsi/scsi_pass.c", "scsi/scsi_pt.c", "scsi/scsi_sa.c", "scsi/scsi_sg.c", "scsi/scsi_targ_bh.c", "scsi/scsi_target.c", "scsi/scsi_xpt.c", "scsi/smp_all.c"]
+_CAM_DEPS = [":module_headers", "//sys/ddb:cam_module_headers", "//sys/bsm:storage_module_headers", "//sys/dev/mmc:storage_module_headers", "//sys/dev/nvme:storage_module_headers", "//sys/geom:storage_module_headers", "//sys/net:storage_module_headers", "//sys/netinet:storage_module_headers", "//sys/netinet6:storage_module_headers", "//sys/vm:storage_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/contrib/ck:kernel_headers"]
+_CAM_OPTIONS = ["kdtrace", "cam", "ada", "scsi", "cd", "da", "pass", "pt", "sa", "ses", "ddb", "printf"]
+amd64_generic_module_objects(srcs = _CAM_SOURCES,
+    deps = _CAM_DEPS + ["//sys/amd64/conf:generic_opt_" + option + "_header" for option in _CAM_OPTIONS])
+[cross_generic_module_objects(arch = arch, srcs = _CAM_SOURCES,
+    deps = _CAM_DEPS + ["//sys/" + arch + "/conf:generic_opt_" + option + "_header" for option in _CAM_OPTIONS])
+ for arch in ["arm64", "riscv"]]
+
+# The declared compiler objects follow maintained SRCS order across subdirectories.
+[bsd_component_selected_objects(name = prefix + "ordered_module_objects",
+    group = ":" + prefix + "generic_module_ctf",
+    object_names = ["ata_all.o", "ata_da.o", "ata_pmp.o", "ata_xpt.o", "cam.o", "cam_compat.o", "cam_iosched.o", "cam_periph.o", "cam_queue.o", "cam_sim.o", "cam_xpt.o", "nvme_all.o", "nvme_da.o", "nvme_util.o", "nvme_xpt.o", "scsi_all.o", "scsi_cd.o", "scsi_ch.o", "scsi_da.o", "scsi_enc.o", "scsi_enc_safte.o", "scsi_enc_ses.o", "scsi_pass.o", "scsi_pt.o", "scsi_sa.o", "scsi_sg.o", "scsi_targ_bh.o", "scsi_target.o", "scsi_xpt.o", "smp_all.o"],
+    visibility = ["//sys/modules/cam:__pkg__"])
+ for prefix in ["", "arm64_", "riscv_"]]

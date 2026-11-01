@@ -14,3 +14,5 @@ cc_library(name = "ctf_headers", hdrs = ["db_ctf.h"], includes = [".."],
 # Physical source headers: the kernel compilation context supplies -Isys.
 cc_library(name = "wlan_headers", hdrs = ["db_sym.h", "ddb.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+cc_library(name = "cam_module_headers", hdrs = ["ddb.h"], visibility = ["//sys/cam:__pkg__"])
