@@ -48,6 +48,15 @@ pmc, pmccontrol, pmcstat, pmcannotate and pmcstudy. All ten selected targets,
 and layout differences. See [PMC evidence](PMC-QUALIFICATION.md) for the bounded
 checks and open hardware/runtime/performance work.
 
+**Cross-target modules** now include real ARM64/RISC-V filemon builds through
+the maintained two-stage shared-module pipeline. No-debug complete files and
+CTF/debug installed sections pass the scoped Make comparisons; loading and
+runtime qualification remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).
+
+**fstyp** now has native ZFS/iconv options and complete 22-case suite installation.
+Four actual ATF cases pass; native iconv default-path resources, makefs and the
+privileged device case remain qualification work. See [fstyp evidence](FSTYP-QUALIFICATION.md).
+
 ## Current coverage audit and next work order (2026-10-27, refreshed)
 
 The current configured metadata survey covers **2,103 directories with no query

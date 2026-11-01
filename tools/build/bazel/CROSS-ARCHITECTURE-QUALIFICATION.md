@@ -210,3 +210,8 @@ world/sysroot/pkgbase construction, bootstrap independence, source-mutation
 behavior, VM/board boot/device tests and controlled CPU/memory/disk-I/O/disk-usage
 comparisons remain open. No kernel was installed, module loaded or VM started
 by this qualification. Make remains production/default; BIP stays out of scope.
+
+The next real module tranche now qualifies filemon on ARM64 and RISC-V,
+including the maintained shared link, CTF/export/debug/install stages. This is
+one explicit module per architecture, not portable coverage for the remaining
+amd64 declarations. See [shared-module evidence](CROSS-MODULE-QUALIFICATION.md).

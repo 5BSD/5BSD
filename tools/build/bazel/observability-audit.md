@@ -8804,3 +8804,13 @@ about architecture-specific SDT relocations, CTF conversion, live probes,
 audit event delivery, module loading or their costs. These remain required
 when kernel/module bodies are migrated. See
 [CROSS-ARCHITECTURE-QUALIFICATION.md](CROSS-ARCHITECTURE-QUALIFICATION.md).
+
+## filemon ARM64 / RISC-V module bodies (2026-11-01)
+
+Original filemon.c and included filemon_wrapper.c now build for both target
+ABIs. The bounded source scan finds no direct SDT/DTrace provider or audit
+marker; no C source/probe was removed or rewritten. Exact no-debug output and
+installed CTF/code/symbol/relocation parity in debug variants do not establish
+syscall wrapper behavior or event coverage. Matching-kernel load/unload and
+read/write/open/exec/fork/exit recording, enabled tracing/audit and overhead
+remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).

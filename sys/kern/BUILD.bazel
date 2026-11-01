@@ -480,3 +480,7 @@ _CROSS_LAYOUT_FLAGS = ["-fno-strict-aliasing", "-fcommon", "-include", "opt_glob
     out = arch + "_generic_layout/genoffset.o") for arch in ["arm64", "riscv"]]
 [kernel_constants(name = arch + "_generic_offset", object = ":" + arch + "_generic_genoffset_object",
     kind = "offset", output = arch + "_generic_layout/offset.inc") for arch in ["arm64", "riscv"]]
+
+[cc_library(name = arch + "_generic_offset_header", hdrs = [":" + arch + "_generic_offset"],
+    strip_include_prefix = arch + "_generic_layout", visibility = ["//visibility:public"])
+ for arch in ["arm64", "riscv"]]

@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Declared relocatable module linking and maintained export-policy actions.
 
-The caller supplies the architecture linker script/emulation and selected SDK
-linker closure. Shared-object module formats and PREFIX_SYMS remain separate.
+The caller supplies the architecture linker policy and selected SDK closure.
+Relocatable and shared stages are distinct; PREFIX_SYMS remains separate.
 """
 
 def _link(ctx):
@@ -12,18 +12,25 @@ def _link(ctx):
         fail("duplicate module object inputs")
     output = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
-    args.add_all(["-m", ctx.attr.emulation, "-warn-common", "--build-id=sha1", "-T", ctx.file.script.path, "-r", "-o", output.path])
+    args.add_all(["-m", ctx.attr.emulation, "-warn-common", "--build-id=sha1"])
+    args.add_all(ctx.attr.linkopts)
+    if ctx.file.script:
+        args.add_all(["-T", ctx.file.script.path])
+    args.add_all(["-Bshareable", "-znotext", "-znorelro"] if ctx.attr.shared else ["-r"])
+    args.add_all(["-o", output.path])
     args.add_all(ctx.files.objects)
     args.use_param_file("@%s", use_always = True)
     ctx.actions.run(executable = ctx.attr.linker[DefaultInfo].files_to_run,
-        arguments = [args], inputs = ctx.files.objects + [ctx.file.script],
+        arguments = [args], inputs = ctx.files.objects + ([ctx.file.script] if ctx.file.script else []),
         tools = ctx.files.linker_inputs, outputs = [output], env = {"LC_ALL": "C"},
         use_default_shell_env = False, mnemonic = "BSDModuleLink")
     return [DefaultInfo(files = depset([output]))]
 
 bsd_module_link = rule(implementation = _link, attrs = {
     "objects": attr.label_list(allow_files = True, mandatory = True),
-    "script": attr.label(allow_single_file = True, mandatory = True),
+    "script": attr.label(allow_single_file = True),
+    "shared": attr.bool(default = False),
+    "linkopts": attr.string_list(),
     "emulation": attr.string(mandatory = True),
     "output": attr.string(mandatory = True),
     "linker": attr.label(executable = True, cfg = "exec", allow_single_file = True, mandatory = True),

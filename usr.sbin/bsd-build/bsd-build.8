@@ -4539,3 +4539,9 @@ are built for the host. Target objects are never executed on that host.
 This profile builds artifacts only and rejects runnable test selections.
 The default target kind is userland and currently requires amd64.
 Cross userland, complete kernels and module sets remain unqualified.
+
+.Pp
+The explicit ARM64 and RISC-V filemon module targets exercise relocatable
+linking, CTF/export processing and the target shared-module link, with the
+existing typed kernel CTF/debug settings and installation metadata.
+These candidates do not qualify complete module sets or runtime loading.
