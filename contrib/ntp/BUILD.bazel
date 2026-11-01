@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load(":sources.bzl", "LIBNTP_SOURCES")
+load(":sources.bzl", "LIBNTP_SOURCES", "LIBPARSE_SOURCES")
 _VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
 exports_files(LIBNTP_SOURCES + ["util/ntptime.c", "sources.bzl"], visibility = _VISIBILITY)
 cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
@@ -35,3 +35,5 @@ filegroup(name = "opts_fragments",
     visibility = _VISIBILITY)
 cc_library(name = "ntpdc_headers", hdrs = glob(["ntpdc/*.h"]), visibility = _VISIBILITY)
 cc_library(name = "ntpq_headers", hdrs = glob(["ntpq/*.h"]), visibility = _VISIBILITY)
+
+exports_files(LIBPARSE_SOURCES, visibility = _VISIBILITY)

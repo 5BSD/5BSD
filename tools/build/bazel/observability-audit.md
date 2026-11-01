@@ -9127,3 +9127,13 @@ shared headers and callers may provide observability and require review:
 
 Evidence: bazel-wlan-review-20261101/observability.json. Scope and open gates:
 WLAN-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: remaining NTP private libraries
+
+Reviewed the maintained 21 libparse and 24 plus optional OpenSSL libevent
+translation units and declared textual inputs. Neither Make component declares
+a DTrace provider or explicit BSM submission; the bounded source scan found no
+direct DTrace/SDT or audit-submission markers. This does not qualify transitive
+observability or runtime. All source and option branches remain declared;
+ntpd's separate timediscipline provider/static anchor/coverage requirement stays
+open for its forthcoming migration. See NTP-PRIVATE-LIBRARIES-QUALIFICATION.md.

@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//usr.sbin/ntp:common.bzl", "PLATFORM", "OPENSSL", "common_defines")
+cc_library(name = "config_headers", hdrs = ["event2/event-config.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/ntp:__subpackages__"])
+_SOURCES = [
+    "//contrib/libevent:buffer.c",
+    "//contrib/libevent:bufferevent.c",
+    "//contrib/libevent:bufferevent_filter.c",
+    "//contrib/libevent:bufferevent_pair.c",
+    "//contrib/libevent:epoll.c",
+    "//contrib/libevent:evdns.c",
+    "//contrib/libevent:event.c",
+    "//contrib/libevent:event_tagging.c",
+    "//contrib/libevent:evmap.c",
+    "//contrib/libevent:evport.c",
+    "//contrib/libevent:evrpc.c",
+    "//contrib/libevent:evthread.c",
+    "//contrib/libevent:evthread_pthread.c",
+    "//contrib/libevent:evutil.c",
+    "//contrib/libevent:evutil_rand.c",
+    "//contrib/libevent:evutil_time.c",
+    "//contrib/libevent:http.c",
+    "//contrib/libevent:kqueue.c",
+    "//contrib/libevent:listener.c",
+    "//contrib/libevent:log.c",
+    "//contrib/libevent:poll.c",
+    "//contrib/libevent:select.c",
+    "//contrib/libevent:signal.c",
+    "//contrib/libevent:strlcpy.c",
+]
+[cc_library(name = "ntpevent" + suffix,
+    srcs = _SOURCES + select({OPENSSL: ["//contrib/libevent:bufferevent_openssl.c"], "//conditions:default": []}),
+    textual_hdrs = ["//contrib/libevent:random_fragment"],
+    deps = [":config_headers", "//usr.sbin/ntp:config_headers", "//contrib/ntp:headers",
+        "//contrib/libevent:headers", "//lib/libthr:thr"] + select({
+        OPENSSL: ["//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"], "//conditions:default": []}),
+    implementation_deps = ["//contrib/libevent:private_headers"],
+    local_defines = common_defines() + ["HAVE_BSD_NICE", "HAVE_STDINT_H"],
+    copts = ["-fpie", "-DPIC"] if suffix else [], linkstatic = True,
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/ntp:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":ntpevent"], visibility = ["//usr.sbin/ntp:__subpackages__"])
+bsd_component_archive(name = "pie_archive", groups = [":ntpevent_pie"], visibility = ["//usr.sbin/ntp:__subpackages__"])

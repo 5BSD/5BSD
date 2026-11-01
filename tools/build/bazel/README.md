@@ -47082,3 +47082,13 @@ The moved source-header owner also passed a wlanstat/install regression.
 See [WLAN-MODULES-QUALIFICATION.md](WLAN-MODULES-QUALIFICATION.md) for evidence
 and exact limitations. Radios, firmware/drivers, live Wi-Fi, non-GENERIC options,
 full kernels/world/pkgbase and controlled performance remain open.
+
+### Native NTP private library closure (2026-11-01)
+
+All four NTP private libraries now have native candidates. The added libparse
+and libntpevent preserve ordinary/PIE objects, 21 parse sources, 24 event sources
+and the conditional OpenSSL source, with maintained configuration/textual inputs.
+Two normal frontend builds and four fresh Make references passed eight captured
+archive symbol/order comparisons and audits of 182 actual compilations.
+See [NTP-PRIVATE-LIBRARIES-QUALIFICATION.md](NTP-PRIVATE-LIBRARIES-QUALIFICATION.md).
+Remaining NTP programs, documentation/package aggregation and runtime remain open.

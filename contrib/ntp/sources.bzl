@@ -107,3 +107,27 @@ LIBNTP_SOURCES = [
     'libntp/lib/isc/unix/time.c',
     'libntp/lib/isc/tsmemcmp.c',
 ]
+
+LIBPARSE_SOURCES = [
+    "libparse/binio.c",
+    "libparse/clk_computime.c",
+    "libparse/clk_dcf7000.c",
+    "libparse/clk_hopf6021.c",
+    "libparse/clk_meinberg.c",
+    "libparse/clk_rawdcf.c",
+    "libparse/clk_rcc8000.c",
+    "libparse/clk_schmid.c",
+    "libparse/clk_sel240x.c",
+    "libparse/clk_trimtaip.c",
+    "libparse/clk_trimtsip.c",
+    "libparse/clk_varitext.c",
+    "libparse/clk_wharton.c",
+    "libparse/data_mbg.c",
+    "libparse/gpstolfp.c",
+    "libparse/ieee754io.c",
+    "libparse/info_trimble.c",
+    "libparse/mfp_mul.c",
+    "libparse/parse.c",
+    "libparse/parse_conf.c",
+    "libparse/trim_info.c",
+]

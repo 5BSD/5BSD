@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//contrib/ntp:sources.bzl", "LIBPARSE_SOURCES")
+load("//usr.sbin/ntp:common.bzl", "PLATFORM", "common_defines", "common_headers")
+[cc_library(name = "parse" + suffix,
+    srcs = ["//contrib/ntp:" + p for p in LIBPARSE_SOURCES],
+    deps = common_headers(), local_defines = common_defines(),
+    copts = ["-fpie", "-DPIC"] if suffix else [], linkstatic = True,
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/ntp:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":parse"], visibility = ["//usr.sbin/ntp:__subpackages__"])
+bsd_component_archive(name = "pie_archive", groups = [":parse_pie"], visibility = ["//usr.sbin/ntp:__subpackages__"])
