@@ -17,7 +17,7 @@ Initial references under /usr/obj/usr/src/bazel-dtrace-core-make-20261101 passed
 18 of 24 builds. All six core DTrace builds failed because the embedded
 dtrace_db.c debugger implementation includes linker_if.h, but the module did
 not declare this generated interface. AMD64 reaches the fragment through ISA
-code; ARM64 and RISC-V reach it through immutable-stack code. The maintained
+code; ARM64 and RISC-V reach it through dtrace_immstack.c. The maintained
 module SRCS now declares linker_if.h, allowing the original Make generator to
 produce it. No source fragment is rewritten or compiled as an extra translation
 unit. No C source or runtime ABI was changed.
