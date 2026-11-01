@@ -1,0 +1,48 @@
+# Native Bazel completion plan
+
+Resumed by user instruction on 2026-11-01 after the committed upgrade
+checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
+and a complete native Bazel system build, not BUILD-file presence. Make
+remains supported for ports and third-party software. BIP remains out of scope.
+
+## Work order
+
+1. Revalidate host, SDK and independent Make references after upgrades.
+   Resume the saved bsdtrace and PCI Ethernet candidates, qualify actual
+   outputs, installation metadata, declared inputs and code generation.
+2. Refresh maintained Make inventories for world, libraries, programs, tests,
+   generated data, kernel and modules on amd64, ARM64 and RISC-V64. Reconcile
+   selected products to actual native targets and installed destinations;
+   retain every missing or unqualified item as an open gate. Presence counts
+   are diagnostics, never completion evidence.
+3. Complete native libraries/programs/generators and kernel/driver/module
+   graphs with explicit configuration inputs and dependencies. Preserve
+   DTrace/FIDL generation, audit hooks, embedded policy, debug/CTF and
+   installation semantics. Review each converted cohort and commit it.
+4. Supply maintained aggregate world, kernel and installation targets,
+   including bootstrap and cross-build dependencies. Compile and link the
+   system with Bazel actions; wrapping Make does not satisfy conversion.
+5. Integrate native products with pkgbase-only package construction, separate
+   hardware builds and verified combined publication under
+   `/usr/obj/usr/src/repo`. Retain ports Make interoperability. Publication
+   worlds require production malloc and existing identity/validation gates.
+6. Build the full system and packages through the maintained frontend; run
+   Bazel tests and disposable-VM boot, login/PAM/su, SSH and service checks.
+   Qualify clean/incremental/cache behavior and CPU, memory, disk I/O and
+   disk-use regressions. Record configuration coverage and runtime limits.
+7. Audit inventory closure and reproducible build/package evidence before
+   claiming completion or changing the production default to Bazel.
+
+## Integration and checkpoints
+
+Each implementation change checks `usr.sbin/bsd-build/build-bsd.c`, maintained
+backend targets, helpers, tests and manual for corresponding updates. Existing
+component qualification uses the format-5 frontend API; the pending component
+resumption adds no CLI option. Aggregate world/kernel/package backend work
+will require frontend integration in the same changes.
+
+Use standard `/usr/obj`, configured ports inputs and all logical CPUs. Do not
+install or reboot the host as part of build qualification. Commit reviewed
+chunks and update qualification documents with checks actually performed.
+The saved patches remain historical checkpoints; applying them is not proof
+that the active graph is qualified.
