@@ -6,3 +6,15 @@ cc_library(name = 'transport_headers', hdrs = ['fuse.h', 'fuse_kernel.h', 'fuse_
     strip_include_prefix = "/sys",
     deps = [],
     visibility = ['//sys/dev/virtio/fs:__pkg__'])
+
+cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "fusefs_module", srcs = ["fuse_node.c", "fuse_io.c", "fuse_device.c", "fuse_ipc.c", "fuse_file.c", "fuse_vfsops.c", "fuse_vnops.c", "fuse_internal.c", "fuse_main.c"],
+    deps = ['//sys/ddb:kernel_headers', '//sys/compat/linux:fuse_errno_headers', ":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/crypto/siphash:kernel_headers"] + [], copts = [])
+[cross_generic_module_objects(arch = arch, name = "fusefs_module", srcs = ["fuse_node.c", "fuse_io.c", "fuse_device.c", "fuse_ipc.c", "fuse_file.c", "fuse_vfsops.c", "fuse_vnops.c", "fuse_internal.c", "fuse_main.c"],
+    deps = ['//sys/ddb:kernel_headers', '//sys/compat/linux:fuse_errno_headers', ":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/crypto/siphash:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in []], copts = [])
+ for arch in ["arm64", "riscv"]]

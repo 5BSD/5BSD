@@ -8962,3 +8962,15 @@ claiming native ZFS module coverage. Live probe firing/arguments and audit-event
 coverage remain unqualified; running filesystem tests does not establish them.
 See MAKEFS-RUNTIME-QUALIFICATION.md for the open runtime gate and retained
 fixture failures.
+
+## Eight filesystem modules on three architectures (2026-11-01)
+
+The bounded sixty-four-source scan retains 312 audit/tracing marker lines in
+twenty-nine files across
+autofs, ext2fs, FUSE, FAT/iconv, 9P, tarfs and UFS/FFS. Original C and existing
+SDT/audit/MAC paths are unchanged; default modules compare with independent Make
+artifacts, including preserved SDT metadata where present. Both tarfs ZSTD
+branches compare separately. Live mount/IO/control authorization, corruption,
+credential/namespace and concurrency cases, probe/audit arguments and storage
+performance remain unqualified. See FILESYSTEM-MODULES-QUALIFICATION.md and
+`bazel-filesystem-modules-review-20261101/observability.json` for bounded evidence.

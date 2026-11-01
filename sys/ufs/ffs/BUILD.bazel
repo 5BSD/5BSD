@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
-exports_files(["ffs_subr.c", "ffs_tables.c"], visibility = ["//lib/libufs:__pkg__", "//sbin/fsdb:__pkg__", "//usr.sbin/makefs:__pkg__"])
+exports_files(["ffs_subr.c", "ffs_tables.c"], visibility = ["//lib/libufs:__pkg__", "//sbin/fsdb:__pkg__", "//usr.sbin/makefs:__pkg__", "//sys/ufs/ufs:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = ["fs.h", "ffs_extern.h"], includes = ["../.."],
     deps = ["//sys/ufs/ufs:kernel_headers"], visibility = ["//visibility:public"])
+
+cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+
+exports_files(["ffs_alloc.c", "ffs_balloc.c", "ffs_inode.c", "ffs_rawread.c", "ffs_snapshot.c", "ffs_softdep.c", "ffs_suspend.c", "ffs_vfsops.c", "ffs_vnops.c"], visibility = ["//sys/ufs/ufs:__pkg__"])

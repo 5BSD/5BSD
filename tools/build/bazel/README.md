@@ -46962,3 +46962,14 @@ Three real System V Make SRCS omissions now explicitly declare vnode_if.h;
 initial cross-reference failures remain retained. Runtime IPC/authorization and
 complete kernel/module coverage remain open. See
 [IPC module qualification](IPC-MODULES-QUALIFICATION.md).
+
+### Eight additional filesystem module candidates (2026-11-01)
+
+Native autofs, ext2fs, fusefs, msdosfs, msdosfs_iconv, p9fs, tarfs and ufs now
+cover amd64, ARM64 and RISC-V64. All 48 default Make/native comparisons and
+72 install records pass; six additional tarfs ZSTD-disabled comparisons and
+nine install records pass. Original C/audit/MAC paths are unchanged. The actual
+msdosfs_iconv Make generated-vnode dependency and FUSE textual input are declared.
+See [filesystem module qualification](FILESYSTEM-MODULES-QUALIFICATION.md) for
+compiler/cache attribution, fresh inventory, failed attempts, startup overhead
+and explicit remaining kernel/runtime/performance gates.

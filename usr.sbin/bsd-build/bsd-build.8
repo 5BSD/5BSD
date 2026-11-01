@@ -4668,3 +4668,12 @@ amd64, ARM64 and RISC-V64 with actual target option headers and original exports
 The maintained System V Makefiles also declare their missing vnode interface.
 Artifact and metadata comparisons do not establish IPC runtime/authorization,
 module loading or complete kernels and module sets.
+
+.Pp
+Native autofs, ext2fs, fusefs, msdosfs, msdosfs_iconv, p9fs, tarfs and ufs
+module/install candidates cover amd64, ARM64 and RISC-V64 with real target options
+and original exports.
+Tarfs comparisons cover both values of the existing kernel_zstdio setting.
+The maintained msdosfs_iconv Makefile also declares its missing vnode interface.
+Artifact/metadata checks do not qualify live filesystem behavior, storage
+performance or complete kernels/module sets.

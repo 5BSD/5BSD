@@ -56,7 +56,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["ddb", "pseudofs", "tmpfs"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
  for option in ["ddb", "pseudofs", "tmpfs"]]
 
 # Security module option contents come from the target config tree.
@@ -92,7 +92,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["geom", "zstdio"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/geom:__subpackages__", "//sys/modules/geom:__subpackages__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/geom:__subpackages__", "//sys/modules/geom:__subpackages__", "//sys/fs/tarfs:__pkg__"])
  for option in ["geom", "zstdio"]]
 
 bsd_tree_file(name = "opt_bpf", tree = ":generic_config", member = "opt_bpf.h",
@@ -118,3 +118,12 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
  for option in ["posix", "sysvipc", "capsicum"]]
+
+# Filesystem module options come from the actual target configuration.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["directio", "ffs", "quota", "suiddir", "tarfs", "ufs"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+ for option in ["directio", "ffs", "quota", "suiddir", "tarfs", "ufs"]]
