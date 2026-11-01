@@ -24,6 +24,25 @@ type ModuleInfo = struct {
     // reported for an allowed module), 0x8 override, 0x10 ready.
     flags uint32;
 };
+// A read-only cursor over the broker's recent load decisions: 0 starts at
+// the oldest retained decision.
+type DecisionCursor = struct { after uint64; };
+type LoadDecision = struct {
+    // Increasing per broker start; the first decision is 1.
+    sequence uint64;
+    // Wall-clock seconds since the Epoch.
+    time int64;
+    module ModuleName;
+    // The requester's switchboard client label.
+    client string:63;
+    // SYSEXT_OP_* of the request (1 Ensure, 10 Restore).
+    operation uint32;
+    // SYSEXT_DECISION_*: 1 loaded, 2 already present, 3 not permitted,
+    // 4 client limited to hardware drivers, 5 administrator deny override,
+    // 6 permitted but the load failed (error holds the errno).
+    result uint32;
+    error uint32;
+};
 closed protocol SystemExtension {
     strict GetProtocolInfo() -> (ProtocolInfo);
     // Errors are errno values (EPERM: not allow-listed, or not ADMIN for the
@@ -45,4 +64,15 @@ closed protocol SystemExtension {
     // cursor, ENOENT at the end.
     strict Info(Module) -> (ModuleInfo) error uint32;
     strict Next(Cursor) -> (ModuleInfo) error uint32;
+};
+// system.SystemExtension.Status: the read-only view switchboard gives UID 0
+// login sessions (root-query.ucl).  It has no method that loads a module or
+// changes policy; Info and Next behave as on SystemExtension.
+closed protocol SystemExtensionStatus {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Info(Module) -> (ModuleInfo) error uint32;
+    strict Next(Cursor) -> (ModuleInfo) error uint32;
+    // The oldest retained decision with a sequence after the cursor; ENOENT
+    // when there is none.  The broker keeps the most recent 64.
+    strict NextDecision(DecisionCursor) -> (LoadDecision) error uint32;
 };
