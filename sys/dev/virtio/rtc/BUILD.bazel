@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "rtc_headers", hdrs = ["virtio_rtc.h"], strip_include_prefix = "/sys", visibility = ["//sys/dev/virtio:__pkg__"])
+
+amd64_generic_module_objects(name = "generic_module", srcs = ["virtio_rtc.c"], deps = [
+    ":rtc_headers",
+    "//sys/dev/virtio:virtio_headers",
+    "//sys/dev/virtio:virtio_if_headers",
+    "//sys/dev/virtio:virtio_bus_if_headers",
+    "//sys/kern:bus_if_headers",
+    "//sys/kern:clock_if_headers",
+    "//sys/kern:device_if_headers",
+    "//sys/vm:kernel_headers",
+])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_module",
+    srcs = ["virtio_rtc.c"],
+    deps = [
+        ":rtc_headers",
+        "//sys/dev/virtio:virtio_headers",
+        "//sys/dev/virtio:virtio_if_headers",
+        "//sys/dev/virtio:virtio_bus_if_headers",
+        "//sys/kern:bus_if_headers",
+        "//sys/kern:clock_if_headers",
+        "//sys/kern:device_if_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

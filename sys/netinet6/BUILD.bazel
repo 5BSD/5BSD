@@ -4,10 +4,29 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "address_headers", hdrs = ["in6.h"], includes = [".."],
     deps = [], visibility = ["//visibility:public"])
 
-cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps = ["//sys/netinet:ip6_wire_headers", "//sys/netinet:ip_headers"], visibility = ["//sys/security/mac:__pkg__"])
+cc_library(name = "interface_state_headers", hdrs = ["in6_var.h"], includes = [".."],
+    deps = [":address_headers", "//sys/net:interface_headers", "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers"],
+    visibility = ["//sys/netinet:__pkg__", "//sys/netgraph:__pkg__",
+        "//sys/modules/netgraph/ip_input:__pkg__"])
+
+cc_library(name = "bridgestp_headers", hdrs = ["in6_var.h"], includes = [".."],
+    deps = [":address_headers"], visibility = ["//sys/netinet:__pkg__"])
+
+cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps = ["//sys/netinet:ip6_wire_headers", "//sys/netinet:ip_headers"], visibility = ["//sys/security/mac:__pkg__", "//sys/net:__pkg__", "//sys/modules/if_enc:__pkg__", "//sys/modules/if_gif:__pkg__", "//sys/modules/if_gre:__pkg__", "//sys/dev/virtio/network:__pkg__"])
+
+cc_library(name = "ipv6_interface_tunnel_headers", hdrs = ["in6_fib.h", "in6_rss.h", "in6_var.h", "ip6_ecn.h", "scope6_var.h"], includes = [".."],
+    deps = [":address_headers", ":ip6_headers"], visibility = ["//sys/net:__pkg__"])
 
 # Source-header closure for the maintained truss build on amd64.
 cc_library(name = "truss_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+exports_files(["in6_gif.c", "ip6_gre.c"], visibility = ["//sys/net:__pkg__", "//sys/modules:__subpackages__"])
+
+# Explicit header closure for the native Netgraph node/core candidates.
+cc_library(name = "netgraph_node_headers", hdrs = ["in6_fib.h", "scope6_var.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"],
+    deps = [":address_headers", ":ip6_headers"])

@@ -1,3 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 amd64_generic_module(module = "mac_abac", objects = ["//sys/security/mac_abac:generic_module_object_files"], package = "mac-abac")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "mac_abac",
+    objects = ["//sys/security/mac_abac:" + arch + "_generic_module_object_files"],
+    package = "mac-abac",
+) for arch in ["arm64", "riscv"]]

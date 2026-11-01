@@ -6,7 +6,63 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.
-cc_library(name = "bhyve_engine_headers", hdrs = ['balloon/virtio_balloon.h', 'gpu/virtio_gpu.h', 'network/virtio_net_5bsd.h', 'rtc/virtio_rtc.h', 'virtio.h', 'virtio_config.h', 'virtio_endian.h', 'virtio_ids.h', 'virtio_ring.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "bhyve_engine_headers", hdrs = ['//sys/dev/virtio/balloon:virtio_balloon.h', '//sys/dev/virtio/gpu:virtio_gpu.h', '//sys/dev/virtio/network:virtio_net_5bsd.h', 'virtio.h', 'virtio_config.h', 'virtio_endian.h', 'virtio_ids.h', 'virtio_ring.h'], strip_include_prefix = "/sys", deps = ["//sys/dev/virtio/rtc:rtc_headers"], visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 # HyperTrace virtio-dtrace wire format, included by bhyve as <dev/virtio/dtrace/virtio_dtrace_wire.h>.
-cc_library(name = "hypertrace_headers", hdrs = ["dtrace/virtio_dtrace_wire.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "hypertrace_headers", hdrs = ["//sys/dev/virtio/dtrace:virtio_dtrace_wire.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# Kernel driver headers and generated interfaces shared by virtio modules.
+cc_library(name = "virtio_headers", hdrs = ["virtio.h", "virtio_config.h", "virtio_endian.h", "virtio_ids.h", "virtio_ring.h", "virtqueue.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+
+filegroup(name = "virtio_if_header_file", srcs = [":virtio_if"], output_group = "header")
+cc_library(name = "virtio_if_headers", hdrs = [":virtio_if_header_file"], strip_include_prefix = "virtio_if.generated", visibility = ["//visibility:public"])
+
+filegroup(name = "virtio_bus_if_header_file", srcs = [":virtio_bus_if"], output_group = "header")
+cc_library(name = "virtio_bus_if_headers", hdrs = [":virtio_bus_if_header_file"], strip_include_prefix = "virtio_bus_if.generated", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "driver_headers", deps = [
+    ":virtio_headers", ":virtio_if_headers", ":virtio_bus_if_headers",
+    "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers",
+], visibility = ["//sys/dev/virtio:__subpackages__"])
+
+amd64_generic_module_objects(name = "generic_driver", srcs = ["virtio.c", "virtqueue.c"],
+    deps = [":driver_headers", "//sys/vm:kernel_headers"])
+
+filegroup(name = "virtio_bus_if_source", srcs = [":virtio_bus_if"], output_group = "source")
+amd64_generic_module_objects(name = "generic_virtio_bus_if", srcs = [":virtio_bus_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c",
+        "-fdebug-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c"])
+
+filegroup(name = "virtio_if_source", srcs = [":virtio_if"], output_group = "source")
+amd64_generic_module_objects(name = "generic_virtio_if", srcs = [":virtio_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_if_source)=virtio_if.c",
+        "-fdebug-prefix-map=$(execpath :virtio_if_source)=virtio_if.c"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_driver",
+    srcs = ["virtio.c", "virtqueue.c"],
+    deps = [":driver_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_virtio_bus_if",
+    srcs = [":virtio_bus_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c", "-fdebug-prefix-map=$(execpath :virtio_bus_if_source)=virtio_bus_if.c"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "generic_virtio_if",
+    srcs = [":virtio_if_source"],
+    deps = [":driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_if_source)=virtio_if.c", "-fdebug-prefix-map=$(execpath :virtio_if_source)=virtio_if.c"],
+) for arch in ["arm64", "riscv"]]

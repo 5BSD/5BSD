@@ -4,3 +4,11 @@ cc_library(name = "headers", hdrs = ["g_multipath.h"], strip_include_prefix = "/
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 amd64_generic_module_objects(srcs = ["g_multipath.c"], deps = [":headers", "//sys/geom:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["g_multipath.c"],
+    deps = [":headers", "//sys/geom:kernel_headers"],
+) for arch in ["arm64", "riscv"]]

@@ -34,7 +34,7 @@ _ARCHIVES = [
     "//sbin/kldunload:install_archive",
     "//sbin/ldconfig:program_install_archive",
     "//sbin/md5:install_archive",
-    "//sbin/mdconfig:install_archive",
+    "//sbin/mdconfig:program_install_archive",
     "//sbin/mdmfs:program_install_archive",
     "//sbin/mknod:install_archive",
     "//sbin/mksnap_ffs:program_install_archive",

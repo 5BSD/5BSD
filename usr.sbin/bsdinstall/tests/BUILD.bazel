@@ -1,21 +1,13 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("//docs/book:sources.bzl", "BOOK_FILES")
+load(":fixture_sources.bzl", "TEST_DIRECTORY_RECORDS", "TEST_SOURCES")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 load("//tools/build/bazel:bsd_fixture_tree.bzl", "bsd_fixture_tree")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
 
 _TESTS = ['adduser_test', 'config_test', 'documentation_test', 'firmware_fetch_test', 'hostname_test', 'jail_test', 'pkgbase_selection_test', 'ports_test', 'repository_test', 'storage_requirement_test', 'tzfspool_test']
-_HEADERS = ['capsicum.h', 'event.h', 'fcntl.h', 'file.h', 'filedesc.h', 'mbuf.h', 'procctl.h', 'procdesc.h', 'ptrace.h', 'socket.h', 'sysent.h', 'un.h', 'user.h', 'wait.h']
-_SOURCES = {"//docs/book:src/" + path: "docs/book/src/" + path for path in BOOK_FILES} | {
-    "//sys/sys:" + name: "sys/sys/" + name for name in _HEADERS
-} | {
-    "//docs/book:tools/check-book.sh": "docs/book/tools/check-book.sh",
-    "//release/tools:vmimage.subr": "release/tools/vmimage.subr",
-    "//sys/kern:syscalls.master": "sys/kern/syscalls.master",
-    "//usr.sbin/bsdinstall:bsdinstall.8": "usr.sbin/bsdinstall/bsdinstall.8",
-}
-
 [bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
     cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
     redirect = "@bsd_sdk//toolchain:stdout_redirect") for name in _TESTS]
@@ -28,22 +20,59 @@ bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/u
 [bsd_install_file(name = "fixture_" + path.replace("/", "_"), src = label,
     destination = "/usr/tests/usr.sbin/bsdinstall/srctree/" + path,
     owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstall-tests"])
-    for label, path in _SOURCES.items()]
-bsd_fixture_tree(name = "srctree", sources = _SOURCES,
+    for label, path in TEST_SOURCES.items()]
+bsd_fixture_tree(name = "srctree", sources = TEST_SOURCES,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
-# This manifest deliberately excludes the two pending generated inventories.
-# It is not yet wired into the parent install_archive or advertised as a full
-# installed suite. Keep the parent's tests=true rejection until both are native.
+bsd_script_output(name = "book-man-pages", script = "//docs/book:tools/check-book.sh",
+    input_mode = "file-list", source_files = ["@book_inventory_src//:man_inventory_sources"],
+    output = "book-man-pages", arguments = ["-g", "man", "-i"],
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk",
+        "@bsd_sdk//toolchain:extra_grep": "grep", "@bsd_sdk//toolchain:extra_sort": "sort",
+        "//usr.bin/xargs:xargs": "xargs"},
+    runtime_libraries = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:extra_grep_runtime",
+        "@bsd_sdk//toolchain:extra_sort_runtime", "@bsd_sdk//toolchain:sh_runtime",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1"],
+    runtime = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:extra_grep_runtime",
+        "@bsd_sdk//toolchain:extra_sort_runtime", "@bsd_sdk//toolchain:sh_runtime"])
+bsd_script_output(name = "book-sysctls", script = "//docs/book:tools/check-book.sh",
+    input_mode = "file-list", source_files = ["@book_inventory_src//:sysctl_inventory_sources"],
+    output = "book-sysctls", arguments = ["-g", "sysctl", "-i"],
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:awk": "awk",
+        "@bsd_sdk//toolchain:extra_grep": "grep", "@bsd_sdk//toolchain:extra_sort": "sort",
+        "//usr.bin/xargs:xargs": "xargs"},
+    runtime_libraries = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:extra_grep_runtime",
+        "@bsd_sdk//toolchain:extra_sort_runtime", "@bsd_sdk//toolchain:sh_runtime",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1"],
+    runtime = ["@bsd_sdk//toolchain:awk_runtime", "@bsd_sdk//toolchain:extra_grep_runtime",
+        "@bsd_sdk//toolchain:extra_sort_runtime", "@bsd_sdk//toolchain:sh_runtime"])
+bsd_install_file(name = "install_book_man_pages", src = ":book-man-pages",
+    destination = "/usr/tests/usr.sbin/bsdinstall/book-man-pages", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=bsdinstall-tests"])
+bsd_install_file(name = "install_book_sysctls", src = ":book-sysctls",
+    destination = "/usr/tests/usr.sbin/bsdinstall/book-sysctls", owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=bsdinstall-tests"])
+bsd_kyua_test(name = "native_book_matches_code_test", program = ":documentation_test",
+    interface = "atf", case_name = "native_book_matches_code", suite = "FreeBSD",
+    suite_files = {label: "srctree/" + path for label, path in TEST_SOURCES.items()} |
+        {":book-man-pages": "book-man-pages", ":book-sysctls": "book-sysctls"},
+    materialize_suite = True, kyua = "@bsd_sdk//toolchain:extra_kyua",
+    clean_environment = True, python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
+    size = "small", visibility = ["//visibility:public"])
 bsd_install_manifest(name = "fixture_manifest",
-    entries = [":install_" + name for name in _TESTS] + [":install_kyuafile"] +
-        [":fixture_" + path.replace("/", "_") for path in _SOURCES.values()])
-_DIRECTORIES = {"/usr/tests/usr.sbin/bsdinstall": True, "/usr/tests/usr.sbin/bsdinstall/srctree": True} | {
-    "/usr/tests/usr.sbin/bsdinstall/srctree/" + "/".join(path.split("/")[:i]): True
-    for path in _SOURCES.values() for i in range(1, len(path.split("/")))
-}
+    entries = [":install_" + name for name in _TESTS] + [":install_kyuafile", ":install_book_man_pages", ":install_book_sysctls"] +
+        [":fixture_" + path.replace("/", "_") for path in TEST_SOURCES.values()],
+    visibility = ["//usr.sbin/bsdinstall:__pkg__"])
 bsd_install_archive(name = "fixture_archive", manifests = [":fixture_manifest"],
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall-tests"]}' for d in _DIRECTORIES},
+    directories = TEST_DIRECTORY_RECORDS,
     mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",

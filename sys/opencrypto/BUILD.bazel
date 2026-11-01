@@ -1,9 +1,32 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "cryptodev_headers", hdrs = ["cryptodev.h", "_cryptodev.h"],
-    strip_include_prefix = "/sys", visibility = ["//sys/kern:__pkg__", "//sys/geom/eli:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])
+    strip_include_prefix = "/sys", visibility = ["//sys/kern:__pkg__", "//sys/geom/eli:__pkg__", "//sys/netipsec:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/virtio/crypto:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
 
 cc_library(name = "ed25519_headers", hdrs = ["cryptodesc_ed25519.h"], includes = [".."], visibility = ["//sys/security/mac_veriexec:__pkg__"])
+
+cc_library(name = "if_enc_headers", hdrs = ["cbc_mac.h", "deflate.h", "gmac.h", "gfmult.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"], strip_include_prefix = "/sys",
+    deps = ["//sys/crypto:sha1_headers", "//sys/crypto/camellia:kernel_headers", "//sys/crypto/rijndael:kernel_headers", "//sys/crypto/sha2:kernel_headers", ":cryptodev_headers"],
+    visibility = ["//sys/net:__pkg__", "//sys/netipsec:__pkg__", "//sys/modules/if_enc:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "cryptodesc_kdf_headers", hdrs = ["cryptodesc_kdf.h"])
+amd64_generic_module_objects(name = "generic_cryptodev_module", srcs = ["cryptodev.c", "cryptodesc_kdf.c"],
+    deps = [":cryptodev_headers", ":if_enc_headers", ":ed25519_headers", ":cryptodesc_kdf_headers",
+        "//sys/crypto:curve25519_headers", "//sys/crypto/sha2:kernel_headers", "//sys/net:network_headers",
+        "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+filegroup(name = "cryptodev_if_header_file", srcs = [":cryptodev_if"], output_group = "header")
+cc_library(name = "cryptodev_if_headers", hdrs = [":cryptodev_if_header_file"],
+    strip_include_prefix = "cryptodev_if.generated", visibility = ["//sys/dev/virtio/crypto:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[cross_generic_module_objects(arch = arch, name = "generic_cryptodev_module", srcs = ["cryptodev.c", "cryptodesc_kdf.c"],
+    deps = [":cryptodev_headers", ":if_enc_headers", ":ed25519_headers", ":cryptodesc_kdf_headers",
+        "//sys/crypto:curve25519_headers", "//sys/crypto/sha2:kernel_headers", "//sys/net:network_headers",
+        "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+ for arch in ["arm64", "riscv"]]

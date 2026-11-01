@@ -1,6 +1,47 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
 # Shared format inputs for etdump; this does not migrate makefs itself.
 cc_library(name = "cd9660_headers", hdrs = ["cd9660.h", "makefs.h", "cd9660/cd9660_eltorito.h"], strip_include_prefix = ".", deps = ["//sys/fs/cd9660:format_headers"], visibility = ["//usr.bin/etdump:__pkg__"])
 cc_library(name = "eltorito_headers", hdrs = ["cd9660/cd9660_eltorito.h"], strip_include_prefix = "cd9660", visibility = ["//usr.bin/etdump:__pkg__"])
 exports_files(["cd9660/cd9660_conversion.c"], visibility = ["//usr.bin/etdump:__pkg__"])
+
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_ZFS = "//tools/build/bazel/config:zfs_enabled"
+_TESTS = "//tools/build/bazel/config:tests_enabled"
+# Ordered maintained Make source inventory. Included checksum implementations
+# remain declared headers of vdev.c rather than duplicate translation units.
+cc_binary(
+    name = "makefs",
+    srcs = [
+        "cd9660.c", "ffs.c", "makefs.c", "msdos.c", "mtree.c", "walk.c",
+        "cd9660/cd9660_strings.c", "cd9660/cd9660_debug.c", "cd9660/cd9660_eltorito.c",
+        "cd9660/cd9660_write.c", "cd9660/cd9660_conversion.c", "cd9660/iso9660_rrip.c",
+        "ffs/ffs_alloc.c", "ffs/ffs_balloc.c", "ffs/ffs_bswap.c", "ffs/ffs_subr.c",
+        "ffs/ufs_bmap.c", "ffs/buf.c", "ffs/mkfs.c", "//sys/ufs/ffs:ffs_tables.c",
+        "//sbin/newfs_msdos:mkfs_msdos.c", "//sbin/newfs_msdos:mkfs_msdos.h",
+        "msdos/msdosfs_conv.c", "msdos/msdosfs_denode.c", "msdos/msdosfs_fat.c",
+        "msdos/msdosfs_lookup.c", "msdos/msdosfs_vnops.c", "msdos/msdosfs_vfsops.c",
+        "//contrib/mtree:getid.c", "//contrib/mtree:misc.c", "//contrib/mtree:spec.c", "//contrib/mknod:pack_dev.c",
+        "cd9660.h", "ffs.h", "makefs.h", "msdos.h", "sys/buf.h",
+        "cd9660/cd9660_eltorito.h", "cd9660/iso9660_rrip.h",
+        "ffs/ufs_bswap.h", "ffs/newfs_extern.h", "ffs/ufs_inode.h", "ffs/ffs_extern.h", "ffs/buf.h",
+        "msdos/direntry.h", "msdos/denode.h",
+    ] + select({_ZFS: ["zfs.c", "zfs/dsl.c", "zfs/fs.c", "zfs/objset.c", "zfs/vdev.c", "zfs/zap.c", "zfs/zfs.h", "//stand/libsa/zfs:nvlist.c"], "//conditions:default": []}),
+    deps = ["//contrib/mtree:install_headers", "//contrib/mknod:headers", "//lib/libnetbsd:netbsd_pie",
+        "//lib/libutil:util", "//lib/libsbuf:sbuf", "//sys/fs/cd9660:format_headers", "//sys/fs/msdosfs:makefs_headers"] +
+        select({_ZFS: ["//stand/libsa/zfs:nvlist_headers", "//sys/cddl/boot:makefs_zfs_inputs"], "//conditions:default": []}),
+    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libsbuf:sbuf_shared"],
+    local_defines = ["MAKEFS", "_WANT_MSDOSFS_INTERNALS", "HAVE_STRUCT_STAT_ST_FLAGS=1"] + select({_ZFS: ["HAVE_ZFS"], "//conditions:default": []}),
+    copts = ["-fPIE", "-Iusr.sbin/makefs", "-Isbin/newfs_msdos"] + select({_ZFS: ["-Iusr.sbin/makefs/zfs"], "//conditions:default": []}),
+    linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "makefs", manual = "makefs.8", package = "utilities", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(
+    name = "install_archive", manifests = [":install_manifest"] + select({_TESTS: ["//usr.sbin/makefs/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({_TESTS: {"/usr/tests/usr.sbin/makefs": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"],
+)

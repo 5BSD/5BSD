@@ -405,6 +405,10 @@ amd64_generic_kernel_objects(name = "generic_clock_calibration", srcs = ["subr_c
 
 filegroup(name = "clock_if_header_file", srcs = [":clock_if"], output_group = "header")
 cc_library(name = "clock_if_headers", hdrs = [":clock_if_header_file"], strip_include_prefix = "clock_if.generated", visibility = ["//visibility:public"])
+
+cc_library(name = "uipc_vsock_headers", hdrs = ["uipc_vsock.h"], strip_include_prefix = ".", include_prefix = "kern",
+    deps = ["//sys/sys:kernel_headers"], visibility = ["//sys/dev/virtio/vsock:__pkg__"])
+
 amd64_generic_kernel_objects(name = "generic_rtc", srcs = ["subr_rtc.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers",
         ":clock_if_headers", "//sys/amd64/conf:generic_opt_ffclock_header"])
@@ -434,8 +438,54 @@ amd64_generic_kernel_objects(name = "generic_process_metadata", srcs = ["kern_pr
         "//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_ktrace_header",
         "//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_stack_header"])
 
-exports_files(["subr_acl_nfs4.c"], visibility = ["//lib/libc/posix1e:__pkg__"])
+exports_files(["kern_alq.c"], visibility = ["//sys/modules/alq:__pkg__"])
+exports_files(["subr_acl_nfs4.c"], visibility = [
+    "//lib/libc/posix1e:__pkg__",
+    "//sys/modules/acl_nfs4:__pkg__",
+])
+exports_files(["subr_acl_posix1e.c"], visibility = [
+    "//sys/modules/acl_posix1e:__pkg__",
+])
 
 exports_files(["subr_capability.c"], visibility = ["//lib/libc/capability:__pkg__"])
 
 exports_files(["subr_vmem.c"], visibility = ["//lib/libuvmem:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+amd64_generic_module_objects(name = "generic_firmware_module", srcs = ["subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+# Real cross-target layout objects: the compiler produces target ELF; native
+# nm/grep/sed/sort extract constants without executing that target code.
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_WARNING_FLAGS", "KERNEL_DEBUG_FLAGS")
+_CROSS_LAYOUT_FLAGS = ["-fno-strict-aliasing", "-fcommon", "-include", "opt_global.h",
+    "-fno-omit-frame-pointer", "-fwrapv", "-fstack-protector-strong", "-std=gnu17"] + KERNEL_WARNING_FLAGS + KERNEL_DEBUG_FLAGS
+[cc_library(name = arch + "_generic_genoffset", srcs = ["genoffset.c"],
+    deps = ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
+        "//sys/sys:kernel_headers", "//sys/bsm:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers"] + extra_headers,
+    copts = _CROSS_LAYOUT_FLAGS + arch_flags,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu,
+        "//tools/build/bazel/kernel_toolchain:kernel"])
+ for arch, cpu, arch_flags, extra_headers in [
+    ("arm64", "aarch64", ["-mgeneral-regs-only", "-ffixed-x18", "-mbranch-protection=standard", "-mno-outline-atomics",
+            "-mno-omit-leaf-frame-pointer", "-mstack-protector-guard=sysreg",
+            "-mstack-protector-guard-reg=sp_el0", "-mstack-protector-guard-offset=0"],
+        ["//sys/arm/include:kernel_headers"]),
+    ("riscv", "riscv64", ["-march=rv64imafdch_zifencei_svinval", "-mabi=lp64", "-mcmodel=medium",
+            "-mno-relax", "-fPIE", "-fno-optimize-sibling-calls"], []),
+]]
+[bsd_component_object(name = arch + "_generic_genoffset_object", group = ":" + arch + "_generic_genoffset",
+    out = arch + "_generic_layout/genoffset.o") for arch in ["arm64", "riscv"]]
+[kernel_constants(name = arch + "_generic_offset", object = ":" + arch + "_generic_genoffset_object",
+    kind = "offset", output = arch + "_generic_layout/offset.inc") for arch in ["arm64", "riscv"]]
+
+[cc_library(name = arch + "_generic_offset_header", hdrs = [":" + arch + "_generic_offset"],
+    strip_include_prefix = arch + "_generic_layout", visibility = ["//visibility:public"])
+ for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[cross_generic_module_objects(arch = arch, name = "generic_firmware_module", srcs = ["subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+ for arch in ["arm64", "riscv"]]

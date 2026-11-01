@@ -3,3 +3,17 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "am
 
 amd64_generic_module_objects(srcs = ["//sys/geom:part/g_part_ebr.c"], deps = ["//sys/geom:partition_interface_headers", "//sys/amd64/conf:generic_opt_geom_header"])
 amd64_generic_module(module = "geom_part_ebr", objects = [":generic_module_object_files"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["//sys/geom:part/g_part_ebr.c"],
+    deps = ["//sys/geom:partition_interface_headers", "//sys/" + arch + "/conf:generic_opt_geom_header"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module(
+    arch = arch,
+    module = "geom_part_ebr",
+    objects = [":" + arch + "_generic_module_object_files"],
+) for arch in ["arm64", "riscv"]]

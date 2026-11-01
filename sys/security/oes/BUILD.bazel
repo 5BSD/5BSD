@@ -13,3 +13,18 @@ _KERNEL_DEPS = [":kernel_headers", "//sys/amd64/conf:generic_opt_mac_header", "/
         "//sys/security/audit:kernel_headers", "//sys/netinet:address_headers", "//sys/dev/mac_capability:label_headers"]
 amd64_generic_module_objects(srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, deps = _KERNEL_DEPS)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = _KERNEL_SOURCES,
+    deps = [
+        ":kernel_headers",
+        "//sys/" + arch + "/conf:generic_opt_mac_header",
+        "//sys/security/mac:policy_headers",
+        "//sys/security/audit:kernel_headers",
+        "//sys/netinet:address_headers",
+        "//sys/dev/mac_capability:label_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

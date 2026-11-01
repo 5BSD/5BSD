@@ -76,3 +76,51 @@ exports_files(["tests/libsys_runtime.c"], visibility = ["//lib/libsys:__pkg__"])
 exports_files(["tests/compiler_rt_runtime.c"], visibility = ["//lib/libcompiler_rt:__pkg__"])
 
 exports_files(["tests/libc_runtime.c"], visibility = ["//lib/libc:__pkg__"])
+
+
+load(":bsd_python_test.bzl", "bsd_python_test")
+
+bsd_python_test(
+    name = "bep_artifacts_test",
+    src = "bep-artifacts-test.py",
+    data = ["bep_artifacts.py"],
+)
+
+
+bsd_python_test(
+    name = "module_inventory_test",
+    src = "module_inventory-test.py",
+    data = ["module_inventory.py"],
+)
+
+bsd_python_test(
+    name = "atf_runner_cleanup_test",
+    src = "atf-runner-cleanup-test.py",
+    data = [":atf_runner"],
+)
+
+bsd_python_test(
+    name = "install_reference_options_test",
+    src = "install-reference-options-test.py",
+    data = ["install_reference_options.py"],
+)
+
+# Includes rejection of foreign userland and unqualified target execution.
+bsd_python_test(
+    name = "source_settings_test",
+    src = "source-settings-test.py",
+    data = ["source_graph.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py"],
+)
+
+# Input-boundary checks for the isolated native iconv VM fixture assembler.
+bsd_python_test(
+    name = "iconv_runtime_fixture_test",
+    src = "iconv-runtime-fixture-test.py",
+    data = ["iconv-runtime-fixture.py"],
+)
+
+bsd_python_test(
+    name = "daemon_extra_root_test",
+    src = "//tools/test/daemon-runtime:extra_root_test.py",
+    data = ["//tools/test/daemon-runtime:extra_root.py"],
+)

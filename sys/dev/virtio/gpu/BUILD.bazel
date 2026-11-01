@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "kernel_headers", hdrs = ['virtio_gpu.h', 'virtio_gpu_geometry.h'], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(srcs = ["virtio_gpu.c"],
+    deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
+        "//sys/dev/vt:framebuffer_headers",
+        "//sys/dev/fb:fb_if_headers",
+        "//sys/vm:kernel_headers"])
+
+exports_files(["virtio_gpu.h"], visibility = ["//sys/dev/virtio:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_gpu.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/dev/vt:framebuffer_headers",
+        "//sys/dev/fb:fb_if_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+
+_PLATFORM = ["@platforms//os:freebsd"]
+_TESTDIR = "/usr/tests/usr.sbin/notifyctl"
+cc_library(name = "fake_inputs", textual_hdrs = ["//usr.sbin/notifyctl:notifyctl.c", "//usr.sbin/BSDNotify:policy.c"],
+    deps = ["//usr.sbin/BSDNotify:policy_headers", "//lib/libnotify:headers", "//lib/libucl:ucl"])
+cc_binary(name = "notifyctl_test_bin", srcs = ["//usr.sbin/notifyctl:notifyctl.c", "//usr.sbin/BSDNotify:policy.c"],
+    deps = ["//usr.sbin/BSDNotify:policy_headers", "//lib/libnotify:notify", "//lib/libucl:ucl"],
+    linkopts = ["-static"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_binary(name = "notifyctl_success_bin", srcs = ["notifyctl_success_impl.c", "notify_policy_success_impl.c", "fake_notify.c"],
+    deps = [":fake_inputs", "//lib/libucl:ucl"], linkopts = ["-static"], linkstatic = True, target_compatible_with = _PLATFORM)
+cc_binary(name = "no_ambient_exec", srcs = ["no_ambient_exec.c"], deps = ["//lib/libservice:service"],
+    linkopts = ["-static"], linkstatic = True, target_compatible_with = _PLATFORM)
+[utility_installation(name = "install_" + p, program = p, manual = None,
+    package = "bsdnotify-tests", bindir = _TESTDIR) for p in ["notifyctl_test_bin", "notifyctl_success_bin", "no_ambient_exec"]]
+bsd_script_wrapper(name = "notifyctl_test", body = "notifyctl_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_install_file(name = "install_shell", src = ":notifyctl_test", destination = _TESTDIR + "/notifyctl_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsdnotify-tests"])
+[bsd_install_file(name = "install_" + n, src = n + ".conf", destination = _TESTDIR + "/" + n + ".conf",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdnotify-tests"]) for n in ["valid", "invalid"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["notifyctl_test"], interfaces = {"notifyctl_test": "atf"})
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _TESTDIR + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdnotify-tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_valid", ":install_invalid", ":install_kyuafile"], visibility = ["//visibility:public"])
+bsd_kyua_test(name = "notifyctl_test_run", program = ":notifyctl_test", interface = "atf", suite = "FreeBSD",
+    suite_files = {":" + p: p for p in ["notifyctl_test_bin", "notifyctl_success_bin", "no_ambient_exec", "valid.conf", "invalid.conf"]},
+    materialize_suite = True, clean_environment = True,
+    kyua = "@bsd_sdk//toolchain:extra_kyua", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"], size = "medium", visibility = ["//visibility:public"])

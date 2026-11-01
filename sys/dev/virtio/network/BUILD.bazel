@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "kernel_headers", hdrs = ["virtio_net.h", "if_vtnetvar.h", "virtio_net_5bsd.h"], strip_include_prefix = "/sys")
+exports_files(["virtio_net_5bsd.h"], visibility = ["//sys/dev/virtio:__pkg__"])
+
+amd64_generic_module_objects(srcs = ["if_vtnet.c"], deps = [
+    ":kernel_headers", "//sys/dev/virtio:driver_headers", "//sys/dev/netmap:virtio_driver_headers",
+    "//sys/net:virtio_driver_headers", "//sys/netinet:virtio_driver_headers", "//sys/netinet6:ip6_headers",
+    "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers",
+    "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header",
+])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["if_vtnet.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/dev/netmap:virtio_driver_headers",
+        "//sys/net:virtio_driver_headers",
+        "//sys/netinet:virtio_driver_headers",
+        "//sys/netinet6:ip6_headers",
+        "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/" + arch + "/conf:generic_opt_inet_header",
+        "//sys/" + arch + "/conf:generic_opt_inet6_header",
+    ],
+) for arch in ["arm64", "riscv"]]

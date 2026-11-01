@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["ng_netflow.c", "netflow.c", "netflow_v9.c"], visibility = ["//sys/netgraph:__pkg__"])
+cc_library(name = "kernel_headers", hdrs = ["netflow.h", "netflow_v9.h", "ng_netflow.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"])

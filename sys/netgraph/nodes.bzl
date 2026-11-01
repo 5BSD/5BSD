@@ -1,0 +1,150 @@
+# SPDX-License-Identifier: BSD-2-Clause
+"""Source-owned Netgraph node/core inputs shared across target architectures."""
+
+# Native node/core source inventory, shared across the three supported targets.
+NETGRAPH_NODE_DEPS = [
+    ":kernel_headers",
+    "//sys/vm:kernel_headers",
+    "//sys/contrib/ck:kernel_headers",
+    "//sys/net:netgraph_node_headers",
+    "//sys/netinet:netgraph_node_headers",
+    "//sys/netinet6:netgraph_node_headers",
+]
+NETGRAPH_NODES = [
+    # GENERIC defines neither MPPC option, selecting the source's KLD fallback:
+    # compression and encryption enabled, matching Make's default source list.
+    struct(
+        name = "ng_mppc",
+        srcs = ["ng_mppc.c", "//sys/net:mppcc.c", "//sys/net:mppcd.c", "//sys/crypto:sha1.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_mppc.h"],
+        deps = ["//sys/net:mppc_headers", "//sys/crypto:sha1_headers", "//sys/crypto:rc4_headers"],
+        options = ["opt_netgraph"],
+    ),
+    struct(
+        name = "ng_bpf",
+        srcs = ["ng_bpf.c", "//sys/net:bpf_filter.c"],
+        hdrs = ["netgraph.h", "ng_bpf.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = ["opt_bpf"],
+    ),
+    struct(
+        name = "ng_bridge",
+        srcs = ["ng_bridge.c"],
+        hdrs = ["netgraph.h", "ng_bridge.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_deflate",
+        srcs = ["ng_deflate.c"],
+        hdrs = ["netgraph.h", "ng_deflate.h", "ng_message.h", "ng_parse.h"],
+        deps = ["//sys/contrib/zlib:kernel_headers"],
+        options = ["opt_netgraph"],
+    ),
+    struct(
+        name = "ng_device",
+        srcs = ["ng_device.c"],
+        hdrs = ["netgraph.h", "ng_device.h", "ng_message.h", "ng_parse.h"],
+        deps = ["//sys/kern:device_if_headers"],
+        options = [],
+    ),
+    struct(
+        name = "ng_eiface",
+        srcs = ["ng_eiface.c"],
+        hdrs = ["netgraph.h", "ng_eiface.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_ether",
+        srcs = ["ng_ether.c"],
+        hdrs = ["netgraph.h", "ng_ether.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_gif",
+        srcs = ["ng_gif.c"],
+        hdrs = ["netgraph.h", "ng_gif.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_iface",
+        srcs = ["ng_iface.c"],
+        hdrs = ["netgraph.h", "ng_iface.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = ["opt_inet", "opt_inet6"],
+    ),
+    struct(
+        name = "ng_ksocket",
+        srcs = ["ng_ksocket.c"],
+        hdrs = ["netgraph.h", "ng_ksocket.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = ["opt_inet6"],
+    ),
+    struct(
+        name = "ng_l2tp",
+        srcs = ["ng_l2tp.c"],
+        hdrs = ["netgraph.h", "ng_l2tp.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_macfilter",
+        srcs = ["ng_macfilter.c"],
+        hdrs = ["netgraph.h", "ng_macfilter.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_nat",
+        srcs = ["ng_nat.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_nat.h", "ng_parse.h"],
+        deps = ["//sys/netinet/libalias:netgraph_headers"],
+        options = [],
+    ),
+    struct(
+        name = "ng_netflow",
+        srcs = ["//sys/netgraph/netflow:ng_netflow.c", "//sys/netgraph/netflow:netflow.c", "//sys/netgraph/netflow:netflow_v9.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h"],
+        deps = ["//sys/netgraph/netflow:kernel_headers"],
+        options = ["opt_inet", "opt_inet6"],
+    ),
+    struct(
+        name = "netgraph",
+        srcs = ["ng_base.c", "ng_parse.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_ppp",
+        srcs = ["ng_ppp.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h", "ng_ppp.h", "ng_vjc.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_tty",
+        srcs = ["ng_tty.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_tty.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_UI",
+        srcs = ["ng_UI.c"],
+        hdrs = ["netgraph.h", "ng_UI.h", "ng_message.h"],
+        deps = [],
+        options = [],
+    ),
+    struct(
+        name = "ng_vjc",
+        srcs = ["ng_vjc.c", "//sys/net:slcompress.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h", "ng_vjc.h"],
+        deps = [],
+        options = [],
+    ),
+
+]

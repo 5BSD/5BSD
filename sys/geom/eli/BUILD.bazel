@@ -1,8 +1,30 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 exports_files(["g_eli_crypto.c", "g_eli_hmac.c", "g_eli_key.c", "pkcs5v2.c"], visibility = ["//lib/geom/eli:__pkg__"])
-cc_library(name = "headers", hdrs = ["g_eli.h", "pkcs5v2.h"], strip_include_prefix = "/sys", deps = ["//sys/opencrypto:cryptodev_headers", "//sys/crypto/sha2:kernel_headers"], visibility = ["//lib/geom/eli:__pkg__"])
+cc_library(name = "headers", hdrs = ["g_eli.h", "pkcs5v2.h"], strip_include_prefix = "/sys", deps = ["//sys/opencrypto:cryptodev_headers", "//sys/crypto/sha2:kernel_headers"], visibility = ["//lib/geom/eli:__pkg__", "//usr.sbin/fstyp:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 amd64_generic_module_objects(srcs = ["g_eli.c", "g_eli_crypto.c", "g_eli_ctl.c", "g_eli_hmac.c", "g_eli_integrity.c", "g_eli_key.c", "g_eli_key_cache.c", "g_eli_privacy.c", "pkcs5v2.c"],
     deps = [":headers", "//sys/geom:kernel_headers", "//sys/crypto:intake_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = [
+        "g_eli.c",
+        "g_eli_crypto.c",
+        "g_eli_ctl.c",
+        "g_eli_hmac.c",
+        "g_eli_integrity.c",
+        "g_eli_key.c",
+        "g_eli_key_cache.c",
+        "g_eli_privacy.c",
+        "pkcs5v2.c",
+    ],
+    deps = [
+        ":headers",
+        "//sys/geom:kernel_headers",
+        "//sys/crypto:intake_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

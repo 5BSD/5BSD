@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+amd64_generic_module_objects(srcs = ["//sys/netinet:accf_data.c"], deps = ["//sys/vm:kernel_headers"])
+amd64_generic_module(module = "accf_data", objects = [":generic_module_object_files"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["//sys/netinet:accf_data.c"],
+    deps = ["//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module(
+    arch = arch,
+    module = "accf_data",
+    objects = [":" + arch + "_generic_module_object_files"],
+) for arch in ["arm64", "riscv"]]

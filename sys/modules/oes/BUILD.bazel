@@ -1,3 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 amd64_generic_module(module = "oes", objects = ["//sys/security/oes:generic_module_object_files"], package = "oes")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "oes",
+    objects = ["//sys/security/oes:" + arch + "_generic_module_object_files"],
+    package = "oes",
+) for arch in ["arm64", "riscv"]]

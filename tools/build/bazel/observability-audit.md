@@ -7658,9 +7658,16 @@ sessions, credential changes and spool access; preserving probes does not prove
 audit completeness. Setuid mode and schg are checked in installation metadata;
 no privileged executable was run on the host.
 
-Cron follow-up: DTrace-disabled native and Make variants now match installation
-and payloads; actual ELF section tables contain no DOF for cron or crontab.
-Enabled live firing and scheduler/audit behavior remain unqualified.
+Cron follow-up: the DTrace-disabled native and Make variants are an explicit
+`dtrace=false`/`WITHOUT_DTRACE` parity check; they are not cron's default. On
+2026-11-01, a fresh format-5 `build-bsd bazel-test` build used the shared
+DTrace-enabled default and its ELF contains `.SUNW_dof` plus all six expected
+provider probe/enabled symbol pairs. This proves artifact instrumentation is
+retained in the enabled build, not that probes fire at runtime. The disabled
+variant has no DOF by design. Scheduler behavior, live probe firing and audit
+coverage remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-cron-dtrace-default-20261101/receipt.json`,
+`artifacts/manifest.json`, and `dtrace-artifact-check.json`.
 
 ### authpf (2026-10-30)
 
@@ -8596,3 +8603,328 @@ are substituted and no source-change class is silently ignored.
 Frontend review: rejected wiring has been removed; the discovery utility is
 not a new build input or user-facing option, so no frontend/backend change is
 required by this committed diagnostic step.
+
+### Accept-filter modules reviewed (2026-11-01)
+
+`accf_data`, `accf_dns`, `accf_http` and `accf_tls` contain no direct DTrace,
+SDT or audit markers. The Bazel migration preserves the maintained module
+sources and does not add tracing solely to populate a checklist. This source
+review is not runtime evidence for accept-filter operations or network-stack
+observability; module load and socket-behavior qualification remain open.
+
+`sys/crypto/rc4/rc4.c` contains no direct DTrace, SDT or audit markers. Its
+module build preserves Make's `EXPORT_SYMS=YES` behavior; no runtime tracing or
+crypto-operation audit coverage is established by that binary parity.
+
+`nmdm` retains its existing `nmdm__rate__configured` SDT probe and associated
+tracepoint/probe/argument-type sections in byte-identical Bazel and Make module
+outputs. This is emitted-metadata parity only; runtime probe firing and actual
+null-modem behavior remain unqualified.
+
+`if_edsc` has no direct DTrace, SDT or audit markers. Its Bazel and Make module
+outputs are byte-identical with the selected profile; no live network interface
+or kernel audit behavior is inferred.
+
+`bridgestp` has no direct DTrace, SDT or audit markers. Its source and install
+metadata have Make parity in the tied amd64 GENERIC build; the module was not
+loaded, so protocol operation and runtime audit/trace behavior remain unknown.
+
+`if_disc` has no direct DTrace, SDT or audit markers. Its tied GENERIC module
+and install manifest match Make, but discard-interface packet behavior was not
+run and no runtime observability or audit coverage is established.
+
+`if_enc` has no direct DTrace, SDT or audit markers. Its tied GENERIC module
+and install manifest match Make; IPsec capture operation and runtime audit or
+trace behavior remain unqualified.
+
+`if_me` has no direct DTrace, SDT or audit markers. Its tied GENERIC module and
+install manifest match Make; minimal-encapsulation runtime and audit behavior
+remain unqualified.
+
+`if_gif` and `if_gre` retain the `giftunnel` and `gretunnel` SDT providers and
+probes already present in their source. Their tied amd64 GENERIC module outputs
+match Make byte for byte, which preserves the emitted SDT metadata. No probe
+firing or tunnel runtime behavior was tested; no runtime observability or audit
+coverage is established by this build parity.
+
+`virtio_rtc` has no direct SDT or audit markers in its driver source. The
+Bazel/Make binary comparison covers emitted content only; no virtio RTC device
+or runtime observability behavior was tested.
+
+`virtio_mem` has no direct SDT or audit markers in its driver source. Its
+Bazel/Make output parity does not establish runtime memory hotplug behavior or
+observability coverage.
+
+`virtio_vsock` declares the existing `vsock` SDT provider and its credit and
+packet probes. Its tied amd64 GENERIC Bazel module is byte-identical to Make,
+including the emitted SDT set sections. The bounds regression test is not a
+probe-firing or socket-transport test; live probe and transport behavior remain
+unverified.
+
+`virtio_snd` and `virtio_pmem` have no direct SDT or audit markers in their
+driver sources. Their byte-identical module outputs preserve Make's emitted
+metadata, but do not establish runtime audio or persistent-memory behavior.
+
+`virtio_random` has no direct SDT or audit markers in its driver source. Its
+module byte parity does not establish runtime random-device behavior or
+entropy-harvesting coverage.
+
+`acl_nfs4` and `acl_posix1e` have no direct SDT probe markers. The NFSv4 ACL
+source recognizes audit and alarm ACL entry types only to reject them; this
+does not provide audit event instrumentation. Their tied amd64 GENERIC module
+outputs match Make, but ACL operations and runtime audit/trace behavior were
+not exercised.
+
+`alq` has no direct SDT or audit markers. Its Bazel module now carries the
+same canonical source path as Make in assertion strings and the tied amd64
+GENERIC module bytes match; ALQ operations and runtime audit/trace behavior
+were not exercised.
+
+The `cc_cdg`, `cc_chd`, `cc_cubic`, `cc_dctcp`, `cc_hd`, `cc_htcp`,
+`cc_newreno` and `cc_vegas` sources have no direct SDT or audit markers. Their
+Make/Bazel CTF and core debug sections match; no congestion-control behavior,
+live tracing or audit event coverage was exercised.
+
+The `ng_async`, `ng_hub`, `ng_pipe`, `ng_tee`, `ng_split` and `ng_vlan` sources
+were reviewed for source-declared SDT/DTrace and audit hooks; none were found.
+Their native Bazel module outputs match fresh tied GENERIC Make bytes. No module
+runtime behavior, node lifecycle, live tracing or audit event coverage was
+exercised. `ng_pipe` uses PCG through the kernel PRNG header; its PCG header is
+an explicit Bazel dependency.
+
+The `ng_tag`, `ng_one2many` and `ng_vlan_rotate` sources were also scanned for
+direct SDT/DTrace and audit hooks; none were found. Their Bazel module bytes
+match fresh tied GENERIC Make output. Runtime behavior, live probes and audit
+event coverage were not tested.
+
+`ng_tcpmss` has no direct SDT/DTrace or audit hooks in the source scan. Its
+Bazel module matches the tied GENERIC Make module byte for byte. The module
+was not loaded, so node behavior and runtime observability remain unqualified.
+
+`ng_patch` and `ng_gif_demux` also contain no direct SDT/DTrace or audit hooks.
+Their tied GENERIC module files match Make byte for byte. Neither module was
+loaded; runtime behavior and observability remain unqualified.
+
+`ng_car` and `ng_socket` also have no direct SDT/DTrace or audit hooks. Their
+tied GENERIC Bazel modules match Make byte for byte. Neither was loaded, so
+CAR shaping, socket-node behavior and runtime observability remain unqualified.
+
+The existing `hub` and `vlan_rotate` Netgraph ATF programs contain nine cases.
+Their Bazel declarations preserve Make's root requirement and exclusive
+execution metadata. On the unprivileged host, the runner reported all nine as
+skipped before entering their bodies; the qualification frontend rejected that
+run as insufficient runtime evidence. This verifies the precondition path only.
+No Netgraph module was loaded, and no DTrace firing or audit behavior was
+qualified.
+
+`ng_ip_input` has no direct SDT/DTrace or audit markers in the scanned source.
+Its declared Bazel module and install manifest build successfully and match a
+fresh tied GENERIC Make module byte for byte. The module was not loaded; packet
+delivery, probe firing and runtime audit coverage remain unqualified.
+
+`ng_checksum` has no direct SDT/DTrace or audit markers in the scanned source.
+Its declared module and install manifest match fresh tied GENERIC Make output.
+Checksum rewriting behavior, packet-path performance and runtime audit/trace
+coverage remain unqualified because the module was not loaded or exercised.
+
+`ng_pppoe` has no direct SDT/DTrace or audit markers in the scanned source.
+Its module and install metadata match fresh tied GENERIC Make output. PPPoE
+session behavior, packet handling, runtime audit/trace coverage and performance
+remain unqualified because the module was not loaded or exercised.
+
+The `speaker` driver and `cd9660_iconv` module source have no direct SDT/DTrace
+or audit markers in the source scan. Both tied amd64 GENERIC modules match
+fresh Make output byte for byte. Neither module was loaded; driver/iconv
+runtime behavior, live probe firing and audit event coverage remain
+unqualified.
+
+### Processor monitoring module source review (2026-11-01)
+
+Scanned `sys/dev/coretemp`, `sys/dev/amdtemp`, `sys/dev/amdsmn` and
+`sys/dev/amdsmu` while adding their native module graphs. None contains direct
+SDT/DTrace or audit markers. Existing hardware accesses, sysctl interfaces and
+kernel module metadata are unchanged. All four no-CTF/no-split-debug modules
+are byte-identical to fresh tied GENERIC Make outputs, with matching install
+metadata, at
+`/usr/obj/usr/src/bazel-temperature-modules-make-reference-20261101/evidence/`.
+No module was loaded, and hardware monitoring, management writes, live probe
+firing and audit event coverage remain open runtime checks.
+
+### Device facility module batch (2026-11-01)
+
+The native `firmware`, `cuse` and `cryptodev` module artifacts retain seven,
+two and one SDT probe pointers respectively. Their provider/probe/argument/
+tracepoint sections and all relocation records compare exactly with fresh
+tied GENERIC Make output in the CTF/debug profile. The opencrypto provider is
+declared externally by cryptodev, as in its maintained source. The no-debug
+module files compare byte for byte, and the installed CTF/debug sections match
+apart from build-ID and debuglink identity. Evidence is under
+`/usr/obj/usr/src/bazel-device-facilities-parity-r5-20261101/` and
+`/usr/obj/usr/src/bazel-device-facilities-ctf-debug-parity-r3-20261101/`.
+
+Source review found no direct SDT/DTrace or audit markers in `backlight.c`,
+`cpuctl.c`, `filemon.c` or its included `filemon_wrapper.c`, and no direct audit
+markers in the other three module sources. Existing generic syscall audit
+behavior is not established by that source scan. The module conversion changes
+build declarations only. Module load/device/crypto behavior, live probe firing,
+audit event coverage and performance remain runtime qualification work.
+
+
+### VirtIO family completion candidate (2026-11-01)
+
+Fourteen new amd64 module declarations complete native descriptions of the
+recorded twenty-module VirtIO family. New core artifacts preserve six SDT probe
+pointers (four virtio lifecycle probes and two virtqueue probes); block preserves
+two request probes; networking preserves six receive/transmit/reinitialization
+probes. In the CTF/debug profile, their complete SDT sections and relocation
+records match independent Make output. The other new driver sources have no
+direct SDT/provider or audit markers in the bounded source scan. The DTrace
+transport implements existing HyperTrace protocol behavior; its name is not
+evidence of a separate generated provider or actual delivery.
+
+All fourteen no-debug module files match Make byte for byte. CTF/debug data,
+symbols, relocations and install records match; console has an additional
+non-file-backed BSS offset difference beyond build-ID/debuglink identity. The
+strict failure and bounded section review remain retained. See
+[VirtIO evidence](VIRTIO-QUALIFICATION.md) for commands, exact limits and paths.
+
+No module was loaded. Device attach/detach, queue reset/failure handling,
+filesystem sharing, graphics/input, IOMMU behavior, crypto operations, HyperTrace
+delivery, live probe firing and security-audit coverage still require matching-
+kernel tests. Absent direct probes do not prove absent system-level observation.
+Source scans and build parity do not close those runtime or performance gates.
+
+## ARM64 / RISC-V kernel layout foundation (2026-11-01)
+
+The new cross-target consumers compile the maintained `sys/kern/genoffset.c`
+and run native layout extraction. No production kernel routine, provider,
+probe site or audit path was changed; the object defines layout symbols.
+This establishes target ABI/layout compiler evidence only. No claim is made
+about architecture-specific SDT relocations, CTF conversion, live probes,
+audit event delivery, module loading or their costs. These remain required
+when kernel/module bodies are migrated. See
+[CROSS-ARCHITECTURE-QUALIFICATION.md](CROSS-ARCHITECTURE-QUALIFICATION.md).
+
+## filemon ARM64 / RISC-V module bodies (2026-11-01)
+
+Original filemon.c and included filemon_wrapper.c now build for both target
+ABIs. The bounded source scan finds no direct SDT/DTrace provider or audit
+marker; no C source/probe was removed or rewritten. Exact no-debug output and
+installed CTF/code/symbol/relocation parity in debug variants do not establish
+syscall wrapper behavior or event coverage. Matching-kernel load/unload and
+read/write/open/exec/fork/exit recording, enabled tracing/audit and overhead
+remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).
+
+## ARM64 / RISC-V backlight, firmware, CUSE, cryptodev (2026-11-01)
+
+The original sources carry firmware's seven lifecycle/wait/lookup SDT schemas,
+CUSE's command-start/command-done schemas, and cryptodev's opencrypto ioctl-error
+schema. Backlight and cryptodesc_kdf have no direct provider/probe/audit markers
+in this bounded scan; subsystem observation is a separate question. No C or
+probe was changed. Complete no-debug bytes and all enabled installed code/CTF/
+symbol/relocation/SDT sections match independent target Make builds. This
+preserves declarations/sites but does not demonstrate live firing, argument
+semantics, audit delivery or overhead. Matching-kernel firmware load/error/wait,
+CUSE command/copy/unload, crypto ioctl/KDF success/error and backlight registration/
+get/set/failure tests remain open. See
+[cohort evidence](CROSS-FACILITIES-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 VirtIO family (2026-11-01)
+
+The nineteen selected modules preserve original source and generated interface
+inputs. The bounded scan records core virtio (four schemas), virtqueue (two),
+block (two), network (six), and vsock (four). No C/probe/audit path was changed.
+All installed SDT/code/relocation/CTF sections match independent target Make
+builds in both CTF modes. The retained source scan distinguishes direct markers
+from subsystem observation. This proves artifact preservation, not live probe
+firing, argument semantics, audit delivery, HyperTrace operation or overhead.
+Matching-kernel device, failure and resource tests remain open. See
+[cross VirtIO evidence](CROSS-VIRTIO-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 filesystems and ACLs (2026-11-01)
+
+The bounded 26-source scan records nineteen SDT schemas: two in cd9660_vnops,
+four in null_subr, nine in tmpfs_subr, two in tmpfs_vnops and two in union_subr.
+Other scanned sources have no direct SDT/audit markers; subsystem observation
+remains a separate question. No C/probe/audit path changed. Complete no-debug
+module bytes and installed enabled SDT/CTF/code/relocation sections match Make.
+Live firing, argument semantics, ACL/MAC enforcement, audit event delivery,
+filesystem failure behavior and overhead remain unqualified. See
+[filesystem evidence](CROSS-FILESYSTEMS-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 MAC and OES modules (2026-11-01)
+
+The bounded 28-C-source scan records 21 ABAC schemas in mac_abac.c, two in
+mac_do.c, nine in oes_event.c and one audit marker in oes_mac.c. Header-defined
+sites and subsystem observation are outside that direct-marker count. No C,
+probe or audit behavior changed. Complete no-debug bytes and installed enabled
+SDT/CTF/code/relocation sections match independent Make artifacts. Live firing,
+argument semantics, ABAC/MAC enforcement, authorization/event/cache behavior,
+audit delivery and overhead remain open. See
+[security-module evidence](CROSS-SECURITY-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 seventeen Netgraph modules (2026-11-01)
+
+No direct SDT provider/schema or audit marker occurs in the bounded seventeen-C-
+source scan. Core/header/socket/network observation remains a separate question.
+No C/probe/audit path changed; installed code/CTF/relocation sections match Make.
+Review graph control/reconfiguration, socket privilege/credential checks, queues
+and error paths against existing tracing/audit coverage; absence in these leaf
+sources alone is not a basis to add or declare adequate instrumentation. Matching-
+kernel forwarding/control/failure/security behavior, event delivery and overhead
+remain open. See [Netgraph evidence](CROSS-NETGRAPH-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 TCP and virtual-interface modules (2026-11-01)
+
+The bounded nineteen-C-source scan records three SDT schemas in if_gif.c and
+three in if_gre.c. Other scanned sources have no direct provider/schema/audit
+marker; header-defined and TCP/network/core observation remain separate. No C,
+probe or audit path changed. Exact no-debug bytes and installed enabled code,
+CTF, relocations and SDT match Make. Matching-kernel traffic/control/error/security
+behavior, live probes, audit delivery and TCP/congestion/resource performance
+remain open. See [network evidence](CROSS-NETWORK-QUALIFICATION.md).
+
+## makefs and fstyp device-test helpers (2026-11-01)
+
+The bounded 42-translation-unit scan (38 makefs, 3 newfs, 1 mdconfig) finds no
+direct DTrace/SDT provider/probe or explicit audit submission. Included headers,
+libc/GEOM/kernel observation and live events remain separate. No production C,
+probe or audit behavior changed. Review image creation and privileged device
+creation/format/detach policy and error paths against existing system coverage;
+leaf-marker absence alone does not determine which new probes belong there.
+Native newfs/mdconfig installed sections match Make except debug links; makefs
+retains documented path/layout differences. All 22 original fstyp cases pass in
+a disposable guest, including original md cleanup, but live probes, audit
+delivery, full helper suites and overhead remain open. See
+[makefs/full-suite evidence](MAKEFS-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 GEOM and portable service modules (2026-11-01)
+
+The bounded 57-original-C-source scan records six SDT schemas in g_multipath.c.
+Two generated RAID interface sources and header/core/subsystem observation remain
+separate. No C/probe/audit path changed. Exact no-debug bytes and installed enabled
+code/CTF/relocation/SDT sections match Make, including both UZIP ZSTD branches.
+Matching-kernel provider and failure/recovery/key/I/O behavior, ALQ/null-modem/
+accept-filter operation, live event semantics and resource overhead remain open.
+See [storage/service evidence](CROSS-STORAGE-QUALIFICATION.md).
+
+## Netgraph core and eighteen new module candidates (2026-11-01)
+
+The bounded twenty-three-original-C-source scan records four SDT schemas in
+ng_base.c, extending earlier leaf-module scans with actual core source coverage.
+Other scanned sources have no direct provider/schema/audit marker; header and
+network/socket observation remain separate. No C/probe/audit path changed.
+Exact no-debug bytes and installed CTF/debug code/SDT/relocation sections match
+Make across amd64, ARM64 and RISC-V64. Live event semantics, privileged graph/
+socket authorization, protocol/control/data/failure behavior and overhead remain
+open. See [new Netgraph evidence](NETGRAPH-CORE-NODES-QUALIFICATION.md).
+
+## ng_mppc on amd64, ARM64 and RISC-V64 (2026-11-01)
+
+The four original C sources (ng_mppc, mppcc, mppcd and sha1) contain no direct
+SDT/DTrace/audit/CTR markers in the bounded scan retained with
+`bazel-netgraph-mppc-review-20261101/observability.json`. Existing C code is
+unchanged. Compile/artifact/install checks do not establish compression or
+encryption behavior, privileged graph/control audit coverage, framework probe
+firing or cryptographic suitability. Review those using matching-kernel runtime
+traffic and error cases; custom MPPC option combinations remain open.

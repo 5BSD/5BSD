@@ -2,3 +2,31 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+filegroup(name = "backlight_if_header_file", srcs = [":backlight_if"], output_group = "header")
+filegroup(name = "backlight_if_source", srcs = [":backlight_if"], output_group = "source")
+cc_library(name = "kernel_headers", hdrs = ["backlight.h"], strip_include_prefix = "/sys")
+cc_library(name = "interface_headers", hdrs = [":backlight_if_header_file"],
+    strip_include_prefix = "backlight_if.generated")
+
+amd64_generic_module_objects(name = "backlight_driver", srcs = ["backlight.c"],
+    deps = [":kernel_headers", ":interface_headers", "//sys/amd64/conf:generic_opt_platform_header",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+amd64_generic_module_objects(name = "backlight_interface", srcs = [":backlight_if_source"],
+    deps = [":kernel_headers", ":interface_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    # Make compiles this generated source from the module object directory.
+    copts = ["-fmacro-prefix-map=$(execpath :backlight_if_source)=backlight_if.c",
+        "-fdebug-prefix-map=$(execpath :backlight_if_source)=backlight_if.c"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[cross_generic_module_objects(arch = arch, name = "backlight_driver", srcs = ["backlight.c"],
+    deps = [":kernel_headers", ":interface_headers", "//sys/" + arch + "/conf:generic_opt_platform_header",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+ for arch in ["arm64", "riscv"]]
+[cross_generic_module_objects(arch = arch, name = "backlight_interface", srcs = [":backlight_if_source"],
+    deps = [":kernel_headers", ":interface_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :backlight_if_source)=backlight_if.c",
+        "-fdebug-prefix-map=$(execpath :backlight_if_source)=backlight_if.c"])
+ for arch in ["arm64", "riscv"]]

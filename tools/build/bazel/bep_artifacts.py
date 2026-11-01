@@ -89,6 +89,9 @@ def snapshot(events_path, destination):
                     raise ValueError('conflicting target output: ' + name)
                 outputs[name] = record
         records.append(dict(target=identity, outputs=[outputs[k] for k in sorted(outputs)]))
+    # BEP targetCompleted order can vary with parallel action scheduling. Keep
+    # the retained artifact manifest stable for the same configured targets.
+    records.sort(key=lambda record: json.dumps(record['target'], sort_keys=True, separators=(',', ':')))
     report = dict(format=1, scope='completed targets, default/metadata/directory_metadata groups, regular files only; excludes runfiles and other output groups', targets=records, unique_files=len(seen), bytes=sum(seen.values()))
     (destination/'manifest.json').write_text(json.dumps(report, indent=2, sort_keys=True)+'\n')
     manifest_hash = hashlib.sha256((destination/'manifest.json').read_bytes()).hexdigest()

@@ -2,3 +2,18 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+[filegroup(name = name + "_header_file", srcs = [":" + name], output_group = "header")
+ for name in ["channel_if", "feeder_if", "mixer_if"]]
+
+[cc_library(name = name + "_headers", hdrs = [":" + name + "_header_file"],
+    strip_include_prefix = name + ".generated",
+    visibility = ["//sys/dev/virtio/sound:__pkg__"])
+ for name in ["channel_if", "feeder_if", "mixer_if"]]
+
+cc_library(name = "virtio_snd_headers", hdrs = ["buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h"],
+    strip_include_prefix = "/sys", deps = [":channel_if_headers", ":feeder_if_headers", ":mixer_if_headers",
+        "//sys/amd64/include:kernel_headers", "//sys/sys:kernel_headers", "//sys/vm:kernel_headers"],
+    visibility = ["//sys/dev/virtio/sound:__pkg__"])

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(
+    module = "cd9660",
+    objects = ["//sys/fs/cd9660:generic_module_object_files"],
+    exports = ["cd9660_iconv"],
+)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "cd9660",
+    objects = ["//sys/fs/cd9660:" + arch + "_generic_module_object_files"],
+    exports = ["cd9660_iconv"],
+) for arch in ["arm64", "riscv"]]

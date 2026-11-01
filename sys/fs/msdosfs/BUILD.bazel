@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "makefs_headers", hdrs = ["bootsect.h", "bpb.h", "denode.h", "direntry.h", "fat.h", "msdosfsmount.h"],
+    strip_include_prefix = "/sys", includes = ["."], visibility = ["//usr.sbin/makefs:__pkg__"])

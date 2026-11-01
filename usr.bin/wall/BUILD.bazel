@@ -26,6 +26,6 @@ bsd_install_archive(
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
 
-exports_files(["ttymsg.c"], visibility = ["//libexec/talkd:__pkg__"])
+exports_files(["ttymsg.c"], visibility = ["//libexec/talkd:__pkg__", "//usr.sbin/syslogd:__pkg__"])
 cc_library(name = "ttymsg_header", hdrs = ["ttymsg.h"], strip_include_prefix = ".",
-    visibility = ["//libexec/talkd:__pkg__"])
+    visibility = ["//libexec/talkd:__pkg__", "//usr.sbin/syslogd:__pkg__"])

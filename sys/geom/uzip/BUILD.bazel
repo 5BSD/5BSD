@@ -8,3 +8,53 @@ amd64_generic_module_objects(name = "g_uzip_zlib", srcs = ["g_uzip_zlib.c"], dep
 amd64_generic_module_objects(name = "g_uzip_lzma", srcs = ["g_uzip_lzma.c"], deps = [":headers", "//sys/contrib/xz-embedded:kernel_headers"], copts = ["-Isys/contrib/xz-embedded/freebsd", "-Isys/contrib/xz-embedded/linux/lib/xz"])
 amd64_generic_module_objects(name = "g_uzip_wrkthr", srcs = ["g_uzip_wrkthr.c"], deps = [":headers"], copts = [])
 amd64_generic_module_objects(name = "g_uzip_zstd", srcs = ["g_uzip_zstd.c"], deps = [":headers", "//sys/contrib/zstd:kernel_headers"], copts = ["-Isys/contrib/zstd/lib/freebsd"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_uzip",
+    srcs = ["g_uzip.c"],
+    deps = [
+        ":headers",
+        "//sys/" + arch + "/conf:generic_opt_geom_header",
+        "//sys/" + arch + "/conf:generic_opt_zstdio_header",
+    ],
+    copts = [],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_uzip_zlib",
+    srcs = ["g_uzip_zlib.c"],
+    deps = [
+        ":headers",
+        "//sys/contrib/zlib:kernel_headers",
+        "//sys/dev/zlib:kernel_headers",
+    ],
+    copts = [],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_uzip_lzma",
+    srcs = ["g_uzip_lzma.c"],
+    deps = [":headers", "//sys/contrib/xz-embedded:kernel_headers"],
+    copts = ["-Isys/contrib/xz-embedded/freebsd", "-Isys/contrib/xz-embedded/linux/lib/xz"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_uzip_wrkthr",
+    srcs = ["g_uzip_wrkthr.c"],
+    deps = [":headers"],
+    copts = [],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "g_uzip_zstd",
+    srcs = ["g_uzip_zstd.c"],
+    deps = [":headers", "//sys/contrib/zstd:kernel_headers"],
+    copts = ["-Isys/contrib/zstd/lib/freebsd"],
+) for arch in ["arm64", "riscv"]]

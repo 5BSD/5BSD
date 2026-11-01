@@ -136,6 +136,29 @@ class ExtraRoot(unittest.TestCase):
         stage_extra_root(self.source, self.target)
         self.assertEqual((self.target / '[').read_bytes(), b'program')
 
+    def test_percent_and_punctuation_payload_names_preserved(self):
+        names = ['ARABIC%UCS.mps', "quoted'file", 'colon:part', 'dollar$file', 'bang!']
+        for name in names:
+            (self.source / name).write_bytes(name.encode())
+        (self.source / 'alias%map').symlink_to('ARABIC%UCS.mps')
+        result = stage_extra_root(self.source, self.target)
+        for name in names:
+            self.assertEqual((self.target / name).read_bytes(), name.encode())
+            self.assertIn(name, result['files_sha256'])
+        self.assertEqual(result['symlinks'], {'alias%map': 'ARABIC%UCS.mps'})
+        self.assertEqual(mtree_escape('ARABIC%UCS.mps'), r'ARABIC\045UCS.mps')
+        self.assertEqual(mtree_escape("quoted'file"), r'quoted\047file')
+
+    def test_control_path_rejected_before_copy(self):
+        for name in ['line\nbreak', 'tab\tname', 'control\x01name']:
+            with self.subTest(name=name):
+                path = self.source / name
+                path.write_text('data')
+                with self.assertRaisesRegex(ValueError, 'METALOG'):
+                    stage_extra_root(self.source, self.target)
+                self.assertFalse(any(self.target.iterdir()))
+                path.unlink()
+
     def test_target_directory_alias_rejected(self):
         (self.source / 'directory').mkdir()
         (self.target / 'directory').symlink_to(self.source)

@@ -5,3 +5,10 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "ioctl_headers", hdrs = ["acpiio.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi:__subpackages__"])
+
+filegroup(name = "acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
+cc_library(name = "acpi_if_headers", hdrs = [":acpi_if_header_file"], strip_include_prefix = "acpi_if.generated",
+    visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
+cc_library(name = "acpivar_headers", hdrs = ["acpivar.h"], strip_include_prefix = "/sys",
+    deps = [":acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/sys:kernel_headers"],
+    visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])

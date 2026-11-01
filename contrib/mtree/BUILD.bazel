@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(["getid.c"], visibility = ["//usr.bin/xinstall:__pkg__", "//usr.sbin/nmtree:__pkg__"])
-cc_library(name = "install_headers", hdrs = ["mtree.h", "extern.h"], includes = ["."], deps = ["//lib/libnetbsd:util_header"], visibility = ["//usr.bin/xinstall:__pkg__", "//usr.sbin/nmtree:__pkg__"])
+exports_files(["getid.c"], visibility = ["//usr.bin/xinstall:__pkg__", "//usr.sbin/nmtree:__pkg__", "//usr.sbin/makefs:__pkg__"])
+cc_library(name = "install_headers", hdrs = ["mtree.h", "extern.h"], includes = ["."], deps = ["//lib/libnetbsd:util_header"], visibility = ["//usr.bin/xinstall:__pkg__", "//usr.sbin/nmtree:__pkg__", "//usr.sbin/makefs:__pkg__"])
 
-exports_files(['compare.c', 'crc.c', 'create.c', 'excludes.c', 'misc.c', 'mtree.c', 'only.c', 'spec.c', 'specspec.c', 'verify.c', 'mtree.8'], visibility = ["//usr.sbin/nmtree:__pkg__"])
+exports_files(['compare.c', 'crc.c', 'create.c', 'excludes.c', 'misc.c', 'mtree.c', 'only.c', 'spec.c', 'specspec.c', 'verify.c', 'mtree.8'], visibility = ["//usr.sbin/nmtree:__pkg__", "//usr.sbin/makefs:__pkg__"])

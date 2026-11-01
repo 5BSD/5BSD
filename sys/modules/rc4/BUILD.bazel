@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+amd64_generic_module(module = "rc4", objects = ["//sys/crypto:rc4_module_object_files"], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "rc4",
+    objects = ["//sys/crypto:" + arch + "_rc4_module_object_files"],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

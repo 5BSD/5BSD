@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "kernel_headers", hdrs = ['virtio_scsi.h', 'virtio_scsivar.h'], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(srcs = ["virtio_scsi.c"],
+    deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
+        "//sys/cam:headers",
+        "//sys/netinet:address_headers",
+        "//sys/amd64/conf:generic_opt_scsi_header",
+        "//sys/amd64/conf:generic_opt_cam_header",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_scsi.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/cam:headers",
+        "//sys/netinet:address_headers",
+        "//sys/" + arch + "/conf:generic_opt_scsi_header",
+        "//sys/" + arch + "/conf:generic_opt_cam_header",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

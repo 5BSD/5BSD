@@ -98,3 +98,8 @@ load("//cddl/share/zfs/compatibility.d:installation_data.bzl", "PROFILES")
 exports_files(["cmd/zpool/compatibility.d/" + p for p in PROFILES], visibility = ["//cddl/share/zfs/compatibility.d:__pkg__"])
 
 exports_files(["scripts/zfs_prepare_disk", "man/man8/zfs_prepare_disk.8.in"], visibility = ["//cddl/usr.libexec/zfs_prepare_disk:__pkg__"])
+
+# Userland vdev-label reader: preserve the maintained per-source ZFS view.
+cc_library(name = "fstyp_headers", hdrs = glob(["lib/libzpool/include/**/*.h"]),
+    includes = ["lib/libzpool/include"], deps = [":spl_headers"],
+    visibility = ["//usr.sbin/fstyp:__pkg__"])

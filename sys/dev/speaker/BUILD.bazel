@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "headers",
+    hdrs = ["speaker.h"],
+    includes = ["../.."],
+    visibility = ["//sys/modules/speaker:__pkg__"],
+)
+
+exports_files(
+    ["spkr.c"],
+    visibility = ["//sys/modules/speaker:__pkg__"],
+)

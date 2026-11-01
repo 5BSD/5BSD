@@ -3,7 +3,6 @@
 import hashlib
 import os
 import posixpath
-import re
 import shutil
 import stat
 from pathlib import Path
@@ -20,6 +19,12 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def metalog_component(value):
+    """Printable punctuation is escaped by mtree_escape, not a pathname ban."""
+    return bool(value) and value not in ('.', '..') and all(
+        char.isprintable() and not char.isspace() for char in value)
+
+
 def stage_extra_root(source, destination, shared_files=None):
     source, destination = Path(source), Path(destination)
     if source.is_symlink() or not source.is_dir():
@@ -34,7 +39,7 @@ def stage_extra_root(source, destination, shared_files=None):
     entries = sorted(source.rglob('*'))
     # Validate the entire input before copying any of it.
     for path in entries:
-        if any(re.fullmatch(r'[A-Za-z0-9_.+@\[\]\-]+', part) is None
+        if any(not metalog_component(part)
                for part in path.relative_to(source).parts):
             raise ValueError('extra fixture pathname cannot be represented by this METALOG: ' + str(path))
         mode = path.lstat().st_mode
@@ -63,7 +68,7 @@ def stage_extra_root(source, destination, shared_files=None):
             link = str(path.readlink())
             normalized = posixpath.normpath(posixpath.join(posixpath.dirname(relative), link))
             if (link.startswith('/') or normalized == '..' or normalized.startswith('../') or
-                    any(part not in ('.', '..') and re.fullmatch(r'[A-Za-z0-9_.+@\[\]\-]+', part) is None for part in link.split('/'))):
+                    any(part not in ('.', '..') and not metalog_component(part) for part in link.split('/'))):
                 raise ValueError('extra fixture symlink escapes tree or is unsafe: ' + relative)
             try:
                 resolved = path.resolve(strict=True)

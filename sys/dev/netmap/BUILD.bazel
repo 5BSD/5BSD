@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "virtio_driver_headers", hdrs = ["if_vtnet_netmap.h", "netmap_kern.h", "netmap_mbq.h"],
+    includes = ["../.."], deps = ["//sys/net:netmap_user_headers", "//sys/vm:kernel_headers"],
+    visibility = ["//sys/dev/virtio/network:__pkg__"])

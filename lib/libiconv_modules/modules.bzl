@@ -16,7 +16,7 @@ def citrus_module(name, src):
     cc_shared_library(
         name = name,
         deps = [":" + name + "_objects"],
-        dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"],
+        dynamic_deps = ["//lib/libc:c_shared"],
         shared_lib_name = "lib" + name + ".so.5",
         user_link_flags = ["-nodefaultlibs", "-Wl,-soname,lib" + name + ".so.5"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({

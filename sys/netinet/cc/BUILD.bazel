@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "cc_headers", hdrs = [
+    "cc.h", "cc_module.h",
+], includes = ["../.."], deps = [
+    "//sys/netinet:tcp_cc_headers",
+])
+cc_library(name = "cc_cubic_headers", hdrs = ["cc_cubic.h"], includes = ["../.."],
+    deps = [":cc_headers"])
+cc_library(name = "cc_newreno_headers", hdrs = ["cc_newreno.h"], includes = ["../.."],
+    deps = [":cc_headers"])
+
+_CC_MODULES = [
+    ("cc_cdg", [":cc_headers", "//sys/contrib/pcg-c:kernel_headers", "//sys/net:route_nhop_headers", "//sys/netinet:tcp_cc_ertt_headers"]),
+    ("cc_chd", [":cc_headers", "//sys/contrib/pcg-c:kernel_headers", "//sys/net:route_nhop_headers", "//sys/netinet:tcp_cc_ertt_headers"]),
+    ("cc_cubic", [":cc_cubic_headers", "//sys/net:route_nhop_headers", "//sys/netinet:tcp_cc_hpts_headers"]),
+    ("cc_dctcp", [":cc_headers", "//sys/net:route_nhop_headers"]),
+    ("cc_hd", [":cc_headers", "//sys/contrib/pcg-c:kernel_headers", "//sys/netinet:tcp_cc_ertt_headers"]),
+    ("cc_htcp", [":cc_headers", "//sys/net:route_nhop_headers"]),
+    ("cc_newreno", [":cc_newreno_headers", "//sys/net:route_nhop_headers", "//sys/netinet:tcp_cc_hpts_headers"]),
+    ("cc_vegas", [":cc_headers", "//sys/net:route_nhop_headers", "//sys/netinet:tcp_cc_ertt_headers"]),
+]
+
+[
+    amd64_generic_module_objects(
+        name = name + "_module",
+        srcs = [name + ".c"],
+        deps = [
+            "//sys/amd64/conf:generic_opt_kern_tls_header",
+            "//sys/contrib/ck:kernel_headers",
+            "//sys/vm:kernel_headers",
+        ] + deps,
+    )
+    for name, deps in _CC_MODULES
+]
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[
+    cross_generic_module_objects(
+        arch = arch,
+        name = name + "_module",
+        srcs = [name + ".c"],
+        deps = [
+            "//sys/" + arch + "/conf:generic_opt_kern_tls_header",
+            "//sys/contrib/ck:kernel_headers",
+            "//sys/vm:kernel_headers",
+        ] + deps,
+    )
+    for arch in ["arm64", "riscv"]
+    for name, deps in _CC_MODULES
+]

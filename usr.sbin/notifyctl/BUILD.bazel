@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+_PLATFORM = ["@platforms//os:freebsd"]
+cc_binary(
+    name = "notifyctl",
+    srcs = ["notifyctl.c", "//usr.sbin/BSDNotify:policy.c"],
+    deps = ["//usr.sbin/BSDNotify:policy_headers", "//lib/libnotify:notify", "//lib/libucl:ucl"],
+    dynamic_deps = ["//lib/libnotify:notify_shared", "//lib/libucl:ucl_shared"],
+    copts = ["-fPIE"],
+    linkopts = ["-pie"],
+    target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+exports_files(["notifyctl.c"], visibility = ["//usr.sbin/notifyctl/tests:__pkg__"])
+utility_installation(name = "install_manifest", program = "notifyctl", manual = "notifyctl.8",
+    package = "bsdnotify", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(
+    name = "install_archive",
+    manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/notifyctl/tests:install_manifest"] + ["//usr.sbin/notifyctl/tests:install_" + p for p in ["notifyctl_test_bin", "notifyctl_success_bin", "no_ambient_exec"]], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdnotify","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/usr.sbin/notifyctl": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdnotify-tests"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdnotify-tests","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/usr.sbin", "/usr/lib/debug/usr/tests/usr.sbin/notifyctl"]}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"],
+)

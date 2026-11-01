@@ -10,7 +10,7 @@ cc_library(
 
 exports_files(['sha224.h', 'sha256.h', 'sha384.h', 'sha512.h', 'sha512t.h'], visibility = ["//lib/libmd:__pkg__"])
 
-cc_library(name = "kernel_headers", hdrs = ["sha256.h", "sha512.h"], strip_include_prefix = "/sys", visibility = ["//sys/geom/eli:__pkg__", "//sys/libkern:__pkg__"])
+cc_library(name = "kernel_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"], strip_include_prefix = "/sys", visibility = ["//sys/geom/eli:__pkg__", "//sys/libkern:__pkg__", "//sys/opencrypto:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 cc_library(

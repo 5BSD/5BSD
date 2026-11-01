@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_ZFS = "//tools/build/bazel/config:zfs_enabled"
+_TESTS = "//tools/build/bazel/config:tests_enabled"
+# ZFS's compatibility includes/forced headers apply only to zfs.c in Make.
+cc_library(
+    name = "zfs_object", srcs = ["zfs.c"], hdrs = ["fstyp.h", "//sys/modules/zfs:zfs_config.h"],
+    implementation_deps = ["//sys/contrib/openzfs:fstyp_headers"],
+    local_defines = ["IN_BASE", "HAVE_ISSETUGID"],
+    copts = ["-fPIE", "-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h",
+        "-include", "sys/modules/zfs/zfs_config.h", "-Wno-cast-qual"],
+    alwayslink = True, linkstatic = True,
+)
+# Link dependencies must not propagate SPL include directories to other sources.
+cc_library(name = "zfs_link", implementation_deps = ["//cddl/lib/libnvpair:nvpair", "//cddl/lib/libzfs:zfs", "//cddl/lib/libspl:spl", "//lib/libthr:thr"])
+cc_binary(
+    name = "fstyp",
+    srcs = ["apfs.c", "befs.c", "cd9660.c", "exfat.c", "ext2fs.c", "fstyp.c", "geli.c", "hammer.c",
+        "hammer2.c", "hfsplus.c", "msdosfs.c", "ntfs.c", "ufs.c", "fstyp.h", "hammer_disk.h", "hammer2_disk.h", "msdosfs.h"],
+    deps = ["//sys/geom/eli:headers", "//lib/libgeom:geom", "//lib/libmd:md_link", "//lib/libufs:ufs"] + select({
+        _ZFS: [":zfs_object", ":zfs_link"],
+        "//conditions:default": [],
+    }),
+    dynamic_deps = ["//lib/libgeom:geom_shared", "//lib/libmd:md_shared", "//lib/libufs:ufs_shared"] + select({
+        _ZFS: ["//cddl/lib/libnvpair:nvpair_shared", "//cddl/lib/libzfs:zfs_shared", "//cddl/lib/libspl:spl_shared", "//lib/libthr:thr_shared"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({_ZFS: ["HAVE_ZFS"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:iconv_enabled": ["WITH_ICONV"], "//conditions:default": []}),
+    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "fstyp", manual = "fstyp.8",
+    package = "utilities", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(
+    name = "install_archive", manifests = [":install_manifest"] + select({_TESTS: ["//usr.sbin/fstyp/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} | select({_TESTS: {
+        "/usr/tests/usr.sbin/fstyp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"],
+)

@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "virtio",
+    objects = ['//sys/dev/virtio:generic_driver_object_files', '//sys/dev/virtio:generic_virtio_bus_if_object_files', '//sys/dev/virtio:generic_virtio_if_object_files'],
+    export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "virtio",
+    objects = [
+        "//sys/dev/virtio:" + arch + "_generic_driver_object_files",
+        "//sys/dev/virtio:" + arch + "_generic_virtio_bus_if_object_files",
+        "//sys/dev/virtio:" + arch + "_generic_virtio_if_object_files",
+    ],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

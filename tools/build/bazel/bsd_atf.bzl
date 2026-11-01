@@ -9,6 +9,7 @@ def _atf_test(ctx):
         "BSD_ATF_CLEANUP_TIMEOUT": str(ctx.attr.cleanup_timeout_seconds),
         "BSD_ATF_CASE": ctx.attr.case_name,
         "BSD_ATF_CLEANUP": "1" if ctx.attr.cleanup else "0",
+        "BSD_ATF_REQUIRED_USER": ctx.attr.required_user,
         "BSD_ATF_INTERFACE": ctx.attr.interface,
         "BSD_ATF_HARNESS": ctx.file.body.basename,
         "BSD_ATF_CONFIG_COUNT": str(len(ctx.attr.config_files)),
@@ -87,6 +88,8 @@ bsd_atf_test = rule(
     attrs = {
         "case_name": attr.string(mandatory = True),
         "cleanup": attr.bool(default = False),
+        "required_user": attr.string(default = "", values = ["", "root", "unprivileged"],
+            doc = "Precondition checked by the runner before executing any test body."),
         "body_timeout_seconds": attr.int(default = 0, doc = "ATF body deadline; zero uses only the outer Bazel timeout."),
         "cleanup_timeout_seconds": attr.int(default = 300, doc = "Separate cleanup deadline, matching Kyua default."),
         "config_files": attr.label_keyed_string_dict(allow_files = True),

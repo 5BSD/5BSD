@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+
+_TESTS = ["syslogd_basic_format_test", "syslogd_forwarded_format_test", "syslogd_relayed_format_test", "syslogd_test"]
+_HELPERS = ["syslogd_format_test_common.sh", "syslogd_test_common.sh"]
+_TESTDIR = "/usr/tests/usr.sbin/syslogd"
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect") for name in _TESTS]
+# These maintained cases require an isolated VNET jail and installed candidate
+# tools. Keep their execution environment in the installed suite; no host
+# syslogd or host network substitute is a native qualification target.
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _TESTS,
+    interfaces = {p: "atf" for p in _TESTS},
+    metadata = {p: '{"execenv":"jail","execenv_jail_params":"vnet=new"}' for p in _TESTS})
+[bsd_install_file(name = "install_" + p, src = ":" + p, destination = _TESTDIR + "/" + p,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"]) for p in _TESTS]
+[bsd_install_file(name = "install_helper_" + str(i), src = p, destination = _TESTDIR + "/" + p,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+ for i, p in enumerate(_HELPERS)]
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = _TESTDIR + "/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest",
+    entries = [":install_" + p for p in _TESTS] + [":install_helper_" + str(i) for i in range(len(_HELPERS))] + [":install_kyuafile"],
+    visibility = ["//visibility:public"])

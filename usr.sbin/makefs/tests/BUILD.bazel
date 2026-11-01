@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_PROGRAMS = ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests"] + select({"//tools/build/bazel/config:zfs_enabled": ["makefs_zfs_tests"], "//conditions:default": []})
+[bsd_script_wrapper(name = name, body = name + ".sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+ for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests", "makefs_zfs_tests"]]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _PROGRAMS,
+    metadata = {"makefs_cd9660_tests": '{"required_files":"/sbin/mount_cd9660","required_kmods":"cd9660","required_user":"root"}',
+        "makefs_ffs_tests": '{"required_user":"root"}',
+        "makefs_msdos_tests": '{"required_files":"/sbin/mount_msdosfs","required_kmods":"msdosfs","required_user":"root"}'} |
+        select({"//tools/build/bazel/config:zfs_enabled": {"makefs_zfs_tests": '{"required_user":"root"}'}, "//conditions:default": {}}),
+    interfaces = {name: "atf" for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests", "makefs_zfs_tests"]})
+[bsd_install_file(name = "install_" + name, src = ":" + name, destination = "/usr/tests/usr.sbin/makefs/" + name,
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+ for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests", "makefs_zfs_tests"]]
+bsd_install_file(name = "install_common", src = "makefs_tests_common.sh", destination = "/usr/tests/usr.sbin/makefs/makefs_tests_common.sh", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/makefs/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_common", ":install_kyuafile"] + [":install_" + name for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests"]] + select({"//tools/build/bazel/config:zfs_enabled": [":install_makefs_zfs_tests"], "//conditions:default": []}), visibility = ["//usr.sbin/makefs:__pkg__"])

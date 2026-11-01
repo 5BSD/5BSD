@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+cc_library(name = "kernel_headers", hdrs = ['virtio_dtrace.h', 'virtio_dtrace_wire.h'], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(srcs = ["virtio_dtrace.c"],
+    deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
+        "//sys/dev/dttransport:kernel_headers",
+        "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers"])
+
+exports_files(["virtio_dtrace_wire.h"], visibility = ["//sys/dev/virtio:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["virtio_dtrace.c"],
+    deps = [
+        ":kernel_headers",
+        "//sys/dev/virtio:driver_headers",
+        "//sys/dev/dttransport:kernel_headers",
+        "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

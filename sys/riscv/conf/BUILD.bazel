@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_kernel_config.bzl", "bsd_kernel_config")
+
+# These are target configuration inputs; config itself runs on the build host.
+filegroup(name = "configuration_inputs", srcs = glob(["*"], exclude = ["BUILD.bazel"]),
+    visibility = ["//visibility:public"])
+
+[bsd_kernel_config(
+    name = name, config = "GENERIC", debug = debug,
+    option_settings = {"//tools/build/bazel/config:kernel_zstdio": "ZSTDIO"},
+    inputs = [":configuration_inputs", "//sys/riscv:configuration_inputs", "//sys/conf:configuration_inputs"],
+    source_anchor = "//sys/conf:files",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"],
+    libraries = ["//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    visibility = ["//visibility:public"],
+) for name, debug in [("generic_config", False), ("generic_debug_config", True)]]
+
+filegroup(name = "generic_identity", srcs = [":generic_config"], output_group = "identity",
+    visibility = ["//visibility:public"])
+filegroup(name = "generic_debug_identity", srcs = [":generic_debug_config"], output_group = "identity",
+    visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
+bsd_tree_file(name = "opt_global", tree = ":generic_config", member = "opt_global.h",
+    output = "generic_options/opt_global.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+
+bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_platform.h",
+    output = "generic_options/opt_platform.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/backlight:__pkg__"])
+
+# Source-owned option names; contents, including empty headers, come from config.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__"])
+ for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
+
+# Filesystem module option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["ddb", "pseudofs", "tmpfs"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__"])
+ for option in ["ddb", "pseudofs", "tmpfs"]]
+
+# Security module option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["mac"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/security:__subpackages__", "//sys/modules/alq:__pkg__"])
+ for option in ["mac"]]
+
+# Netgraph module option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["kdb", "netgraph"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netgraph:__pkg__"])
+ for option in ["kdb", "netgraph"]]
+
+# Network module option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["ipsec", "kern_tls", "rss"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__", "//sys/netinet/cc:__pkg__"])
+ for option in ["ipsec", "kern_tls", "rss"]]
+
+# Storage option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["geom", "zstdio"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/geom:__subpackages__", "//sys/modules/geom:__subpackages__"])
+ for option in ["geom", "zstdio"]]
+
+bsd_tree_file(name = "opt_bpf", tree = ":generic_config", member = "opt_bpf.h",
+    output = "generic_options/opt_bpf.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netgraph:__pkg__"])

@@ -7,3 +7,15 @@ cc_library(name = "headers", hdrs = ["null.h"], strip_include_prefix = ".", incl
     visibility = ["//sys/security/mac_veriexec:__pkg__"])
 
 amd64_generic_module_objects(srcs = ["null_subr.c", "null_vfsops.c", "null_vnops.c"], deps = [":headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = [
+        "null_subr.c",
+        "null_vfsops.c",
+        "null_vnops.c",
+    ],
+    deps = [":headers"],
+) for arch in ["arm64", "riscv"]]

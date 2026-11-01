@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+exports_files(["nvlist.c"], visibility = ["//usr.sbin/makefs:__pkg__"])
+cc_library(name = "nvlist_headers", hdrs = ["nvlist.h"], strip_include_prefix = "/stand/libsa", visibility = ["//usr.sbin/makefs:__pkg__"])

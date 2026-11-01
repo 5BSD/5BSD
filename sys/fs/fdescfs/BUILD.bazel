@@ -5,3 +5,11 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objec
 cc_library(name = "headers", hdrs = ["fdesc.h"], strip_include_prefix = ".", include_prefix = "fs/fdescfs",
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 amd64_generic_module_objects(srcs = ["fdesc_vfsops.c", "fdesc_vnops.c"], deps = [":headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["fdesc_vfsops.c", "fdesc_vnops.c"],
+    deps = [":headers"],
+) for arch in ["arm64", "riscv"]]

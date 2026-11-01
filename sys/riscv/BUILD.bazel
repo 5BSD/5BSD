@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# SoC metadata referenced by files directives in the maintained configurations.
+filegroup(name = "configuration_inputs", srcs = glob(["*/files.*"]) + glob(["*/options.*"], allow_empty = True),
+    visibility = ["//sys/riscv/conf:__pkg__"])

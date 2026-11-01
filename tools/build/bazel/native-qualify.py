@@ -33,6 +33,7 @@ def main():
     for name in ('src', 'objtop', 'bazel', 'output', 'inputs'):
         parser.add_argument('--'+name, type=Path, required=True)
     parser.add_argument('--jobs', type=int, required=True)
+    parser.add_argument('--target-arch', choices=('amd64', 'aarch64', 'riscv64'), default='amd64')
     args = parser.parse_args()
     if args.jobs < 1: raise ValueError('positive jobs required')
     # Bazel 9 or later only; refused before any input is prepared or run.
@@ -41,6 +42,8 @@ def main():
     if isinstance(config, dict) and type(config.get("format")) is int and config["format"] == 5:
         source_graph.qualify(config, args)
         return
+    if args.target_arch != 'amd64':
+        raise ValueError('cross-target qualification requires format-5 source graph inputs')
     if isinstance(config, dict) and type(config.get('format')) is int and config['format'] == 2:
         native_prepare.prepare(config, args)
         return

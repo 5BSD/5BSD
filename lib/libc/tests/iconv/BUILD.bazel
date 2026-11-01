@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 # Maintained test program also checks the native public iconv wrapper linkage.
-# Runtime qualification waits for declared native iconv modules and data.
+# VM default-path runtime evidence: tools/build/bazel/ICONV-RUNTIME-QUALIFICATION.md.
+# This program is not an automatic privileged host test.
 cc_binary(name = "iconvctl_runtime_program", srcs = ["iconvctl_test.c"],
     deps = ["//lib/libc:shared_link_interface", "//lib/atf/libatf-c:atf_c"],
     dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared"],

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+amd64_generic_module(module = "backlight", objects = [
+    "//sys/dev/backlight:backlight_driver_object_files",
+    "//sys/dev/backlight:backlight_interface_object_files",
+], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+[cross_generic_module(arch = arch, module = "backlight", objects = ["//sys/dev/backlight:" + arch + "_backlight_driver_object_files", "//sys/dev/backlight:" + arch + "_backlight_interface_object_files"], export_all = True)
+ for arch in ["arm64", "riscv"]]

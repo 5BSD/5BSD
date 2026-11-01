@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc/toolchains:cc_toolchain.bzl", "cc_toolchain")
+load("@bsd_sdk//toolchain:identity.bzl", "BSD_TARGET")
+load(":config.bzl", "kernel_cc_config")
+package(default_visibility = ["//visibility:public"])
+constraint_setting(name = "abi")
+constraint_value(name = "kernel", constraint_setting = ":abi")
+
+# Kernel compilation deliberately excludes the SDK userland headers/sysroot.
+# Intrinsic headers must be added explicitly when an owning target needs them.
+filegroup(name = "compile_inputs", srcs = ["@bsd_sdk//toolchain:bin/clang", "@bsd_sdk//toolchain:clang_runtime"])
+filegroup(name = "link_inputs", srcs = [":compile_inputs", "@bsd_sdk//toolchain:bin/ld.lld", "@bsd_sdk//toolchain:ld.lld_runtime"])
+filegroup(name = "all_inputs", srcs = [":compile_inputs", ":link_inputs",
+    "@bsd_sdk//toolchain:archive_inputs", "@bsd_sdk//toolchain:objcopy_inputs", "@bsd_sdk//toolchain:strip_inputs"])
+
+# The SDK's compiler runs on amd64. Its target triple supplies the selected OS
+# release; kernel ABI flags/headers are target-owned, never the host sysroot.
+_TARGETS = [("amd64", "x86_64", "x86_64", "k8"),
+            ("arm64", "aarch64", "aarch64", "aarch64"),
+            ("riscv64", "riscv64", "riscv64", "riscv64")]
+[platform(name = name, constraint_values = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu,
+    ":kernel", "@bsd_sdk//toolchain:selected_sdk"]) for name, cpu, triple, cc_cpu in _TARGETS]
+[kernel_cc_config(name = name + "_config", target = triple + "-" + "-".join(BSD_TARGET.split("-")[1:]), cpu = cc_cpu)
+ for name, cpu, triple, cc_cpu in _TARGETS]
+[cc_toolchain(name = name + "_compiler", toolchain_identifier = "bsd-kernel-" + cc_cpu,
+    toolchain_config = ":" + name + "_config", all_files = ":all_inputs",
+    compiler_files = ":compile_inputs", as_files = ":compile_inputs",
+    linker_files = ":link_inputs", ar_files = "@bsd_sdk//toolchain:archive_inputs",
+    objcopy_files = "@bsd_sdk//toolchain:objcopy_inputs", strip_files = "@bsd_sdk//toolchain:strip_inputs",
+    dwp_files = "@bsd_sdk//toolchain:empty", supports_param_files = 1)
+ for name, cpu, triple, cc_cpu in _TARGETS]
+[toolchain(name = name + "_registered", toolchain = ":" + name + "_compiler",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    exec_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64", "@bsd_sdk//toolchain:selected_sdk"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu,
+        ":kernel", "@bsd_sdk//toolchain:selected_sdk"])
+ for name, cpu, triple, cc_cpu in _TARGETS]
