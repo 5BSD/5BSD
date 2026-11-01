@@ -98,3 +98,9 @@ bsd_python_test(
     src = "atf-runner-cleanup-test.py",
     data = [":atf_runner"],
 )
+
+bsd_python_test(
+    name = "install_reference_options_test",
+    src = "install-reference-options-test.py",
+    data = ["install_reference_options.py"],
+)

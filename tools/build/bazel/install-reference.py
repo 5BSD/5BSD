@@ -13,6 +13,7 @@ import shlex
 import subprocess
 
 import libmd_environment
+import install_reference_options
 from libmd_environment import BuildEnvironment, digest
 
 
@@ -36,6 +37,8 @@ def main():
                         help='enable a library-local MK_ option not declared in src.opts.mk')
     parser.add_argument('--without-local-option', action='append', default=[],
                         help='disable a library-local MK_ option not declared in src.opts.mk')
+    parser.add_argument('--make-define', action='append', default=[],
+                        help='presence-only NAME=1 selector in the component basename namespace')
     args = parser.parse_args()
     selected = args.with_option + args.without_option + args.with_local_option + args.without_local_option
     if len(set(selected)) != len(selected) or any(not re.fullmatch(r'[A-Z][A-Z0-9_]*', value) for value in selected):
@@ -53,7 +56,12 @@ def main():
         parser.error('output must be fresh below /usr/obj, separate from source and staged SDK')
     if component == src or not component.is_relative_to(src) or not (component / 'Makefile').is_file():
         parser.error('component must be a maintained directory within the actual source tree')
+    definitions = install_reference_options.component_definitions(
+        component, args.make_define, option_names=selected)
     environment = BuildEnvironment(src, objtop, profile, make, component)
+    definitions = install_reference_options.component_definitions(
+        component, args.make_define, option_names=selected,
+        profile_names=environment.assignments)
     # Verify the baseline before changing the isolated component configuration.
     environment.verify()
     component_options = {name: 'yes' for name in args.with_option}
@@ -73,6 +81,16 @@ def main():
     for name, expected in component_options.items():
         if environment.query(['-V', 'MK_' + name]).strip() != expected:
             raise ValueError('component option is unknown or ineffective: ' + name)
+    for name, value in definitions.items():
+        environment.options.append(name + '=' + value)
+        if environment.query(['-V', name]).strip() != value:
+            raise ValueError('component define is ineffective: ' + name)
+    if definitions:
+        identity = environment.query(['-V', 'OBJTOP', '-V', 'MACHINE', '-V', 'MACHINE_ARCH',
+                                      '-V', '${CC}'], component=src / 'lib/libmd').splitlines()
+        if (len(identity) != 4 or identity[:3] != [str(objtop), 'amd64', 'amd64'] or
+                shlex.split(identity[3]) != environment.cc):
+            raise ValueError('component define changed baseline SDK/target/compiler identity')
     # Feature overrides can legitimately add/remove Makefile includes. Freeze
     # the selected configuration before building, retaining baseline hashes too.
     selected_closure = environment.capture_closure()
@@ -91,10 +109,12 @@ def main():
     build_environment = dict(environment.env, MAKEOBJDIR='${REFERENCE_OBJROOT}${.CURDIR}',
                              REFERENCE_OBJROOT=str(objects))
     implementations = {str(Path(__file__).resolve()): digest(Path(__file__)),
-                       str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__))}
+                       str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__)),
+                       str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference',
                'component': str(component), 'jobs': args.jobs,
                'component_options': component_options,
+               'component_definitions': definitions,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
                'implementation_hashes': implementations,
                'object_environment': {key: build_environment[key] for key in ('MAKEOBJDIR', 'REFERENCE_OBJROOT')},
