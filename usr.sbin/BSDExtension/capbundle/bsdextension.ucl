@@ -34,14 +34,21 @@
 # switchboard additionally resolves it for UID 0 sessions that hold no
 # software authority (root login shells), per
 # /Capabilities/Config/switchboard/root-query.ucl.
+# system.SystemExtension.RootLoad has Load and Unload only (bsd.extension.v1
+# SystemExtensionRootLoad).  switchboard resolves it for the same UID 0
+# sessions per /Capabilities/Config/switchboard/root-load.ucl; the broker loads
+# only a /boot/kernel file the package database records in a base package of
+# the policy's root_load_repository, with a matching checksum.
 activation { boot = true; ipc = ["system.SystemExtension",
-    "system.SystemExtension.Status"]; }
+    "system.SystemExtension.Status", "system.SystemExtension.RootLoad"]; }
 # Container model: bsdextension reconciles the modules it loaded on bundles' behalf
 # against the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md);
 # the live set is read from these delivered directories, never opened by path.
 # BSDEXTENSION_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
-# /boot/kernel: linker.hints for the device_drivers class (bsdextension.ucl).
-directories = ["/etc/bsdextension", "/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live", "/boot/kernel"];
+# /boot/kernel: linker.hints for the device_drivers class (bsdextension.ucl)
+# and the module files root loads check.  /var/db/pkg: the package database
+# root loads consult (read in a forked child that holds only this directory).
+directories = ["/etc/bsdextension", "/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live", "/boot/kernel", "/var/db/pkg"];
 control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];

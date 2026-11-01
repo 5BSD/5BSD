@@ -22,19 +22,28 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libfidl/include
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
+# rootload.c: pkg checksums (sys/contrib/libb2) and the package database
+# (base's private sqlite), as in the daemon's Makefile.
+.PATH:		${SRCTOP}/sys/contrib/libb2
+CFLAGS+=	-I${SRCTOP}/sys/contrib/libb2
+CFLAGS+=	-I${SRCTOP}/contrib/sqlite3
+CFLAGS.blake2b-ref.c+=	-DSUFFIX=_ref -I${SRCTOP}/usr.sbin/BSDExtension/libb2
+CWARNFLAGS.blake2b-ref.c+=	-Wno-unused-function -Wno-cast-qual
 # Production bindings for everything except next_peer, which uses its own
 # bsd:2 bindings.
 .if !defined(PROG) || ${PROG} != "next_peer"
 CFLAGS+=	-I${FIDLGEN.extensioncmp}
 .endif
-LIBADD+=	extensioncmp fidl_bsd service channel ucl pthread capreclaim logcmp
+LIBADD+=	extensioncmp fidl_bsd service channel ucl pthread capreclaim logcmp \
+		sqlite3
 NO_SHARED=	yes
 
 # allowlist_test: pure unit — the allow-list / name-validation / config-loader
 # regression.  No capability plane, no kldload, no privilege.
 ATF_TESTS_SH+= startup_test
 ATF_TESTS_C+=		allowlist_test
-SRCS.allowlist_test=	allowlist_test.c bsdextension.c policy.c reclaim.c
+SRCS.allowlist_test=	allowlist_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
 
 # provider_test: drives the real bsd.extension.v1 server over a public capability
 # channel via sysext_test_serve(), with libextensioncmp and hand-built frames.
@@ -44,27 +53,39 @@ SRCS.inherited_session_test= inherited_session_test.c
 TEST_METADATA.inherited_session_test+= timeout="15"
 
 ATF_TESTS_C+=		provider_test
-SRCS.provider_test=	provider_test.c bsdextension.c policy.c reclaim.c
+SRCS.provider_test=	provider_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
 
 # reclaim_test: pure unit — the module -> bundle owner map and the destroy
 # decisions (shared module kept, found-already-loaded never unloaded, busy
 # module retried) with the kldunload seam stubbed.  No plane, no privilege.
 ATF_TESTS_C+=		reclaim_test
-SRCS.reclaim_test=	reclaim_test.c bsdextension.c policy.c reclaim.c
+SRCS.reclaim_test=	reclaim_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
+
+# rootload_test: the root-load endpoint (system.SystemExtension.RootLoad) over a
+# public capability channel with fixture kernel and package directories and a
+# real sqlite package database; the kernel linker calls are stubbed.  No
+# privilege.
+ATF_TESTS_C+=		rootload_test
+SRCS.rootload_test=	rootload_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
 
 ATF_TESTS_C+= policy_test
-SRCS.policy_test= policy_test.c bsdextension.c policy.c reclaim.c
+SRCS.policy_test= policy_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
 
 # drivers_test: pure unit — the device_drivers class (linker.hints PNP
 # classification, policy key, override deny) and the installed kernel hints.
 ATF_TESTS_C+= drivers_test
-SRCS.drivers_test= drivers_test.c bsdextension.c policy.c reclaim.c
+SRCS.drivers_test= drivers_test.c bsdextension.c policy.c reclaim.c \
+	rootload.c blake2b-ref.c
 
 # Schema evolution: the real bsd:1 client and provider paired with next_peer,
 # built from evolution/extensioncmp_next.fidl at bsd:2 (its own bindings).
 ATF_TESTS_C+= evolution_test
 SRCS.evolution_test= evolution_test.c evolution_test_provider.c policy.c \
-	reclaim.c
+	reclaim.c rootload.c blake2b-ref.c
 TEST_METADATA.evolution_test+= timeout="120"
 
 PROGS+= next_peer
@@ -84,7 +105,7 @@ PROGS+= latency_bench
 BINDIR_latency_bench= ${TESTSDIR}
 MAN.latency_bench=
 SRCS.latency_bench= latency_bench.c latency_bench_provider.c policy.c \
-	reclaim.c
+	reclaim.c rootload.c blake2b-ref.c
 CFLAGS.latency_bench+= -I${SRCTOP}/tools/build/fuchsia
 NO_SHARED.latency_bench= no
 
