@@ -51,6 +51,7 @@
 
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/event.h>
 #include <sys/linker.h>
 #include <sys/module.h>
 #include <sys/procdesc.h>
@@ -67,6 +68,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <ucl.h>
@@ -103,10 +105,64 @@ struct sysext_client {
 	const char *label;
 	const char *bundle;	/* installed bundle (stamped container), or "" */
 	service_rights_t rights;
+	/*
+	 * Arrived on system.SystemExtension.Status: only Info and Next are
+	 * decided, whatever the session's rights.  The status handler table has
+	 * no other method; this is the second, independent refusal.
+	 */
+	bool read_only;
 };
 
 /* The module -> bundle owner map's directory (reclaim.c), or -1. */
 static int sysext_owners_fd = -1;
+
+/*
+ * Recent load decisions for the status view.  A fixed ring indexed by
+ * sequence; client-serving threads record and read it under one mutex.
+ */
+static pthread_mutex_t sysext_decisions_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct sysext_decision sysext_decisions[SYSEXT_DECISIONS_MAX];
+static uint64_t sysext_decision_seq = 1;	/* the next sequence to assign */
+
+void
+sysext_decision_record(const char *module, const char *client,
+    uint32_t operation, uint32_t result, int error)
+{
+	struct sysext_decision *d;
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+		now.tv_sec = 0;
+	pthread_mutex_lock(&sysext_decisions_lock);
+	d = &sysext_decisions[sysext_decision_seq % SYSEXT_DECISIONS_MAX];
+	memset(d, 0, sizeof(*d));
+	d->sequence = sysext_decision_seq++;
+	d->time = (int64_t)now.tv_sec;
+	(void)strlcpy(d->module, module, sizeof(d->module));
+	(void)strlcpy(d->client, client != NULL ? client : "", sizeof(d->client));
+	d->operation = operation;
+	d->result = result;
+	d->error = (uint32_t)error;
+	pthread_mutex_unlock(&sysext_decisions_lock);
+}
+
+int
+sysext_decision_next(uint64_t after, struct sysext_decision *out)
+{
+	uint64_t oldest, want;
+	int error = 0;
+
+	pthread_mutex_lock(&sysext_decisions_lock);
+	oldest = sysext_decision_seq > SYSEXT_DECISIONS_MAX ?
+	    sysext_decision_seq - SYSEXT_DECISIONS_MAX : 1;
+	want = after >= oldest ? after + 1 : oldest;
+	if (after == UINT64_MAX || want >= sysext_decision_seq)
+		error = ENOENT;
+	else
+		*out = sysext_decisions[want % SYSEXT_DECISIONS_MAX];
+	pthread_mutex_unlock(&sysext_decisions_lock);
+	return (error);
+}
 
 /*
  * The held "system" gate token covering SYS_GATE_KLDLOAD (+ KLDUNLOAD),
@@ -567,12 +623,13 @@ stat_extension(const char *name, int *loaded)
 /* Pin before loading, so reclaim cannot race an administrative/boot ensure.
  * Failed loads can retain a conservative boot claim; they never grant a load. */
 static int
-managed_ensure(const char *name, const char *bundle)
+managed_ensure(const char *name, const char *bundle, bool *loaded_nowp)
 {
-	bool loaded_now;
+	bool loaded_now = false;
 	const char *owner = bundle[0] != '\0' ? bundle : SYSEXT_BOOT_OWNER;
 	int error;
 
+	*loaded_nowp = false;
 	if (sysext_owners_fd >= 0 &&
 	    sysext_owner_note(sysext_owners_fd, name, owner, false) == -1)
 		return (errno);
@@ -580,12 +637,25 @@ managed_ensure(const char *name, const char *bundle)
 	if (error == 0 && sysext_owners_fd >= 0 &&
 	    sysext_owner_note(sysext_owners_fd, name, owner, loaded_now) == -1)
 		syslog(LOG_WARNING, "reclaim attribution for %s: %m", name);
+	*loaded_nowp = loaded_now;
 	return (error);
 }
 
-static int
-restore_extensions(void)
+/* Record a permitted load's outcome for the status view. */
+static void
+record_load(const char *name, const char *client, uint32_t op, int error,
+    bool loaded_now)
 {
+
+	sysext_decision_record(name, client, op, error != 0 ?
+	    SYSEXT_DECISION_FAILED : loaded_now ? SYSEXT_DECISION_LOADED :
+	    SYSEXT_DECISION_PRESENT, error);
+}
+
+static int
+restore_extensions(const char *client)
+{
+	bool loaded_now;
 	struct sysext_config enabled, current;
 	size_t i;
 	int error, first = 0;
@@ -598,7 +668,9 @@ restore_extensions(void)
 			return (errno);
 		if (!extension_allowed(&current, enabled.allow[i]))
 			continue;
-		error = managed_ensure(enabled.allow[i], "");
+		error = managed_ensure(enabled.allow[i], "", &loaded_now);
+		record_load(enabled.allow[i], client, SYSEXT_OP_RESTORE, error,
+		    loaded_now);
 		if (error != 0) {
 			syslog(LOG_ERR, "restore %s: %s", enabled.allow[i], strerror(error));
 			if (first == 0)
@@ -630,7 +702,7 @@ sysext_handle(const struct sysext_client *identity,
 {
 	const char *client = identity->label;
 	struct sysext_config cfg;
-	bool driver;
+	bool driver, loaded_now;
 	int loaded;
 
 	memset(rp, 0, sizeof(*rp));
@@ -651,11 +723,23 @@ sysext_handle(const struct sysext_client *identity,
 			return (SYSEXT_REPLY_BASIC);
 		}
 	}
+	/*
+	 * The read-only status view decides Info and Next only.  Its handler
+	 * table has no other method, so this is defense in depth: whatever the
+	 * session's rights, nothing here loads a module or edits policy.
+	 */
+	if (identity->read_only && rq->op != SYSEXT_OP_INFO &&
+	    rq->op != SYSEXT_OP_NEXT) {
+		rp->status = EPERM;
+		syslog(LOG_WARNING, "request %u (client %s) -> DENIED "
+		    "(read-only status session)", rq->op, client);
+		return (SYSEXT_REPLY_BASIC);
+	}
 	if (rq->op >= SYSEXT_OP_ALLOW && rq->op <= SYSEXT_OP_RESTORE) {
 		if (!service_rights_allow(identity->rights, SERVICE_RIGHTS_ADMIN))
 			rp->status = EPERM;
 		else if (rq->op == SYSEXT_OP_RESTORE)
-			rp->status = restore_extensions();
+			rp->status = restore_extensions(client);
 		else if (sysext_policy_change(active_policy, rq->op, rq->name,
 		    identity->rights) == -1)
 			rp->status = errno;
@@ -765,13 +849,28 @@ sysext_handle(const struct sysext_client *identity,
 	 * denial leaks no information about the module set.
 	 */
 	if (!request_allowed(&cfg, client, rq->name, &driver)) {
+		uint32_t reason;
+
+		/* The most specific cause: an administrator deny, then the class. */
+		if (active_policy != NULL &&
+		    sysext_policy_denied(active_policy, rq->name))
+			reason = SYSEXT_DECISION_OVERRIDE;
+		else if (sysext_driver_client(&cfg, client))
+			reason = SYSEXT_DECISION_DRIVERS_ONLY;
+		else
+			reason = SYSEXT_DECISION_NOT_PERMITTED;
 		rp->status = EPERM;
 		syslog(LOG_WARNING,
 		    "%s %s (client %s) -> DENIED (%s)",
 		    rq->op == SYSEXT_OP_STAT ? "STAT" : "ENSURE", rq->name,
-		    client, sysext_driver_client(&cfg, client) ?
+		    client, reason == SYSEXT_DECISION_OVERRIDE ?
+		    "administrator deny override" :
+		    reason == SYSEXT_DECISION_DRIVERS_ONLY ?
 		    "client may load hardware drivers only" :
 		    "not on allow-list");
+		if (rq->op == SYSEXT_OP_ENSURE)
+			sysext_decision_record(rq->name, client,
+			    SYSEXT_OP_ENSURE, reason, 0);
 		return (SYSEXT_REPLY_BASIC);
 	}
 
@@ -787,7 +886,8 @@ sysext_handle(const struct sysext_client *identity,
 		return (SYSEXT_REPLY_STAT);
 	}
 
-	rp->status = managed_ensure(rq->name, identity->bundle);
+	rp->status = managed_ensure(rq->name, identity->bundle, &loaded_now);
+	record_load(rq->name, client, SYSEXT_OP_ENSURE, rp->status, loaded_now);
 	syslog(LOG_INFO, "ENSURE %s (client %s%s): %s", rq->name, client,
 	    driver ? ", hardware driver" : "",
 	    rp->status == 0 ? "loaded" : strerror(rp->status));
@@ -1069,14 +1169,112 @@ ext_next(void *argument, struct fidl_bsd_connection *connection,
 }
 
 /*
+ * bsd.extension.v1 SystemExtensionStatus: the read-only view served on
+ * system.SystemExtension.Status.  The protocol has no Ensure, Reload or policy
+ * method, so a request for one is an unknown ordinal and closes the session.
+ * Info and Next are decided by sysext_handle() exactly as on SystemExtension
+ * (the session's identity is marked read-only as well).
+ */
+static void
+st_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_ProtocolInfo info = { SYSEXT_WIRE_VERSION };
+	int error;
+
+	error = bsd_extension_v1_SystemExtensionStatus_GetProtocolInfo_reply(
+	    connection, request, &info);
+	session->negotiated = error == 0;
+	ext_completed(connection, 0, 0, error);
+}
+
+/* Info and Next share a result layout; one macro per generated type. */
+#define	ST_INFO_METHOD(fn, method, op, argtype)				\
+static void								\
+fn(void *argument, struct fidl_bsd_connection *connection,		\
+    struct fidl_bsd_request *request, argtype *value)			\
+{									\
+	struct sysext_session *session = argument;			\
+	struct bsd_extension_v1_SystemExtensionStatus_##method##_Result reply; \
+	struct ext_outcome out;						\
+									\
+	if (!ext_ready(session, connection, op))			\
+		return;							\
+	memset(&reply, 0, sizeof(reply));				\
+	ext_decide(session, op, value->name, value->name_size, &out);	\
+	if (out.status == 0 && out.kind == SYSEXT_REPLY_INFO) {		\
+		reply.tag = bsd_extension_v1_SystemExtensionStatus_##method##_Result_response_tag; \
+		reply.value.response.name = out.irp.name;		\
+		reply.value.response.name_size = strnlen(out.irp.name,	\
+		    sizeof(out.irp.name));				\
+		reply.value.response.flags = out.irp.flags;		\
+	} else {							\
+		reply.tag = bsd_extension_v1_SystemExtensionStatus_##method##_Result_err_tag; \
+		reply.value.err = (uint32_t)(out.status != 0 ?		\
+		    out.status : EIO);					\
+	}								\
+	ext_completed(connection, op, out.status,			\
+	    bsd_extension_v1_SystemExtensionStatus_##method##_reply(	\
+	    connection, request, &reply));				\
+}
+ST_INFO_METHOD(st_info, Info, SYSEXT_OP_INFO, struct bsd_extension_v1_Module)
+ST_INFO_METHOD(st_next, Next, SYSEXT_OP_NEXT, struct bsd_extension_v1_Cursor)
+
+static void
+st_next_decision(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request,
+    struct bsd_extension_v1_DecisionCursor *value)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_SystemExtensionStatus_NextDecision_Result reply;
+	struct sysext_decision d;
+	int status;
+
+	if (!ext_ready(session, connection, SYSEXT_OP_DECISION))
+		return;
+	memset(&reply, 0, sizeof(reply));
+	status = sysext_decision_next(value->after, &d);
+	if (status == 0) {
+		reply.tag = bsd_extension_v1_SystemExtensionStatus_NextDecision_Result_response_tag;
+		reply.value.response.sequence = d.sequence;
+		reply.value.response.time = d.time;
+		reply.value.response.module = d.module;
+		reply.value.response.module_size = strnlen(d.module,
+		    sizeof(d.module));
+		reply.value.response.client = d.client;
+		reply.value.response.client_size = strnlen(d.client,
+		    sizeof(d.client));
+		reply.value.response.operation = d.operation;
+		reply.value.response.result = d.result;
+		reply.value.response.error = d.error;
+	} else {
+		reply.tag = bsd_extension_v1_SystemExtensionStatus_NextDecision_Result_err_tag;
+		reply.value.err = (uint32_t)status;
+	}
+	ext_completed(connection, SYSEXT_OP_DECISION, status,
+	    bsd_extension_v1_SystemExtensionStatus_NextDecision_reply(connection,
+	    request, &reply));
+}
+
+/*
  * Serve one client on its own worker channel until it closes.  Runs in a
  * client-serving thread; it shares the daemon's process and held gate token, so
  * its kldload passes the gate under the authorization granted at startup.
+ * A status session (system.SystemExtension.Status) is bound to the
+ * SystemExtensionStatus handlers instead and marked read-only.
  */
 static int
 sysext_worker(int fd, const char *client, const char *container,
-    service_rights_t rights)
+    service_rights_t rights, bool status)
 {
+	static const struct bsd_extension_v1_SystemExtensionStatus_server
+	    status_handlers = {
+		.GetProtocolInfo = st_protocol_info,
+		.Info = st_info,
+		.Next = st_next,
+		.NextDecision = st_next_decision
+	};
 	static const struct bsd_extension_v1_SystemExtension_server handlers = {
 		.GetProtocolInfo = ext_protocol_info,
 		.Ensure = ext_ensure,
@@ -1095,7 +1293,7 @@ sysext_worker(int fd, const char *client, const char *container,
 	struct fidl_bsd_connection *connection;
 	char label[SYSEXT_NAME_MAX], bundle[64] = "";
 	struct sysext_client identity = { .label = label, .bundle = bundle,
-	    .rights = rights };
+	    .rights = rights, .read_only = status };
 	struct sysext_session session = { .identity = &identity };
 
 	(void)strlcpy(label, client, sizeof(label));
@@ -1115,8 +1313,11 @@ sysext_worker(int fd, const char *client, const char *container,
 		(void)close(fd);
 		return (1);
 	}
-	if (bsd_extension_v1_SystemExtension_bind(connection, &handlers,
-	    &session) != 0) {
+	if ((status ?
+	    bsd_extension_v1_SystemExtensionStatus_bind(connection,
+	    &status_handlers, &session) :
+	    bsd_extension_v1_SystemExtension_bind(connection, &handlers,
+	    &session)) != 0) {
 		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
@@ -1146,9 +1347,37 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 	active_policy = sysext_policy_create(cfg);
 	if (active_policy == NULL)
 		return (1);
-	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_NONE);
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_NONE, false);
 	sysext_policy_destroy(active_policy);
 	return (result);
+}
+
+/*
+ * The status view.  The session is given every right, ADMIN included, so a
+ * test shows that the endpoint alone, not the rights, keeps it read-only.
+ */
+int
+sysext_test_serve_status(int fd, const char *client,
+    const struct sysext_config *cfg)
+{
+	int result;
+
+	active_policy = sysext_policy_create(cfg);
+	if (active_policy == NULL)
+		return (1);
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_ALL, true);
+	sysext_policy_destroy(active_policy);
+	return (result);
+}
+
+void
+sysext_test_decisions_reset(void)
+{
+
+	pthread_mutex_lock(&sysext_decisions_lock);
+	memset(sysext_decisions, 0, sizeof(sysext_decisions));
+	sysext_decision_seq = 1;
+	pthread_mutex_unlock(&sysext_decisions_lock);
 }
 #endif /* BSDEXTENSION_TESTING */
 
@@ -1161,6 +1390,7 @@ struct sysext_conn {
 	service_rights_t	rights;
 	char			label[64];	/* service_identity.client_label */
 	char			container[64];	/* service_identity.container */
+	bool			status;		/* system.SystemExtension.Status */
 };
 
 /*
@@ -1188,7 +1418,8 @@ sysext_client_thread(void *arg)
 
 	/* sysext_worker() owns c->fd (its connection takes it, or it closes it
 	 * on failure) -- do NOT close it again here (double-close race). */
-	(void)sysext_worker(c->fd, c->label, c->container, c->rights);
+	(void)sysext_worker(c->fd, c->label, c->container, c->rights,
+	    c->status);
 	free(c);
 	(void)atomic_fetch_sub_explicit(&sysext_nthreads, 1,
 	    memory_order_relaxed);
@@ -1196,7 +1427,10 @@ sysext_client_thread(void *arg)
 }
 
 /*
- * Expose system.SystemExtension and serve each accepted client.
+ * Expose system.SystemExtension and the read-only system.SystemExtension.Status
+ * and serve each accepted client.  Each name has its own listener; the
+ * listener that fired decides the handler table, and the endpoint switchboard
+ * names in the identity must agree with it.
  * service_provider_authorize_capabilities() authorizes the delivered
  * SYS_GATE_KLDLOAD/KLDUNLOAD token, which is then dup'd (survives the bootstrap
  * authority drop) so it outlives into capability mode.
@@ -1215,15 +1449,28 @@ sysext_client_thread(void *arg)
 static int
 sysext_serve(void)
 {
+	static const char *const names[2] = { SYSEXT_SERVICE_NAME,
+	    SYSEXT_STATUS_SERVICE_NAME };
 	struct service_identity id;
-	struct service_listener *listener;
+	struct service_listener *listeners[2];
 	struct service_provider *provider;
-	int fd;
+	struct kevent changes[2], event;
+	unsigned which;
+	int fd, kq;
 
-	if (service_provider_create(&provider) == -1 ||
+	if ((kq = kqueue()) == -1 ||
+	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
-	    service_provider_expose(provider, SYSEXT_SERVICE_NAME,
-	    &listener) == -1)
+	    service_provider_expose(provider, names[0], &listeners[0]) == -1 ||
+	    service_provider_expose(provider, names[1], &listeners[1]) == -1)
+		return (-1);
+	for (which = 0; which < 2; which++) {
+		if ((fd = service_listener_fd(listeners[which])) == -1)
+			return (-1);
+		EV_SET(&changes[which], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0,
+		    0, (void *)(uintptr_t)which);
+	}
+	if (kevent(kq, changes, 2, NULL, 0, NULL) == -1)
 		return (-1);
 	/*
 	 * Anti-tamper the process before it holds the SYS_GATE_KLDLOAD token -- the
@@ -1261,9 +1508,18 @@ sysext_serve(void)
 		pthread_t tid;
 		int error;
 
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			syslog(LOG_ERR, "accept queue: %m");
+			return (-1);
+		}
+		which = (unsigned)(uintptr_t)event.udata;
+		if (which > 1)
+			continue;
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1) {
+		if (service_listener_accept(listeners[which], &id, &fd) == -1) {
 			error = errno;
 			/* A clean quiesce is the only reason to leave the loop. */
 			if (service_provider_quiescing(provider) == 1) {
@@ -1302,6 +1558,18 @@ sysext_serve(void)
 			(void)close(fd);
 			continue;
 		}
+		/*
+		 * The listener and the endpoint switchboard resolved must agree; a
+		 * disagreement is a routing fault and never widens a status
+		 * session to the full protocol.
+		 */
+		if (strcmp(id.service_name, names[which]) != 0) {
+			syslog(LOG_ERR, "client from %s refused: endpoint %.64s "
+			    "arrived on the %s listener", id.client_label,
+			    id.service_name, names[which]);
+			(void)close(fd);
+			continue;
+		}
 		c = malloc(sizeof(*c));
 		if (c == NULL) {
 			BSDEXTENSION_TRACE_WORKER_REJECT(2, errno);
@@ -1313,6 +1581,7 @@ sysext_serve(void)
 		(void)strlcpy(c->label, id.client_label, sizeof(c->label));
 		(void)strlcpy(c->container, id.container, sizeof(c->container));
 		c->rights = id.rights;
+		c->status = which == 1;
 		/*
 		 * Count the thread before creating it, so a burst of accepts cannot
 		 * race past the cap; undo on failure.  The accept loop is the only

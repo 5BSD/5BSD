@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 31, 2026
+.Dd November 1, 2026
 .Dt BSDEXTENSION 8
 .Os
 .Sh NAME
@@ -157,6 +157,45 @@ so that a device attached after boot gets its driver through
 .Xr devmatch 8 .
 Each request is logged with its client label, for example
 .Dq ENSURE if_urndis (client devd, hardware driver): loaded .
+.Pp
+.Nm
+also serves
+.Dq system.SystemExtension.Status ,
+a read-only view over the
+.Sy SystemExtensionStatus
+protocol of the same
+.Sy bsd.extension.v1
+library.
+It has only
+.Sy GetProtocolInfo ,
+.Sy Info ,
+.Sy Next
+and
+.Sy NextDecision ;
+a frame for any other method is an unknown ordinal and closes the session,
+and the worker additionally decides nothing but
+.Sy Info
+and
+.Sy Next
+for a session that arrived on this name, whatever its rights.
+.Xr switchboard 8
+resolves it, besides for SYSTEM-domain callers, for UID 0 sessions that hold no
+software grant, such as a root login shell
+.Pq Pa root-query.ucl ;
+.Xr sysextctl 8
+.Cm status
+uses it.
+.Sy NextDecision
+returns the recent load decisions, oldest first:
+.Nm
+keeps the 64 most recent
+.Sy Ensure
+and
+.Sy Restore
+outcomes in memory since it started, each with the time, module, client
+label and result (loaded, already present, not permitted, client limited to
+hardware drivers, administrator deny override, or the load error).
+.Pp
 INFO reports a class driver as allowed; boot activation
 .Pq Cm enable
 still needs an explicit

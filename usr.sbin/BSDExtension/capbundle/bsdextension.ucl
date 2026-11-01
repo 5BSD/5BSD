@@ -28,7 +28,14 @@
 # restriction), so the sandbox is never loosened (the raw syscall stays
 # priv-checked).  Read-only queries (kldfind/kldstat) are capmode-enabled and
 # ungated, so no kldstat declaration is needed.
-activation { boot = true; ipc = ["system.SystemExtension"]; }
+# system.SystemExtension.Status is the read-only view (policy entries and the
+# recent load decisions; bsd.extension.v1 SystemExtensionStatus has no method
+# that loads or changes anything).  It is SYSTEM-only like the main name;
+# switchboard additionally resolves it for UID 0 sessions that hold no
+# software authority (root login shells), per
+# /Capabilities/Config/switchboard/root-query.ucl.
+activation { boot = true; ipc = ["system.SystemExtension",
+    "system.SystemExtension.Status"]; }
 # Container model: bsdextension reconciles the modules it loaded on bundles' behalf
 # against the installed-or-running bundles (docs/book/src/plane/containers-and-storage.md);
 # the live set is read from these delivered directories, never opened by path.
