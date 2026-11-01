@@ -125,4 +125,17 @@ bsd_python_test(
     data = ["//tools/test/daemon-runtime:extra_root.py"],
 )
 
+bsd_python_test(
+    name = "daemon_scratch_disk_test",
+    src = "//tools/test/daemon-runtime:scratch_disk_test.py",
+    data = ["//tools/test/daemon-runtime:" + name for name in ["run-vm.py", "atf_metadata.py", "serial_timeline.py", "disk_copy.py", "host_resources.py", "workspace_disk.py", "scratch_disk.py"]],
+)
+
+bsd_python_test(
+    name = "makefs_runtime_inventory_test",
+    src = "makefs-runtime-inventory-test.py",
+    data = ["makefs-runtime-check.py", "//usr.sbin/makefs/tests:runtime_suite_inventory"] + [
+        "//usr.sbin/makefs/tests:" + name + ".sh" for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests", "makefs_zfs_tests"]],
+)
+
 exports_files(["bsd_usbdevs.bzl"], visibility = ["//visibility:public"])

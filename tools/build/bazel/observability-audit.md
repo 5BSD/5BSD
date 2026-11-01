@@ -8950,3 +8950,15 @@ Live IPC/control permissions, audit arguments, failures, credentials/namespaces,
 resource bounds and concurrency remain unqualified. See
 IPC-MODULES-QUALIFICATION.md and retained
 `bazel-ipc-modules-review-20261101/observability.json` for bounded evidence.
+
+## Complete makefs runtime fixture (2026-11-01)
+
+The complete 63-case native inventory preserves the original scripts, root
+requirements, helper/kernel requirements, timeouts and cleanup. Native runtime
+helpers retain their existing build instrumentation, including rmdir's declared
+DTrace provider. This tranche changes no production C or original test bodies.
+The guest uses the matching execution kernel as explicit bootstrap, without
+claiming native ZFS module coverage. Live probe firing/arguments and audit-event
+coverage remain unqualified; running filesystem tests does not establish them.
+See MAKEFS-RUNTIME-QUALIFICATION.md for the open runtime gate and retained
+fixture failures.

@@ -2168,6 +2168,13 @@ records native makefs default/reduced builds, complete helper installation,
 and all 22 original fstyp cases including guest-only md/newfs and cleanup.
 The standard base group file is an explicit fixture input;
 root-only requirements and original test assertions are retained.
+The complete makefs suite inventory and disposable guest runner are described in
+.Pa tools/build/bazel/MAKEFS-RUNTIME-QUALIFICATION.md .
+Typed ZFS selection retains the original conditional suite installation.
+The maintained harness supports a separate private sparse scratch disk with
+explicit sampled host allocation/free-space bounds; it stages no world tools
+when used independently of its ZFS bootstrap mode.
+Original ATF requirements, timeouts, cleanup and source skips are preserved.
 This fixture does not qualify normal Capsule startup, SSH,
 complete pkgbase images or controlled performance.
 .Pp

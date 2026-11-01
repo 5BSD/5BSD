@@ -239,11 +239,22 @@ metadata and rejection of missing/duplicate cleanup evidence on the host.
 
 Explicit-device pool import
 ---------------------------
---scratch-disk-mib SIZE requires --zfs and at least 128 MiB. It creates a new
+--scratch-disk-mib SIZE accepts 128..65536 MiB. It creates a new
 private scratch.img under the new work directory, attaches it as the guest's
 second virtio disk, and supplies /tests/scratch-device. It never accepts a host
 disk or pool. The disk remains with the result for inspection; no later run
 silently reuses it. The size and QEMU device arguments are recorded.
+Without --zfs, an explicit --scratch-host-max-allocated-mib budget is required;
+this mode does not stage world-built ZFS tools or modules. The caller must
+supply its declared guest tools and matching execution-kernel requirements.
+--scratch-host-reserve-mib sets the host free-space floor (default 1024 MiB,
+minimum 256 MiB). Preflight requires free space for budget plus reserve.
+The monitor samples private-disk allocation and host free space, checks file
+identity/logical capacity and terminates QEMU on a breached bound. Results
+retain samples and observed maxima/minima; these are not complete I/O accounting,
+inter-sample peak guarantees or controlled performance measurements. Existing
+--zfs callers retain their bootstrap tool/module behavior and may opt into an
+allocation budget. Filesystems are created and mounted only inside the guest.
 Example additions for the production import primitive and recipient checks:
     --zfs --memory-mib 2048 --scratch-disk-mib 1024 --timeout 360
     --atf-suite usr.sbin/capsule/tests/storage_test

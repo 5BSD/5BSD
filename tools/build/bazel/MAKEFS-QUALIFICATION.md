@@ -120,3 +120,10 @@ probe or explicit audit submission was found in makefs/newfs/mdconfig sources;
 dependency instrumentation remains in the existing graph. Live tracing/audit
 and the full installed makefs/mdconfig test suites remain open.
 No host md device, chroot, sysctl, installation, service change or reboot was used.
+
+## Complete makefs suite follow-up
+
+See MAKEFS-RUNTIME-QUALIFICATION.md for the complete 63-case source-owned
+inventory, native helper closure, additional ZFS-disabled/tests-enabled
+installation comparison and bounded guest execution, including retained
+fixture failures. The original artifact/layout limitations above still apply.

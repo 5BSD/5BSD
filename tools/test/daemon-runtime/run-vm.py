@@ -6,6 +6,7 @@ from atf_metadata import parse_listing, cases_completed, apply_case_budgets, par
 from serial_timeline import SerialTimeline
 from disk_copy import check_source, copy_source
 from host_resources import HostMonitor
+from scratch_disk import policy as scratch_policy, create as scratch_create, DiskMonitor
 from workspace_disk import requirement as workspace_requirement, check_space as workspace_space, create as workspace_create
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
@@ -20,6 +21,8 @@ p.add_argument('--oes-factory',action='store_true')
 p.add_argument('--oes-admission',action='store_true',help='run real Capsule/SwitchBoard with OES test bundles')
 p.add_argument('--zfs',action='store_true',help='stage matching ZFS module and world tools for actual dataset tests; not BIP qualification')
 p.add_argument('--scratch-disk-mib',type=int,default=0,help='new private virtio scratch disk, exposed to tests as /dev/vtbd1')
+p.add_argument('--scratch-host-max-allocated-mib',type=int,default=0,help='explicit sampled host allocation cap for independent private scratch disk')
+p.add_argument('--scratch-host-reserve-mib',type=int,default=1024,help='minimum sampled host free-space reserve with a scratch disk')
 p.add_argument('--host-max-rss-mib',type=int,default=0,help='QEMU process RSS budget; required with a workspace disk, 0 observes without a limit')
 p.add_argument('--workspace-disk-mib',type=int,default=0,help='new private build workspace disk at /dev/vtbd3; requires input and output disks')
 p.add_argument('--workspace-host-reserve-mib',type=int,default=1024,help='host free-space reserve beyond planned private disks')
@@ -48,7 +51,6 @@ a=p.parse_args()
 if not 64 <= a.root_mib <= 16384: p.error('root-mib must be between 64 and 16384')
 if a.oes_admission: a.oes_factory=True
 if a.timeout<=0: p.error('timeout must be positive')
-if a.scratch_disk_mib and (a.scratch_disk_mib < 128 or not a.zfs): p.error('scratch disk requires --zfs and at least 128 MiB')
 if a.output_disk_mib and (a.input_disk is None or not 16 <= a.output_disk_mib <= 16384): p.error('output disk requires a read-only input and capacity 16..16384 MiB')
 if (a.input_disk is None) != (a.input_disk_sha256 is None): p.error('input disk requires both path and expected SHA256')
 if a.input_disk is not None and (a.scratch_disk_mib or re.fullmatch(r'[0-9a-f]{64}', a.input_disk_sha256) is None): p.error('input disk requires a lowercase SHA256 and cannot share the scratch disk slot')
@@ -61,6 +63,7 @@ if not 0 <= a.host_max_rss_mib <= 65536: p.error('host RSS budget must be 0..655
 if a.workspace_disk_mib and not a.host_max_rss_mib: p.error('workspace builds require an explicit --host-max-rss-mib budget')
 root=a.root.resolve(); obj=a.objtop.resolve(); work=a.work.resolve()
 try:
+ scratch_budget=scratch_policy(a.scratch_disk_mib,a.scratch_host_max_allocated_mib,a.scratch_host_reserve_mib,work,require_budget=not a.zfs)
  workspace_required=workspace_requirement(a.workspace_disk_mib,a.input_disk is not None,a.output_disk_mib,a.root_mib,a.workspace_host_reserve_mib)
  workspace_budget=workspace_space(work,workspace_required)
 except (OSError,ValueError) as error: p.error(str(error))
@@ -212,7 +215,7 @@ if input_disk is not None:
  (stage/'tests/input-device').write_text('/dev/vtbd1\n')
 if a.scratch_disk_mib:
  (stage/'tests/scratch-device').write_text('/dev/vtbd1\n')
- with (work/'scratch.img').open('xb') as disk: disk.truncate(a.scratch_disk_mib*1024*1024)
+ scratch_create(work/'scratch.img',a.scratch_disk_mib*1024*1024)
 if a.output_disk_mib:
  if output_source is not None:
   copy_source(output_source,a.output_disk_source_sha256,a.output_disk_mib*1024*1024,work/'output.img')
@@ -299,15 +302,18 @@ provenance={'resource_profile':a.resource_profile,'output_disk_mib':a.output_dis
 if a.oes_admission:
  provenance['scope']='native fixtures followed by PID1 Capsule/SwitchBoard OES admission and live coalition reload/removal; OES-only provider, not installed ZFS/installer acceptance'
 provenance.update(workspace_disk_mib=a.workspace_disk_mib,workspace_disk=str(work/'workspace.img') if a.workspace_disk_mib else None,workspace_host_budget=workspace_budget,workspace_host_reserve_mib=a.workspace_host_reserve_mib)
+provenance.update(scratch_host_budget=scratch_budget)
 provenance.update(output_disk_source=str(output_source) if output_source else None,output_disk_source_sha256=a.output_disk_source_sha256)
 (work/'inputs.json').write_text(json.dumps(provenance,indent=2)+'\n')
 started=time.monotonic(); timeline=SerialTimeline()
 monitor=HostMonitor(work/'host-resources.jsonl',a.host_max_rss_mib)
+disk_monitor=DiskMonitor(work/'scratch.img',scratch_budget,work/'scratch-resources.jsonl') if scratch_budget else None
 proc=subprocess.Popen(cmd); deadline=started+a.timeout; forced=False
 try:
  while proc.poll() is None and time.monotonic()<deadline:
   try:
    observed=monitor.observe(proc.pid,time.monotonic()-started)
+   if disk_monitor: disk_monitor.observe(time.monotonic()-started)
    if not observed and proc.poll() is None: raise ValueError('live QEMU process missing from resource observation')
   except (OSError,ValueError,subprocess.SubprocessError) as error:
    provenance['host_resource_error']=str(error)
@@ -325,6 +331,7 @@ finally:
   try: proc.wait(timeout=10)
   except subprocess.TimeoutExpired: proc.kill(); proc.wait()
 provenance['host_resources']=monitor.close()
+if disk_monitor: provenance['scratch_resources']=disk_monitor.close()
 text=log.read_text(errors='replace') if log.exists() else ''
 timeline.observe(text, time.monotonic()-started)
 provenance['serial_timeline']=dict(scope='host-observed complete serial lines; polling and buffering delay included', events=timeline.events)

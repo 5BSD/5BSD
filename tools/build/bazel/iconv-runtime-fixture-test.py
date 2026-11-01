@@ -78,6 +78,24 @@ class FixtureBoundaryTest(unittest.TestCase):
         self.assertFalse((destination / 'loader.conf').exists())
         self.assertFalse((destination / 'entropy').exists())
 
+    def test_explicit_kernel_module_hash_and_build_binding(self):
+        kernel = self.root / 'kernel'
+        kernel.write_bytes(b'selected-kernel')
+        module = self.root / 'modules/zfs/zfs.ko'
+        module.parent.mkdir(parents=True)
+        module.write_bytes(b'selected-module')
+        entry = {'path': str(module), 'sha256': fixture.digest(module), 'kernel_sha256': fixture.digest(kernel)}
+        self.assertEqual(fixture.kernel_modules({'zfs.ko': entry}, kernel)['zfs.ko']['path'], str(module))
+        for field in ['sha256', 'kernel_sha256']:
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                fixture.kernel_modules({'zfs.ko': {**entry, field: '0'*64}}, kernel)
+        outside = self.root / 'other.ko'
+        outside.write_bytes(b'selected-module')
+        with self.assertRaisesRegex(ValueError, 'selected kernel build'):
+            fixture.kernel_modules({'zfs.ko': {**entry, 'path': str(outside)}}, kernel)
+        with self.assertRaisesRegex(ValueError, 'basename'):
+            fixture.kernel_modules({'../zfs.ko': entry}, kernel)
+
     def test_explicit_copy_collision_rejected(self):
         source = Path(self.temp.name) / 'source'
         source.write_text('payload')

@@ -17,3 +17,125 @@ bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = _PROGRAMS,
 bsd_install_file(name = "install_common", src = "makefs_tests_common.sh", destination = "/usr/tests/usr.sbin/makefs/makefs_tests_common.sh", owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
 bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.sbin/makefs/Kyuafile", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
 bsd_install_manifest(name = "install_manifest", entries = [":install_common", ":install_kyuafile"] + [":install_" + name for name in ["makefs_cd9660_tests", "makefs_ffs_tests", "makefs_msdos_tests"]] + select({"//tools/build/bazel/config:zfs_enabled": [":install_makefs_zfs_tests"], "//conditions:default": []}), visibility = ["//usr.sbin/makefs:__pkg__"])
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+_RUNTIME_SUITES = {
+    "makefs_cd9660_tests": {
+        "program": "/usr/tests/usr.sbin/makefs/makefs_cd9660_tests",
+        "policy": {
+            "required_files": "/sbin/mount_cd9660",
+            "required_kmods": "cd9660",
+            "required_user": "root"
+        },
+        "cases": [
+            "D_flag",
+            "F_flag",
+            "from_mtree_spec_file",
+            "from_multiple_dirs",
+            "from_single_dir",
+            "o_flag_allow_deep_trees",
+            "o_flag_allow_max_name",
+            "o_flag_isolevel_1",
+            "o_flag_isolevel_2",
+            "o_flag_isolevel_3",
+            "o_flag_preparer",
+            "o_flag_publisher",
+            "o_flag_rockridge",
+            "o_flag_rockridge_dev_nodes",
+            "T_flag_dir",
+            "T_flag_F_flag",
+            "T_flag_mtree",
+            "duplicate_names"
+        ],
+        "source_skips": {
+            "o_flag_allow_max_name": "-o allow-max-name is not implemented",
+            "o_flag_isolevel_1": "-o isolevel=1 is failing",
+            "o_flag_isolevel_3": "-o isolevel=3 is not implemented"
+        }
+    },
+    "makefs_ffs_tests": {
+        "program": "/usr/tests/usr.sbin/makefs/makefs_ffs_tests",
+        "policy": {
+            "required_user": "root"
+        },
+        "cases": [
+            "escaped_contents",
+            "autocalculate_image_size",
+            "D_flag",
+            "F_flag",
+            "from_mtree_spec_file",
+            "from_multiple_dirs",
+            "from_single_dir",
+            "o_flag_version_1",
+            "o_flag_version_2",
+            "T_flag_dir",
+            "T_flag_F_flag",
+            "T_flag_mtree"
+        ],
+        "source_skips": {}
+    },
+    "makefs_msdos_tests": {
+        "program": "/usr/tests/usr.sbin/makefs/makefs_msdos_tests",
+        "policy": {
+            "required_files": "/sbin/mount_msdosfs",
+            "required_kmods": "msdosfs",
+            "required_user": "root"
+        },
+        "cases": [
+            "T_flag_dir",
+            "T_flag_F_flag",
+            "T_flag_mtree"
+        ],
+        "source_skips": {}
+    },
+    "makefs_zfs_tests": {
+        "program": "/usr/tests/usr.sbin/makefs/makefs_zfs_tests",
+        "policy": {
+            "required_user": "root"
+        },
+        "cases": [
+            "autoexpand",
+            "autotrim",
+            "basic",
+            "compression",
+            "dataset_removal",
+            "devfs",
+            "empty_dir",
+            "empty_fs",
+            "file_extend",
+            "file_sizes",
+            "hard_links",
+            "indirect_dnode_array",
+            "long_file_name",
+            "multi_dataset_1",
+            "multi_dataset_2",
+            "multi_dataset_3",
+            "multi_dataset_4",
+            "multi_dataset_5",
+            "multi_staging_1",
+            "multi_staging_2",
+            "reproducible",
+            "snapshot",
+            "soft_links",
+            "root_props",
+            "used_space_props",
+            "path_vdev_props",
+            "perms",
+            "T_flag_dir",
+            "T_flag_F_flag",
+            "T_flag_mtree"
+        ],
+        "source_skips": {}
+    }
+}
+# Runtime program requirements are explicit fixture inputs, never host PATH fallback.
+_REQUIRED_PROGRAMS = ["[", "awk", "basename", "cat", "chmod", "chown", "cmp", "cp", "cut", "dd", "df", "diff", "dirname", "du", "dumpfs", "echo", "find", "grep", "head", "id", "install", "jot", "kldstat", "ln", "ls", "makefs", "md5", "mdconfig", "mkdir", "mkfifo", "mktemp", "mount", "mount_cd9660", "mount_msdosfs", "mtree", "newfs", "pwd_mkdb", "rm", "rmdir", "sed", "seq", "sh", "sort", "stat", "strings", "su", "sync", "tail", "tar", "test", "touch", "tr", "truncate", "tunefs", "umount", "uname", "uniq", "wc", "zdb", "zfs", "zpool", "zsh"]
+write_file(name = "runtime_suite_inventory", out = "runtime_suite_inventory.json",
+    content = select({"//tools/build/bazel/config:zfs_enabled": [json.encode({"format": 1, "required_programs": _REQUIRED_PROGRAMS, "suites": _RUNTIME_SUITES})],
+        "//conditions:default": [json.encode({"format": 1, "required_programs": _REQUIRED_PROGRAMS, "suites": {name: value for name, value in _RUNTIME_SUITES.items() if name != "makefs_zfs_tests"}})]}),
+    visibility = ["//tools/build/bazel:__pkg__"])
+exports_files(["makefs_cd9660_tests.sh", "makefs_ffs_tests.sh", "makefs_msdos_tests.sh", "makefs_zfs_tests.sh"], visibility = ["//tools/build/bazel:__pkg__"])
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+# Runtime argv[0] alias; the production package retains its maintained hardlink.
+copy_file(name = "bracket_runtime", src = "//bin/test:test", out = "[", is_executable = True, visibility = ["//tools/build/bazel:__pkg__"])

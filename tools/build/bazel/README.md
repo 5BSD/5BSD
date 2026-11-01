@@ -73,6 +73,9 @@ modules/data and native makefs/newfs/mdconfig, including original privileged
 md cleanup. See [makefs/full-suite evidence](MAKEFS-QUALIFICATION.md). See [fstyp evidence](FSTYP-QUALIFICATION.md) and
 [iconv runtime evidence](ICONV-RUNTIME-QUALIFICATION.md) for exact artifact
 comparisons, explicit fixture inputs, bootstrap boundaries and resource limits.
+The complete 63-case makefs inventory, original source skips, reduced settings
+and bounded guest qualification are recorded in
+[makefs runtime evidence](MAKEFS-RUNTIME-QUALIFICATION.md).
 
 **ARM64/RISC-V facility modules** now add backlight, firmware, CUSE and cryptodev
 on both architectures: all eight no-debug files match Make completely; enabled
