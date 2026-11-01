@@ -8985,3 +8985,14 @@ relocations where present; NFS-root enabled/disabled selections compare separate
 These textual/artifact checks do not establish live client/server/provider probes,
 lock/authentication/TLS/GSS paths, credential/MAC/audit denials or NFS-root boot.
 See NFS-MODULES-QUALIFICATION.md and retained source/header scan JSON for scope.
+
+### RPC/GSS module source audit (2026-11-01)
+
+krpc, kgssapi and kgssapi_krb5 preserve 57 maintained C sources plus seven
+generated C sources across amd64, ARM64 and RISC-V64. The bounded static scan
+records thirteen existing SDT marker lines in clnt_dg.c, clnt_rc.c and replay.c.
+This is a textual inventory, not a runtime probe count or proof of complete
+audit/DTrace coverage. Generated interfaces and installed module sections
+compare with independent Make references; matching-kernel load/unload, provider
+registration, TLS/GSS/Kerberos authentication/denials, live arguments and NFS
+recovery still need qualification. Evidence: bazel-rpc-gss-review-20261101.

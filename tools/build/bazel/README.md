@@ -46983,3 +46983,16 @@ records pass. The typed kernel_nfs_root setting connects actual target config
 with optional diskless-object selection; existing kernel NLM RPC sources remain
 source-controlled inputs. See [NFS module qualification](NFS-MODULES-QUALIFICATION.md)
 for failed attempts, compiler/tracing evidence and remaining protocol/runtime gates.
+
+### RPC/GSS modules on three architectures (2026-11-01)
+
+Native krpc, kgssapi and kgssapi_krb5 module/install targets cover amd64, ARM64
+and RISC-V64. All 18 independent Make/native comparisons and 27 file/debug
+install records pass; nine plain modules are byte-identical, installed CTF
+sections match except build-ID/debuglink and both actual debuglinks validate.
+The audit covers 384 target compiles and 78 generated input comparisons. RPC
+outputs match exactly; KOBJ outputs retain an explicitly recorded provenance
+comment difference. The krpc Makefile now declares its missing vnode_if.h input.
+See [RPC-GSS-MODULES-QUALIFICATION.md](RPC-GSS-MODULES-QUALIFICATION.md) for the
+independent generation setup, corrected stdout/header-guard semantics, retained
+failures, debug limits and open runtime/full-system/performance gates.

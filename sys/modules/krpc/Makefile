@@ -24,7 +24,7 @@ SRCS=	auth_none.c \
 
 SRCS+=	rpctls_impl.c auth_tls.c
 
-SRCS+=	opt_inet6.h opt_kern_tls.h
+SRCS+=	opt_inet6.h opt_kern_tls.h vnode_if.h
 
 SRCS+=		rpctlscd.h rpctlscd_xdr.c rpctlscd_clnt.c
 CLEANFILES=	rpctlscd.h rpctlscd_xdr.c rpctlscd_clnt.c

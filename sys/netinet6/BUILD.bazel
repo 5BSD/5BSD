@@ -33,3 +33,5 @@ cc_library(name = "netgraph_node_headers", hdrs = ["in6_fib.h", "scope6_var.h"],
 
 cc_library(name = "nfs_module_headers", hdrs = ["in6.h", "in6_var.h"], strip_include_prefix = "/sys",
     deps = [], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["in6.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])

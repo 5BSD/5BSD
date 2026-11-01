@@ -174,3 +174,5 @@ cc_library(name = "mppc_headers", hdrs = ["mppc.h"], strip_include_prefix = "/sy
 
 cc_library(name = "nfs_module_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"], strip_include_prefix = "/sys",
     deps = [], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["vnet.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])

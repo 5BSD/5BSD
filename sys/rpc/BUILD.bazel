@@ -10,3 +10,23 @@ exports_files(["rpcsec_tls/rpctlscd.x", "rpcsec_tls/rpctlssd.x"], visibility = [
 
 cc_library(name = "nfs_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
     visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+load("//tools/build/bazel:bsd_kernel_rpc.bzl", "kernel_rpc_protocol")
+kernel_rpc_protocol(name = "rpctlscd", source = "rpcsec_tls/rpctlscd.x")
+kernel_rpc_protocol(name = "rpctlssd", source = "rpcsec_tls/rpctlssd.x")
+cc_library(name = "generated_rpc_headers", hdrs = [":rpctlscd.h", ":rpctlssd.h"], strip_include_prefix = ".", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "provider_headers", hdrs = glob(["*.h", "rpcsec_gss/*.h"]),
+    strip_include_prefix = "/sys", deps = [":generated_rpc_headers"], visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+exports_files(["rpcsec_gss/rpcsec_gss.c", "rpcsec_gss/rpcsec_gss_conf.c", "rpcsec_gss/rpcsec_gss_misc.c", "rpcsec_gss/rpcsec_gss_prot.c", "rpcsec_gss/svc_rpcsec_gss.c"], visibility = ["//sys/kgssapi:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+_KRPC_SOURCES = ["auth_none.c", "auth_unix.c", "authunix_prot.c", "clnt_bck.c", "clnt_dg.c", "clnt_nl.c", "clnt_rc.c", "clnt_vc.c", "getnetconfig.c", "rpc_callmsg.c", "rpc_generic.c", "rpc_prot.c", "rpcb_clnt.c", "rpcb_prot.c", "replay.c", "svc.c", "svc_auth.c", "svc_auth_unix.c", "svc_dg.c", "svc_generic.c", "svc_vc.c", "rpcsec_tls/rpctls_impl.c", "rpcsec_tls/auth_tls.c", ":rpctlscd_xdr.c", ":rpctlscd_clnt.c", ":rpctlssd_xdr.c", ":rpctlssd_clnt.c"]
+_KRPC_DEPS = ["//sys/netlink:rpc_provider_headers", "//sys/rpc:provider_headers", "//sys/kgssapi:provider_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/net:rpc_provider_headers", "//sys/netinet:rpc_provider_headers", "//sys/netinet6:rpc_provider_headers"]
+amd64_generic_module_objects(name = "krpc_module", srcs = _KRPC_SOURCES,
+    deps = _KRPC_DEPS + ["//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header"])
+[cross_generic_module_objects(arch = arch, name = "krpc_module", srcs = _KRPC_SOURCES,
+    deps = _KRPC_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet6", "opt_kern_tls"]])
+ for arch in ["arm64", "riscv"]]

@@ -4688,3 +4688,15 @@ object group; GENERIC defaults true and comparisons cover both values.
 Kernel NLM RPC C/headers retain their maintained source-controlled contract.
 Artifact checks do not qualify NFS traffic, RPC authentication, lock recovery,
 NFS-root boot or complete kernels/module sets.
+.Pp
+Native krpc, kgssapi and kgssapi_krb5 module/install candidates declare
+amd64, ARM64 and RISC-V64 object groups.
+Kernel RPC generation declares schemas, rpcgen, preprocessor and filter tools;
+stdout generation preserves the maintained header-guard semantics before
+applying the original kernel include filters.
+KOBJ interfaces use the maintained generator.
+Plain artifacts, installed CTF sections, generated inputs and file install
+metadata compare with independent Make references on all three architectures.
+Separate DWARF layout and KOBJ source-provenance comments differ.
+These artifact checks do not establish live TLS/GSS/Kerberos authentication or
+matching-kernel module operation.

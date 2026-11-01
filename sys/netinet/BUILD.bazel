@@ -64,3 +64,5 @@ cc_library(name = "netgraph_node_headers", hdrs = ["in.h", "in_fib.h", "in_systm
 
 cc_library(name = "nfs_module_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h"], strip_include_prefix = "/sys",
     deps = ["//sys/netinet/cc:nfs_headers"], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["in.h", "tcp.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
