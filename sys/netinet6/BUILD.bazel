@@ -60,3 +60,65 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["in6.h"], visibility =
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "in6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "in6.h",
+        "in6_var.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "in6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "in6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "in6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "in6.h",
+        "ip6_var.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

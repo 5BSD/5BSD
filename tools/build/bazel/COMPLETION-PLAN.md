@@ -62,3 +62,15 @@ that the active graph is qualified.
   aggregate configurations, reconcile source-owned recursive command-line and
   SUBDIR_ENV overrides too; export propagation alone does not model arbitrary
   recursive Make semantics. Native products must retain explicit Bazel inputs.
+
+- Keep source-package ownership valid as BUILD files are introduced. A configured
+  query of existing built-in kernel groups exposed stale root-package ACPICA
+  and autofs header paths; loading a narrow cohort does not establish whole-
+  graph validity. Correct ownership and qualify affected consumers rather than
+  excluding the kernel version/COPYRIGHT dependency that exposes the error.
+- Diagnose execution-tool cache behavior from paired configured actions and
+  actual execution records. PPP observed uncached tool compilation in a later
+  profile, but matching execution output roots disprove the tentative differing-
+  root explanation. Neither build-progress counts nor execution-log size alone
+  establish how many tools rebuilt or why. Qualify compact evidence logging
+  before full-system scale and controlled performance comparisons.

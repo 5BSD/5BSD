@@ -119,3 +119,75 @@ cross_generic_module_objects(arch = "riscv", name = "network_support_module", sr
     copts = [])
 bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
     object_names = ["toecore.o"], visibility = ["//sys/modules/toecore:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "in.h",
+        "ip.h",
+        "ip6.h",
+        "udp.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "in.h",
+        "in_var.h",
+        "ip.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "in.h",
+        "ip.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "in.h",
+        "ip.h",
+        "ip6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "in.h",
+        "ip.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "in.h",
+        "in_kdtrace.h",
+        "ip.h",
+        "ip6.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

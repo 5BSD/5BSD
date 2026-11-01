@@ -253,3 +253,380 @@ cross_generic_module_objects(arch = "riscv", name = "network_support_module", sr
     copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
 bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
     object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "if.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "route.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "if_vlan_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "if_vlan_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "if.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "rndis.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

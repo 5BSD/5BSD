@@ -5007,3 +5007,14 @@ See
 for three qualified build profiles, retained source-diagnostic differences,
 pppctl usage tests and separate privileged/network/runtime gates.
 Custom configuration-directory and experimental netgraph inputs remain open.
+.Pp
+Native USB network qualification uses existing format-5 kernel profiles,
+module/install actions and target GENERIC option providers for nineteen
+source-selected modules on amd64, ARM64 and RISC-V64.
+All 114 plain/CTF component configurations match Make installation contracts;
+plain modules are byte-identical and installed CTF sections/debug CRCs pass.
+See
+.Pa tools/build/bazel/USB-NETWORK-QUALIFICATION.md
+for original compiler/link-input audits, retained analysis failures and separate
+hardware, live tracing, alternate configuration and full-system gates.
+No host module loading is performed by these checks.

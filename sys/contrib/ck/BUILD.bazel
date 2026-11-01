@@ -18,3 +18,516 @@ bsd_source_headers(name = "mii_family_headers", hdrs = ["include/ck_cc.h", "incl
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/aarch64/ck_f_pr.h", "include/gcc/aarch64/ck_pr.h", "include/gcc/aarch64/ck_pr_llsc.h", "include/gcc/ck_cc.h", "include/gcc/ck_f_pr.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "include/ck_cc.h",
+        "include/ck_epoch.h",
+        "include/ck_limits.h",
+        "include/ck_md.h",
+        "include/ck_pr.h",
+        "include/ck_queue.h",
+        "include/ck_stack.h",
+        "include/ck_stdbool.h",
+        "include/ck_stddef.h",
+        "include/ck_stdint.h",
+        "include/gcc/aarch64/ck_f_pr.h",
+        "include/gcc/aarch64/ck_pr.h",
+        "include/gcc/aarch64/ck_pr_llsc.h",
+        "include/gcc/ck_cc.h",
+        "include/gcc/ck_f_pr.h",
+        "include/gcc/ck_pr.h",
+        "include/gcc/x86_64/ck_f_pr.h",
+        "include/gcc/x86_64/ck_pr.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

@@ -37,3 +37,193 @@ bsd_source_headers(name = "mii_family_headers", hdrs = ["audit.h"], visibility =
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["audit.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "audit.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

@@ -84,3 +84,18 @@ amd64_generic_module_objects(name = "wlan_xauth_module", srcs = ["ieee80211_xaut
 [cross_generic_module_objects(arch = arch, name = "wlan_xauth_module", srcs = ["ieee80211_xauth.c"],
     deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "_ieee80211.h",
+        "ieee80211.h",
+        "ieee80211_crypto.h",
+        "ieee80211_ioctl.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

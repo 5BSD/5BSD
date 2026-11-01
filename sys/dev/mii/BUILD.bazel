@@ -50,3 +50,113 @@ cross_generic_module_objects(arch = "riscv", name = "mii_module", srcs = ["acphy
     copts = ["-fmacro-prefix-map=$(execpath :miibus_if_source)=miibus_if.c", "-fdebug-prefix-map=$(execpath :miibus_if_source)=miibus_if.c"])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_mii_module_ctf",
     object_names = ["acphy.o", "amphy.o", "atphy.o", "axphy.o", "bmtphy.o", "brgphy.o", "ciphy.o", "dp83822phy.o", "dp83867phy.o", "e1000phy.o", "gentbi.o", "icsphy.o", "ip1000phy.o", "jmphy.o", "lxtphy.o", "miibus_if.o", "mii.o", "mii_bitbang.o", "mii_physubr.o", "nsgphy.o", "nsphy.o", "nsphyter.o", "pnaphy.o", "qsphy.o", "rdcphy.o", "rgephy.o", "rlphy.o", "smcphy.o", "smscphy.o", "tdkphy.o", "truephy.o", "ukphy.o", "ukphy_subr.o", "vscphy.o", "xmphy.o", "micphy.o", "mii_fdt.o"], visibility = ["//sys/modules/mii:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "mii.h",
+        "miivar.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

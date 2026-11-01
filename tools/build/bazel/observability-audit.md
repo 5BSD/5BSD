@@ -9449,3 +9449,18 @@ operations; logging delivery, privileged transitions, authentication and device
 negotiation remain isolated runtime gates. No probes or production behavior
 were changed for this scan. See PPP-QUALIFICATION.md for all captured evidence
 and dependency-library/runtime limits.
+
+
+## USB network module review (2026-11-01)
+
+Twenty unchanged production C sources for nineteen selected USB network modules
+contain no direct DTrace/SDT, audit or CTR markers in the bounded source scan.
+All 114 native architecture/plain/CTF module configurations preserve Make
+installed sections and debug-link contracts as described in
+[USB network qualification](USB-NETWORK-QUALIFICATION.md). The absence of direct
+markers is a review candidate for attach/detach, link changes and recoverable
+USB transfer failures, not proof that shared network/USB tracing is absent.
+Review existing shared probes and disabled/enabled overhead before adding hot
+packet-path instrumentation. No live probe firing, USB hardware operation or
+new event coverage is claimed. Scan hashes and lines are retained in
+/usr/obj/usr/src/bazel-usb-ethernet-review-r3-20261101/observability.json.
