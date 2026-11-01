@@ -866,6 +866,7 @@ ATF_TC_BODY(device_flags_eligibility, tc)
 ATF_TC_WITHOUT_HEAD(topology_validate_enforces_device_identity);
 ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 {
+	char detail[192];
 	struct migration_topology local, remote;
 	uint32_t reason;
 
@@ -930,12 +931,32 @@ ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
 	    EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
+	/* The destination log names the refused device field. */
+	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
+	    detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "device 0 (virtio-blk) compat_crc32: source "
+	    "0x11223345, destination 0x11223344");
 	remote.devices[0].compat_crc32 = local.devices[0].compat_crc32;
 
 	/* And an identical pair still validates after the mutations are undone. */
 	reason = 0xffffffff;
 	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason), 0);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_NONE);
+	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
+	    detail, sizeof(detail)), 0);
+	ATF_CHECK_STREQ(detail, "");
+	remote.device_count = 2;
+	strlcpy(remote.devices[1].name, "virtio-rnd", MIGRATION_DEVICE_NAME_MAX);
+	remote.devices[1].migration_flags = local.devices[0].migration_flags;
+	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
+	    detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "device count: source 2, destination 1; "
+	    "first unmatched: source \"virtio-rnd\"");
+	remote.cores = 1;
+	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
+	    detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "vCPUs (n/sockets/cores/threads): source "
+	    "2/1/1/1, destination 2/1/2/1");
 }
 
 ATF_TC_WITHOUT_HEAD(rom_content_identity_refuses_different_destination);

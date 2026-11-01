@@ -13,6 +13,10 @@
 #define	CHECKPOINT_CPU_ARCH_ARM64	2U
 #define	CHECKPOINT_CPU_ARCH_RISCV64	3U
 #define	CHECKPOINT_CPU_MAX_RECORDS	256U
+/* Synthetic amd64 records after the CPUID leaves (vm_cpu_compat fields). */
+#define	CHECKPOINT_CPU_X86_PLATFORM	0xfffffffdU
+#define	CHECKPOINT_CPU_X86_POLICY	0xfffffffeU
+#define	CHECKPOINT_CPU_X86_NESTED	0xffffffffU
 
 struct checkpoint_cpu_record {
 	uint32_t selector;
@@ -38,6 +42,9 @@ int	checkpoint_cpu_contract_encode(
 	    const struct checkpoint_cpu_contract *, char **);
 int	checkpoint_cpu_contract_decode(const char *,
 	    struct checkpoint_cpu_contract *);
+int	checkpoint_cpu_contract_describe_mismatch(
+	    const struct checkpoint_cpu_contract *,
+	    const struct checkpoint_cpu_contract *, char *, size_t);
 int	checkpoint_cpu_contract_capture(struct vcpu *,
 	    struct checkpoint_cpu_contract *);
 

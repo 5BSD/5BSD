@@ -370,6 +370,10 @@ bool	migration_device_flags_eligible(uint32_t migration_flags);
  */
 int	migration_topology_validate(const struct migration_topology *local,
 	    const struct migration_topology *remote, uint32_t *reason);
+/* Describe the first field migration_topology_validate() refused (EXDEV). */
+int	migration_topology_describe_mismatch(
+	    const struct migration_topology *local,
+	    const struct migration_topology *remote, char *buf, size_t len);
 
 /* ---- Transport abstraction ---------------------------------------------- */
 
