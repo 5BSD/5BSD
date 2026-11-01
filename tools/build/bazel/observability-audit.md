@@ -8996,3 +8996,15 @@ audit/DTrace coverage. Generated interfaces and installed module sections
 compare with independent Make references; matching-kernel load/unload, provider
 registration, TLS/GSS/Kerberos authentication/denials, live arguments and NFS
 recovery still need qualification. Evidence: bazel-rpc-gss-review-20261101.
+
+### Virtual-network module source audit (2026-11-01)
+
+The seven original C sources for CARP, bridge, epair, lagg and VLAN are preserved
+on amd64, ARM64 and RISC-V64. A bounded scan records twenty existing SDT marker
+lines in if_bridge.c, if_epair.c, if_lagg.c and if_vlan.c. ip_carp.c,
+ieee8023ad_lacp.c and sha1.c have no matches for the audited patterns; failover
+and LACP state-transition observability need review during runtime qualification.
+Compiled installed sections compare with Make, but provider registration, live
+arguments, traffic/failure paths and privilege/MAC/audit denials remain untested.
+Evidence: bazel-virtual-interface-review-20261101; scope and limits are in
+VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md.

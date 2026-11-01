@@ -176,3 +176,30 @@ cc_library(name = "nfs_module_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h",
     deps = [], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
 
 cc_library(name = "rpc_provider_headers", hdrs = ["vnet.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "virtual_interface_headers", hdrs = ["bpf.h", "bridgestp.h", "dlt.h", "ethernet.h", "ieee8023ad_lacp.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_clone.h", "if_dl.h", "if_lagg.h", "if_llatbl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "infiniband.h", "netisr.h", "pfil.h", "route.h", "vnet.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+amd64_generic_module_objects(name = "if_bridge_module", srcs = ["if_bridge.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_carp_header"])
+[cross_generic_module_objects(arch = arch, name = "if_bridge_module", srcs = ["if_bridge.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_carp"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_epair_module", srcs = ["if_epair.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_rss_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header"])
+[cross_generic_module_objects(arch = arch, name = "if_epair_module", srcs = ["if_epair.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_rss", "opt_inet", "opt_inet6"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_lagg_module", srcs = ["if_lagg.c", "ieee8023ad_lacp.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_ratelimit_header"])
+[cross_generic_module_objects(arch = arch, name = "if_lagg_module", srcs = ["if_lagg.c", "ieee8023ad_lacp.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_kern_tls", "opt_ratelimit"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_vlan_module", srcs = ["if_vlan.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_ipsec_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_vlan_header", "//sys/amd64/conf:generic_opt_ratelimit_header"])
+[cross_generic_module_objects(arch = arch, name = "if_vlan_module", srcs = ["if_vlan.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_ipsec", "opt_kern_tls", "opt_vlan", "opt_ratelimit"]])
+ for arch in ["arm64", "riscv"]]

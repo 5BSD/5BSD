@@ -2,6 +2,8 @@
 exports_files(["tcp_stats.c"], visibility = ["//lib/libstats:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
 cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
     deps = ["//sys/net:network_headers", "//sys/netinet6:address_headers"], visibility = ["//visibility:public"])
 
@@ -66,3 +68,12 @@ cc_library(name = "nfs_module_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.
     deps = ["//sys/netinet/cc:nfs_headers"], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
 
 cc_library(name = "rpc_provider_headers", hdrs = ["in.h", "tcp.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "virtual_interface_headers", hdrs = ["icmp6.h", "if_ether.h", "in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_carp.h", "ip_carp_nl.h", "ip_var.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+amd64_generic_module_objects(name = "carp_module", srcs = ["ip_carp.c", "//sys/crypto:sha1.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/crypto:sha1_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_carp_header", "//sys/amd64/conf:generic_opt_bpf_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_ofed_header"])
+[cross_generic_module_objects(arch = arch, name = "carp_module", srcs = ["ip_carp.c", "//sys/crypto:sha1.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/crypto:sha1_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_carp", "opt_bpf", "opt_inet", "opt_inet6", "opt_ofed"]])
+ for arch in ["arm64", "riscv"]]

@@ -4700,3 +4700,11 @@ metadata compare with independent Make references on all three architectures.
 Separate DWARF layout and KOBJ source-provenance comments differ.
 These artifact checks do not establish live TLS/GSS/Kerberos authentication or
 matching-kernel module operation.
+
+.Pp
+Native CARP, bridge, epair, lagg and VLAN module/install candidates cover
+amd64, ARM64 and RISC-V64.
+Declared option headers are extracted from the actual target GENERIC config;
+artifact and file install-metadata comparisons cover plain and CTF/debug modes.
+These checks do not qualify live networking, failover, alternate kernel options
+or complete kernels; separate DWARF layout remains outside the artifact gate.

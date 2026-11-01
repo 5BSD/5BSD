@@ -46996,3 +46996,13 @@ comment difference. The krpc Makefile now declares its missing vnode_if.h input.
 See [RPC-GSS-MODULES-QUALIFICATION.md](RPC-GSS-MODULES-QUALIFICATION.md) for the
 independent generation setup, corrected stdout/header-guard semantics, retained
 failures, debug limits and open runtime/full-system/performance gates.
+
+### Virtual-network modules on three architectures (2026-11-01)
+
+Native CARP, bridge, epair, lagg and VLAN module/install targets now cover amd64,
+ARM64 and RISC-V64. All 30 independent Make/native comparisons and 45 file/debug
+install records pass. Fifteen plain artifacts are byte-identical; installed CTF
+sections match except build-ID/debuglink, and both actual debuglinks validate.
+All 42 target compile actions and their actual GENERIC option-header hashes are
+audited. See [VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md](VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md)
+for source ownership, evidence, debug limits and open runtime/system gates.
