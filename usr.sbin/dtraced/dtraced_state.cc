@@ -2321,6 +2321,7 @@ state::process_joblist(void)
 
 		if (!curjob->connsockfd->retired.load() &&
 		    !this->handle_job(curjob)) {
+			const int job_error = errno;
 			if (curjob->handoff_deferred &&
 			    !curjob->connsockfd->retired.load()) {
 				/* HT-C BEGIN: disabled trace continuity. */
@@ -2385,7 +2386,10 @@ state::process_joblist(void)
 				}
 				/* HT-C END */
 			}
-			ERR("failed to handle job kind %d", curjob->kind);
+			/* Name the peer and cause: a lost forwarder ACK and a
+			 * refused frame need different fixes. */
+			ERR("failed to handle job kind %d for %s: %s", curjob->kind,
+			    curjob->connsockfd->ident, strerror(job_error));
 			/* The job's reference pins the client through retirement. */
 			this->kill_socket(curjob->connsockfd);
 		}
