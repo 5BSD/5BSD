@@ -7658,9 +7658,16 @@ sessions, credential changes and spool access; preserving probes does not prove
 audit completeness. Setuid mode and schg are checked in installation metadata;
 no privileged executable was run on the host.
 
-Cron follow-up: DTrace-disabled native and Make variants now match installation
-and payloads; actual ELF section tables contain no DOF for cron or crontab.
-Enabled live firing and scheduler/audit behavior remain unqualified.
+Cron follow-up: the DTrace-disabled native and Make variants are an explicit
+`dtrace=false`/`WITHOUT_DTRACE` parity check; they are not cron's default. On
+2026-11-01, a fresh format-5 `build-bsd bazel-test` build used the shared
+DTrace-enabled default and its ELF contains `.SUNW_dof` plus all six expected
+provider probe/enabled symbol pairs. This proves artifact instrumentation is
+retained in the enabled build, not that probes fire at runtime. The disabled
+variant has no DOF by design. Scheduler behavior, live probe firing and audit
+coverage remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-cron-dtrace-default-20261101/receipt.json`,
+`artifacts/manifest.json`, and `dtrace-artifact-check.json`.
 
 ### authpf (2026-10-30)
 
@@ -8596,3 +8603,137 @@ are substituted and no source-change class is silently ignored.
 Frontend review: rejected wiring has been removed; the discovery utility is
 not a new build input or user-facing option, so no frontend/backend change is
 required by this committed diagnostic step.
+
+### Accept-filter modules reviewed (2026-11-01)
+
+`accf_data`, `accf_dns`, `accf_http` and `accf_tls` contain no direct DTrace,
+SDT or audit markers. The Bazel migration preserves the maintained module
+sources and does not add tracing solely to populate a checklist. This source
+review is not runtime evidence for accept-filter operations or network-stack
+observability; module load and socket-behavior qualification remain open.
+
+`sys/crypto/rc4/rc4.c` contains no direct DTrace, SDT or audit markers. Its
+module build preserves Make's `EXPORT_SYMS=YES` behavior; no runtime tracing or
+crypto-operation audit coverage is established by that binary parity.
+
+`nmdm` retains its existing `nmdm__rate__configured` SDT probe and associated
+tracepoint/probe/argument-type sections in byte-identical Bazel and Make module
+outputs. This is emitted-metadata parity only; runtime probe firing and actual
+null-modem behavior remain unqualified.
+
+`if_edsc` has no direct DTrace, SDT or audit markers. Its Bazel and Make module
+outputs are byte-identical with the selected profile; no live network interface
+or kernel audit behavior is inferred.
+
+`bridgestp` has no direct DTrace, SDT or audit markers. Its source and install
+metadata have Make parity in the tied amd64 GENERIC build; the module was not
+loaded, so protocol operation and runtime audit/trace behavior remain unknown.
+
+`if_disc` has no direct DTrace, SDT or audit markers. Its tied GENERIC module
+and install manifest match Make, but discard-interface packet behavior was not
+run and no runtime observability or audit coverage is established.
+
+`if_enc` has no direct DTrace, SDT or audit markers. Its tied GENERIC module
+and install manifest match Make; IPsec capture operation and runtime audit or
+trace behavior remain unqualified.
+
+`if_me` has no direct DTrace, SDT or audit markers. Its tied GENERIC module and
+install manifest match Make; minimal-encapsulation runtime and audit behavior
+remain unqualified.
+
+`if_gif` and `if_gre` retain the `giftunnel` and `gretunnel` SDT providers and
+probes already present in their source. Their tied amd64 GENERIC module outputs
+match Make byte for byte, which preserves the emitted SDT metadata. No probe
+firing or tunnel runtime behavior was tested; no runtime observability or audit
+coverage is established by this build parity.
+
+`virtio_rtc` has no direct SDT or audit markers in its driver source. The
+Bazel/Make binary comparison covers emitted content only; no virtio RTC device
+or runtime observability behavior was tested.
+
+`virtio_mem` has no direct SDT or audit markers in its driver source. Its
+Bazel/Make output parity does not establish runtime memory hotplug behavior or
+observability coverage.
+
+`virtio_vsock` declares the existing `vsock` SDT provider and its credit and
+packet probes. Its tied amd64 GENERIC Bazel module is byte-identical to Make,
+including the emitted SDT set sections. The bounds regression test is not a
+probe-firing or socket-transport test; live probe and transport behavior remain
+unverified.
+
+`virtio_snd` and `virtio_pmem` have no direct SDT or audit markers in their
+driver sources. Their byte-identical module outputs preserve Make's emitted
+metadata, but do not establish runtime audio or persistent-memory behavior.
+
+`virtio_random` has no direct SDT or audit markers in its driver source. Its
+module byte parity does not establish runtime random-device behavior or
+entropy-harvesting coverage.
+
+`acl_nfs4` and `acl_posix1e` have no direct SDT probe markers. The NFSv4 ACL
+source recognizes audit and alarm ACL entry types only to reject them; this
+does not provide audit event instrumentation. Their tied amd64 GENERIC module
+outputs match Make, but ACL operations and runtime audit/trace behavior were
+not exercised.
+
+`alq` has no direct SDT or audit markers. Its Bazel module now carries the
+same canonical source path as Make in assertion strings and the tied amd64
+GENERIC module bytes match; ALQ operations and runtime audit/trace behavior
+were not exercised.
+
+The `cc_cdg`, `cc_chd`, `cc_cubic`, `cc_dctcp`, `cc_hd`, `cc_htcp`,
+`cc_newreno` and `cc_vegas` sources have no direct SDT or audit markers. Their
+Make/Bazel CTF and core debug sections match; no congestion-control behavior,
+live tracing or audit event coverage was exercised.
+
+The `ng_async`, `ng_hub`, `ng_pipe`, `ng_tee`, `ng_split` and `ng_vlan` sources
+were reviewed for source-declared SDT/DTrace and audit hooks; none were found.
+Their native Bazel module outputs match fresh tied GENERIC Make bytes. No module
+runtime behavior, node lifecycle, live tracing or audit event coverage was
+exercised. `ng_pipe` uses PCG through the kernel PRNG header; its PCG header is
+an explicit Bazel dependency.
+
+The `ng_tag`, `ng_one2many` and `ng_vlan_rotate` sources were also scanned for
+direct SDT/DTrace and audit hooks; none were found. Their Bazel module bytes
+match fresh tied GENERIC Make output. Runtime behavior, live probes and audit
+event coverage were not tested.
+
+`ng_tcpmss` has no direct SDT/DTrace or audit hooks in the source scan. Its
+Bazel module matches the tied GENERIC Make module byte for byte. The module
+was not loaded, so node behavior and runtime observability remain unqualified.
+
+`ng_patch` and `ng_gif_demux` also contain no direct SDT/DTrace or audit hooks.
+Their tied GENERIC module files match Make byte for byte. Neither module was
+loaded; runtime behavior and observability remain unqualified.
+
+`ng_car` and `ng_socket` also have no direct SDT/DTrace or audit hooks. Their
+tied GENERIC Bazel modules match Make byte for byte. Neither was loaded, so
+CAR shaping, socket-node behavior and runtime observability remain unqualified.
+
+The existing `hub` and `vlan_rotate` Netgraph ATF programs contain nine cases.
+Their Bazel declarations preserve Make's root requirement and exclusive
+execution metadata. On the unprivileged host, the runner reported all nine as
+skipped before entering their bodies; the qualification frontend rejected that
+run as insufficient runtime evidence. This verifies the precondition path only.
+No Netgraph module was loaded, and no DTrace firing or audit behavior was
+qualified.
+
+`ng_ip_input` has no direct SDT/DTrace or audit markers in the scanned source.
+Its declared Bazel module and install manifest build successfully and match a
+fresh tied GENERIC Make module byte for byte. The module was not loaded; packet
+delivery, probe firing and runtime audit coverage remain unqualified.
+
+`ng_checksum` has no direct SDT/DTrace or audit markers in the scanned source.
+Its declared module and install manifest match fresh tied GENERIC Make output.
+Checksum rewriting behavior, packet-path performance and runtime audit/trace
+coverage remain unqualified because the module was not loaded or exercised.
+
+`ng_pppoe` has no direct SDT/DTrace or audit markers in the scanned source.
+Its module and install metadata match fresh tied GENERIC Make output. PPPoE
+session behavior, packet handling, runtime audit/trace coverage and performance
+remain unqualified because the module was not loaded or exercised.
+
+The `speaker` driver and `cd9660_iconv` module source have no direct SDT/DTrace
+or audit markers in the source scan. Both tied amd64 GENERIC modules match
+fresh Make output byte for byte. Neither module was loaded; driver/iconv
+runtime behavior, live probe firing and audit event coverage remain
+unqualified.

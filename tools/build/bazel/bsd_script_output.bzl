@@ -9,8 +9,14 @@ def _quote(value):
     return "'" + value.replace("'", "'\\''") + "'"
 
 def _generate(ctx):
+    if not ctx.file.src and ctx.attr.input_mode != "file-list":
+        fail("this input mode requires src")
+    if ctx.file.src and ctx.attr.input_mode == "file-list":
+        fail("file-list input mode does not take src")
     if ctx.files.additional_sources and ctx.attr.input_mode != "argument":
         fail("additional sources require argument input mode")
+    if ctx.attr.source_files and ctx.attr.input_mode != "file-list":
+        fail("source_files require file-list input mode")
     directory = None
     if ctx.attr.input_mode == "directory":
         anchor = ctx.attr.directory_anchor
@@ -51,6 +57,17 @@ def _generate(ctx):
         args += [file.path for file in ctx.files.additional_sources]
     if directory != None:
         args.append(directory)
+    source_files = sorted(ctx.files.source_files, key = lambda file: file.path)
+    file_list = None
+    if ctx.attr.input_mode == "file-list":
+        if not source_files:
+            fail("file-list input mode requires declared source_files")
+        paths = [file.path for file in source_files]
+        if any([any([character in path for character in [" ", "\t", "\n", "\r", "\\"]]) for path in paths]):
+            fail("file-list source paths must be safe for the maintained xargs-based generator")
+        file_list = ctx.actions.declare_file(ctx.label.name + ".inputs")
+        ctx.actions.write(file_list, "\n".join(paths) + "\n")
+        args.append(file_list.path)
     environment = dict(ctx.attr.environment)
     for key in environment:
         if key in ["LC_ALL", "PATH", "CPP", "LD_LIBRARY_PATH"]:
@@ -105,19 +122,27 @@ def _generate(ctx):
         " ".join([_quote(ctx.executable.shell.path)] + [_quote(flag) for flag in ctx.attr.shell_flags] + [_quote(ctx.file.script.path)]) + ' "$@"\n')
     args[args.index(ctx.file.script.path)] = launcher.path
     generated_inputs.append(launcher)
+    inputs = (
+        [ctx.file.script] + ([ctx.file.src] if ctx.file.src else []) + aliases +
+        ctx.files.inputs + ctx.files.additional_sources + source_files + generated_inputs +
+        ctx.files.runtime_libraries
+    )
+    if file_list:
+        inputs.append(file_list)
     ctx.actions.run(executable = ctx.attr.redirect[DefaultInfo].files_to_run,
-        arguments = args, inputs = depset([ctx.file.script, ctx.file.src] + aliases + ctx.files.inputs + ctx.files.additional_sources + generated_inputs + ctx.files.runtime_libraries, transitive = compiler_inputs),
+        arguments = args, inputs = depset(inputs, transitive = compiler_inputs),
         tools = tools + ctx.files.runtime, outputs = [output],
         env = environment, use_default_shell_env = False,
         mnemonic = "BSDScriptOutput")
     return [DefaultInfo(files = depset([output]))]
 bsd_script_output = rule(implementation = _generate, attrs = {
     "script": attr.label(allow_single_file = True, mandatory = True),
-    "src": attr.label(allow_single_file = True, mandatory = True),
+    "src": attr.label(allow_single_file = True),
     "inputs": attr.label_list(allow_files = True),
     "additional_sources": attr.label_list(allow_files = True),
+    "source_files": attr.label_list(allow_files = True, cfg = "exec", doc = "Declared generator inputs used by file-list mode."),
     "output": attr.string(mandatory = True),
-    "input_mode": attr.string(default = "stdin", values = ["stdin", "argument", "directory"]),
+    "input_mode": attr.string(default = "stdin", values = ["stdin", "argument", "directory", "file-list"], doc = "file-list passes a stable manifest of source_files to the generator."),
     "directory_anchor": attr.string(doc = "Source path relative to the directory argument; all other accessed files must be declared in inputs."),
     "environment": attr.string_dict(),
     "use_cpp": attr.bool(default = False),

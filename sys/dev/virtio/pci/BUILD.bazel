@@ -7,3 +7,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['virtio_pci_legacy_var.h', 'virtio_pci_modern_var.h', 'virtio_pci_var.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "shmem_headers", hdrs = ["virtio_pci_shmem.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/dev/virtio/pmem:__pkg__"])

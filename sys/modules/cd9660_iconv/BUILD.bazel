@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(
+    srcs = ["//sys/fs/cd9660:cd9660_iconv.c"],
+)
+
+amd64_generic_module(
+    module = "cd9660_iconv",
+    objects = [":generic_module_object_files"],
+)

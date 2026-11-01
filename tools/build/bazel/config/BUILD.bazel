@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag", "int_flag")
 
+# Mirrors Make's MK_WERROR default for base and kernel builds.
+bool_flag(name = "werror", build_setting_default = True,
+    visibility = ["//visibility:public"])
+config_setting(name = "werror_enabled", flag_values = {":werror": "true"},
+    visibility = ["//visibility:public"])
+
 # Mirrors the maintained BSD default: manual pages stay in their base package.
 bool_flag(
     name = "split_manpages",
@@ -213,11 +219,18 @@ config_setting(name = "examples_enabled", flag_values = {":examples": "true"}, v
 # Match ctfconvert's default when Make's VERSION environment label is absent.
 string_flag(name = "kernel_ctf_label", build_setting_default = "*** No Label Provided ***", visibility = ["//visibility:public"])
 
+# Effective kernel/module CTF and split-debug choices from the selected profile.
+bool_flag(name = "kernel_ctf", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "kernel_ctf_enabled", flag_values = {":kernel_ctf": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "kernel_debug", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "kernel_debug_enabled", flag_values = {":kernel_debug": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "kernel_ctf_and_debug_enabled", flag_values = {":kernel_ctf": "true", ":kernel_debug": "true"}, visibility = ["//visibility:public"])
+
 # Explicit provenance; kernel version generation rejects an unset value.
 string_flag(name = "kernel_source_revision", build_setting_default = "", visibility = ["//visibility:public"])
 
 # Kernel and module installation roots, corresponding to KODIR/KERN_DEBUGDIR.
-string_flag(name = "kernel_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])
+string_flag(name = "kernel_directory", build_setting_default = "/boot/modules", visibility = ["//visibility:public"])
 string_flag(name = "kernel_debug_directory", build_setting_default = "/usr/lib/debug", visibility = ["//visibility:public"])
 
 # Shared authority for native config and option-selected kernel sources.

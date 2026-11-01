@@ -13,3 +13,7 @@ cc_library(name = "vmmapi_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_snapshot.
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_snapshot.h'], strip_include_prefix = "/sys", deps = ["//sys/sys:hypertrace_header"], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "pc_bios_headers", hdrs = ["pc/bios.h"],
+    strip_include_prefix = ".", include_prefix = "machine",
+    visibility = ["//sys/modules/bios/smbios:__pkg__", "//sys/modules/bios/vpd:__pkg__"])

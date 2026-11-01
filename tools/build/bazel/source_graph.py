@@ -12,6 +12,7 @@ import time
 import tempfile
 import bep_artifacts
 import test_reports
+import bsd_toolchain
 from libmd_environment import digest
 
 
@@ -145,11 +146,19 @@ def _qualify(config, args, state):
     if actual!=set(receipt['snapshot']):raise ValueError('cached SDK file inventory changed')
     for name,value in receipt['snapshot'].items():
         if digest(repository/name)!=value:raise ValueError('cached SDK input changed: '+name)
+    cache_digest, cache_entries = bsd_toolchain.verify_repository_cache(selected['repository-cache'])
+    distdir_digest, distdir_files = bsd_toolchain.verify_distdirs(distdirs)
+    staged_cache = out / 'repository-cache'
+    bsd_toolchain.stage_repository_cache(
+        {'repository_cache': str(selected['repository-cache'])}, staged_cache)
+    staged_digest, staged_entries = bsd_toolchain.verify_repository_cache(staged_cache)
+    if (staged_digest, staged_entries) != (cache_digest, cache_entries):
+        raise ValueError('staged repository cache differs from the verified input')
     commands=[]
     try:
         argv=[str(args.bazel),'--ignore_all_rc_files','--max_idle_secs=300','--server_javabase='+str(selected['java-home']),'--output_user_root='+str(state/'bazel-root'),
               'test' if config['tests'] else 'build','--override_module=bsd_sdk='+str(repository),
-              '--lockfile_mode=error','--repository_disable_download','--repository_cache='+str(selected['repository-cache']),
+              '--lockfile_mode=error','--repository_disable_download','--repository_cache='+str(staged_cache),
               '--platforms=@bsd_sdk//toolchain:native','--host_platform=@bsd_sdk//toolchain:native',
               '--jobs='+str(args.jobs),'--compilation_mode=opt','--strip=never',
               # Extend Bazel defaults so build-only test targets retain runfiles.
@@ -184,7 +193,12 @@ def _qualify(config, args, state):
         artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts')
         for name,value in bindings.items():
             if digest(Path(name))!=value:raise ValueError('qualification input changed: '+name)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,execution_log_sha256=digest(out/'execution.json'),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        if bsd_toolchain.verify_repository_cache(selected['repository-cache']) != (cache_digest, cache_entries):
+            raise ValueError('verified repository cache input changed during qualification')
+        if bsd_toolchain.verify_distdirs(distdirs) != (distdir_digest, distdir_files):
+            raise ValueError('verified distdir inputs changed during qualification')
+        staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=digest(out/'execution.json'),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

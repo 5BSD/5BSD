@@ -4,6 +4,7 @@
 #
 # usage: check-book.sh [-m man-inventory] [-s sysctl-inventory] root
 #        check-book.sh -g man|sysctl|headers root
+#        check-book.sh -g man|sysctl -i input-file-list
 #
 # root mirrors the source layout: the top of a source tree, or a staged copy
 # holding docs/book/src, sys/kern/syscalls.master and the sys/sys headers the
@@ -36,6 +37,7 @@ usage()
 {
 	echo "usage: check-book.sh [-m man-inventory] [-s sysctl-inventory] root" >&2
 	echo "       check-book.sh -g man|sysctl|headers root" >&2
+	echo "       check-book.sh -g man|sysctl -i input-file-list" >&2
 	exit 2
 }
 
@@ -54,23 +56,41 @@ gen_headers()
 # Every manual page the tree provides, as name.section: page sources
 # (including generated *.in templates) and the MAN and MLINKS lists of the
 # build Makefiles.
+gen_man_makefiles()
+{
+	xargs awk '
+		/^[ \t]*(MAN[0-9]*|MLINKS)[ \t]*[+?:]?=/ { inlist = 1 }
+		inlist {
+			for (i = 1; i <= NF; i++)
+				if ($i ~ /^[A-Za-z0-9_.:+-]+\.[1-9][a-z]*$/)
+					print $i
+			if ($0 !~ /\\$/)
+				inlist = 0
+		}'
+}
+
 gen_man()
 {
-	{
-		find "$1" -name .git -prune -o -type f -name '*.[1-9]*' -print |
-		    sed -e 's,.*/,,' -e 's,\.in$,,'
-		find "$1" -name .git -prune -o -type f \
-		    \( -name Makefile -o -name 'Makefile.*' -o -name '*.mk' \) \
-		    -print | xargs awk '
-			/^[ \t]*(MAN[0-9]*|MLINKS)[ \t]*[+?:]?=/ { inlist = 1 }
-			inlist {
-				for (i = 1; i <= NF; i++)
-					if ($i ~ /^[A-Za-z0-9_.:+-]+\.[1-9][a-z]*$/)
-						print $i
-				if ($0 !~ /\\$/)
-					inlist = 0
-			}'
-	} | grep -E '^[A-Za-z0-9_.:+-]+\.[1-9][a-z]*$' | sort -u
+	if [ "${2-}" = list ]; then
+		{
+			while IFS= read -r path; do
+				base=${path##*/}
+				case "$base" in *.[1-9]*) printf '%s\n' "${base%.in}" ;; esac
+			done < "$1"
+			while IFS= read -r path; do
+				base=${path##*/}
+				case "$base" in Makefile|Makefile.*|*.mk) printf '%s\n' "$path" ;; esac
+			done < "$1" | gen_man_makefiles
+		} | grep -E '^[A-Za-z0-9_.:+-]+\.[1-9][a-z]*$' | sort -u
+	else
+		{
+			find "$1" -name .git -prune -o -type f -name '*.[1-9]*' -print |
+			    sed -e 's,.*/,,' -e 's,\.in$,,'
+			find "$1" -name .git -prune -o -type f \
+			    \( -name Makefile -o -name 'Makefile.*' -o -name '*.mk' \) \
+			    -print | gen_man_makefiles
+		} | grep -E '^[A-Za-z0-9_.:+-]+\.[1-9][a-z]*$' | sort -u
+	fi
 }
 
 # Every statically declared sysctl as "S parent-oid leaf" (parent-oid is the
@@ -78,8 +98,13 @@ gen_man()
 # literal name at run time as "D leaf".
 gen_sysctl()
 {
-	find "$1/sys" -name .git -prune -o -type f \( -name '*.c' -o -name '*.h' \) \
-	    -print | xargs grep -l 'SYSCTL_' | xargs awk '
+	if [ "${2-}" = list ]; then
+		while IFS= read -r path; do printf '%s\n' "$path"; done < "$1" |
+		    xargs grep -l 'SYSCTL_'
+	else
+		find "$1/sys" -name .git -prune -o -type f \( -name '*.c' -o -name '*.h' \) \
+		    -print | xargs grep -l 'SYSCTL_'
+	fi | xargs awk '
 	function splitargs(s, args,    n, depth, i, c, cur) {
 		n = 0; depth = 0; cur = ""
 		for (i = 1; i <= length(s); i++) {
@@ -162,15 +187,25 @@ gen_sysctl()
 genonly=
 maninv=
 sysctlinv=
-while getopts g:m:s: opt; do
+input_list=
+while getopts g:m:s:i: opt; do
 	case "$opt" in
 	g) genonly=$OPTARG ;;
 	m) maninv=$OPTARG ;;
 	s) sysctlinv=$OPTARG ;;
+	i) input_list=$OPTARG ;;
 	*) usage ;;
 	esac
 done
 shift $((OPTIND - 1))
+if [ -n "$input_list" ]; then
+	[ "$genonly" = man -o "$genonly" = sysctl ] && [ $# -eq 0 ] || usage
+	[ -f "$input_list" ] || { echo "check-book.sh: $input_list: not a file" >&2; exit 2; }
+	case "$genonly" in
+	man) gen_man "$input_list" list; exit $? ;;
+	sysctl) gen_sysctl "$input_list" list; exit $? ;;
+	esac
+fi
 [ $# -eq 1 ] || usage
 root=$1
 [ -d "$root" ] || { echo "check-book.sh: $root: not a directory" >&2; exit 2; }

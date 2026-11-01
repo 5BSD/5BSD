@@ -1,3 +1,14 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "format_headers", hdrs = ["iso.h", "iso_rrip.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/makefs:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "kernel_headers",
+    hdrs = ["cd9660_mount.h", "cd9660_node.h", "cd9660_rrip.h", "iso.h", "iso_rrip.h"],
+    strip_include_prefix = "/sys", deps = ["//sys/geom:kernel_headers", "//sys/sys:iconv_headers"])
+amd64_generic_module_objects(
+    srcs = ["cd9660_bmap.c", "cd9660_lookup.c", "cd9660_node.c", "cd9660_rrip.c",
+        "cd9660_util.c", "cd9660_vfsops.c", "cd9660_vnops.c"],
+    deps = [":kernel_headers"])
+
+exports_files(["cd9660_iconv.c"], visibility = ["//sys/modules/cd9660_iconv:__pkg__"])

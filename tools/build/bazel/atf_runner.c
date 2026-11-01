@@ -274,6 +274,7 @@ main(int argc, char **argv)
 	const char *test_case = required("BSD_ATF_CASE");
 	const char *harness = required("BSD_ATF_HARNESS");
 	const char *interface = required("BSD_ATF_INTERFACE");
+	const char *required_user = getenv("BSD_ATF_REQUIRED_USER");
 	const char *executable;
 	const char *loader = getenv("BSD_ATF_LOADER");
 	int use_loader = loader != NULL && strcmp(loader, "1") == 0;
@@ -284,6 +285,18 @@ main(int argc, char **argv)
 	const char *cleanup = getenv("BSD_ATF_CLEANUP");
 	char *cleanup_case;
 	FILE *stream;
+
+	if (required_user != NULL && *required_user != '\0') {
+		if (strcmp(required_user, "root") == 0 && geteuid() != 0)
+			return (report_result(test_case, "skipped", "requires user root"));
+		if (strcmp(required_user, "unprivileged") == 0 && geteuid() == 0)
+			return (report_result(test_case, "skipped", "requires an unprivileged user"));
+		if (strcmp(required_user, "root") != 0 &&
+		    strcmp(required_user, "unprivileged") != 0) {
+			fprintf(stderr, "invalid required-user setting: %s\n", required_user);
+			return (1);
+		}
+	}
 
 	shell_interface = strcmp(interface, "shell") == 0;
 	if (!shell_interface && strcmp(interface, "program") != 0) {

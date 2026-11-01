@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["smbios.c"], visibility = ["//sys/modules/bios/smbios:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "kernel_headers", hdrs = ["smbios.h"],
+    strip_include_prefix = "/sys",
+    visibility = ["//sys/modules/bios/smbios:__pkg__"])

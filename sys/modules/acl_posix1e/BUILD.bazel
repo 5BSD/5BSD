@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(
+    srcs = ["//sys/kern:subr_acl_posix1e.c"],
+)
+
+amd64_generic_module(
+    module = "acl_posix1e",
+    objects = [":generic_module_object_files"],
+)

@@ -7,6 +7,17 @@ BsdDebugInfo = provider(fields = ["binary", "debug", "unstripped"])
 
 def _debug_split(ctx):
     binary = ctx.actions.declare_file(ctx.attr.binary_name)
+    if not ctx.attr.enabled:
+        ctx.actions.run(
+            executable = ctx.attr.objcopy[DefaultInfo].files_to_run,
+            arguments = ["--strip-debug", ctx.file.src.path, binary.path],
+            inputs = [ctx.file.src], tools = ctx.files.objcopy_inputs,
+            outputs = [binary], env = {"LC_ALL": "C"}, use_default_shell_env = False,
+            mnemonic = "BSDStripKernelDebug",
+        )
+        return [DefaultInfo(files = depset([binary])),
+                OutputGroupInfo(debug_files = depset()),
+                BsdDebugInfo(binary = binary, debug = None, unstripped = ctx.file.src)]
     debug = ctx.actions.declare_file(ctx.attr.debug_name)
     ctx.actions.run(
         executable = ctx.attr.objcopy[DefaultInfo].files_to_run,
@@ -32,6 +43,7 @@ bsd_debug_split = rule(
         "src": attr.label(allow_single_file = True, mandatory = True),
         "binary_name": attr.string(mandatory = True),
         "debug_name": attr.string(mandatory = True),
+        "enabled": attr.bool(default = True),
         "objcopy": attr.label(allow_single_file = True, executable = True, cfg = "exec", mandatory = True),
         "objcopy_inputs": attr.label(allow_files = True, cfg = "exec", mandatory = True),
     },

@@ -26,6 +26,20 @@ class ArtifactTests(unittest.TestCase):
         output=manifest['targets'][0]['outputs'][0]
         self.assertEqual((self.root/'artifacts'/output['file']).read_bytes(),b'original\n')
         self.assertEqual(manifest['targets'][0]['target']['configuration']['id'],'cfg')
+    def test_manifest_target_order_is_stable(self):
+        other=json.loads(json.dumps(self.events[0]))
+        other['id']['targetCompleted']['label']='//pkg:other'
+        set_event, leaf_event=self.events[1:]
+        streams=[self.events[0:1]+[other,set_event,leaf_event], [other,self.events[0],set_event,leaf_event]]
+        manifests=[]
+        for index, events in enumerate(streams):
+            path=self.root/f'events-{index}.json'
+            path.write_text(''.join(json.dumps(event)+'\n' for event in events))
+            destination=self.root/f'artifacts-{index}'
+            snapshot(path,destination)
+            manifests.append((destination/'manifest.json').read_bytes())
+        self.assertEqual(manifests[0],manifests[1])
+
     def test_metadata_groups_and_private_storage(self):
         group=self.events[0]['completed']['outputGroup'][0]
         group['name']='metadata'

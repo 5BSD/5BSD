@@ -4,12 +4,24 @@ load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-cc_library(name = "network_headers", hdrs = ["if.h", "vnet.h"], includes = [".."],
+cc_library(name = "network_headers", hdrs = ["if.h", "vnet.h", "netisr.h"], includes = [".."],
     deps = [], visibility = ["//visibility:public"])
 
-cc_library(name = "route_headers", hdrs = ["route.h"], includes = [".."], deps = [":network_headers"], visibility = ["//visibility:public"])
+cc_library(name = "bpf_headers", hdrs = ["bpf.h", "dlt.h"], includes = [".."],
+    deps = [":network_headers", "//sys/contrib/ck:kernel_headers"],
+    visibility = ["//sys/netgraph:__pkg__"])
 
-cc_library(name = "interface_headers", hdrs = ["if_var.h", "ifq.h", "bpfdesc.h"], includes = [".."], deps = [":network_headers", "//sys/contrib/ck:kernel_headers"], visibility = ["//visibility:public"])
+cc_library(name = "route_headers", hdrs = ["route.h"], includes = [".."], deps = [":network_headers"], visibility = ["//visibility:public"])
+cc_library(name = "route_nhop_headers", hdrs = ["route/nhop.h"], includes = [".."],
+    deps = [":route_headers"], visibility = ["//sys/netinet/cc:__pkg__"])
+cc_library(name = "ppp_defs_headers", hdrs = ["ppp_defs.h"], includes = [".."],
+    visibility = ["//sys/netgraph:__pkg__"])
+cc_library(name = "ethernet_headers", hdrs = ["ethernet.h"], includes = [".."],
+    deps = [":network_headers"], visibility = ["//sys/netgraph:__pkg__", "//tests/sys/netgraph:__pkg__"])
+cc_library(name = "vlan_headers", hdrs = ["if_vlan_var.h"], includes = [".."],
+    deps = [":interface_headers"], visibility = ["//sys/netgraph:__pkg__"])
+
+cc_library(name = "interface_headers", hdrs = ["if_var.h", "ifq.h", "bpfdesc.h", "if_types.h"], includes = [".."], deps = [":network_headers", "//sys/contrib/ck:kernel_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "interface_type_headers", hdrs = ["if_types.h"], includes = [".."], visibility = ["//sys/security/mac_test:__pkg__", "//sys/kern:__pkg__"])
 
@@ -22,3 +34,33 @@ cc_library(name = "netmap_user_headers", hdrs = ["netmap.h", "netmap_user.h", "n
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['ethernet.h', 'ieee_oui.h', 'if.h', 'if_tap.h', 'if_tun.h', 'netmap.h', 'netmap_legacy.h', 'netmap_user.h', 'netmap_virt.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+cc_library(name = "if_edsc_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if_clone.h", "if_private.h", "if_types.h"],
+    includes = [".."], deps = [":interface_headers"], visibility = ["//sys/modules/if_edsc:__pkg__"])
+
+cc_library(name = "if_disc_headers", hdrs = ["bpf.h", "dlt.h", "if_clone.h", "if_private.h", "if_types.h", "route.h", "vnet.h"],
+    includes = [".."], deps = [":interface_headers", ":network_headers", ":route_headers"], visibility = ["//sys/modules/if_disc:__pkg__"])
+
+cc_library(name = "if_enc_headers", hdrs = ["bpf.h", "dlt.h", "if_clone.h", "if_enc.h", "if_private.h", "if_types.h", "netisr.h", "pfil.h", "pfkeyv2.h", "route.h", "vnet.h"],
+    includes = [".."], deps = [":interface_headers", ":network_headers", ":route_headers"], visibility = ["//sys/modules/if_enc:__pkg__", "//sys/netipsec:__pkg__"])
+
+cc_library(name = "if_me_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if_clone.h", "if_private.h", "if_types.h", "netisr.h", "route.h", "vnet.h"],
+    includes = [".."], deps = [":interface_headers", ":network_headers", ":route_headers"], visibility = ["//sys/modules/if_me:__pkg__"])
+
+cc_library(name = "if_gif_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if_bridgevar.h", "if_clone.h", "if_gif.h", "if_private.h", "if_types.h", "netisr.h", "route.h", "vnet.h"],
+    includes = [".."], deps = [":interface_headers", ":network_headers", ":route_headers", "//sys/netinet:ipv4_interface_tunnel_headers", "//sys/netinet6:ipv6_interface_tunnel_headers", "//sys/netlink:tunnel_headers", "//sys/security/mac:framework_headers"], visibility = ["//sys/modules/if_gif:__pkg__"])
+
+cc_library(name = "if_gre_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if_clone.h", "if_gre.h", "if_private.h", "if_types.h", "netisr.h", "route.h", "vnet.h"],
+    includes = [".."], deps = [":interface_headers", ":network_headers", ":route_headers", "//sys/netinet:ipv4_interface_tunnel_headers", "//sys/netinet6:ipv6_interface_tunnel_headers", "//sys/netlink:tunnel_headers", "//sys/security/mac:framework_headers"], visibility = ["//sys/modules/if_gre:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+amd64_generic_module_objects(name = "if_edsc_module", srcs = ["if_edsc.c"], deps = [":if_edsc_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "if_disc_module", srcs = ["if_disc.c"], deps = [":if_disc_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "if_enc_module", srcs = ["if_enc.c"], deps = [":if_enc_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_ipsec_header", "//sys/netinet:ipv4_tunnel_headers", "//sys/netinet6:ip6_headers", "//sys/netipsec:if_enc_headers", "//sys/opencrypto:if_enc_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "if_me_module", srcs = ["if_me.c"], deps = [":if_me_headers", "//sys/netinet:ipv4_tunnel_headers", "//sys/security/mac:framework_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "if_gif_module", srcs = ["if_gif.c", "//sys/netinet:in_gif.c", "//sys/netinet6:in6_gif.c"], deps = [":if_gif_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "if_gre_module", srcs = ["if_gre.c", "//sys/netinet:ip_gre.c", "//sys/netinet6:ip6_gre.c"], deps = [":if_gre_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_rss_header", "//sys/vm:kernel_headers"])
+
+cc_library(name = "bridgestp_headers", hdrs = ["bridgestp.h", "ethernet.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h"],
+    includes = [".."], deps = [":interface_headers", "//sys/netinet:bridgestp_headers"], visibility = ["//sys/modules/bridgestp:__pkg__"])
+amd64_generic_module_objects(name = "bridgestp_module", srcs = ["bridgestp.c"], deps = [":bridgestp_headers", "//sys/vm:kernel_headers"])

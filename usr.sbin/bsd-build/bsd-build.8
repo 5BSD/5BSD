@@ -2457,6 +2457,13 @@ false corresponds to Make WITHOUT_VERIEXEC_DEBUG.
 Current core sources do not consume that definition, so both settings produce
 identical artifacts. Both variants have Make artifact and staged metadata
 comparisons; live enforcement remains unqualified.
+.Pp
+The boolean //tools/build/bazel/config:werror defaults to true, matching the
+maintained MK_WERROR default for amd64 kernel and module compilation.
+False omits -Werror while retaining the kernel warning flags.
+The qualification targets cover fourteen converted GENERIC amd64 Netgraph
+modules and one two-object built-in kernel group; the complete kernel is not
+qualified by those checks.
 For example, //tools/build/bazel/config:split_manpages set to true selects
 separate manual-page package ownership; false is the maintained default.
 The boolean //sbin/growfs:gfsdbg defaults to false and selects the maintained
@@ -3833,9 +3840,20 @@ The format-5 settings
 .Dq //tools/build/bazel/config:kernel_directory
 and
 .Dq //tools/build/bazel/config:kernel_debug_directory
-default to /boot/kernel and /usr/lib/debug. An empty debug directory places
-debug files beside the module. Setting changes preserve compiled payloads.
-Package assembly, complete module coverage and runtime qualification remain open.
+default to /boot/modules and /usr/lib/debug. An empty debug directory places
+debug files beside the module. The boolean settings
+.Dq //tools/build/bazel/config:kernel_ctf
+and
+.Dq //tools/build/bazel/config:kernel_debug
+select kernel/module CTF conversion and separate debug-file generation for
+these amd64 GENERIC targets. Either setting enables DWARF during compilation;
+when both are disabled, Bazel's opt-mode debug flag is overridden. Their
+defaults are disabled and match the selected Make profile with MK_CTF=no and
+empty DEBUG_FLAGS. Another Make profile must supply matching values explicitly.
+These settings do not infer arbitrary src.conf configuration. Setting changes
+preserve compiled payloads.
+Package assembly, complete module coverage and runtime qualification
+remain open.
 
 .Pp
 .Dq //tools/test/construction:nullfs_artifacts_test

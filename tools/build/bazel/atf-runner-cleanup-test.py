@@ -15,14 +15,19 @@ class CleanupLifecycle(unittest.TestCase):
     def setUpClass(cls):
         cls.storage = tempfile.TemporaryDirectory(prefix='atf-runner-cleanup-')
         cls.root = Path(cls.storage.name)
-        cls.runner = cls.root / 'runner'
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(SOURCE), '-o', str(cls.runner)], check=True)
+        runfiles = Path(os.environ.get('TEST_SRCDIR', '')) / os.environ.get('TEST_WORKSPACE', '')
+        runfile_runner = runfiles / 'tools/build/bazel/atf_runner'
+        if runfile_runner.is_file():
+            cls.runner = runfile_runner
+        else:
+            cls.runner = cls.root / 'runner'
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(SOURCE), '-o', str(cls.runner)], check=True)
 
     @classmethod
     def tearDownClass(cls):
         cls.storage.cleanup()
 
-    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False, loader=False, missing_loader=False):
+    def exercise(self, body_exit=0, cleanup_exit=0, result='passed', cleanup='1', signal=False, check_locale=False, xml=False, body_timeout="0", cleanup_timeout="0", hang_body=False, hang_cleanup=False, loader=False, missing_loader=False, required_user=""):
         with tempfile.TemporaryDirectory(dir=self.root) as tmp:
             root = Path(tmp)
             suite = root / 'workspace/atf-suite'
@@ -68,6 +73,7 @@ esac
             env = dict(os.environ, TEST_SRCDIR=str(root), TEST_WORKSPACE='workspace',
                        TEST_TMPDIR=str(root), BSD_ATF_CASE='example', BSD_ATF_HARNESS='fixture',
                        BSD_ATF_INTERFACE='program', BSD_ATF_LOADER='1' if loader else '0',
+                       BSD_ATF_REQUIRED_USER=required_user,
                        FIXTURE_LOADER_LOG=str(root / 'loader-calls'), BSD_ATF_CONFIG_COUNT='0', BSD_ATF_CLEANUP=cleanup,
                        BSD_ATF_BODY_TIMEOUT=str(body_timeout), BSD_ATF_CLEANUP_TIMEOUT=str(cleanup_timeout),
                        HANG_BODY='yes' if hang_body else 'no', HANG_CLEANUP='yes' if hang_cleanup else 'no',
@@ -75,6 +81,8 @@ esac
                        SIGNAL='yes' if signal else 'no', CHECK_LOCALE='yes' if check_locale else 'no')
             if xml:
                 env['XML_OUTPUT_FILE'] = str(root / 'test.xml')
+            else:
+                env.pop('XML_OUTPUT_FILE', None)
             if check_locale:
                 env.update({name: 'contaminated' for name in ['LANG', 'LC_ALL', 'LC_COLLATE', 'LC_CTYPE', 'LC_MESSAGES', 'LC_MONETARY', 'LC_NUMERIC', 'LC_TIME', 'TZ', 'PATH_LOCALE']})
             run = subprocess.run([str(self.runner)], env=env, capture_output=True, text=True, timeout=10)
@@ -142,6 +150,15 @@ esac
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(report.find('testsuite').get('skipped'), '0')
         self.assertIsNone(report.find('.//skipped'))
+
+    def test_required_user_is_checked_before_body(self):
+        required_user = 'root' if os.geteuid() != 0 else 'unprivileged'
+        run, report = self.exercise(xml=True, required_user=required_user)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(report.find('testsuite').get('skipped'), '1')
+        self.assertIn('requires', report.find('.//skipped').get('message'))
+        self.assertNotIn(': passed', run.stdout)
+        self.assertFalse(list(self.root.glob('atf.*/body-created')))
 
     def test_nonpassing_outcomes_are_explicit(self):
         for outcome in ('expected_failure', 'skipped'):

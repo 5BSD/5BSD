@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_SOURCE_PATH_FLAGS = ["-fmacro-prefix-map=tests/sys/netgraph=/usr/src/tests/sys/netgraph",
+    "-fdebug-prefix-map=tests/sys/netgraph=/usr/src/tests/sys/netgraph"]
+_ATF_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared",
+    "//lib/libnetgraph:netgraph_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libc.so.7",
+    "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"]
+
+cc_library(name = "netgraph_test_util", srcs = ["util.c"], hdrs = ["util.h"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libnetgraph:netgraph",
+        "//lib/libnetgraph:headers"], copts = ["-fpie"] + _SOURCE_PATH_FLAGS,
+    local_defines = ["PIC"],
+    target_compatible_with = _PLATFORM)
+
+cc_binary(name = "hub_test_program", srcs = ["hub.c"],
+    deps = [":netgraph_test_util", "//lib/atf/libatf-c:atf_c",
+        "//lib/libnetgraph:netgraph", "//lib/libnetgraph:headers"],
+    dynamic_deps = _ATF_RUNTIME[:2], copts = ["-fpie"] + _SOURCE_PATH_FLAGS,
+    local_defines = ["PIC"],
+    linkopts = ["-pie", "-Wl,-znow", "-Wl,-zrelro"],
+    target_compatible_with = _PLATFORM)
+cc_binary(name = "vlan_rotate_test_program", srcs = ["vlan_rotate.c"],
+    deps = [":netgraph_test_util", "//lib/atf/libatf-c:atf_c",
+        "//lib/libnetgraph:netgraph", "//lib/libnetgraph:headers",
+        "//sys/netgraph:bridge_test_headers", "//sys/net:ethernet_headers"],
+    dynamic_deps = _ATF_RUNTIME[:2], copts = ["-fpie"] + _SOURCE_PATH_FLAGS,
+    local_defines = ["PIC"],
+    linkopts = ["-pie", "-Wl,-znow", "-Wl,-zrelro"],
+    target_compatible_with = _PLATFORM)
+
+_HUB_CASES = ["basic", "persistence", "loop", "many_hooks"]
+_VLAN_ROTATE_CASES = ["basic", "reverse", "ethertype", "typeether", "minmax"]
+[bsd_atf_test(name = "hub_" + case, case_name = case, interface = "program",
+    body = ":hub_test_program", runner = "//tools/build/bazel:atf_runner",
+    required_user = "root", runtime_lib = _ATF_RUNTIME, tags = ["exclusive"],
+    size = "small") for case in _HUB_CASES]
+[bsd_atf_test(name = "vlan_rotate_" + case, case_name = case, interface = "program",
+    body = ":vlan_rotate_test_program", runner = "//tools/build/bazel:atf_runner",
+    required_user = "root", runtime_lib = _ATF_RUNTIME, tags = ["exclusive"],
+    size = "small") for case in _VLAN_ROTATE_CASES]
+test_suite(name = "tests", tests = [":" + "hub_" + case for case in _HUB_CASES] +
+    [":" + "vlan_rotate_" + case for case in _VLAN_ROTATE_CASES], visibility = ["//visibility:public"])

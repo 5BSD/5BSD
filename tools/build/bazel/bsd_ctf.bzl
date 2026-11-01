@@ -10,9 +10,6 @@ load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 def _convert(ctx):
     if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
         fail("select ctf_label or ctf_label_setting")
-    label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
-    if not label:
-        fail("an explicit CTF label is required")
     source = ctx.attr.library
     regular = []
     pic = []
@@ -34,25 +31,31 @@ def _convert(ctx):
                 pic += lib.pic_objects
     if not regular and not pic:
         fail("CTF requires the selected library's own compilation objects")
-    runtime_dirs = depset([f.dirname for f in ctx.files.runtime]).to_list()
     converted = {}
-    for variant, objects in [("regular", regular), ("pic", pic)]:
-        if len(depset(objects).to_list()) != len(objects):
-            fail("duplicate CTF object inputs")
-        outputs = []
-        for index, obj in enumerate(objects):
-            # ctfmerge sorts input paths before merging types. Put the object
-            # basename before the collision discriminator so unique-basename
-            # inputs retain the same ordering as ordinary Make objects.
-            # The index still distinguishes equal-basename input objects.
-            out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + obj.basename + "/" + str(index) + "/" + obj.basename)
-            ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
-                arguments = (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path, obj.path],
-                inputs = [obj], tools = ctx.files.runtime, outputs = [out],
-                env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(runtime_dirs)},
-                use_default_shell_env = False, mnemonic = "BSDCtfConvert")
-            outputs.append(out)
-        converted[variant] = outputs
+    if ctx.attr.enabled:
+        label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
+        if not label:
+            fail("an explicit CTF label is required")
+        runtime_dirs = depset([f.dirname for f in ctx.files.runtime]).to_list()
+        for variant, objects in [("regular", regular), ("pic", pic)]:
+            if len(depset(objects).to_list()) != len(objects):
+                fail("duplicate CTF object inputs")
+            outputs = []
+            for index, obj in enumerate(objects):
+                # ctfmerge sorts input paths before merging types. Put the object
+                # basename before the collision discriminator so unique-basename
+                # inputs retain the same ordering as ordinary Make objects.
+                # The index still distinguishes equal-basename input objects.
+                out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + obj.basename + "/" + str(index) + "/" + obj.basename)
+                ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
+                    arguments = (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path, obj.path],
+                    inputs = [obj], tools = ctx.files.runtime, outputs = [out],
+                    env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(runtime_dirs)},
+                    use_default_shell_env = False, mnemonic = "BSDCtfConvert")
+                outputs.append(out)
+            converted[variant] = outputs
+    else:
+        converted = {"regular": regular, "pic": pic}
     toolchain = find_cc_toolchain(ctx)
     features = cc_common.configure_features(ctx = ctx, cc_toolchain = toolchain,
         requested_features = ctx.features, unsupported_features = ctx.disabled_features)
@@ -74,6 +77,7 @@ bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLi
     attrs = {"library": attr.label(providers = [CcInfo], mandatory = True),
         "converter": attr.label(executable = True, cfg = "exec", mandatory = True),
         "runtime": attr.label_list(allow_files = True, cfg = "exec"),
+        "enabled": attr.bool(default = True),
         "ctf_label": attr.string(),
         "ctf_label_setting": attr.label(providers = [BuildSettingInfo]),
         "preserve_debug": attr.bool(default = False)},
@@ -83,6 +87,10 @@ bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLi
 def _merge(ctx):
     if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
         fail("choose either ctf_label or ctf_label_setting")
+    out = ctx.actions.declare_file(ctx.attr.output)
+    if not ctx.attr.enabled:
+        ctx.actions.symlink(output = out, target_file = ctx.file.linked)
+        return [DefaultInfo(files = depset([out]))]
     label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
     if not label:
         fail("an explicit CTF label is required")
@@ -96,7 +104,6 @@ def _merge(ctx):
         staged = ctx.actions.declare_file(ctx.label.name + "/merge_inputs/" + obj.basename + "/" + str(index) + "/" + obj.basename)
         ctx.actions.symlink(output = staged, target_file = obj)
         objects.append(staged)
-    out = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
     args.add_all(["--copy-executable" if ctx.attr.is_executable else "--copy", ctx.file.linked.path, out.path,
         "--", ctx.executable.merger.path] + (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path])
@@ -114,6 +121,7 @@ bsd_ctf_merge = rule(implementation = _merge, attrs = {
     "merger": attr.label(executable = True, cfg = "exec", mandatory = True),
     "copy_runner": attr.label(executable = True, cfg = "exec", mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),
+    "enabled": attr.bool(default = True),
     "output": attr.string(mandatory = True),
     "ctf_label": attr.string(),
     "ctf_label_setting": attr.label(providers = [BuildSettingInfo]),

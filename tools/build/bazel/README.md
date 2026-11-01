@@ -5,6 +5,15 @@ its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
+**Current status (2026-11-01):** the recursive Make inventory counts 729
+selected amd64 GENERIC kernel modules; 78 have direct Bazel module declarations.
+All 17 converted Netgraph modules currently pass `build-bsd` compilation and
+byte/installation-metadata parity against tied GENERIC Make output. The Bazel
+9.3.1 port bootstrap with output-query error-propagation fixes passed, but a
+redistributable, independently bootstrapped toolchain and complete Bazel world,
+kernel, pkgbase and runtime qualification remain open. Make stays the production
+backend.
+
 **Embedded-policy qualification correction (2026-10-27):** symbol, linkage
 and DTrace parity alone do not prove signing-input parity. BSDNotify now embeds
 and verifies `.5bsd.policy` against Make. BSDLog, BSDAudit, BSDTime and BSDPower
@@ -34080,9 +34089,10 @@ userland mode on the module are rejected. Native kldxref reads the native and
 Make modules and emits identical 64-byte linker.hints. No module was loaded.
 
 //sys/modules/nullfs:install_manifest declares module/debug destinations and
-package=kernel tags. Format-5 settings kernel_directory (default /boot/kernel)
-and kernel_debug_directory (default /usr/lib/debug) select roots; an empty debug
-root places debug beside the module. bsd_install_file supports ordered string
+package=kernel tags. The source tree's default KMODDIR is /boot/modules, and
+format-5 setting kernel_directory now uses that value by default. The
+kernel_debug_directory setting defaults to /usr/lib/debug; an empty debug root
+places debug beside the module. bsd_install_file supports ordered string
 setting prefixes without changing existing static callers. The initial 0555
 mode assumption was caught by the Make install comparison and corrected to
 0444. NO_ROOT alone in the standalone module recipe did not activate install -U;
@@ -45471,6 +45481,64 @@ Frontend review: rejected wiring has been removed; the discovery utility is
 not a new build input or user-facing option, so no frontend/backend change is
 required by this committed diagnostic step.
 
+### bsdinstall inventory inputs and tests-enabled archive (2026-11-01)
+
+The type-aware repository watch is now used by `book_inventory_repository`.
+It watches each source directory listing, symlinks the selected regular files
+into a local external repository, and exposes file groups for the manual and
+sysctl inventory generators. The scanner selects manual-name source files and
+Make metadata, plus all `sys/` C/header candidates. Including every C/header
+candidate as a declared input means adding or removing `SYSCTL_` in an existing
+file invalidates the action through normal input hashing. Directory membership
+and entry-type changes trigger repository reevaluation through the patched
+Bazel 9 Dirents fingerprint.
+
+The first action design copied those inputs into a tree artifact before
+running `check-book.sh`. It passed output comparison but wrote 16,544 files
+(about 135 MiB) in 138.336 seconds on this host. That copy design was dropped.
+The maintained checker now accepts `-i` with a declared path list and runs its
+existing awk/grep/sort/xargs parsing directly over those declared files. The
+current source view has 15,312 manual/Makefile inputs and 14,602 `sys/`
+C/header inputs (425,565,760 logical bytes); scan plus both generator runs
+took 8.203 seconds and peaked at 23,808 KiB RSS in a warm host measurement.
+
+The new file-list mode matches the retained Make-generated inventories by
+SHA-256: 19,177 manual records (345,987 bytes) and 7,951 sysctl records
+(167,576 bytes). The three scanner/checker unit tests pass, including fixture
+comparison between root scanning and declared-file-list mode. A fresh full-tree
+Make reference scan was started after the checker change but stopped after over
+a minute while the host was heavily loaded; the prior reference hashes remain
+available in `file-list-make-parity.json`, and are independently matched against
+the file-list outputs. Bazel action execution and archive comparison remain
+pending. Evidence and source path lists are under
+`/usr/obj/usr/src/bazel-book-inventories-20261101/`.
+
+The `bsdinstall` test fixture manifest now includes both generated inventory
+files. Its parent `install_archive` accepts `tests=true` and merges the
+maintained test directory records and `/usr/tests` mtree policy instead of
+rejecting that configuration. This is source graph work, not yet a Bazel
+build or complete archive parity result. The selected SDK was refreshed from
+maintained Make outputs without host installation: the new receipt covers 8,382
+inputs and 42 execution-host dependencies with zero missing or changed entries;
+its 8,331-file snapshot has zero missing files or hash mismatches. The maintained
+plan export and tool staging then passed. The initial `build-bsd bazel-test`
+attempt stopped before analysis because the existing lock lacked a checksum for
+`apple_support` 1.24.2. A temporary minimal Bzlmod workspace reproduced the
+broad lock-update blocker: rules_python 1.7.0 has no host-compatible Python 3.11
+runtime on FreeBSD, so its publishing-dependency extension fails despite its
+module declaring Python 3.11. No partial lockfile update was retained. A later
+run using the existing locked graph and downloads disabled successfully built
+the selected bsdinstall targets; this did not qualify the general lock refresh.
+No VM, host install, upgrade or reboot was used.
+
+The previous repository experiment section records the earlier rejected
+candidate. The current implementation uses the type-aware patched Bazel and
+avoids per-file repository content watches. Real source-mutation, archive
+comparison, and full `build-bsd` qualification remain open. The frontend
+already accepts these explicit targets and settings; no `build-bsd.c` or manual
+contract change was needed. The selected build is recorded below. Make remains
+the production backend.
+
 ### Type-aware repository directory invalidation (2026-11-01)
 
 The 9.3.1 port candidate changes `RepoRecordedInput.Dirents` fingerprints to
@@ -45508,3 +45576,1113 @@ no frontend or manual change is required. The locally installed Bazel remains
 unpatched and was used only as a negative regression control. The corrected
 port candidate still needs integration into the installed build environment
 before repository-based installer inventory generation can rely on it.
+
+### Bzlmod host interpreter qualification — 2026-11-01
+
+The failed Bazel 9 lock refresh was isolated in a temporary workspace with an
+explicit `rules_python` 1.7.0 dependency and the documented Python 3.11
+`python.defaults()` / `python.toolchain()` declarations. It still fails on this
+FreeBSD host: rules_python reports that no host-compatible Python 3.11 runtime
+exists, then its own publishing-dependency `pip.parse` extension cannot resolve
+`python_3_11_host`. The host provides Python 3.12; the Python 3.11 port source
+exists in `/usr/obj/5BSD-ports`, but no staged runtime is present. This is a
+FreeBSD host-runtime compatibility gap, not an omitted `python.toolchain()`
+call. The general root lock refresh remains blocked until the toolchain input is
+supplied or the dependency graph is changed with an equally reproducible,
+reviewed solution. Selected targets that do not need to refresh the lock can
+build offline from the current locked graph. No source workaround or manual
+lockfile hash was applied. The isolated probe is under
+`/tmp/bazel-python-probe-20261101/`; its output root is under `/usr/obj`.
+
+The rules_python 1.7.0 toolchain API supports adding an arbitrary platform with
+explicit OS, architecture, runtime archive URL and SHA-256. Its host detection
+recognizes FreeBSD. A future lock refresh should use a real Python 3.11 host
+runtime from the selected `lang/python311` port, package that runtime as a
+pinned declared tool input, and register its FreeBSD host platform through
+that API. A placeholder runtime, a version-mismatched Python 3.12 executable,
+or an unpinned host path would not qualify. The port work directory has no
+staged interpreter yet.
+
+### Maintained bsdinstall frontend build — 2026-11-01
+
+The maintained `build-bsd bazel-test` frontend completed successfully with
+Bazel 9.3.1 and the existing lockfile for
+`//usr.sbin/bsdinstall/tests:fixture_archive`,
+`//usr.sbin/bsdinstall/tests:srctree`, and
+`//usr.sbin/bsdinstall:install_archive`. The configured test inventory was
+empty, so the frontend ran a Bazel build; this result is not a test pass. Bazel
+completed 5,083 actions in 257.917 seconds, with 355 action-cache hits. The
+frontend retained 105 unique declared artifacts (8,351,598 bytes).
+
+The run used the verified 544-entry repository cache copied under the
+qualification output and 47 declared distdir files. Cache hashes matched
+before/after staging, and the source cache and distdirs remained unchanged.
+The receipt is
+`/usr/obj/usr/src/bazel-bsdinstall-frontend-20261101/receipt.json`; raw action
+and event logs are beside it. This proves selected-target build execution
+through the maintained frontend. A fresh `install-reference.py` Make stage at
+`/usr/obj/usr/src/bazel-bsdinstall-make-reference-20261101` then matched all 191
+archive installation records, including ownership, group, mode, tags, links,
+and file types. Of the regular payloads, 152 are byte-identical; the eight
+ELF/debug files with build-dependent bytes have matching symbol inventories,
+the four executable ELF files have matching dynamic tags, and all four
+`.gnu_debuglink` CRCs match. The two generated book inventories also match
+their Make-produced references by SHA-256. The audit receipt is
+`/usr/obj/usr/src/bazel-bsdinstall-frontend-20261101/archive-parity.json`.
+
+The frontend's configured Bazel test inventory was empty, so that invocation
+did not run tests. After private archive extraction, host Kyua ran
+`documentation_test:native_book_matches_code` from the Bazel-produced archive;
+the case passed in 0.404 seconds against the declared source fixture and
+generated inventories. This is runtime evidence for one installed ATF case,
+not execution through `bazel test`; the other installer cases remain unrun.
+The source graph consumes the prepared Make-built SDK, so this does not prove
+Bazel compiles every installer program. It also does not establish world,
+kernel, package, installation lifecycle, or comparative performance coverage.
+
+The case is now also a declared Bazel test target,
+`//usr.sbin/bsdinstall/tests:native_book_matches_code_test`, in
+`usr.sbin/bsdinstall/tests/BUILD.bazel`. It stages the maintained test script,
+all `TEST_SOURCES` beneath the same `srctree/` path used by the installer
+archive, and both Bazel-generated book inventories. `build-bsd bazel-test` ran
+the one selected ATF case through the existing `bsd_kyua_test` rule and passed
+1/1 case (Bazel elapsed time 3.677 seconds; 104 actions, 49 cache hits). The
+first attempt failed because the suite files omitted the `srctree/` prefix; the
+mapping was corrected and the fresh rerun passed. Host `/usr/libexec/atf-sh`,
+`atf-check`, shell utilities and the selected Make-built SDK remain execution
+inputs, so this is not hermetic-runtime or whole-installer qualification. The
+existing format-5 frontend already accepts explicit target and test labels;
+no C frontend or manual interface change was needed.
+
+### cd9660 native module and install-root qualification (2026-11-01)
+
+`//sys/modules/cd9660:generic_module` builds the seven maintained cd9660
+sources through the reusable amd64 GENERIC module rules. The module install root
+is `/boot/modules`, matching the Make query and the Bazel setting default. Its
+format-5 install manifest records `/boot/modules/cd9660.ko`, root/wheel,
+0444, and `package=kernel`; this matches the staged Make METALOG record.
+
+The Make reference uses the GENERIC kernel module environment
+`MODULE_TIED=yes`, as set by `sys/conf/kern.post.mk`, plus
+`MK_REPRODUCIBLE_PATHS=yes PREFIX_SYSDIR=sys`. A standalone module Make
+invocation without `MODULE_TIED` has different kernel compatibility metadata
+and is not the right reference for the kernel build. The selected Make profile
+reports `MK_CTF=no` and empty `DEBUG_FLAGS`. Matching Bazel settings disable
+kernel CTF and debug-file generation. The maintained `build-bsd bazel-test`
+action passed for `//sys/modules/cd9660:generic_module` and
+`//sys/modules/cd9660:install_manifest`; no test target was selected.
+
+The initial comparison found differing `.llvm_addrsig` entries because Bazel's
+opt configuration supplied `-g` even when the selected Make profile had empty
+`DEBUG_FLAGS`. The shared amd64 rule now adds `-g0` when both kernel CTF and
+separate debug output are disabled, and enables DWARF when either feature needs
+it. The kernel CTF/debug values already pass through format-5 build settings;
+no frontend option was bypassed.
+
+After that correction, the default-profile Bazel and Make modules are
+byte-for-byte identical (61,568 bytes; SHA-256
+`2a01fa76dce4efdd89f407256427e99b7e4b851b78f2a169db87f163ce632abd`). Their
+224 `llvm-nm --print-size` records, 692 normalized relocations, all ELF
+sections, and installation metadata match. The report is
+`/usr/obj/usr/src/bazel-cd9660-debug-parity-fix-r2-20261101/parity-report.json`.
+The Make reference used `MODULE_TIED=yes`, matching `sys/conf/kern.post.mk`,
+plus reproducible source paths. No module was installed on the host or loaded.
+
+The CTF plus split-debug variant now has a matching Make reference. The
+format-5 input sets `kernel_ctf_label` to the Make `VERSION` query result
+(`5BSD 16.0-CURRENT amd64 1600027`); matching logical DWARF prefix maps keep
+source paths reproducible. The Bazel and Make `.ko` files (89,568 bytes) and
+`.ko.debug` files (734,648 bytes) are byte-for-byte identical. `ctfdump` output,
+debuglink name and CRC, install metadata, and `kldxref` kernel dependency and
+`linker.hints` also match. See
+`/usr/obj/usr/src/bazel-cd9660-ctf-debug-prefixmap-20261101/parity-report.json`.
+This is a positive Make comparison with explicitly equivalent CTF/debug and
+logical-path settings; it does not establish automatic version-label selection
+for every build profile.
+
+The CTF-only and debug-only setting combinations also build through the maintained
+frontend and select the expected output files. These `bazel-test` actions select
+no test targets. No module was installed on the host or loaded. This qualifies
+one module on amd64 GENERIC; complete module coverage, runtime loading, package
+assembly, other architectures and a full kernel build remain open. Only 55 of 1,003 `sys/modules` directories with Makefiles currently have BUILD files.
+
+### tmpfs native module parity (2026-11-01)
+
+`//sys/modules/tmpfs:generic_module` builds the four maintained tmpfs sources
+through the shared amd64 GENERIC module and CTF/debug rules. The maintained
+`build-bsd bazel-test` format-5 frontend completed the selected module and
+install-manifest targets with default kernel CTF/debug settings; no test target
+was selected. A fresh Make reference used the tied GENERIC module profile
+(`MODULE_TIED=yes`, `KERNBUILDDIR=/usr/obj/usr/src/amd64.amd64/sys/GENERIC`,
+`MK_REPRODUCIBLE_PATHS=yes`, `PREFIX_SYSDIR=sys`) with a separate object and
+stage root.
+
+The staged Make module and Bazel module are byte-for-byte identical at 148,080
+bytes (SHA-256
+`389a7eaafac07a12467a7213d28d83443cb1eec5dcf00d22a68350fe97d28bb0`). The
+Bazel install manifest and Make METALOG both record `/boot/modules/tmpfs.ko`,
+root/wheel, mode 0444 and `package=kernel`. Running the same maintained
+`kldxref` binary on isolated copies produced identical `linker.hints` (SHA-256
+`57491cbede15abfcf92e95e4cd2f3f61e2e65740589ec782596b315018ae3ba7`). The
+parity report is
+`/usr/obj/usr/src/bazel-tmpfs-qualification-20261101/parity-report.json`.
+No module was installed on the host or loaded. Runtime loading, package
+assembly, CTF/debug variants, other architectures and performance remain
+unqualified for tmpfs; this does not establish complete module coverage.
+
+### Accept-filter kernel modules (2026-11-01)
+
+Added Bazel targets for `accf_data`, `accf_dns`, `accf_http` and `accf_tls`.
+Each module explicitly consumes its source from `sys/netinet` and declares the
+VM header package needed by `mbuf.h`; this dependency stays local to these
+modules rather than broadening the common kernel header closure. All four
+module and install-manifest targets built through `build-bsd bazel-test` with
+the format-5 graph and the 16-CPU host setting. The first compile identified
+`vm/uma.h` as an undeclared dependency; after declaring `//sys/vm:kernel_headers`
+for these targets, the maintained Bazel build passed. The receipt and artifact
+manifest are under
+`/usr/obj/usr/src/bazel-accf-modules-r3-20261101/`.
+
+Fresh Make builds used the tied amd64 GENERIC module profile, the same
+`KERNBUILDDIR`, `MODULE_TIED=yes`, reproducible paths, and CTF/debug disabled.
+All four Bazel `.ko` files are byte-for-byte identical to their Make outputs.
+The Bazel manifests and Make's install command both specify `/boot/modules`,
+root:wheel, mode 0444 and `package=kernel`. The Make compile logs and outputs
+are under `/usr/obj/usr/src/bazel-accf-make-qualification-20261101/`.
+
+The four sources contain no direct DTrace or audit markers; this migration adds
+none and does not establish runtime observability. No module was installed or
+loaded, and no dedicated module behavior tests exist in this target set. Runtime
+loading, accept-filter socket behavior, CTF/debug variants and non-amd64 builds
+remain open. Module directories with Makefiles now total 1,003, with 55 having
+BUILD files; this is still a small portion of module coverage.
+
+Repeated format-5 qualification runs reused the cached module outputs. Their
+BEP artifact contents were the same, but the retained manifest hashes differed
+because BEP reports target completions in varying order. The snapshotter now
+sorts target records by their configured identity; the regression suite passes
+16/16 cases, and two subsequent qualification runs produce the same artifact
+manifest SHA-256 (`f7c599877a42fd43253e3484df26f7957385d98c3490d33b49814a135ead8005`).
+This qualifies deterministic artifact capture for this repeated target set; it
+does not establish general cache invalidation correctness for the complete graph.
+
+The artifact snapshotter's 16-case unittest suite is now a declared
+`//tools/build/bazel:bep_artifacts_test` target. The reusable
+`bsd_python_test` rule runs tests with the selected SDK's `extra_python`, Python
+home and runtime files; it does not depend on an undeclared host Python or add a
+new `rules_python` dependency to the module graph. The maintained
+`build-bsd bazel-test` frontend passed this target (1/1 test action, 1/1 case)
+with the format-5 inputs. Its receipt and test report are under
+`/usr/obj/usr/src/bazel-bep-test-qualified-r2-20261101/`. The first sandbox run
+caught that the Python executable itself was missing from runfiles; after
+adding that declared input, the sandboxed SDK-backed test passed. This qualifies
+this helper test's runtime closure, not the full SDK Python runtime or every
+Python-based test in the tree.
+
+### RC4 kernel module export parity (2026-11-01)
+
+Added a source-owned `rc4_module` object target in `sys/crypto/BUILD.bazel`
+with an explicit `rc4.h` dependency, and a `//sys/modules/rc4` target using
+`export_all = True` to preserve the Makefile's `EXPORT_SYMS=YES` behavior.
+Both the module and install-manifest targets passed through `build-bsd
+bazel-test` using the maintained format-5 graph. A tied amd64 GENERIC Make
+reference used the same kernel object tree with CTF and split debug disabled.
+The `.ko` outputs are byte-for-byte identical (11,136 bytes), which also
+preserves the full exported symbol set. The Bazel install manifest and Make
+install command both specify `/boot/modules/rc4.ko`, root:wheel, mode 0444 and
+`package=kernel`. Evidence is under
+`/usr/obj/usr/src/bazel-rc4-module-20261101/` and
+`/usr/obj/usr/src/bazel-rc4-make-qualification-20261101/`.
+
+The source has no direct DTrace, SDT or audit markers. No module was loaded;
+runtime behavior, CTF/debug variants and other architectures remain open. The
+module-directory inventory now finds 55 BUILD files among 1,003 module
+Makefiles; source and module coverage remains incomplete.
+
+### nmdm module DTrace artifact parity (2026-11-01)
+
+Added source-owned `//sys/dev/nmdm:generic_module_object_files` and
+`//sys/modules/nmdm` module/install-manifest targets. The maintained
+`build-bsd bazel-test` format-5 build passed for both targets. A fresh tied
+amd64 GENERIC Make build used the same kernel object tree, with CTF and split
+debug disabled. The two 18,784-byte module outputs are byte-for-byte identical.
+Both retain `nmdm__rate__configured`, plus the `set_sdt_tracepoint_set`,
+`set_sdt_probes_set` and `set_sdt_argtypes_set` sections. Make's install command
+and Bazel's install manifest agree on `/boot/modules/nmdm.ko`, root:wheel, mode
+0444 and `package=kernel`. Evidence is under
+`/usr/obj/usr/src/bazel-nmdm-module-20261101/` and
+`/usr/obj/usr/src/bazel-nmdm-make-qualification-20261101/`.
+
+This verifies emitted probe metadata parity, not live probe firing or nmdm
+runtime behavior; the module was not installed or loaded. CTF/debug variants
+and other architectures remain open. The current inventory finds 54 BUILD files
+among 1,003 module Makefiles.
+
+### if_edsc network module and configured-module baseline (2026-11-01)
+
+Added source-owned `//sys/net:if_edsc_module_object_files` and
+`//sys/modules/if_edsc` module/install-manifest targets. Its declared headers
+cover the direct BPF, DLT, Ethernet, interface-clone, interface-private and
+interface-type includes; the object target also declares the VM header package
+required through `mbuf.h`. The first builds exposed the missing dependencies in
+sequence; after declaration, both targets passed through maintained
+`build-bsd bazel-test`.
+
+A fresh Make build used the tied amd64 GENERIC module profile with CTF and split
+debug disabled. The Make and Bazel `if_edsc.ko` outputs are byte-for-byte
+identical at 15,336 bytes. Both install descriptions specify
+`/boot/modules/if_edsc.ko`, root:wheel, mode 0444 and `package=kernel`. Evidence
+is under `/usr/obj/usr/src/bazel-if-edsc-module-r5-20261101/` and
+`/usr/obj/usr/src/bazel-if-edsc-make-qualification-20261101/`. No module was
+loaded; runtime interface behavior and other build profiles remain open. The
+source has no direct DTrace or audit markers.
+
+The maintained inventory uses recursive Make `SUBDIR` queries for amd64, with
+source and make configuration files set to `/dev/null` and the GENERIC kernel
+option set supplied to `linuxkpi`. After adding `if_me`, it selected 729 leaf
+KMODs. Forty-three selected module directories have a BUILD file, but only 42
+contain a direct Bazel module macro invocation; the zfs BUILD file is partial,
+leaving 687 selected KMODs without a direct module target. Across the full
+modules tree, 59 of 1,003 module Makefile directories have BUILD files. The
+complete inventory is `/usr/obj/usr/src/bazel-module-coverage-generic-if-me-20261101.json`.
+It measures Make's configured selection and direct module-macro presence, not
+a Bazel build or runtime qualification of all 729 modules.
+
+### bridgestp kernel module (2026-11-01)
+
+Added `//sys/net:bridgestp_module_object_files` and a native
+`//sys/modules/bridgestp` module/install-manifest target. Its Makefile declares
+`EXPORT_SYMS=YES`; the Bazel module uses `export_all = True`. The source-owned
+header closure explicitly declares the bridge, Ethernet, interface, IPv4 and
+IPv6 headers used by `bridgestp.c`. Compile attempts exposed the missing
+transitive header dependencies before the final declared closure built.
+
+Both Bazel targets passed the maintained `build-bsd bazel-test` configured
+build at `/usr/obj/usr/src/bazel-bridgestp-qualification-r5-20261101/`. No test
+was selected, so this is a build pass, not a behavioral test pass. A fresh Make
+reference used the same amd64 GENERIC kernel headers, tied-module mode, disabled
+CTF/debug output, and a source path mapping for equivalent reproducible object
+paths. The 39,640-byte Bazel and Make `bridgestp.ko` files are byte-for-byte
+identical. Make's install command and Bazel's manifest both specify
+`/boot/modules/bridgestp.ko`, root:wheel, mode 0444 and `package=kernel`.
+Evidence, including the exact artifact hashes, byte-comparison result and Make
+install dry-run, is under `/usr/obj/usr/src/bazel-bridgestp-make-qualification/`
+and `/usr/obj/usr/src/bazel-bridgestp-qualification-r5-20261101/`.
+The maintained module inventory regression target also passed 1/1 test case
+through `build-bsd bazel-test`; its receipt is
+`/usr/obj/usr/src/bazel-module-inventory-test-current-20261101/receipt.json`.
+
+The source has no direct DTrace, SDT or audit markers. The module was not
+installed or loaded, so STP runtime behavior, live observability, CTF/debug
+variants and other architectures remain unqualified. The existing
+`tests/sys/net/if_bridge_test.sh` suite has `stp` and `stp_vlan` cases using
+VNET jails and requiring root; they were not run in this build qualification
+and need VM runtime coverage. The amd64 GENERIC inventory is complete with 729
+selected leaf KMODs, 43 BUILD files and 42 direct module targets; 687 selected
+modules still need targets, with the zfs BUILD file partial. Across the entire
+modules tree, 59 of 1,003 module Makefile directories have BUILD files. The
+retained report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-if-me-20261101.json`.
+
+### if_disc network module (2026-11-01)
+
+Added `//sys/net:if_disc_module_object_files` and native
+`//sys/modules/if_disc` module/install-manifest targets. The target declares the
+INET and INET6 GENERIC option headers listed in Make's `SRCS`, along with the
+interface, BPF/DLT, route and VM header dependencies. The first compile exposed
+the missing `net/dlt.h` declaration; the completed header closure now builds.
+
+The maintained `build-bsd bazel-test` build passed both module and manifest
+targets at `/usr/obj/usr/src/bazel-if-disc-qualification-r2-20261101/`. The
+15,080-byte tied amd64 GENERIC Bazel module matches the fresh Make output
+byte-for-byte. Make's install command and Bazel manifest both specify
+`/boot/modules/if_disc.ko`, root:wheel, mode 0444 and `package=kernel`.
+Artifact hashes and install evidence are under
+`/usr/obj/usr/src/bazel-if-disc-make-qualification/` and
+`/usr/obj/usr/src/bazel-if-disc-qualification-r2-20261101/`.
+
+There are no direct DTrace, SDT or audit markers in the source. No runtime test
+was selected; the module was not loaded. Packet discard behavior, CTF/debug
+variants and other architectures remain unqualified. Coverage counts are from
+the refreshed module inventory above.
+
+### if_enc IPsec interface module (2026-11-01)
+
+Added native `//sys/net:if_enc_module_object_files` and
+`//sys/modules/if_enc` module/install-manifest targets. The Bazel object target
+declares the INET, INET6 and IPsec GENERIC option headers from Make's `SRCS`,
+plus network, IPv4/IPv6, IPsec and OpenCrypto header targets. The IPsec option
+header was added to the generated GENERIC header set and exposed as a declared
+target. Compile and analysis failures exposed missing header and visibility
+edges; the final graph builds without replacing or omitting source inputs.
+
+The maintained `build-bsd bazel-test` build passed the module and manifest
+targets at `/usr/obj/usr/src/bazel-if-enc-me-qualification-r2-20261101/`. A fresh
+tied amd64 GENERIC Make build used the same option headers, disabled CTF/debug
+output and matching source path mapping. The 21,536-byte module outputs are
+byte-for-byte identical. Make and Bazel install metadata agree on
+`/boot/modules/if_enc.ko`, root:wheel, mode 0444 and `package=kernel`. Exact
+hashes and install dry-run are under
+`/usr/obj/usr/src/bazel-if-enc-make-qualification/` and
+`/usr/obj/usr/src/bazel-if-enc-me-qualification-r2-20261101/`.
+
+No test was selected and the module was not loaded. IPsec capture behavior,
+runtime networking, CTF/debug variants and other architectures remain
+unqualified. The source has no direct DTrace, SDT or audit markers.
+
+### if_me minimal encapsulation module (2026-11-01)
+
+Added native `//sys/net:if_me_module_object_files` and
+`//sys/modules/if_me` module/install-manifest targets. Its declared closure
+includes interface/BPF/Ethernet headers, the shared IPv4 tunnel headers, the
+MAC framework header target and required VM headers. The IPv4 dependency target
+is shared with `if_enc` because both consume the same protocol and encapsulation
+interfaces.
+
+Both Bazel targets passed through the maintained `build-bsd bazel-test` at
+`/usr/obj/usr/src/bazel-if-enc-me-qualification-r2-20261101/`. The tied amd64
+GENERIC Make and Bazel outputs are byte-for-byte identical (27,328 bytes).
+Their install records agree on `/boot/modules/if_me.ko`, root:wheel, mode 0444
+and `package=kernel`. Hashes and Make install dry-run are under
+`/usr/obj/usr/src/bazel-if-me-make-qualification/`.
+
+No test was selected and the module was not loaded; no dedicated `if_me` test
+was identified in `tests/`. IPv4 minimal-encapsulation behavior, CTF/debug
+variants and other architectures remain unqualified. The source has no direct
+DTrace, SDT or audit markers.
+
+### GIF and GRE tunnel modules (2026-11-01)
+
+Added native `//sys/net:if_gif_module_object_files` and
+`//sys/modules/if_gif` targets, plus corresponding `if_gre` targets. Their
+source lists follow `bsd.kmod.mk`: the main source and the INET/INET6
+implementation sources, with `if_gre` also consuming `opt_rss.h`. The declared
+header closures include the IPv4/IPv6 tunnel interfaces, route/netlink headers,
+MAC framework headers and the selected amd64 GENERIC option headers. The
+`if_gif` target retains `EXPORT_SYMS=YES` behavior. Both drivers keep their
+existing `giftunnel` and `gretunnel` SDT probes.
+
+The maintained `build-bsd bazel-test` frontend passed each module and install
+manifest target using the offline configured SDK, repository cache and
+distdirs. Receipts are
+`/usr/obj/usr/src/bazel-if-gif-qualification-20261101/receipt.json` and
+`/usr/obj/usr/src/bazel-if-gre-qualification-20261101/receipt.json`. The
+frontend selected no behavioral tests. Fresh tied amd64 GENERIC Make outputs
+are byte-for-byte identical: `if_gif.ko` is 54,824 bytes and `if_gre.ko` is
+62,136 bytes. Make's `-n install` commands and the Bazel manifests agree on
+`/boot/modules`, root:wheel, mode 0444 and `package=kernel`. Make reference
+objects are under `/usr/obj/usr/src/bazel-if-gif-make-qualification/` and
+`/usr/obj/usr/src/bazel-if-gre-make-qualification/`.
+
+The source-owned SDT metadata is preserved in the identical binaries, but no
+probe firing, tunnel traffic, CTF/debug variant, or other architecture was
+tested. The existing `tests/sys/net/if_gif.sh` and `if_gre.sh` behavioral tests
+were not run; module loading and runtime networking remain open.
+
+The refreshed Make-derived amd64 GENERIC inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-if-gif-gre-20261101.json`
+(SHA-256 `7b636a3ca9c83176d18eb1697a89c1f0ffea62f0a51c34658d5f5ffdbf6dee14`).
+Its recursive Make selection contains 729 leaf KMODs: 45 selected directories
+have BUILD files, 44 declare direct module targets, and 685 selected KMODs
+still lack one. The `zfs` BUILD file remains partial. This inventory counts
+target declarations, not successful builds or runtime qualification. Program,
+library, full-world and full-kernel Bazel coverage also remain incomplete.
+
+### VirtIO RTC module (2026-11-01)
+
+Added the shared `//sys/dev/virtio:virtio_headers` and generated virtio
+interface-header targets, a source/header target for
+`//sys/dev/virtio/rtc:generic_module_object_files`, and the native
+`//sys/modules/virtio/rtc` module/install-manifest targets. The closure names
+the clock, bus, device, virtio and VM headers consumed by `virtio_rtc.c`. The
+new RTC subpackage required moving `virtio_rtc.h` out of the parent bhyve header
+list into an explicit dependency; the bhyve target was then rebuilt to check
+that existing consumer.
+
+`build-bsd bazel-test` passed the module and manifest targets at
+`/usr/obj/usr/src/bazel-virtio-rtc-qualification-r3-20261101/receipt.json`.
+A fresh tied amd64 GENERIC Make build is byte-identical (27,144 bytes); Make's
+install dry run and the Bazel manifest both specify `/boot/modules`,
+root:wheel, mode 0444 and `package=kernel`. The Make output is under
+`/usr/obj/usr/src/bazel-virtio-rtc-make-qualification/`. The existing bhyve
+binary and install manifest also built successfully through `build-bsd` at
+`/usr/obj/usr/src/bazel-bhyve-virtio-rtc-dependency-qualification-20261101/`.
+No behavioral test was selected. No virtio RTC device runtime, other
+architectures, or debug/CTF variant was qualified; no direct SDT or audit
+markers were found in the driver source.
+
+The latest Make-derived amd64 GENERIC inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-virtio-rtc-20261101.json`
+(SHA-256 `aa9fdf8b5c0dc338cf727681220693eed605727c41a70423c874c19c40de551d`).
+It finds 729 selected leaf KMODs, with 46 selected directories containing
+BUILD files, 45 direct Bazel module targets and 684 selected KMODs without
+direct targets. Counts describe declarations; the inventory does not claim
+that all modules build or run.
+
+### VirtIO memory module (2026-11-01)
+
+Added `//sys/dev/virtio/mem:generic_module_object_files` and the
+`//sys/modules/virtio/mem` module/install-manifest targets. This driver shares
+the common VirtIO headers and generated bus interfaces declared for
+`virtio_rtc`; its `virtio_mem.h` is a direct declared input. The maintained
+`build-bsd bazel-test` build passed at
+`/usr/obj/usr/src/bazel-virtio-mem-qualification-20261101/receipt.json`. A
+fresh tied amd64 GENERIC Make output matches byte for byte (SHA-256
+`b0b1053dfbc177bca42a470467b80ecf3ee3f8168b520c4cdb2c7d01417ff8d9`). Make's
+install dry run agrees with the Bazel manifest on `/boot/modules`, root:wheel,
+mode 0444 and `package=kernel`. Make objects are under
+`/usr/obj/usr/src/bazel-virtio-mem-make-qualification/`.
+
+No behavioral test was selected or runtime device test performed; other
+architectures and CTF/debug variants remain open. No direct SDT or audit
+markers were found in this driver's source. The latest Make-derived amd64
+GENERIC inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-virtio-mem-20261101.json`
+(SHA-256 `81bf74d6fe7389fdbaeed30dc84388f78fb3977755875e86bb9053e0b2a53791`).
+It counts 729 selected leaf KMODs, 47 selected module
+directories with BUILD files, 46 direct Bazel module targets, and 683 selected
+KMODs without direct targets. These counts are declaration coverage, not
+build or runtime qualification.
+
+### VirtIO vsock module and bounds regression test (2026-11-01)
+
+Added the `//sys/dev/virtio/vsock:generic_module_object_files` target, its
+explicit `kern/uipc_vsock.h` and generated bus/device/virtio interface
+dependencies, and the `//sys/modules/virtio/vsock` module/install manifest.
+The new header target in `sys/kern` is visible only to this driver package.
+
+`build-bsd bazel-test` passed the module and manifest targets and ran
+`//sys/dev/virtio/vsock:virtio_vsock_bounds_test` successfully (1/1 test).
+The test covers accepted receive lengths at and below the buffer limit,
+rejection above it, and exact-size event validation. The fresh tied amd64
+GENERIC Make output is byte-identical (44,776 bytes; SHA-256
+`01b9bbdb07865a26b8108b7d9b86bea1b9f5544d688db72a34df391def94d838`). Make's
+install dry run and the Bazel manifest agree on `/boot/modules`, root:wheel,
+mode 0444 and `package=kernel`. Receipts and outputs are under
+`/usr/obj/usr/src/bazel-virtio-vsock-test-qualification-r2-20261101/` and
+`/usr/obj/usr/src/bazel-virtio-vsock-make-qualification/`.
+
+An unchanged warm run at
+`/usr/obj/usr/src/bazel-virtio-vsock-cache-qualification-20261101/` completed
+in 0.19 seconds with one Bazel action-cache hit. Its test event reports
+`cachedLocally: true`, so Bazel reused the prior passing test result rather
+than executing the test again; the initial run is the behavioral test evidence.
+
+The binary comparison preserves Make's emitted SDT sets
+(`set_sdt_tracepoint_set`, `set_sdt_probes_set` and `set_sdt_argtypes_set`).
+The test exercises the header validators, not a live socket connection;
+runtime guest/host transport, SDT probe firing, other architectures and
+CTF/debug variants remain unqualified.
+
+The latest recursive Make inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-virtio-vsock-20261101.json`
+(SHA-256 `cd8a3219f192181d76452a078db9dc20b502d30a39f6616032173647817f5b3e`).
+It finds 729 selected leaf KMODs, 48 selected directories with BUILD files,
+47 direct module targets, and 682 selected modules without direct targets.
+Program, library, full-world and full-kernel coverage remain incomplete.
+
+### VirtIO sound and persistent-memory modules (2026-11-01)
+
+Added `//sys/dev/virtio/sound:generic_module_object_files` and the native
+`//sys/modules/virtio/sound` module/install targets. The dependency graph
+includes the GENERIC-derived `opt_snd.h`, PCM headers, and generated channel,
+feeder and mixer interfaces. The option header is produced from the maintained
+kernel configuration, not from a hand-written substitute. The
+`build-bsd bazel-test` module build passed at
+`/usr/obj/usr/src/bazel-virtio-snd-qualification-20261101/receipt.json`.
+
+Also added `//sys/dev/virtio/pmem:generic_module_object_files` and
+`//sys/modules/virtio/pmem` targets. Its ACPICA header target follows the exact
+Make compiler dependency closure; other declared inputs include the ACPI
+interface, NVDIMM, GEOM and VirtIO PCI shared-memory headers. The maintained
+`build-bsd bazel-test` build passed at
+`/usr/obj/usr/src/bazel-virtio-pmem-qualification-20261101/receipt.json`.
+
+Fresh tied amd64 GENERIC Make outputs are byte-identical: `virtio_snd.ko` is
+35,264 bytes (SHA-256
+`83b2386f4dc8842bfba663c9ae36e73ccfa3c7d7d96e7eece2adf8f0278c32ba`) and
+`virtio_pmem.ko` is 19,048 bytes (SHA-256
+`2524196ef2f780925ff1324c0a388495ce6121d75a3ad686fb7591fe5fe9e6bb`). Make
+install dry runs and Bazel manifests agree on `/boot/modules`, root:wheel,
+mode 0444 and `package=kernel`. Make references are under
+`/usr/obj/usr/src/bazel-virtio-snd-make-qualification/` and
+`/usr/obj/usr/src/bazel-virtio-pmem-make-qualification/`. No test was selected;
+sound playback and persistent-memory device behavior, CTF/debug variants and
+other architectures remain unqualified. No direct SDT or audit markers were
+found in these driver sources.
+
+The latest complete recursive Make inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-virtio-pmem-snd-20261101.json`
+(SHA-256 `18ded15e04f2aef2794f5ac976bd02ede5bf8f3a4d5f2544e707f3310885348b`).
+It counts 729 selected amd64 GENERIC leaf KMODs, 50 selected module
+directories with BUILD files, 49 direct module targets and 680 selected KMODs
+without direct targets. This is still declaration/build coverage for a small
+subset, not full system qualification.
+
+### VirtIO random module (2026-11-01)
+
+Added `//sys/dev/virtio/random:generic_module_object_files` and the
+`//sys/modules/virtio/random` module/install-manifest targets. The graph names
+the VirtIO interfaces and the random-provider and harvest headers used by the
+driver. The maintained `build-bsd bazel-test` build passed at
+`/usr/obj/usr/src/bazel-virtio-random-qualification-20261101/receipt.json`.
+The fresh tied amd64 GENERIC Make output is byte-identical (SHA-256
+`f7628574800249e4832ef51fd3bfa1f186787b2597939971d6cf25def7b0a9a5`). Make's
+install dry run and Bazel's manifest agree on `/boot/modules`, root:wheel,
+mode 0444 and `package=kernel`; Make output is under
+`/usr/obj/usr/src/bazel-virtio-random-make-qualification/`. No behavioral
+random-device test, CTF/debug variant or other architecture was exercised; no
+direct SDT or audit markers were found in the source.
+
+The latest recursive Make inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-virtio-random-20261101.json`
+(SHA-256 `8dbe252bfe8411407b6c134f551fc688c54c59ef97f2dc704326ab4944ba2453`).
+It counts 729 selected leaf KMODs, 51 selected module directories with BUILD
+files, 50 direct module targets and 679 selected modules without direct
+targets. These figures do not indicate full system coverage.
+
+### ACL kernel modules (2026-11-01)
+
+Added native `//sys/modules/acl_nfs4` and `//sys/modules/acl_posix1e`
+module/install-manifest targets. Both compile the source already owned by
+`sys/kern`; the source exports are restricted to their actual consumers, and
+the generated vnode interface is inherited from the common kernel header
+closure. The maintained `build-bsd bazel-test` frontend passed both module and
+manifest targets with 16 jobs. Its final receipt is
+`/usr/obj/usr/src/bazel-acl-modules-qualification-r3-20261101/receipt.json`.
+No behavioral test was selected.
+
+Fresh tied amd64 GENERIC Make builds with CTF and split debug disabled are
+byte-identical to Bazel: `acl_nfs4.ko` is 18,528 bytes with SHA-256
+`79be60fa9d004087dbeb0af2c9cd77c7b155da103a259bd1f6878b700da486dd`, and
+`acl_posix1e.ko` is 13,960 bytes with SHA-256
+`f6ea688f05ffc13e3b9bc623a297068dce5f1ecb937c3a23af92fcf54242669d`. The
+Bazel manifests and Make install dry runs agree on `/boot/modules`, root:wheel,
+mode 0444 and `package=kernel`. The Make objects are under
+`/usr/obj/usr/src/bazel-acl-make-qualification-20261101/`; an isolated Make
+stage is under `/usr/obj/usr/src/bazel-acl-make-stage-20261101/`. No host
+installation or module load occurred.
+
+The sources contain no direct SDT probes. The NFSv4 source mentions audit ACL
+entry types but explicitly rejects them; this is not audit event coverage.
+ACL operations, loaded-module behavior, CTF/debug variants and other
+architectures remain unqualified.
+
+The refreshed recursive Make inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-acl-20261101.json` (SHA-256
+`45ce1cda9f977791f9b87fdcf0f9b5125c4e2da50f1ad87e9e76c0cdfc6955d8`). It
+counts 729 selected amd64 GENERIC leaf KMODs, 53 selected module directories
+with BUILD files, 52 direct module targets and 677 selected modules without
+direct targets. This count remains a small fraction of the module and full
+system migration.
+
+### ALQ kernel module and source-path parity (2026-11-01)
+
+Added native `//sys/modules/alq` module and install-manifest targets for
+`kern_alq.c`, preserving the Makefile's `EXPORT_SYMS=YES` behavior with
+`export_all = True`. The first byte comparison found a real difference:
+Bazel embedded the relative source path in assertion strings while Make
+embedded `/usr/src/sys/kern/kern_alq.c`. The shared
+`amd64_generic_module_objects` rule now maps each declared repository source
+execpath to its canonical `/usr/src/...` form, matching Make's source-path
+policy without a module-specific exception.
+
+After this rule change, the maintained `build-bsd bazel-test` target passed at
+`/usr/obj/usr/src/bazel-alq-module-qualification-r4-20261101/receipt.json`.
+The fresh tied amd64 GENERIC Make output and Bazel output are byte-identical
+(27,056 bytes; SHA-256
+`d4d60fde498a1ff1ff7595eb158409167d40b3c3de141e2cb529a04b68f64e89`). Make's
+install command and Bazel's manifest agree on `/boot/modules/alq.ko`,
+root:wheel, mode 0444 and `package=kernel`. No test was selected, module load
+or ALQ behavior was exercised, and the source has no direct SDT or audit
+markers.
+
+To check the shared rule change for regressions, the maintained frontend also
+built all 53 currently declared GENERIC module targets and their manifests
+(106 labels, 106 output files) in one invocation. The receipt is
+`/usr/obj/usr/src/bazel-generic-modules-source-path-map-qualification-20261101/receipt.json`.
+This is a compile/manifest sweep only: it does not establish Make parity for
+all 53 modules, module runtime behavior, package assembly, other architectures
+or performance.
+
+The refreshed Make-derived amd64 GENERIC inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-alq-20261101.json` (SHA-256
+`857d73a265fabf10b42e82830edd139b546430487eeeff4772f7a6458df77c59`). It
+counts 729 selected leaf KMODs, 54 selected module directories with BUILD
+files, 53 direct module targets and 676 selected modules without direct
+targets. The `status=complete` result means Make traversal had no query errors;
+it does not mean the Bazel migration is complete.
+
+### TCP congestion-control module family (2026-11-01)
+
+Added native targets for `cc_cdg`, `cc_chd`, `cc_cubic`, `cc_dctcp`, `cc_hd`,
+`cc_htcp`, `cc_newreno` and `cc_vegas`. Their source/header graph follows the
+Make-generated dependency files: common TCP and routing interfaces are
+separate from the optional HPTS, ERTT, PCG and algorithm-specific headers.
+`route_nhop_headers` is scoped to this package, so adding the CC closure does
+not widen every route consumer's header inputs. The generated option
+`opt_kern_tls.h` is taken from the selected amd64 GENERIC configuration.
+
+The maintained `build-bsd bazel-test` frontend built all eight modules and
+install manifests in the CTF/debug-disabled profile. The modules match fresh
+tied amd64 GENERIC Make outputs byte for byte; the machine-readable comparison
+at `/usr/obj/usr/src/bazel-cc-modules-qualification-r3-20261101/make-parity.json`
+also verifies `/boot/modules`, root:wheel, mode 0444 and `package=kernel`.
+No behavioral test was selected.
+
+The eight targets also build with CTF and split debug enabled. Their CTF dump,
+code/data sections, DWARF info/abbreviation/frame sections, install metadata
+and isolated `kldxref` linker hints match Make. ELF build IDs and debuglink
+bytes differ because DWARF line and string tables encode different build paths;
+the debug files are therefore not byte-identical. The comparison is at
+`/usr/obj/usr/src/bazel-cc-modules-ctf-debug-qualification-r3-20261101/make-parity.json`.
+No CC module was installed or loaded. The sources have no direct SDT or audit
+markers, and no dedicated congestion-control module behavior test was found
+in `tests/sys/netinet`.
+
+The latest complete recursive Make inventory is
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-r2-20261101.json`
+(SHA-256
+`2c21eabb9c31df8c0c12e40106615801f9650f89731248d6b415da1eae7d628f`). It
+counts 729 selected amd64 GENERIC leaf KMODs, 71 selected module directories
+with BUILD files, 70 direct module targets and 659 selected modules without
+direct targets. `status=complete` means the Make traversal had no query errors;
+it does not mean modules or the full system are migrated.
+
+A second fresh `build-bsd bazel-test` invocation selected the same ten targets
+and reused their cached outputs: Bazel reported one internal action and zero
+execution actions, while the artifact manifest and receipt were regenerated.
+Evidence: `/usr/obj/usr/src/bazel-netgraph-family-qualification-r4-20261101/`.
+
+Frontend review: the existing format-5 `build-bsd bazel-test --bazel-inputs`
+path accepted these targets and CTF/debug settings. The manual already
+describes those settings, so no `build-bsd` C interface or backend change was
+needed. The production build backend remains Make.
+
+### Netgraph modules async, hub, pipe, tee, split and vlan (2026-11-01)
+
+Added native GENERIC amd64 Bazel module and install-manifest targets for
+`ng_async`, `ng_hub`, `ng_pipe`, `ng_tee`, `ng_split` and `ng_vlan`. Their
+source ownership remains in `sys/netgraph`; module directories declare only
+which source object and install target they consume. Header dependencies come
+from fresh Make `.depend` files, including the PCG header closure required by
+`ng_pipe`, instead of exposing all netgraph headers to every consumer.
+
+The `ng_async` target passed the maintained format-5 frontend and its `.ko`
+was byte-identical to fresh tied amd64 GENERIC Make output (SHA-256
+`d57695af0882e8fa999c8aacd2fdd10cb6ec7eb4c56877578aa702375b1f99cb`). Its
+evidence is `/usr/obj/usr/src/bazel-netgraph-async-qualification-20261101/`.
+
+The maintained `build-bsd bazel-test` format-5 action built all ten module and
+manifest targets with 16 jobs. All five module files are byte-identical to
+fresh tied amd64 GENERIC Make outputs. Make install dry-runs agree with the
+manifests on `/boot/modules`, root:wheel, mode 0444, and `package=kernel`.
+Evidence: `/usr/obj/usr/src/bazel-netgraph-family-qualification-r3-20261101/`
+(`receipt.json`, `make-parity.json`, and `make-install-reference.json`) and
+`/usr/obj/usr/src/bazel-netgraph-family-make-reference-20261101/`.
+
+No module was installed or loaded and no Netgraph behavioral test was
+selected. These modules have not been qualified for runtime behavior, live
+DTrace or audit coverage, CTF/debug parity, or performance. Existing
+`build-bsd bazel-test --bazel-inputs` format 5 covers these targets; frontend
+or backend contract changes were not needed. Make remains the production
+backend.
+
+### Additional Netgraph modules tag, one2many and vlan_rotate (2026-11-01)
+
+Added native GENERIC amd64 targets for `ng_tag`, `ng_one2many` and
+`ng_vlan_rotate`. Their source/header closures follow fresh Make dependency
+files; `vlan_rotate` additionally declares the network Ethernet header target.
+The maintained `build-bsd bazel-test` format-5 build passed for all three
+module/install-manifest pairs. All three `.ko` outputs match fresh tied
+amd64 GENERIC Make bytes exactly. Make install dry-runs agree with the
+manifests on `/boot/modules`, root:wheel, mode 0444 and `package=kernel`.
+Evidence: `/usr/obj/usr/src/bazel-netgraph-simple-family-qualification-20261101/`
+and `/usr/obj/usr/src/bazel-netgraph-simple-family-make-reference-20261101/`.
+
+No runtime test was selected; these modules were not loaded. DTrace/audit
+coverage and performance remain unqualified. CTF/debug parity was also checked:
+`ctfdump` output matches Make for all three, and after removing only the ELF
+build-id and GNU debuglink sections, the module section sets match byte for
+byte. The `.debug_info`, `.debug_abbrev`, `.debug_frame` and `.debug_ranges`
+sections in separate debug files match byte for byte. Both `/boot/modules`
+and `/usr/lib/debug/boot/modules` install records match Make dry-runs, including
+owner, group, mode and package tags. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-simple-family-ctf-qualification-20261101/`
+(`receipt.json`, `make-ctf-debug-parity.json`) and
+`/usr/obj/usr/src/bazel-netgraph-simple-family-ctf-make-reference-r2-20261101/`.
+The stripped module bytes still differ where their build-id/debuglink sections
+encode build-specific metadata. The standard format-5 frontend covers the new
+targets without a CLI or backend change.
+
+### Netgraph hub and vlan_rotate ATF declarations (2026-11-01)
+
+Added Bazel build targets for the existing `hub` and `vlan_rotate` ATF-C
+programs and declared all nine cases present in those two programs. The case
+targets carry Make's `required_user=root` and `is_exclusive=true` metadata:
+the runner skips before entering a test body when its effective uid does not
+meet the declared requirement, and Bazel serializes these tests because they
+share Netgraph node names.
+
+`atf-runner-cleanup-test.py` passed all 20 tests, including a regression test
+that checks the identity gate emits a skipped XML case without creating the
+test body's marker. The test is registered as
+`//tools/build/bazel:atf_runner_cleanup_test`; it runs against the Bazel-built
+runner and passed through the maintained format-5 frontend. The test fixture
+clears Bazel's ambient `XML_OUTPUT_FILE` when checking the no-reporting case.
+Evidence: `/usr/obj/usr/src/bazel-atf-runner-test-qualification-r2-20261101/`.
+The maintained format-5 `build-bsd bazel-test` build of
+the Netgraph modules, test programs and case targets passed with `tests=[]`:
+`/usr/obj/usr/src/bazel-netgraph-tests-build-qualification-r2-20261101/`.
+Fresh Make test programs were also built for source-object comparison; the
+hub, vlan_rotate and shared utility source object `.text` matched Make. Bazel
+and Make linked executables have matching needed-library and global-symbol
+sets, while final executable bytes and linked `.text` differ due to link layout
+and debug/strip handling. The source-path mapping was aligned with Make.
+
+A deliberate runtime attempt selected the two basic cases on this unprivileged
+host. Bazel expanded the suite to all nine cases; all nine reported
+`skipped: requires user root` before running their bodies. The test reports
+were retained under
+`/usr/obj/usr/src/bazel-netgraph-tests-runtime-qualification-r2-20261101/`,
+but `build-bsd` correctly rejected the attempt as qualification because its
+gate requires executed cases to pass. This confirms safe precondition handling,
+not Netgraph runtime behavior. Root-capable matching-kernel VM execution and
+the remaining Make test programs in this directory are still open.
+
+### Netgraph ng_tcpmss module (2026-11-01)
+
+Added a native amd64 GENERIC target for `ng_tcpmss`. Its declared dependencies
+come from the fresh Make `.depend.ng_tcpmss.o` closure: Netgraph headers, IPv4
+wire headers and TCP wire headers, with the shared GENERIC kernel headers.
+`build-bsd bazel-test` built the module and install manifest. A fresh Make
+reference built with `MODULE_TIED=yes` matches the Bazel `.ko` byte for byte
+(SHA-256 `5a0d7bf3f70ffe69f3382f0ff10786d3536f5eae291d54abe43adc8c732c5797`).
+The install manifest agrees with Make's dry run: `/boot/modules/ng_tcpmss.ko`,
+root:wheel, mode 0444, `package=kernel`. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-tcpmss-qualification-20261101/`.
+
+The Make reference must be tied to the built GENERIC kernel, matching Bazel's
+`KLD_TIED` compile mode; an untied reference carries a different kernel
+dependency version range and is not a valid byte-parity comparison. No module
+was loaded. Runtime behavior, DTrace/audit events and performance remain open.
+The maintained format-5 frontend accepts this module through existing explicit
+target inputs; no `build-bsd` frontend/backend change was required.
+
+The recursive Make inventory after this target was added recorded
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-r3-20261101.json`
+(SHA-256 `df3e9d96e366f6dc7ba6fdfcd773d79f938154e272d5450b1478de8fe56740a8`):
+729 selected amd64 GENERIC leaf KMODs, 72 selected
+module directories with BUILD files, 71 direct Bazel module targets, and 658
+selected modules without direct targets. These are coverage counts; they do not
+qualify the modules still lacking targets.
+
+### amd64 kernel warning policy and Netgraph requalification (2026-11-01)
+
+Reviewing the `ng_socket` build log found Bazel was not carrying Make's kernel
+warning policy: it emitted pointer-sign warnings while Make's kmod flags
+explicitly suppress them and enable `-Werror`. Added the format-5 boolean
+`//tools/build/bazel/config:werror`, default true to match `MK_WERROR=yes`, and
+applied Make's kernel warning flags to both built-in kernel and kernel-module
+compilation. Setting it false removes `-Werror` but retains the warning list.
+The setting is an ordinary declared build input; the maintained format-5
+`build-bsd bazel-test` frontend required no CLI/backend changes. The manual now
+documents the setting and its current qualification scope.
+
+With `werror=true`, all fourteen converted amd64 GENERIC Netgraph modules and
+their install manifests built through `build-bsd`; fresh cleaned Make builds
+used `MODULE_TIED=yes`, `/dev/null` source/environment make configuration and
+16 jobs. All fourteen Bazel `.ko` files are byte-identical to Make, all
+install manifests match Make dry runs, and the Bazel invocation emitted no
+compiler warnings. The tested `werror=false` `ng_tcpmss` variant also built and
+produced the same `.ko` bytes. A representative two-object built-in kernel
+group (`subr_prf.c`, `subr_sbuf.c`) also compiled with `werror=true`; this does
+not qualify the complete kernel. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-all-converted-warning-qualification-20261101/`
+(`receipt.json`, `execution.json`, `make-parity.json`, fresh Make logs),
+`/usr/obj/usr/src/bazel-werror-disabled-qualification-20261101/`, and
+`/usr/obj/usr/src/bazel-kernel-warning-policy-qualification-20261101/`.
+
+The recursive Make inventory after these module additions reports 729 selected
+amd64 GENERIC leaf KMODs, 76 directories with BUILD files, 75 direct module
+targets and 654 selected modules without direct targets. Its complete record is
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-r4-20261101.json`
+(SHA-256 `127d529a0df0a6512f3154d2ef33b5ca20f6096b8b0eb3763383626a9513c67b`).
+These figures describe module declarations, not full kernel or system coverage.
+
+### Netgraph ng_patch and ng_gif_demux modules (2026-11-01)
+
+Added native amd64 GENERIC targets for `ng_patch` and `ng_gif_demux`. Their
+module header targets follow the fresh Make dependency files. The patch module
+declares the BPF and Ethernet headers; `bpf_headers` now exposes `bpf.h` and
+`dlt.h` with the CK header dependency required by `sys/net/bpf.h`. The first
+Bazel build exposed that missing CK edge, and the corrected graph builds.
+
+The maintained `build-bsd bazel-test` format-5 build passed for both modules
+and install manifests. Both `.ko` files match fresh `MODULE_TIED=yes` Make
+outputs byte for byte: `ng_patch` SHA-256
+`03aed7b73e375cc9653fb0ec1d945f720175280c886d7427e8896701055506c0` and
+`ng_gif_demux` SHA-256
+`e49f17de4fa7e780de6f0be5033dbffcb7411d31ea3151198343904fbe964a92`. Make
+install dry runs agree with `/boot/modules`, root:wheel, mode 0444 and
+`package=kernel`. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-patch-gifdemux-qualification-r2-20261101/`
+(`receipt.json`, `make-parity.json`).
+
+No runtime tests or module loads were performed; behavior, DTrace/audit coverage
+and performance are still open. The existing format-5 frontend covered the
+targets; no `build-bsd` CLI or backend change was needed.
+
+### Netgraph ng_car and ng_socket modules (2026-11-01)
+
+Added native amd64 GENERIC targets for `ng_car` and `ng_socket`. The CAR
+header closure contains its public header and private `qos.h`; the socket
+closure declares both socket headers, the VNET interface header, and CK
+headers required through `sys/epoch.h`. The first socket build exposed the
+missing CK edge, which was added explicitly before qualification.
+
+The maintained format-5 build passed for both modules and install manifests.
+Their tied Make `.ko` outputs are byte-identical: `ng_car` SHA-256
+`86e7c8a923e0b720d8e6e393c36c637a28eddc2c472167d5f5e6e5f3b262eb61` and
+`ng_socket` SHA-256
+`7d980b412a95604f957a1e7d88cb49f65f16652c344102084d863800f9ddfd1e`.
+Install dry runs agree on `/boot/modules`, root:wheel, mode 0444 and
+`package=kernel`. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-car-socket-qualification-r2-20261101/`
+(`receipt.json`, `make-parity.json`).
+
+No modules were loaded or runtime tests run. The focused sources contain no
+direct SDT/DTrace or audit markers; live observability and performance remain
+unqualified. No `build-bsd` frontend or backend change was needed.
+
+### Netgraph `ng_ip_input` module (2026-11-01)
+
+Added native amd64 GENERIC targets for `ng_ip_input` and its kernel install
+manifest. The declared header graph uses shared network/interface headers and
+narrow IPv4/IPv6 interface-state headers; Bazel analysis caught a visibility
+mistake before compilation, and compile failures exposed missing direct header
+dependencies. Those dependencies are now explicit instead of relying on the
+prepared SDK's broad include paths.
+
+The maintained format-5 `build-bsd bazel-test` build passed with 16 jobs. A
+fresh tied GENERIC Make build produced an identical `.ko` (SHA-256
+`b493167c6bf20efdf9e4b7e3f80585654ded61bd6bd293b74747c752ca66967a`). Make's
+install dry run agrees with the manifest: `/boot/modules/ng_ip_input.ko`,
+root:wheel, mode 0444, package `kernel`. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-ip-input-qualification-r6-20261101/` and the
+fresh Make object under `/usr/obj/usr/src/amd64.amd64/sys/modules/netgraph/ip_input/`.
+
+After adding these shared header declarations, I rebuilt all 15 currently
+converted Netgraph modules and manifests through `build-bsd`, with
+`werror=true`; the Bazel run reported no compiler warnings. Their outputs match
+fresh tied GENERIC Make module bytes, and each generated install record matches
+the Make install dry run for destination, owner, group, mode and package tag.
+The machine-checked comparison is
+`/usr/obj/usr/src/bazel-netgraph-15-module-requalification-20261101/make-parity.json`
+(SHA-256
+`a73bfd57b0b446ab763e36282e8ef219a31f711abf82f0a7855af8300badf4b7`); the
+maintained Bazel receipt and artifacts are in the same directory.
+
+No module was loaded and no runtime, DTrace firing, audit-event or performance
+test was run. Source inspection found no direct SDT/DTrace or audit markers.
+The current recursive Make inventory now reports 729 selected amd64 GENERIC
+leaf KMODs, 77 selected module directories with BUILD files, 76 direct module
+targets, and 653 without direct targets. Its complete report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-ip-input-20261101.json`;
+SHA-256 `68ddaa249e52be89c423fcfa984d2b69a4e7430fa7c607b5e18946b46d807cce`.
+`status=complete` means the recursive Make query had no errors, not that every
+module is migrated or qualified.
+
+A second maintained format-5 run passed. Its Bazel event summary recorded only
+the unconditional workspace-status action as executed; C compile, module
+link, metadata and manifest outputs were reused from cache. This is a focused
+repeat-build check, not a general incremental invalidation test. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-ip-input-cache-qualification-20261101/`.
+No module was loaded and no runtime, DTrace firing, audit-event or performance
+test was run. Source inspection found no direct SDT/DTrace or audit markers.
+The existing `build-bsd` format-5 inputs already accept these explicit targets;
+no CLI, backend or manual change was required. Make remains the production
+backend.
+
+### Netgraph `ng_checksum` module (2026-11-01)
+
+Added native amd64 GENERIC `ng_checksum` and installation-manifest targets.
+Its dependency graph follows the fresh Make `.depend.ng_checksum.o` closure:
+generic INET/INET6 option headers; BPF, Ethernet, interface and VLAN headers;
+IPv4, IPv6, TCP and UDP wire headers; and the Netgraph/module kernel headers.
+The shared interface header target now includes `if_types.h`; dedicated UDP
+wire and IPv6 wire header targets keep those include edges explicit.
+
+The maintained format-5 `build-bsd bazel-test` build passed with 16 jobs. A
+fresh tied GENERIC Make build produced an identical module
+(SHA-256 `c5c657da9335bca0ec5d2582fb78a88431b16ca355cef6794aae283f27c09c27`).
+Make's install dry run matches the Bazel install record for
+`/boot/modules/ng_checksum.ko`, root:wheel, mode 0444 and package `kernel`.
+The comparison is recorded in
+`/usr/obj/usr/src/bazel-netgraph-checksum-qualification-20261101/make-parity.json`.
+The refreshed recursive Make inventory reports 729 selected amd64 GENERIC
+leaf KMODs, 78 selected module directories with BUILD files, 77 direct module
+targets and 652 without direct targets. Its status is complete with no Make
+query errors; it does not qualify the undeclared modules. Evidence:
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-checksum-20261101.json`
+(SHA-256
+`c06ebbd3119def2a53d7a5b6998d2a14143d8132a72d51d6dd920fed2809de34`).
+
+No module was loaded; runtime, DTrace firing, audit events and performance were
+not tested. Source inspection found no direct SDT/DTrace or audit markers.
+The existing `build-bsd` explicit format-5 target path covers this addition, so
+its CLI/backend and manual did not require changes. Make remains the production
+backend.
+
+### Netgraph `ng_pppoe` module (2026-11-01)
+
+Added native amd64 GENERIC `ng_pppoe` and install-manifest targets from its
+fresh Make dependency closure. The declared module headers cover Netgraph's
+PPPoE/Ethernet interfaces, network interface/VLAN headers and CK epoch headers;
+the common GENERIC kernel-header provider supplies tied module configuration.
+
+The maintained format-5 `build-bsd bazel-test` build passed with 16 jobs. A
+fresh `MODULE_TIED=yes` Make build produced an identical module (SHA-256
+`fc72cfd6190dceeae92e87a0d47c7d7ce3b1b252a3aee92c8cdcd418148812c4`). Make's
+install dry run matches the Bazel record for `/boot/modules/ng_pppoe.ko`,
+root:wheel, mode 0444 and package `kernel`. Machine-checked evidence is
+`/usr/obj/usr/src/bazel-netgraph-pppoe-qualification-20261101/make-parity.json`.
+
+No module was loaded or run. Source inspection found no direct SDT/DTrace or
+audit markers; PPPoE behavior, live probes, audit coverage and performance
+remain unqualified. Existing `build-bsd` target inputs cover this module, so no
+frontend, backend or manual change was needed. Make remains the production
+backend.
+
+### Consolidated Netgraph module requalification (2026-11-01)
+
+After adding `ng_checksum` and `ng_pppoe`, the maintained format-5
+`build-bsd bazel-test` action rebuilt all 17 converted Netgraph modules and
+their install manifests with `werror=true` and 16 jobs. No compiler warning
+was emitted. A machine-checked comparison verified all 17 module files are
+byte-identical to their tied amd64 GENERIC Make outputs and all 17 install
+records match Make dry runs for destination, owner, group, mode and package
+tag. Evidence:
+`/usr/obj/usr/src/bazel-netgraph-17-module-requalification-20261101/`
+(`receipt.json`, `make-parity.json`; parity SHA-256
+`c32f5b5013ee728a266da81413c3fc40e37d957803a19c29cf15ab66a122bbe6`).
+
+The latest recursive Make inventory reports 729 selected amd64 GENERIC leaf
+KMODs, 79 selected module directories with BUILD files, 78 direct module
+targets and 651 without direct targets. The complete no-query-error report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-netgraph-pppoe-20261101.json`
+(SHA-256
+`dcdba1970bd349d553812d2f4ad89ae55bf43a9c1ca5244cb6c0ff3fa9cb53b1`). This
+counts declared targets only. Module runtime, packet behavior, DTrace firing,
+audit coverage and performance remain unqualified. `build-bsd` already accepts
+these target and setting inputs, so its frontend/backend and manual contract
+remain unchanged; Make remains the production backend.
+
+### Speaker kernel module Make parity (2026-11-01)
+
+Added native amd64 GENERIC Bazel declarations for `speaker` and its public
+header/source package. The maintained format-5 `build-bsd bazel-test
+--bazel-inputs` path built `//sys/modules/speaker:generic_module` and
+`//sys/modules/speaker:install_manifest` with the prepared SDK and pinned
+module lock. A fresh `MODULE_TIED=yes` Make build used the same GENERIC kernel
+configuration and default CTF/split-debug-disabled profile. The Bazel and Make
+`speaker.ko` files are byte-identical (18,592 bytes; SHA-256
+`9482df102514eddbf86dbc59ff1993796246ee690ad4c23e1d279381750773d5`). The
+Make install dry run agrees with Bazel's manifest on
+`/boot/modules/speaker.ko`, owner root, group wheel, mode 0444 and
+`package=kernel`.
+
+Evidence: `/usr/obj/usr/src/bazel-speaker-qualification-20261101/receipt.json`
+and `/usr/obj/usr/src/bazel-speaker-make-reference-20261101/evidence/`
+(`make-parity.json` and `make-install-dry-run.txt`). No module was installed
+or loaded and no speaker behavior, DTrace/audit coverage, CTF/debug variant,
+other architecture, incremental invalidation or performance was qualified.
+The target uses the existing format-5 explicit-inputs interface; no
+`build-bsd` CLI or backend change was needed. Make remains the production
+backend.
+
+The recursive Make-derived amd64 GENERIC inventory after adding this target
+reports 729 selected leaf KMODs, 80 selected module directories with BUILD
+files, 79 direct `amd64_generic_module` targets and 650 without direct module
+targets. The no-query-error report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-speaker-20261101.json`
+(SHA-256 `72cade443a949751508d9842ba5c9001aefd2b48f9df0fe9f2dfc7aafcbd7563`).
+These are declaration counts, not evidence that the remaining modules are
+built or qualified.
+
+### `cd9660_iconv` kernel module Make parity (2026-11-01)
+
+Added a native amd64 GENERIC target for the one-source `cd9660_iconv` module.
+The source remains owned by `sys/fs/cd9660` and is exported explicitly to the
+module package; compilation uses the shared GENERIC kernel header/offset
+inputs. The maintained format-5 `build-bsd bazel-test --bazel-inputs` build
+passed for the module and install manifest. A fresh tied GENERIC Make build
+produced byte-identical `cd9660_iconv.ko` output (12,424 bytes; SHA-256
+`573596151ecf1f3bec56698a3c4dcec383fbb45f7039953a5f023715f0801c05`). The
+Make install dry run matches the manifest's `/boot/modules/cd9660_iconv.ko`,
+root:wheel, mode 0444 and `package=kernel` record.
+
+Evidence: `/usr/obj/usr/src/bazel-cd9660-iconv-qualification-20261101/` and
+`/usr/obj/usr/src/bazel-cd9660-iconv-make-reference-20261101/evidence/`.
+No tests were selected and no module was installed or loaded. Runtime behavior,
+CTF/debug settings, other architectures and performance remain unqualified.
+The existing explicit-inputs `build-bsd` path accepts the target; no frontend
+or backend change was required. Make remains the production backend.
+
+A second format-5 `build-bsd bazel-test` invocation selected the same two
+`cd9660_iconv` targets and reused the prior build actions. Bazel reported one
+action executed, the unconditional workspace-status action; no compile, link,
+CTF, strip or manifest action executed. Its receipt and BEP evidence are in
+`/usr/obj/usr/src/bazel-cd9660-iconv-cache-qualification-20261101/`. This is a
+focused unchanged-input cache check, not a general source/header invalidation
+or cross-workspace reproducibility test.
+
+The refreshed recursive Make-derived amd64 GENERIC inventory reports 729 leaf
+KMODs, 81 selected module directories with BUILD files, 80 direct module
+targets and 649 modules without direct targets. Its no-query-error report is
+`/usr/obj/usr/src/bazel-module-coverage-generic-cd9660-iconv-20261101.json`
+(SHA-256 `ba47ede230d5bd99c01e4e3f88079e1a7f8b48058a380f5b0c0c150ba273bb8a`).
+This is a declaration count; most selected modules remain unmigrated.
+
+### Consolidated kernel module dependency and test requalification (2026-11-01)
+
+The first consolidated `build-bsd bazel-test` sweep found two undeclared-input
+errors that isolated module builds had not exposed. `geom_label` passed a
+nonexistent `module_options` directory as an include path even though Bazel
+creates `opt_geom.h` as a generated file in its action sandbox. The module now
+exports that generated header through a `cc_library` virtual include while
+keeping the source header include path separate. This models the Make rule,
+which writes `#define GEOM_LABEL 1` to `opt_geom.h`, and removes the spurious
+missing-include-directory compiler flag. `geom_uzip` had retained Make's two
+XZ `-I` paths but declared only `linux/include/linux/xz.h`; the sandbox did not
+contain the private headers in those directories. Its XZ header target now
+declares the FreeBSD config/malloc headers and Linux LZMA2/private/stream
+headers actually included by the source. Neither fix weakens compiler warning
+checks or substitutes a hand-written source list for Make's module inputs.
+
+After these fixes, the maintained format-5 `build-bsd bazel-test` sweep built
+82 selected amd64 GENERIC module targets and their 82 install manifests with
+16 jobs. Four registered tests also passed: BEP artifact collection, module
+inventory, ATF runner cleanup, and bsdinstall book/code consistency. Bazel
+reused cached results for those four test cases; it did not execute them again
+in this invocation. The receipt is
+`/usr/obj/usr/src/bazel-module-and-tool-tests-qualification-r2-20261101/receipt.json`;
+the module-only sweep receipt is
+`/usr/obj/usr/src/bazel-all-generic-modules-qualification-r3-20261101/receipt.json`.
+This verifies selected target analysis/build and declared install manifests,
+not all modules, live module behavior, package installation, a full kernel or
+world build, or performance.
+
+The earlier Make comparison for `geom_label` and `geom_uzip` remains available
+in `/usr/obj/usr/src/bazel-module-header-regression-20261028/qualification/`:
+allocated text/data/rodata, symbols, relocations, CTF and SDT sections matched
+their tied Make references, and install metadata matched. That comparison
+predates this dependency-only correction; a fresh Make byte-for-byte comparison
+of those two outputs was not run in this sweep. Separate fresh Make parity
+records for `speaker` and `cd9660_iconv` are in their preceding sections. The
+fresh `smbios` and `vpd` comparison is at
+`/usr/obj/usr/src/bazel-bios-modules-qualification-r4-20261101/make-parity.json`:
+both module outputs were byte-identical to tied Make builds (SHA-256
+`77a03a03567b78d6209d23e272566e6a179e4fe7399232e46fdee4277ce77478` and
+`affb2c360f62c7c9c493225425a79fd762774030017efb7e5d8575a1f78df114`), and
+install metadata matched the Make dry runs. No module was installed or loaded.

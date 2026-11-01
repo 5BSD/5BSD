@@ -5,3 +5,87 @@ cc_library(name = "bluetooth_user_headers", hdrs = ['ng_message.h'], strip_inclu
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['ng_message.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "bridge_test_headers", hdrs = ["ng_bridge.h"], strip_include_prefix = "/sys",
+    visibility = ["//tests/sys/netgraph:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "kernel_headers", hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h"],
+    includes = [".."], deps = ["//sys/amd64/conf:generic_opt_kdb_header",
+    "//sys/amd64/conf:generic_opt_netgraph_header", "//sys/sys:kernel_headers"],
+    visibility = ["//visibility:private"])
+cc_library(name = "async_module_headers", hdrs = ["ng_async.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/async:__pkg__"])
+cc_library(name = "hub_module_headers", hdrs = ["ng_hub.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/hub:__pkg__"])
+cc_library(name = "pipe_module_headers", hdrs = ["ng_pipe.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:network_headers", "//sys/netinet:ipv4_wire_headers",
+        "//sys/netinet6:address_headers", "//sys/contrib/pcg-c:kernel_headers"], visibility = ["//sys/modules/netgraph/pipe:__pkg__"])
+cc_library(name = "tee_module_headers", hdrs = ["ng_tee.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/tee:__pkg__"])
+cc_library(name = "split_module_headers", hdrs = ["ng_split.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/split:__pkg__"])
+cc_library(name = "vlan_module_headers", hdrs = ["ng_vlan.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:ethernet_headers", "//sys/net:interface_headers",
+        "//sys/net:vlan_headers"], visibility = ["//sys/modules/netgraph/vlan:__pkg__"])
+cc_library(name = "tag_module_headers", hdrs = ["ng_tag.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/tag:__pkg__"])
+cc_library(name = "one2many_module_headers", hdrs = ["ng_one2many.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/one2many:__pkg__"])
+cc_library(name = "vlan_rotate_module_headers", hdrs = ["ng_vlan_rotate.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:ethernet_headers"], visibility = ["//sys/modules/netgraph/vlan_rotate:__pkg__"])
+cc_library(name = "tcpmss_module_headers", hdrs = ["ng_tcpmss.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/netinet:ipv4_wire_headers", "//sys/netinet:tcp_wire_headers"],
+    visibility = ["//sys/modules/netgraph/tcpmss:__pkg__"])
+cc_library(name = "patch_module_headers", hdrs = ["ng_patch.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:bpf_headers", "//sys/net:ethernet_headers"],
+    visibility = ["//sys/modules/netgraph/patch:__pkg__"])
+cc_library(name = "gif_demux_module_headers", hdrs = ["ng_gif_demux.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/gif_demux:__pkg__"])
+cc_library(name = "car_module_headers", hdrs = ["ng_car.h", "qos.h"], includes = [".."],
+    deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/car:__pkg__"])
+cc_library(name = "socket_module_headers", hdrs = ["ng_socket.h", "ng_socketvar.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:network_headers", "//sys/contrib/ck:kernel_headers"],
+    visibility = ["//sys/modules/netgraph/socket:__pkg__"])
+cc_library(name = "ip_input_module_headers", hdrs = ["ng_ip_input.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:interface_headers", "//sys/netinet:address_headers",
+        "//sys/netinet6:address_headers"], visibility = ["//sys/modules/netgraph/ip_input:__pkg__"])
+cc_library(name = "checksum_module_headers", hdrs = ["ng_checksum.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:bpf_headers", "//sys/net:ethernet_headers",
+        "//sys/net:interface_headers", "//sys/net:vlan_headers", "//sys/netinet:address_headers",
+        "//sys/netinet:ipv4_wire_headers", "//sys/netinet:ip6_wire_headers",
+        "//sys/netinet:tcp_wire_headers", "//sys/netinet:udp_wire_headers"],
+    visibility = ["//sys/modules/netgraph/checksum:__pkg__"])
+cc_library(name = "pppoe_module_headers", hdrs = ["ng_pppoe.h", "ng_ether.h"], includes = [".."],
+    deps = [":kernel_headers", "//sys/net:ethernet_headers", "//sys/net:interface_headers",
+        "//sys/net:vlan_headers", "//sys/contrib/ck:kernel_headers"],
+    visibility = ["//sys/modules/netgraph/pppoe:__pkg__"])
+amd64_generic_module_objects(name = "ng_async_module", srcs = ["ng_async.c"], deps = [
+    ":async_module_headers", "//sys/net:ppp_defs_headers", "//sys/vm:kernel_headers",
+])
+amd64_generic_module_objects(name = "ng_hub_module", srcs = ["ng_hub.c"], deps = [":hub_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_pipe_module", srcs = ["ng_pipe.c"], deps = [":pipe_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_tee_module", srcs = ["ng_tee.c"], deps = [":tee_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_split_module", srcs = ["ng_split.c"], deps = [":split_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_vlan_module", srcs = ["ng_vlan.c"], deps = [":vlan_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_tag_module", srcs = ["ng_tag.c"], deps = [":tag_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_one2many_module", srcs = ["ng_one2many.c"], deps = [":one2many_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_vlan_rotate_module", srcs = ["ng_vlan_rotate.c"], deps = [":vlan_rotate_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_tcpmss_module", srcs = ["ng_tcpmss.c"], deps = [":tcpmss_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_patch_module", srcs = ["ng_patch.c"], deps = [":patch_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_gif_demux_module", srcs = ["ng_gif_demux.c"], deps = [":gif_demux_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_car_module", srcs = ["ng_car.c"], deps = [":car_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_socket_module", srcs = ["ng_socket.c"], deps = [":socket_module_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_ip_input_module", srcs = ["ng_ip_input.c"], deps = [
+    ":ip_input_module_headers", "//sys/net:network_headers", "//sys/net:interface_headers",
+    "//sys/netinet:address_headers", "//sys/netinet:interface_headers",
+    "//sys/netinet:ip_headers", "//sys/netinet6:address_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_checksum_module", srcs = ["ng_checksum.c"], deps = [
+    ":checksum_module_headers", "//sys/amd64/conf:generic_opt_inet_header",
+    "//sys/amd64/conf:generic_opt_inet6_header", "//sys/net:bpf_headers",
+    "//sys/net:ethernet_headers", "//sys/net:interface_headers", "//sys/net:vlan_headers",
+    "//sys/netinet:address_headers", "//sys/netinet:ipv4_wire_headers",
+    "//sys/netinet:ip6_wire_headers", "//sys/netinet:tcp_wire_headers",
+    "//sys/netinet:udp_wire_headers", "//sys/vm:kernel_headers"])
+amd64_generic_module_objects(name = "ng_pppoe_module", srcs = ["ng_pppoe.c"], deps = [
+    ":pppoe_module_headers", "//sys/net:ethernet_headers", "//sys/net:interface_headers",
+    "//sys/net:vlan_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])

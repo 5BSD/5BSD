@@ -29,6 +29,14 @@ def profile_assignments(path):
     return values
 
 
+def same_executable(path, expected):
+    """Accept symlink and hardlink aliases of the selected compiler file."""
+    try:
+        return os.path.samefile(path, expected)
+    except OSError:
+        return False
+
+
 class BuildEnvironment:
     def __init__(self, src, objtop, profile, make, component=None):
         self.src, self.objtop = src.resolve(strict=True), objtop.resolve(strict=True)
@@ -58,7 +66,7 @@ class BuildEnvironment:
             raise ValueError('buildenv compiler is not bound to selected staged sysroot')
         self.compiler = self.objtop/'tmp/usr/bin/clang'
         selected = shutil.which(self.cc[0], path=rows[4])
-        if not selected or Path(selected).resolve(strict=True) != self.compiler.resolve(strict=True):
+        if not selected or not same_executable(selected, self.compiler):
             raise ValueError('buildenv compiler executable differs from selected staged clang')
         self.compiler_selected = selected
         self.inputs[str(self.compiler)] = digest(self.compiler)

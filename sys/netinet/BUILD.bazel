@@ -5,19 +5,50 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "address_headers", hdrs = ["in.h"], includes = [".."],
     deps = ["//sys/net:network_headers", "//sys/netinet6:address_headers"], visibility = ["//visibility:public"])
 
+cc_library(name = "interface_headers", hdrs = ["in_var.h"], includes = [".."],
+    deps = [":address_headers", "//sys/net:interface_headers", "//sys/netinet6:interface_state_headers",
+        "//sys/contrib/ck:kernel_headers"],
+    visibility = ["//sys/netgraph:__pkg__", "//sys/modules/netgraph/ip_input:__pkg__"])
+
 cc_library(name = "pcb_headers", hdrs = ["in_pcb.h"], includes = [".."],
     deps = [":address_headers", "//sys/net:route_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "ip_headers", hdrs = ["ip_var.h", "in_kdtrace.h"], includes = [".."], deps = [":pcb_headers"], visibility = ["//visibility:public"])
 
-cc_library(name = "ip6_wire_headers", hdrs = ["ip6.h"], includes = [".."], visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ip6_wire_headers", hdrs = ["ip6.h"], includes = [".."], visibility = ["//sys/netinet6:__pkg__", "//sys/netgraph:__pkg__"])
 
-cc_library(name = "ipv4_wire_headers", hdrs = ["in_systm.h", "ip.h"], includes = [".."], deps = [":address_headers"], visibility = ["//sys/security/audit:__pkg__"])
+cc_library(name = "ipv4_wire_headers", hdrs = ["in_systm.h", "ip.h"], includes = [".."], deps = [":address_headers"], visibility = ["//sys/security/audit:__pkg__", "//sys/netgraph:__pkg__"])
 
-cc_library(name = "tcp_wire_headers", hdrs = ["tcp.h"], includes = [".."], visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "bridgestp_headers", hdrs = ["if_ether.h", "in_systm.h", "in_var.h"], includes = [".."], deps = [":address_headers", "//sys/netinet6:bridgestp_headers"], visibility = ["//sys/net:__pkg__"])
+
+cc_library(name = "ipv4_tunnel_headers", hdrs = ["if_ether.h", "in_systm.h", "in_var.h", "ip.h", "ip_encap.h", "ip_var.h"], includes = [".."],
+    deps = [":address_headers", ":ip_headers", ":pcb_headers", "//sys/netinet6:bridgestp_headers"], visibility = ["//sys/net:__pkg__", "//sys/modules/if_enc:__pkg__", "//sys/modules/if_me:__pkg__", "//sys/modules/if_gif:__pkg__", "//sys/modules/if_gre:__pkg__", "//sys/netipsec:__pkg__"])
+
+cc_library(name = "ipv4_interface_tunnel_headers", hdrs = ["in_fib.h", "in_pcb.h", "in_rss.h", "ip_ecn.h", "udp.h", "udp_var.h"], includes = [".."],
+    deps = [":ipv4_tunnel_headers", ":pcb_headers"], visibility = ["//sys/net:__pkg__"])
+
+cc_library(name = "tcp_wire_headers", hdrs = ["tcp.h"], includes = [".."], visibility = ["//sys/kern:__pkg__", "//sys/netgraph:__pkg__"])
+
+cc_library(name = "udp_wire_headers", hdrs = ["udp.h"], includes = [".."],
+    deps = [":address_headers"], visibility = ["//sys/netgraph:__pkg__"])
+
+# Header closure consumed by the amd64 GENERIC TCP congestion-control modules.
+cc_library(name = "tcp_cc_headers", hdrs = [
+    "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h",
+    "tcp_timer.h", "tcp_var.h",
+], includes = [".."], deps = [
+    ":pcb_headers", "//sys/netinet6:address_headers",
+], visibility = ["//sys/netinet/cc:__pkg__"])
+cc_library(name = "tcp_cc_ertt_headers", hdrs = ["khelp/h_ertt.h"], includes = [".."],
+    deps = [":tcp_cc_headers"], visibility = ["//sys/netinet/cc:__pkg__"])
+cc_library(name = "tcp_cc_hpts_headers", hdrs = ["tcp_hpts.h", "tcp_log_buf.h"], includes = [".."],
+    deps = [":tcp_cc_headers"], visibility = ["//sys/netinet/cc:__pkg__"])
 
 # Source-header closure for the maintained truss build on amd64.
 cc_library(name = "truss_headers", hdrs = ['in.h', 'sctp.h', 'sctp_uio.h'], strip_include_prefix = "/sys", visibility = ["//usr.bin/truss:__pkg__"])
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['in.h', 'tcp.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# Sources consumed by the separately installed accept-filter kernel modules.
+exports_files(["accf_data.c", "accf_dns.c", "accf_http.c", "accf_tls.c", "in_gif.c", "ip_gre.c"], visibility = ["//sys/net:__pkg__", "//sys/modules:__subpackages__"])

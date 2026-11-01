@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(
+    srcs = ["//sys/kern:kern_alq.c"],
+    deps = [
+        "//sys/amd64/conf:generic_opt_mac_header",
+        "//sys/security/mac:framework_headers",
+        "//sys/vm:kernel_headers",
+    ],
+)
+
+amd64_generic_module(
+    module = "alq",
+    objects = [":generic_module_object_files"],
+    export_all = True,
+)

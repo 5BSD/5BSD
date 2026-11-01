@@ -1,20 +1,19 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//usr.sbin/bsdinstall/tests:fixture_sources.bzl", "TEST_DIRECTORY_RECORDS")
 [bsd_install_file(name = "install_" + name, src = name, destination = destination, owner = "root", group = "wheel", mode = "0555", install_tags = ["package=bsdinstall"]) for name, destination in [("bsdinstall", "/usr/sbin/bsdinstall"), ("startbsdinstall", "/usr/libexec/bsdinstall/startbsdinstall")]]
 bsd_install_file(name = "base_config", src = "//usr.sbin/pkg:5BSD.conf.in", destination = "/usr/share/bsdinstall/5BSD-base.conf", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdinstall"])
 bsd_compress(name = "manual", src = "bsdinstall.8", output = "bsdinstall.8.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 bsd_install_file(name = "manual_file", src = ":manual", destination = "/usr/share/man/man8/bsdinstall.8.gz", owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=bsdinstall-man"], "//conditions:default": ["package=bsdinstall"]}))
 bsd_install_manifest(name = "install_manifest", entries = [":install_bsdinstall", ":install_startbsdinstall", ":base_config", ":manual_file"])
-# The installed test subtree still needs native fixture generation and mapping.
-# Reject tests=true here until it is represented, rather than silently omitting it.
 bsd_install_archive(name = "install_archive",
-    manifests = [":install_manifest", "//usr.sbin/bsdinstall/scripts:install_manifest"] + ["//usr.sbin/bsdinstall/" + name + ":install_manifest" for name in ["distextract", "distfetch", "partedit", "runconsoles"]],
-    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall"]}' for d in ["/usr/sbin", "/usr/libexec/bsdinstall"]} | {"/usr/share/bsdinstall": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec", "/usr/lib/debug/usr/libexec/bsdinstall"]},
-    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    manifests = [":install_manifest", "//usr.sbin/bsdinstall/scripts:install_manifest"] + ["//usr.sbin/bsdinstall/" + name + ":install_manifest" for name in ["distextract", "distfetch", "partedit", "runconsoles"]] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/bsdinstall/tests:fixture_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall"]}' for d in ["/usr/sbin", "/usr/libexec/bsdinstall"]} | {"/usr/share/bsdinstall": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall"]}'} | {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdinstall","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/libexec", "/usr/lib/debug/usr/libexec/bsdinstall"]} | select({"//tools/build/bazel/config:tests_enabled": TEST_DIRECTORY_RECORDS, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"} | select({"//tools/build/bazel/config:tests_enabled": {"//etc/mtree:BSD.tests.dist": "/usr/tests"}, "//conditions:default": {}}),
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
-    target_compatible_with = select({"//tools/build/bazel/config:tests_enabled": ["@platforms//:incompatible"], "//conditions:default": []}), visibility = ["//visibility:public"])
+    visibility = ["//visibility:public"])
 
 exports_files(["bsdinstall.8"], visibility = ["//usr.sbin/bsdinstall/tests:__pkg__"])

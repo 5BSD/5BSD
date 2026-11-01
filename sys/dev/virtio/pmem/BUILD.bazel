@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "pmem_headers", hdrs = ["virtio_pmem.h"], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(name = "generic_module", srcs = ["virtio_pmem.c"], deps = [
+    ":pmem_headers",
+    "//sys/amd64/conf:generic_opt_acpi_header",
+    "//sys/contrib/dev/acpica/include:kernel_headers",
+    "//sys/dev/acpica:acpivar_headers",
+    "//sys/dev/nvdimm:kernel_headers",
+    "//sys/dev/virtio:virtio_headers",
+    "//sys/dev/virtio:virtio_if_headers",
+    "//sys/dev/virtio/pci:shmem_headers",
+    "//sys/geom:kernel_headers",
+    "//sys/kern:bus_if_headers",
+    "//sys/kern:device_if_headers",
+    "//sys/vm:kernel_headers",
+])

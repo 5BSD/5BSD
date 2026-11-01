@@ -21,3 +21,9 @@ fuchsia_runtime_repository = use_repo_rule("//tools/build/bazel:fuchsia_runtime_
 fuchsia_runtime_repository(name = "fuchsia_runtime_src",
     source_marker = "//contrib/fuchsia:LICENSE",
     build_file = "//tools/build/bazel:fuchsia_runtime.BUILD")
+
+# Source inventory view for bsdinstall's maintained documentation test inputs.
+book_inventory_repository = use_repo_rule("//tools/build/bazel:book_inventory_repository.bzl", "book_inventory_repository")
+book_inventory_repository(name = "book_inventory_src", source_marker = "//:COPYRIGHT",
+    python = "@bsd_sdk//toolchain:bin/extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json")

@@ -1,4 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-cc_library(name = "kernel_headers", hdrs = ["linux/include/linux/xz.h"], includes = ["../.."], visibility = ["//visibility:public"])
+cc_library(
+    name = "kernel_headers",
+    hdrs = [
+        "freebsd/xz_config.h",
+        "freebsd/xz_malloc.h",
+        "linux/include/linux/xz.h",
+        "linux/lib/xz/xz_lzma2.h",
+        "linux/lib/xz/xz_private.h",
+        "linux/lib/xz/xz_stream.h",
+    ],
+    includes = ["../.."],
+    visibility = ["//visibility:public"],
+)

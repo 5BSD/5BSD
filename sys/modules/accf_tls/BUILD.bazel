@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+amd64_generic_module_objects(srcs = ["//sys/netinet:accf_tls.c"], deps = ["//sys/vm:kernel_headers"])
+amd64_generic_module(module = "accf_tls", objects = [":generic_module_object_files"])
