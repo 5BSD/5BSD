@@ -181,6 +181,61 @@ ATF_TC_BODY(match_is_exact, tc)
 	    EXDEV);
 }
 
+ATF_TC_WITHOUT_HEAD(describe_names_differing_field);
+ATF_TC_BODY(describe_names_differing_field, tc)
+{
+	struct checkpoint_cpu_contract destination, source;
+	char detail[192];
+
+	source = sample_contract();
+	destination = source;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), 0);
+	ATF_CHECK_STREQ(detail, "");
+
+	destination.records[1].values[2] ^= 1;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail,
+	    "CPUID 0x7.0 ecx: source 0x00000005, destination 0x00000004");
+
+	destination = source;
+	destination.record_count--;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "record count: source 3, destination 2");
+
+	destination = source;
+	destination.records[2].parameter = 2;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail,
+	    "record 2 leaf: source 0xd.1, destination 0xd.2");
+
+	destination = source;
+	destination.architecture = CHECKPOINT_CPU_ARCH_ARM64;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail, "architecture: source 1, destination 2");
+
+	source.architecture = CHECKPOINT_CPU_ARCH_RISCV64;
+	destination = source;
+	destination.records[0].values[3] = 9;
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_STREQ(detail,
+	    "record 0.0 value[3]: source 0x00000003, destination 0x00000009");
+
+	/* Truncation is safe and still reports the mismatch. */
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, detail, 8), EXDEV);
+	ATF_CHECK_EQ(strlen(detail), 7);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	    &destination, NULL, 8), EINVAL);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(NULL,
+	    &destination, detail, sizeof(detail)), EINVAL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -189,5 +244,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rejects_ambiguous_record_order);
 	ATF_TP_ADD_TC(tp, rejects_oversized_text_before_decode);
 	ATF_TP_ADD_TC(tp, match_is_exact);
+	ATF_TP_ADD_TC(tp, describe_names_differing_field);
 	return (atf_no_error());
 }

@@ -16,5 +16,6 @@ int	x86_cpuid_topology(uint32_t leaf, uint32_t subleaf, uint16_t cores,
 	    uint32_t values[4]);
 uint32_t x86_cpuid_guest_stdext2(uint32_t host_stdext2);
 uint8_t	x86_cpuid_linear_address_width(uint32_t guest_stdext2);
+bool	x86_cpuid_leaf_host_cpu_local(uint32_t leaf);
 
 #endif /* _VMM_X86_CPUID_H_ */

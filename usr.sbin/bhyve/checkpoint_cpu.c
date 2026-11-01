@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -222,5 +223,102 @@ checkpoint_cpu_contract_decode(const char *text,
 	if (error != 0)
 		return (error);
 	*contract = candidate;
+	return (0);
+}
+
+/*
+ * Name one register of a contract record for an operator.  The synthetic
+ * amd64 selectors carry vm_cpu_compat fields (see checkpoint_cpu_machdep.c).
+ */
+static void
+describe_value(char *buf, size_t len, uint32_t architecture,
+    const struct checkpoint_cpu_record *record, unsigned int value)
+{
+	static const char *const x86_regs[4] = { "eax", "ebx", "ecx", "edx" };
+	static const char *const x86_platform[4] = { "tsc_frequency[31:0]",
+	    "tsc_frequency[63:32]", "x2apic_state", "reserved" };
+	static const char *const x86_policy[4] = { "xcr0_allowed[31:0]",
+	    "xcr0_allowed[63:32]", "xsave_max_size", "compat_flags" };
+	static const char *const x86_nested[4] = {
+	    "nested_capability_signature[31:0]",
+	    "nested_capability_signature[63:32]",
+	    "nested_schema_signature[31:0]",
+	    "nested_schema_signature[63:32]" };
+
+	if (architecture == CHECKPOINT_CPU_ARCH_AMD64) {
+		switch (record->selector) {
+		case CHECKPOINT_CPU_X86_PLATFORM:
+			snprintf(buf, len, "x86 platform %s",
+			    x86_platform[value]);
+			return;
+		case CHECKPOINT_CPU_X86_POLICY:
+			snprintf(buf, len, "x86 policy %s", x86_policy[value]);
+			return;
+		case CHECKPOINT_CPU_X86_NESTED:
+			snprintf(buf, len, "x86 nested %s", x86_nested[value]);
+			return;
+		default:
+			snprintf(buf, len, "CPUID %#x.%u %s", record->selector,
+			    record->parameter, x86_regs[value]);
+			return;
+		}
+	}
+	snprintf(buf, len, "record %#x.%u value[%u]", record->selector,
+	    record->parameter, value);
+}
+
+int
+checkpoint_cpu_contract_describe_mismatch(
+    const struct checkpoint_cpu_contract *source,
+    const struct checkpoint_cpu_contract *destination, char *buf, size_t len)
+{
+	const struct checkpoint_cpu_record *s, *d;
+	char field[96];
+	size_t count;
+
+	if (buf == NULL || len == 0)
+		return (EINVAL);
+	buf[0] = '\0';
+	if (source == NULL || destination == NULL)
+		return (EINVAL);
+	if (source->version != destination->version) {
+		snprintf(buf, len, "contract version: source %u, destination %u",
+		    source->version, destination->version);
+		return (EXDEV);
+	}
+	if (source->architecture != destination->architecture) {
+		snprintf(buf, len, "architecture: source %u, destination %u",
+		    source->architecture, destination->architecture);
+		return (EXDEV);
+	}
+	count = source->record_count < destination->record_count ?
+	    source->record_count : destination->record_count;
+	if (count > CHECKPOINT_CPU_MAX_RECORDS)
+		count = CHECKPOINT_CPU_MAX_RECORDS;
+	for (size_t i = 0; i < count; i++) {
+		s = &source->records[i];
+		d = &destination->records[i];
+		if (s->selector != d->selector || s->parameter != d->parameter) {
+			/* Different leaf sets: name the first divergent leaf. */
+			snprintf(buf, len, "record %zu leaf: source %#x.%u, "
+			    "destination %#x.%u", i, s->selector, s->parameter,
+			    d->selector, d->parameter);
+			return (EXDEV);
+		}
+		for (unsigned int v = 0; v < 4; v++) {
+			if (s->values[v] == d->values[v])
+				continue;
+			describe_value(field, sizeof(field),
+			    source->architecture, s, v);
+			snprintf(buf, len, "%s: source 0x%08x, destination "
+			    "0x%08x", field, s->values[v], d->values[v]);
+			return (EXDEV);
+		}
+	}
+	if (source->record_count != destination->record_count) {
+		snprintf(buf, len, "record count: source %zu, destination %zu",
+		    source->record_count, destination->record_count);
+		return (EXDEV);
+	}
 	return (0);
 }
