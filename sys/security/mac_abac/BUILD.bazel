@@ -13,3 +13,11 @@ amd64_generic_kernel_objects(name = "generic_builtin", srcs = _KERNEL_SOURCES, d
 cc_library(name = "abi_headers", hdrs = ["mac_abac.h"], strip_include_prefix = "/sys",
     visibility = ["//usr.sbin/mac_abacd:__pkg__", "//usr.sbin/mac_abac_ctl:__pkg__"])
 exports_files(["mac_abac.h"], visibility = ["//usr.sbin/mac_abac_ctl:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = _KERNEL_SOURCES,
+    deps = [":headers"],
+) for arch in ["arm64", "riscv"]]

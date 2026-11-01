@@ -4568,3 +4568,11 @@ cd9660 and cd9660_iconv, fdescfs, nullfs, pseudofs, tmpfs and unionfs.
 They use target-generated options and the existing kernel CTF/debug settings.
 Independent Make comparisons cover installed artifacts and file metadata;
 filesystem operations and matching-kernel module loading remain unqualified.
+
+.Pp
+ARM64 and RISC-V64 candidates also include mac_abac, mac_ddb, mac_do, mac_ntpd,
+mac_pimd, mac_portacl, mac_priority, mac_test, mac_test_hooks and oes.
+The normal kernel profile preserves generated MAC options and individual kernel,
+mac-abac, oes and test package assignments.
+Artifact/CTF/debug and file metadata comparisons do not qualify policy
+enforcement, authorization, event delivery or matching-kernel module loading.

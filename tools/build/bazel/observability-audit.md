@@ -8851,3 +8851,14 @@ module bytes and installed enabled SDT/CTF/code/relocation sections match Make.
 Live firing, argument semantics, ACL/MAC enforcement, audit event delivery,
 filesystem failure behavior and overhead remain unqualified. See
 [filesystem evidence](CROSS-FILESYSTEMS-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 MAC and OES modules (2026-11-01)
+
+The bounded 28-C-source scan records 21 ABAC schemas in mac_abac.c, two in
+mac_do.c, nine in oes_event.c and one audit marker in oes_mac.c. Header-defined
+sites and subsystem observation are outside that direct-marker count. No C,
+probe or audit behavior changed. Complete no-debug bytes and installed enabled
+SDT/CTF/code/relocation sections match independent Make artifacts. Live firing,
+argument semantics, ABAC/MAC enforcement, authorization/event/cache behavior,
+audit delivery and overhead remain open. See
+[security-module evidence](CROSS-SECURITY-QUALIFICATION.md).
