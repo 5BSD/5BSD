@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# BLAKE2 reference code for userland consumers (bsdextension(8) compares
+# module files with pkg's BLAKE2b file checksums).  The kernel builds these
+# files through sys/conf/files with sys/crypto/blake2/config.h.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "headers", hdrs = ["blake2.h", "blake2-impl.h"],
+    strip_include_prefix = ".",
+    visibility = ["//usr.sbin/BSDExtension:__subpackages__"])
+exports_files(["blake2b-ref.c"],
+    visibility = ["//usr.sbin/BSDExtension:__subpackages__"])

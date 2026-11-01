@@ -3,20 +3,23 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
 [cc_binary(name = name,
     srcs = [name + ".c", "test_policy.h", "//usr.sbin/BSDExtension:bsdextension.c",
-        "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
+        "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c",
+        "//usr.sbin/BSDExtension:rootload.c"],
     deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers",
+        "//usr.sbin/BSDExtension:blake2b", "//sys/contrib/libb2:headers",
+        "//contrib/sqlite3:headers", "//lib/libsqlite3:sqlite3",
         "//lib/libextensioncmp:extensioncmp", "//lib/libextensioncmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libservice:service", "//lib/libchannel:channel",
         "//lib/libucl:ucl", "//lib/libcapreclaim:capreclaim", "//lib/liblogcmp:logcmp", "//lib/libthr:thr"] + (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
     local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
- for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test"]]
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test", "rootload_test"]]
 [bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
     suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     tags = ["manual", "requires-matching-kernel"] if name in ["provider_test", "reclaim_test"] else [],
     size = "medium", visibility = ["//visibility:public"])
- for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test"]]
+ for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test", "rootload_test"]]
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_fidl.bzl", "bsd_fidl_ir", "bsd_fidl_bindings")
@@ -46,12 +49,13 @@ cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
     linkopts = ["-static"], linkstatic = True)
 
 
-_EXTENSION_LIBS = ['//lib/libextensioncmp:extensioncmp', '//lib/libfidl:fidl', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libthr:thr']
-cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
-    deps = _EXTENSION_LIBS + ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+_EXTENSION_LIBS = ['//lib/libextensioncmp:extensioncmp', '//lib/libfidl:fidl', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libthr:thr', '//lib/libsqlite3:sqlite3']
+_ROOTLOAD = ["//usr.sbin/BSDExtension:blake2b", "//sys/contrib/libb2:headers", "//contrib/sqlite3:headers"]
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c"],
+    deps = _EXTENSION_LIBS + _ROOTLOAD + ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
-cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c"],
-    deps = _EXTENSION_LIBS + ["//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c"],
+    deps = _EXTENSION_LIBS + _ROOTLOAD + ["//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     dynamic_deps = [lib + "_shared" for lib in _EXTENSION_LIBS],
     local_defines = ["BSDEXTENSION_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
 bsd_kyua_test(name = "evolution_test_run", program = ":evolution_test", interface = "atf",

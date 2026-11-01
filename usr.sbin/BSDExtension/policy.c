@@ -123,6 +123,8 @@ resolve(struct policy_state *s)
 	memcpy(s->effective.driver_clients, s->base.driver_clients,
 	    sizeof(s->effective.driver_clients));
 	s->effective.ndriver_clients = s->base.ndriver_clients;
+	memcpy(s->effective.root_load_repository, s->base.root_load_repository,
+	    sizeof(s->effective.root_load_repository));
 	for (i = 0; i < s->base.nallow; i++)
 		if (allowed(s, s->base.allow[i]) &&
 		    add_name(&s->effective, s->base.allow[i]) == -1)

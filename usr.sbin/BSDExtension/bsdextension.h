@@ -20,8 +20,10 @@
 #define _BSDEXTENSION_H_
 
 #include <sys/types.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <libservice.h>
 
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
@@ -29,6 +31,7 @@
 #define	SYSEXT_MAX_ALLOW	256	/* allow-list capacity */
 #define	SYSEXT_MAX_DRIVER_CLIENTS 8	/* driver_clients capacity */
 #define	SYSEXT_CLIENT_MAX	64	/* switchboard label bound */
+#define	SYSEXT_REPOSITORY_MAX	64	/* root_load_repository bound */
 #define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
 /*
  * Bundle-relative config filename, opened via the switchboard-delivered Config
@@ -60,6 +63,13 @@ struct sysext_config {
 	 */
 	char	driver_clients[SYSEXT_MAX_DRIVER_CLIENTS][SYSEXT_CLIENT_MAX];
 	size_t	ndriver_clients;
+	/*
+	 * root_load_repository: the pkg repository name (the "repository"
+	 * annotation pkg records at install) whose base packages a UID 0 login
+	 * session may load kernel modules from (system.SystemExtension.RootLoad).
+	 * Empty: root loads are refused.
+	 */
+	char	root_load_repository[SYSEXT_REPOSITORY_MAX];
 };
 
 struct sysext_policy;
@@ -98,6 +108,56 @@ bool sysext_policy_denied(struct sysext_policy *, const char *);
 extern int sysext_driver_dirfd;
 bool sysext_hints_pnp_module(const void *, size_t, const char *);
 bool sysext_driver_module(int, const char *);
+
+/*
+ * Root loads (rootload.c), served on system.SystemExtension.RootLoad.  The
+ * manifest delivers /var/db/pkg by descriptor; the package database is parsed
+ * in a forked child that holds only that directory and a reply pipe (never
+ * the kldload token).  A file qualifies when the database records
+ * /boot/kernel/FILE in a package whose origin is base/... and whose repository
+ * annotation is the configured root_load_repository, and the file's BLAKE2b
+ * checksum (pkg's "2$" format) matches the recorded one.
+ */
+#define	SYSEXT_PKGDB_DIR	"/var/db/pkg"
+#define	SYSEXT_PKGDB_FILE	"local.sqlite"
+#define	SYSEXT_PKGDB_MAX	(1024L * 1024 * 1024)	/* database size bound */
+#define	SYSEXT_MODULE_FILE_MAX	(512L * 1024 * 1024)	/* module size bound */
+#define	SYSEXT_PKG_CHECKSUM_MAX	160
+#define	SYSEXT_ROOT_LOADED_MAX	64	/* tracked root loads (for unload) */
+extern int sysext_pkgdb_dirfd;
+
+struct sysext_pkg_record {
+	char	checksum[SYSEXT_PKG_CHECKSUM_MAX];
+	char	package[128];
+	char	origin[160];
+	char	repository[SYSEXT_REPOSITORY_MAX];
+	bool	symlink;
+	bool	found;		/* false: no package records the path */
+};
+/* 0 with *rec filled (rec->found false when no package records path), or an
+ * errno when the database cannot be read. */
+int	sysext_pkgdb_lookup(int dirfd, const char *path,
+	    struct sysext_pkg_record *rec);
+/* pkg's file checksum ("2$" + z-base-32 BLAKE2b-512) of an open file. */
+int	sysext_pkg_checksum_fd(int fd, char *out, size_t outlen);
+void	sysext_pkg_base32(const unsigned char *in, size_t inlen, char *out,
+	    size_t outlen);
+/*
+ * Decide a root Load or Unload: returns SYSEXT_DECISION_*; *errorp is the
+ * errno of a failed load or unload; detail receives a reason for the log.
+ * The caller has already checked the name, the policy (enabled, not denied by
+ * an administrator) and that the module is not loaded.
+ */
+uint32_t sysext_root_load(const char *repository, const char *name,
+	    int *errorp, char *detail, size_t detaillen);
+uint32_t sysext_root_unload(const char *name, int *errorp, char *detail,
+	    size_t detaillen);
+/* Another client asked for name while loaded: a root unload is refused. */
+void	sysext_root_note_shared(const char *name);
+/* A module whose unload a root session may never request. */
+bool	sysext_root_unload_protected(const char *name);
+/* Serialises the broker's own kernel loads (rootload.c checks new files). */
+extern pthread_mutex_t sysext_load_lock;
 
 /*
  * Recent load decisions (Ensure and Restore), kept in memory for the read-only
@@ -155,6 +215,22 @@ int	sysext_test_serve_status(int fd, const char *client,
 	    const struct sysext_config *cfg);
 /* Drop every recorded decision and restart the sequence at 1. */
 void	sysext_test_decisions_reset(void);
+/*
+ * The same over the root-load endpoint (SystemExtensionRootLoad).  The kernel
+ * and package directories are the test's; sysext_test_kld_* replace the
+ * kernel linker calls (NULL: the real kldload/kldunload/kldstat/kldnext).
+ */
+int	sysext_test_serve_rootload(int fd, const char *client,
+	    const struct sysext_config *cfg, int kerneldir, int pkgdir,
+	    const char *deny);
+extern int (*sysext_test_kld_load)(const char *path, int *fileid);
+extern int (*sysext_test_kld_unload)(int fileid);
+/* Fill the name and pathname of a loaded file id; an errno when none. */
+extern int (*sysext_test_kld_stat)(int fileid, char *name, size_t namelen,
+	    char *path, size_t pathlen);
+/* The first loaded file id after fileid, or 0 at the end. */
+extern int (*sysext_test_kld_next)(int fileid);
+void	sysext_test_root_reset(void);
 #else
 #define	SYSEXT_STATIC	static
 #endif /* BSDEXTENSION_TESTING */

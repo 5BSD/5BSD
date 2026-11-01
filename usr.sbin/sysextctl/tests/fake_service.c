@@ -19,10 +19,11 @@
 
 /*
  * SYSEXT_TEST_ACCESS: "full" (the default) reaches the full endpoint (rc,
- * devd); "root" reaches only the read-only
- * view, as a root login shell does; "none" reaches neither (another user).
+ * devd); "root" reaches the read-only view and the root-load endpoint, as a
+ * root login shell does (and runs with effective UID 0); "none" reaches
+ * neither (another user, effective UID 1001).
  */
-struct extensioncmp_session { int open, status; };
+struct extensioncmp_session { int open, status, rootload; };
 static struct extensioncmp_session session;
 
 static const char *
@@ -39,8 +40,18 @@ writable(const struct extensioncmp_session *s)
 {
 	if (s != &session || !session.open)
 		abort();
-	if (session.status)
+	if (session.status || session.rootload)
 		abort();
+}
+
+/* The caller's effective UID follows SYSEXT_TEST_ACCESS (see above). */
+uid_t
+geteuid(void)
+{
+	const char *m = access_mode();
+
+	return (strcmp(m, "root") == 0 ? 0 : strcmp(m, "none") == 0 ? 1001 :
+	    getuid());
 }
 
 static const char *
@@ -96,6 +107,7 @@ extensioncmp_session_open(struct extensioncmp_session **out)
 		return (errno = ENOENT, -1);
 	session.open = 1;
 	session.status = 0;
+	session.rootload = 0;
 	*out = &session;
 	return (0);
 }
@@ -107,6 +119,7 @@ extensioncmp_session_open_status(struct extensioncmp_session **out)
 		return (errno = ENOENT, -1);
 	session.open = 1;
 	session.status = 1;
+	session.rootload = 0;
 	*out = &session;
 	return (0);
 }
@@ -282,4 +295,72 @@ sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
 	}
 	*oldlenp = len;
 	return (0);
+}
+
+/*
+ * The root-load endpoint: only for "root" access.  SYSEXT_TEST selects the
+ * broker's decision: present, notpackaged, checksum, outside, override,
+ * disabled, pkgdb, changed, failed (EBUSY), notroot; otherwise the load or
+ * unload succeeds.
+ */
+int
+extensioncmp_session_open_rootload(struct extensioncmp_session **out)
+{
+	if (strcmp(access_mode(), "root") != 0)
+		return (errno = ENOENT, -1);
+	session.open = 1;
+	session.status = 0;
+	session.rootload = 1;
+	*out = &session;
+	return (0);
+}
+
+static int
+root_outcome(const char *name, int load,
+    struct service_extension_root_outcome *o)
+{
+	static const struct { const char *mode; int result; } table[] = {
+		{ "present", SYSEXT_DECISION_PRESENT },
+		{ "notpackaged", SYSEXT_DECISION_NOT_PACKAGED },
+		{ "checksum", SYSEXT_DECISION_CHECKSUM },
+		{ "outside", SYSEXT_DECISION_NOT_KERNEL_DIR },
+		{ "override", SYSEXT_DECISION_OVERRIDE },
+		{ "disabled", SYSEXT_DECISION_DISABLED },
+		{ "pkgdb", SYSEXT_DECISION_PKGDB },
+		{ "changed", SYSEXT_DECISION_CHANGED },
+		{ "failed", SYSEXT_DECISION_FAILED },
+		{ "notroot", SYSEXT_DECISION_NOT_ROOT_LOADED },
+	};
+	int error;
+
+	if (!session.open || !session.rootload)
+		abort();
+	memset(o, 0, sizeof(*o));
+	if ((error = check(name, 0)) != 0 || (error = outcome(1)) != 0)
+		return (errno = error, -1);
+	o->result = load ? SYSEXT_DECISION_LOADED : SYSEXT_DECISION_UNLOADED;
+	for (size_t i = 0; i < nitems(table); i++)
+		if (strcmp(mode(), table[i].mode) == 0)
+			o->result = table[i].result;
+	if (o->result == SYSEXT_DECISION_FAILED)
+		o->error = EBUSY;
+	return (0);
+}
+
+int
+extensioncmp_root_load(struct extensioncmp_session *s, const char *name,
+    struct service_extension_root_outcome *o)
+{
+	if (s != &session)
+		abort();
+	return (root_outcome(name, 1, o));
+}
+
+int
+extensioncmp_root_unload(struct extensioncmp_session *s, const char *name,
+    struct service_extension_root_outcome *o)
+{
+	if (s != &session)
+		abort();
+	return (root_outcome(name, 0, o));
 }

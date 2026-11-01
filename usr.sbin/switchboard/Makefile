@@ -28,7 +28,8 @@ SWITCHBOARD_CONFIGPACKAGE= switchboard
 # The rc.d adoption allow-list is policy, read at boot from this file rather
 # than hardcoded in switchboard (rc_adopt.c).
 FILESGROUPS+=	ADOPT_CONF
-ADOPT_CONF=	rc_adopt.conf boot-authority.ucl service-authority.ucl root-query.ucl
+ADOPT_CONF=	rc_adopt.conf boot-authority.ucl service-authority.ucl root-query.ucl \
+		root-load.ucl
 ADOPT_CONFDIR=	/Capabilities/Config/switchboard
 ADOPT_CONFPACKAGE=	switchboard
 

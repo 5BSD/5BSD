@@ -4,7 +4,18 @@ PACKAGE=	runtime
 PROG=	BSDExtension
 MAN=		BSDExtension.8
 
-SRCS=		bsdextension.c policy.c reclaim.c
+SRCS=		bsdextension.c policy.c reclaim.c rootload.c
+
+# Root loads compare module files with the checksums pkg recorded (BLAKE2b,
+# sys/contrib/libb2 reference code) and read the package database with base's
+# private sqlite (rootload.c).
+.PATH:		${SRCTOP}/sys/contrib/libb2
+SRCS+=		blake2b-ref.c
+CFLAGS.blake2b-ref.c+=	-DSUFFIX=_ref -I${.CURDIR}/libb2
+# Reference code: unused helpers and const-dropping loads.
+CWARNFLAGS.blake2b-ref.c+=	-Wno-unused-function -Wno-cast-qual
+CFLAGS+=	-I${SRCTOP}/sys/contrib/libb2
+CFLAGS+=	-I${SRCTOP}/contrib/sqlite3
 
 # The kernel-module allow-list (default-deny) config, delivered in the unit's
 # Config/ directory so a born-in-capmode broker opens it through the
@@ -67,7 +78,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		extensioncmp service channel ucl pthread capreclaim logcmp fidl_bsd
+LIBADD=		extensioncmp service channel ucl pthread capreclaim logcmp fidl_bsd \
+		sqlite3
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

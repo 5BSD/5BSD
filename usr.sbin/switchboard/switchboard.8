@@ -1072,6 +1072,26 @@ that
 .Dq Nm sysextctl Cm status
 uses.
 An absent file grants nothing; an invalid file grants nothing and is logged.
+.It Pa /Capabilities/Config/switchboard/root-load.ucl
+Endpoints that act, for the same callers as
+.Pa root-query.ucl :
+the same format, the same admission (effective UID 0 in the kernel stamp,
+not jailed, no software authority, not a unit), no administrative rights.
+It is a separate file so the read-only list stays read-only and the load
+endpoint can be withdrawn on its own.
+The packaged file lists
+.Dq system.SystemExtension.RootLoad ,
+the endpoint of
+.Xr BSDExtension 8
+that
+.Dq Nm sysextctl Cm load
+and
+.Cm unload
+use from a root login shell: the broker loads only a
+.Pa /boot/kernel
+module file that the package database records in a 5BSD base package, with
+a matching checksum, and unloads only what such a load loaded.
+An absent file grants nothing; an invalid file grants nothing and is logged.
 .El
 .Pp
 Both bundle directories and all loaded bundle contents must be root-owned and

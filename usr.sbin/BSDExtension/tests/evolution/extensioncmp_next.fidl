@@ -35,11 +35,17 @@ type LoadDecision = struct {
     module ModuleName;
     // The requester's switchboard client label.
     client string:63;
-    // SYSEXT_OP_* of the request (1 Ensure, 10 Restore).
+    // SYSEXT_OP_* of the request (1 Ensure, 10 Restore, 14 root Load,
+    // 15 root Unload).
     operation uint32;
     // SYSEXT_DECISION_*: 1 loaded, 2 already present, 3 not permitted,
     // 4 client limited to hardware drivers, 5 administrator deny override,
-    // 6 permitted but the load failed (error holds the errno).
+    // 6 permitted but the load failed (error holds the errno); root loads
+    // (operation 14 Load, 15 Unload): 7 not a 5BSD base package file,
+    // 8 checksum differs from the package record, 9 no regular NAME.ko in
+    // /boot/kernel, 10 unloaded, 11 not loaded by a root load (or shared),
+    // 12 root loads not configured, 13 package database unreadable,
+    // 14 file replaced during the load (load undone).
     result uint32;
     error uint32;
 };
@@ -78,4 +84,24 @@ closed protocol SystemExtensionStatus {
     // The oldest retained decision with a sequence after the cursor; ENOENT
     // when there is none.  The broker keeps the most recent 64.
     strict NextDecision(DecisionCursor) -> (LoadDecision) error uint32;
+};
+// The outcome of a root Load or Unload: the decision the broker recorded.
+type RootLoadOutcome = struct {
+    // SYSEXT_DECISION_* (see LoadDecision.result).
+    result uint32;
+    // errno of a failed load or unload, else 0.
+    error uint32;
+};
+// system.SystemExtension.RootLoad: what switchboard gives UID 0 sessions
+// outside a jail that hold no software authority (root-load.ucl).  Load reads
+// /boot/kernel/NAME.ko (NAME, or NAME with .ko) and loads it only when the
+// local package database records that file in a 5BSD base package and its
+// content matches the recorded checksum; administrator denies still win.
+// Unload removes only a module a root Load loaded and no other client has
+// since asked for.  There is no policy, list or administrative method.
+// Errors are errno values for a malformed request (EINVAL: bad name).
+closed protocol SystemExtensionRootLoad {
+    strict GetProtocolInfo() -> (ProtocolInfo);
+    strict Load(Module) -> (RootLoadOutcome) error uint32;
+    strict Unload(Module) -> (RootLoadOutcome) error uint32;
 };

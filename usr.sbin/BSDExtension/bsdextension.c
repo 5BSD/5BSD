@@ -111,7 +111,25 @@ struct sysext_client {
 	 * no other method; this is the second, independent refusal.
 	 */
 	bool read_only;
+	/*
+	 * Arrived on system.SystemExtension.RootLoad: only the root Load and
+	 * Unload decisions (root_decide) apply; sysext_handle() refuses every
+	 * request from such a session.
+	 */
+	bool root_load;
+	uint64_t nonce;		/* the requester's per-exec program nonce */
 };
+
+/* Which endpoint a session arrived on (the listener that accepted it). */
+enum sysext_endpoint {
+	SYSEXT_ENDPOINT_FULL,		/* system.SystemExtension */
+	SYSEXT_ENDPOINT_STATUS,		/* system.SystemExtension.Status */
+	SYSEXT_ENDPOINT_ROOTLOAD	/* system.SystemExtension.RootLoad */
+};
+#define	SYSEXT_ENDPOINTS	3
+
+/* The client recorded for a root Load or Unload in the decision ring. */
+#define	SYSEXT_ROOT_CLIENT	"root (uid 0)"
 
 /* The module -> bundle owner map's directory (reclaim.c), or -1. */
 static int sysext_owners_fd = -1;
@@ -427,7 +445,7 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 {
 	struct sysext_config candidate;
 	ucl_object_t *root;
-	const ucl_object_t *arr, *ent, *drivers, *clients;
+	const ucl_object_t *arr, *ent, *drivers, *clients, *repo;
 	ucl_object_iter_t it = NULL;
 	const char *name;
 	size_t i;
@@ -439,7 +457,7 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 	if (root == NULL)
 		return (-1);
 	memset(&candidate, 0, sizeof(candidate));
-	if (ucl_object_type(root) != UCL_OBJECT || root->len < 1 || root->len > 3)
+	if (ucl_object_type(root) != UCL_OBJECT || root->len < 1 || root->len > 4)
 		goto done;
 	/* Optional: the hardware-driver class (see struct sysext_config). */
 	drivers = ucl_object_lookup(root, "device_drivers");
@@ -453,8 +471,25 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 	    clients->keylen != strlen("driver_clients") ||
 	    ucl_object_type(clients) != UCL_ARRAY))
 		goto done;
-	/* Every key is one of the three, each at most once: no unknown key. */
-	if (root->len != 1 + (drivers != NULL) + (clients != NULL))
+	/*
+	 * Optional: the repository whose base packages a UID 0 session may load
+	 * modules from (system.SystemExtension.RootLoad); absent refuses them.
+	 */
+	repo = ucl_object_lookup(root, "root_load_repository");
+	if (repo != NULL && (repo->next != NULL ||
+	    repo->keylen != strlen("root_load_repository") ||
+	    ucl_object_type(repo) != UCL_STRING ||
+	    (name = ucl_object_tostring(repo)) == NULL ||
+	    strlen(name) != repo->len ||
+	    repo->len >= sizeof(candidate.root_load_repository) ||
+	    !valid_client_label(name, repo->len)))
+		goto done;
+	if (repo != NULL)
+		(void)strlcpy(candidate.root_load_repository, name,
+		    sizeof(candidate.root_load_repository));
+	/* Every key is one of the four, each at most once: no unknown key. */
+	if (root->len != 1 + (drivers != NULL) + (clients != NULL) +
+	    (repo != NULL))
 		goto done;
 	it = NULL;
 	while (clients != NULL &&
@@ -548,8 +583,22 @@ sysext_config_reload(struct sysext_config *cfg, const char *path)
  * "already loaded") or an errno.  kldload(2) is CAPENABLED; a name that is
  * already present returns EEXIST, which is success for an ensure.
  */
+static int ensure_extension_locked(const char *, bool *);
+
+/* Serialised with root loads, which check the files each load brings in. */
 static int
 ensure_extension(const char *name, bool *loaded_now)
+{
+	int error;
+
+	pthread_mutex_lock(&sysext_load_lock);
+	error = ensure_extension_locked(name, loaded_now);
+	pthread_mutex_unlock(&sysext_load_lock);
+	return (error);
+}
+
+static int
+ensure_extension_locked(const char *name, bool *loaded_now)
 {
 	int fileid;
 
@@ -650,6 +699,9 @@ record_load(const char *name, const char *client, uint32_t op, int error,
 	sysext_decision_record(name, client, op, error != 0 ?
 	    SYSEXT_DECISION_FAILED : loaded_now ? SYSEXT_DECISION_LOADED :
 	    SYSEXT_DECISION_PRESENT, error);
+	/* Another client now relies on a module a root session may have loaded. */
+	if (error == 0 && !loaded_now)
+		sysext_root_note_shared(name);
 }
 
 static int
@@ -733,6 +785,13 @@ sysext_handle(const struct sysext_client *identity,
 		rp->status = EPERM;
 		syslog(LOG_WARNING, "request %u (client %s) -> DENIED "
 		    "(read-only status session)", rq->op, client);
+		return (SYSEXT_REPLY_BASIC);
+	}
+	/* A root-load session has no method that reaches this decision. */
+	if (identity->root_load) {
+		rp->status = EPERM;
+		syslog(LOG_WARNING, "request %u (client %s) -> DENIED "
+		    "(root-load session)", rq->op, client);
 		return (SYSEXT_REPLY_BASIC);
 	}
 	if (rq->op >= SYSEXT_OP_ALLOW && rq->op <= SYSEXT_OP_RESTORE) {
@@ -1258,16 +1317,169 @@ st_next_decision(void *argument, struct fidl_bsd_connection *connection,
 }
 
 /*
+ * bsd.extension.v1 SystemExtensionRootLoad, served on
+ * system.SystemExtension.RootLoad: switchboard resolves it for UID 0 sessions
+ * outside a jail that hold no software authority (root-load.ucl).  The
+ * protocol has Load and Unload only; neither consults the allow-list or the
+ * session's rights.  Load requires the policy's root_load_repository and no
+ * administrator deny, then rootload.c's package and checksum checks.  Every
+ * request is recorded in the decision ring and logged with the switchboard
+ * label and the requester's program nonce.
+ */
+static const char *
+decision_word(uint32_t result)
+{
+
+	switch (result) {
+	case SYSEXT_DECISION_LOADED:
+		return ("loaded");
+	case SYSEXT_DECISION_PRESENT:
+		return ("already loaded");
+	case SYSEXT_DECISION_OVERRIDE:
+		return ("DENIED (administrator deny override)");
+	case SYSEXT_DECISION_FAILED:
+		return ("FAILED");
+	case SYSEXT_DECISION_NOT_PACKAGED:
+		return ("DENIED (not a file of a 5BSD base package)");
+	case SYSEXT_DECISION_CHECKSUM:
+		return ("DENIED (checksum differs from the package record)");
+	case SYSEXT_DECISION_NOT_KERNEL_DIR:
+		return ("DENIED (no regular module file in " SYSEXT_KERNEL_DIR
+		    ")");
+	case SYSEXT_DECISION_UNLOADED:
+		return ("unloaded");
+	case SYSEXT_DECISION_NOT_ROOT_LOADED:
+		return ("DENIED (not loaded by a root load)");
+	case SYSEXT_DECISION_DISABLED:
+		return ("DENIED (root loads are not configured)");
+	case SYSEXT_DECISION_PKGDB:
+		return ("DENIED (package database unavailable)");
+	case SYSEXT_DECISION_CHANGED:
+		return ("DENIED (file changed during the load)");
+	default:
+		return ("?");
+	}
+}
+
+static uint32_t
+root_decide(const struct sysext_client *identity, uint32_t op,
+    const char *name, size_t length, int *errorp, int *statusp)
+{
+	struct sysext_request rq;
+	struct sysext_config cfg;
+	char detail[384];
+	uint32_t result;
+	int error = 0, loaded = 0;
+
+	*errorp = 0;
+	*statusp = 0;
+	if (!identity->root_load) {
+		*statusp = EPERM;
+		return (0);
+	}
+	if (!ext_request(&rq, op, name, length) || !valid_module_name(rq.name)) {
+		*statusp = EINVAL;
+		syslog(LOG_WARNING, "ROOT %s (uid 0 session, client %s) -> "
+		    "invalid module name", op == SYSEXT_OP_ROOT_LOAD ? "LOAD" :
+		    "UNLOAD", identity->label);
+		return (0);
+	}
+	if (active_policy == NULL ||
+	    sysext_policy_snapshot(active_policy, &cfg) == -1) {
+		*statusp = active_policy == NULL ? EINVAL : errno;
+		return (0);
+	}
+	detail[0] = '\0';
+	if (op != SYSEXT_OP_ROOT_LOAD)
+		result = sysext_root_unload(rq.name, &error, detail,
+		    sizeof(detail));
+	else if (cfg.root_load_repository[0] == '\0') {
+		result = SYSEXT_DECISION_DISABLED;
+		(void)snprintf(detail, sizeof(detail), "%s sets no "
+		    "root_load_repository", SYSEXT_CONFIG_NAME);
+	} else if (sysext_policy_denied(active_policy, rq.name))
+		result = SYSEXT_DECISION_OVERRIDE;
+	else if (stat_extension(rq.name, &loaded) == 0 && loaded)
+		result = SYSEXT_DECISION_PRESENT;
+	else
+		result = sysext_root_load(cfg.root_load_repository, rq.name,
+		    &error, detail, sizeof(detail));
+	sysext_decision_record(rq.name, SYSEXT_ROOT_CLIENT, op, result, error);
+	syslog(result == SYSEXT_DECISION_LOADED ||
+	    result == SYSEXT_DECISION_PRESENT ||
+	    result == SYSEXT_DECISION_UNLOADED ? LOG_NOTICE : LOG_WARNING,
+	    "ROOT %s %s (uid 0 session, client %s, program nonce %#jx) -> "
+	    "%s%s%s%s%s", op == SYSEXT_OP_ROOT_LOAD ? "LOAD" : "UNLOAD",
+	    rq.name, identity->label, (uintmax_t)identity->nonce,
+	    decision_word(result), error != 0 ? ": " : "",
+	    error != 0 ? strerror(error) : "", detail[0] != '\0' ? "; " : "",
+	    detail);
+	*errorp = error;
+	return (result);
+}
+
+static void
+rl_protocol_info(void *argument, struct fidl_bsd_connection *connection,
+    struct fidl_bsd_request *request, struct fidl_bsd_empty *empty __unused)
+{
+	struct sysext_session *session = argument;
+	struct bsd_extension_v1_ProtocolInfo info = { SYSEXT_WIRE_VERSION };
+	int error;
+
+	error = bsd_extension_v1_SystemExtensionRootLoad_GetProtocolInfo_reply(
+	    connection, request, &info);
+	session->negotiated = error == 0;
+	ext_completed(connection, 0, 0, error);
+}
+
+#define	RL_METHOD(fn, method, op)					\
+static void								\
+fn(void *argument, struct fidl_bsd_connection *connection,		\
+    struct fidl_bsd_request *request, struct bsd_extension_v1_Module *value) \
+{									\
+	struct sysext_session *session = argument;			\
+	struct bsd_extension_v1_SystemExtensionRootLoad_##method##_Result reply; \
+	uint32_t result;						\
+	int status, error;						\
+									\
+	if (!ext_ready(session, connection, op))			\
+		return;							\
+	memset(&reply, 0, sizeof(reply));				\
+	result = root_decide(session->identity, op, value->name,	\
+	    value->name_size, &error, &status);				\
+	if (status == 0) {						\
+		reply.tag = bsd_extension_v1_SystemExtensionRootLoad_##method##_Result_response_tag; \
+		reply.value.response.result = result;			\
+		reply.value.response.error = (uint32_t)error;		\
+	} else {							\
+		reply.tag = bsd_extension_v1_SystemExtensionRootLoad_##method##_Result_err_tag; \
+		reply.value.err = (uint32_t)status;			\
+	}								\
+	ext_completed(connection, op, status,				\
+	    bsd_extension_v1_SystemExtensionRootLoad_##method##_reply(	\
+	    connection, request, &reply));				\
+}
+RL_METHOD(rl_load, Load, SYSEXT_OP_ROOT_LOAD)
+RL_METHOD(rl_unload, Unload, SYSEXT_OP_ROOT_UNLOAD)
+
+/*
  * Serve one client on its own worker channel until it closes.  Runs in a
  * client-serving thread; it shares the daemon's process and held gate token, so
  * its kldload passes the gate under the authorization granted at startup.
  * A status session (system.SystemExtension.Status) is bound to the
- * SystemExtensionStatus handlers instead and marked read-only.
+ * SystemExtensionStatus handlers instead and marked read-only; a root-load
+ * session (system.SystemExtension.RootLoad) to SystemExtensionRootLoad.
  */
 static int
 sysext_worker(int fd, const char *client, const char *container,
-    service_rights_t rights, bool status)
+    service_rights_t rights, enum sysext_endpoint kind, uint64_t nonce)
 {
+	static const struct bsd_extension_v1_SystemExtensionRootLoad_server
+	    rootload_handlers = {
+		.GetProtocolInfo = rl_protocol_info,
+		.Load = rl_load,
+		.Unload = rl_unload
+	};
 	static const struct bsd_extension_v1_SystemExtensionStatus_server
 	    status_handlers = {
 		.GetProtocolInfo = st_protocol_info,
@@ -1293,8 +1505,10 @@ sysext_worker(int fd, const char *client, const char *container,
 	struct fidl_bsd_connection *connection;
 	char label[SYSEXT_NAME_MAX], bundle[64] = "";
 	struct sysext_client identity = { .label = label, .bundle = bundle,
-	    .rights = rights, .read_only = status };
+	    .rights = rights, .read_only = kind == SYSEXT_ENDPOINT_STATUS,
+	    .root_load = kind == SYSEXT_ENDPOINT_ROOTLOAD, .nonce = nonce };
 	struct sysext_session session = { .identity = &identity };
+	int bound;
 
 	(void)strlcpy(label, client, sizeof(label));
 	/* The stamped container names the bundle; "" for units without one. */
@@ -1313,11 +1527,21 @@ sysext_worker(int fd, const char *client, const char *container,
 		(void)close(fd);
 		return (1);
 	}
-	if ((status ?
-	    bsd_extension_v1_SystemExtensionStatus_bind(connection,
-	    &status_handlers, &session) :
-	    bsd_extension_v1_SystemExtension_bind(connection, &handlers,
-	    &session)) != 0) {
+	switch (kind) {
+	case SYSEXT_ENDPOINT_STATUS:
+		bound = bsd_extension_v1_SystemExtensionStatus_bind(connection,
+		    &status_handlers, &session);
+		break;
+	case SYSEXT_ENDPOINT_ROOTLOAD:
+		bound = bsd_extension_v1_SystemExtensionRootLoad_bind(connection,
+		    &rootload_handlers, &session);
+		break;
+	default:
+		bound = bsd_extension_v1_SystemExtension_bind(connection,
+		    &handlers, &session);
+		break;
+	}
+	if (bound != 0) {
 		fidl_bsd_connection_destroy(connection);
 		return (1);
 	}
@@ -1347,7 +1571,8 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 	active_policy = sysext_policy_create(cfg);
 	if (active_policy == NULL)
 		return (1);
-	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_NONE, false);
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_NONE,
+	    SYSEXT_ENDPOINT_FULL, 0);
 	sysext_policy_destroy(active_policy);
 	return (result);
 }
@@ -1365,11 +1590,49 @@ sysext_test_serve_status(int fd, const char *client,
 	active_policy = sysext_policy_create(cfg);
 	if (active_policy == NULL)
 		return (1);
-	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_ALL, true);
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_ALL,
+	    SYSEXT_ENDPOINT_STATUS, 0);
 	sysext_policy_destroy(active_policy);
 	return (result);
 }
 
+
+/*
+ * The root-load endpoint over the test's kernel and package directories.  The
+ * session is given every right, ADMIN included: the endpoint alone decides
+ * what it may do.
+ */
+int
+sysext_test_serve_rootload(int fd, const char *client,
+    const struct sysext_config *cfg, int kerneldir, int pkgdir,
+    const char *deny)
+{
+	int result, saved_kernel = sysext_driver_dirfd,
+	    saved_pkg = sysext_pkgdb_dirfd, statedir;
+
+	active_policy = sysext_policy_create(cfg);
+	if (active_policy == NULL)
+		return (1);
+	/* An administrator deny override, in a private state directory. */
+	if (deny != NULL) {
+		(void)mkdir("rl-policy-state", 0700);
+		statedir = open("rl-policy-state", O_DIRECTORY | O_RDONLY);
+		if (statedir == -1 ||
+		    sysext_policy_attach(active_policy, statedir) == -1 ||
+		    sysext_policy_change(active_policy, SYSEXT_OP_DENY, deny,
+		    SERVICE_RIGHTS_ADMIN) == -1)
+			return (1);
+	}
+	sysext_driver_dirfd = kerneldir;
+	sysext_pkgdb_dirfd = pkgdir;
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_ALL,
+	    SYSEXT_ENDPOINT_ROOTLOAD, 0x5b5d);
+	sysext_driver_dirfd = saved_kernel;
+	sysext_pkgdb_dirfd = saved_pkg;
+	sysext_policy_destroy(active_policy);
+	active_policy = NULL;
+	return (result);
+}
 void
 sysext_test_decisions_reset(void)
 {
@@ -1390,7 +1653,8 @@ struct sysext_conn {
 	service_rights_t	rights;
 	char			label[64];	/* service_identity.client_label */
 	char			container[64];	/* service_identity.container */
-	bool			status;		/* system.SystemExtension.Status */
+	enum sysext_endpoint	kind;		/* the listener that accepted it */
+	uint64_t		nonce;		/* service_identity.client_nonce */
 };
 
 /*
@@ -1419,7 +1683,7 @@ sysext_client_thread(void *arg)
 	/* sysext_worker() owns c->fd (its connection takes it, or it closes it
 	 * on failure) -- do NOT close it again here (double-close race). */
 	(void)sysext_worker(c->fd, c->label, c->container, c->rights,
-	    c->status);
+	    c->kind, c->nonce);
 	free(c);
 	(void)atomic_fetch_sub_explicit(&sysext_nthreads, 1,
 	    memory_order_relaxed);
@@ -1449,28 +1713,32 @@ sysext_client_thread(void *arg)
 static int
 sysext_serve(void)
 {
-	static const char *const names[2] = { SYSEXT_SERVICE_NAME,
-	    SYSEXT_STATUS_SERVICE_NAME };
+	static const char *const names[SYSEXT_ENDPOINTS] = {
+		[SYSEXT_ENDPOINT_FULL] = SYSEXT_SERVICE_NAME,
+		[SYSEXT_ENDPOINT_STATUS] = SYSEXT_STATUS_SERVICE_NAME,
+		[SYSEXT_ENDPOINT_ROOTLOAD] = SYSEXT_ROOTLOAD_SERVICE_NAME
+	};
 	struct service_identity id;
-	struct service_listener *listeners[2];
+	struct service_listener *listeners[SYSEXT_ENDPOINTS];
 	struct service_provider *provider;
-	struct kevent changes[2], event;
+	struct kevent changes[SYSEXT_ENDPOINTS], event;
 	unsigned which;
 	int fd, kq;
 
 	if ((kq = kqueue()) == -1 ||
 	    service_provider_create(&provider) == -1 ||
-	    service_provider_authorize_capabilities(provider) == -1 ||
-	    service_provider_expose(provider, names[0], &listeners[0]) == -1 ||
-	    service_provider_expose(provider, names[1], &listeners[1]) == -1)
+	    service_provider_authorize_capabilities(provider) == -1)
 		return (-1);
-	for (which = 0; which < 2; which++) {
+	for (which = 0; which < SYSEXT_ENDPOINTS; which++) {
+		if (service_provider_expose(provider, names[which],
+		    &listeners[which]) == -1)
+			return (-1);
 		if ((fd = service_listener_fd(listeners[which])) == -1)
 			return (-1);
 		EV_SET(&changes[which], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0,
 		    0, (void *)(uintptr_t)which);
 	}
-	if (kevent(kq, changes, 2, NULL, 0, NULL) == -1)
+	if (kevent(kq, changes, SYSEXT_ENDPOINTS, NULL, 0, NULL) == -1)
 		return (-1);
 	/*
 	 * Anti-tamper the process before it holds the SYS_GATE_KLDLOAD token -- the
@@ -1515,7 +1783,7 @@ sysext_serve(void)
 			return (-1);
 		}
 		which = (unsigned)(uintptr_t)event.udata;
-		if (which > 1)
+		if (which >= SYSEXT_ENDPOINTS)
 			continue;
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
@@ -1581,7 +1849,8 @@ sysext_serve(void)
 		(void)strlcpy(c->label, id.client_label, sizeof(c->label));
 		(void)strlcpy(c->container, id.container, sizeof(c->container));
 		c->rights = id.rights;
-		c->status = which == 1;
+		c->kind = (enum sysext_endpoint)which;
+		c->nonce = id.client_nonce;
 		/*
 		 * Count the thread before creating it, so a burst of accepts cannot
 		 * race past the cap; undo on failure.  The accept loop is the only
@@ -1675,14 +1944,24 @@ main(int argc, char **argv)
 	}
 	/*
 	 * The hardware-driver class reads the kernel's linker.hints through the
-	 * delivered kernel directory.  Soft: without it the class grants nothing
-	 * and only the allow-list applies.
+	 * delivered kernel directory, and root loads open module files beneath
+	 * it.  Soft: without it the class grants nothing and root loads are
+	 * refused; only the allow-list applies.  Opened whatever the policy
+	 * says, so a policy reload can enable either.
 	 */
-	if (!conf_from_arg && sysext_conf.device_drivers &&
+	if (!conf_from_arg &&
 	    service_resource_dir(SYSEXT_KERNEL_DIR, &sysext_driver_dirfd) == -1) {
 		sysext_driver_dirfd = -1;
-		syslog(LOG_WARNING, "device drivers: cannot open %s (%m); "
-		    "only allow-listed modules can load", SYSEXT_KERNEL_DIR);
+		syslog(LOG_WARNING, "cannot open %s (%m); hardware drivers and "
+		    "root loads are refused", SYSEXT_KERNEL_DIR);
+	}
+	/* Root loads read the package database beneath this directory. */
+	if (!conf_from_arg &&
+	    service_resource_dir(SYSEXT_PKGDB_DIR, &sysext_pkgdb_dirfd) == -1) {
+		sysext_pkgdb_dirfd = -1;
+		if (sysext_conf.root_load_repository[0] != '\0')
+			syslog(LOG_WARNING, "cannot open %s (%m); root loads "
+			    "are refused", SYSEXT_PKGDB_DIR);
 	}
 
 

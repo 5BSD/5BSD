@@ -4,11 +4,13 @@
 #include <sys/module.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
+#include <bsm/audit.h>
 #include <err.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <sysexits.h>
 #include <time.h>
 #include <unistd.h>
@@ -20,7 +22,7 @@ static void __dead2
 usage(void)
 {
 	fprintf(stderr, "usage: sysextctl status | list | config | reload | restore\n"
-	    "       sysextctl status|load|allow|deny|reset|enable|disable module\n");
+	    "       sysextctl status|load|unload|allow|deny|reset|enable|disable module\n");
 	exit(EX_USAGE);
 }
 
@@ -81,12 +83,12 @@ print_info(const struct service_extension_info *info)
 	    info->ready ? "" : " (bootstrap; persistent policy not ready)");
 }
 
+/* Why a decision came out as it did; shared by status and root loads. */
 static const char *
-decision_text(const struct service_extension_decision *d, char *buf,
-    size_t len)
+result_text(int result, int error, char *buf, size_t len)
 {
 
-	switch (d->result) {
+	switch (result) {
 	case SYSEXT_DECISION_LOADED:
 		return ("loaded");
 	case SYSEXT_DECISION_PRESENT:
@@ -99,10 +101,57 @@ decision_text(const struct service_extension_decision *d, char *buf,
 	case SYSEXT_DECISION_OVERRIDE:
 		return ("refused: denied by an administrator override");
 	case SYSEXT_DECISION_FAILED:
-		(void)snprintf(buf, len, "load failed: %s", strerror(d->error));
+		(void)snprintf(buf, len, "load failed: %s", strerror(error));
 		return (buf);
+	case SYSEXT_DECISION_NOT_PACKAGED:
+		return ("refused: not a file of an installed 5BSD base package");
+	case SYSEXT_DECISION_CHECKSUM:
+		return ("refused: the file does not match the checksum its "
+		    "package recorded (modified or replaced; reinstall the "
+		    "package)");
+	case SYSEXT_DECISION_NOT_KERNEL_DIR:
+		return ("refused: no regular module file of that name in "
+		    "/boot/kernel");
+	case SYSEXT_DECISION_UNLOADED:
+		return ("unloaded");
+	case SYSEXT_DECISION_NOT_ROOT_LOADED:
+		return ("refused: not loaded with sysextctl load since the "
+		    "broker started, used by another client, or a protected "
+		    "module");
+	case SYSEXT_DECISION_DISABLED:
+		return ("refused: root loads are not configured "
+		    "(root_load_repository in bsdextension.ucl)");
+	case SYSEXT_DECISION_PKGDB:
+		return ("refused: the package database could not be read");
+	case SYSEXT_DECISION_CHANGED:
+		return ("refused: the module file changed during the load; "
+		    "the load was undone");
 	default:
 		return ("unknown");
+	}
+}
+
+static const char *
+decision_text(const struct service_extension_decision *d, char *buf,
+    size_t len)
+{
+
+	return (result_text(d->result, d->error, buf, len));
+}
+
+static const char *
+operation_text(int operation)
+{
+
+	switch (operation) {
+	case SYSEXT_OP_RESTORE:
+		return ("restore");
+	case SYSEXT_OP_ROOT_LOAD:
+		return ("root load");
+	case SYSEXT_OP_ROOT_UNLOAD:
+		return ("root unload");
+	default:
+		return ("load");
 	}
 }
 
@@ -116,7 +165,7 @@ print_decision(const struct service_extension_decision *d)
 	    strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", &tm) == 0)
 		strlcpy(when, "?", sizeof(when));
 	printf("  %s %s %s (client %s): %s\n", when,
-	    d->operation == SYSEXT_OP_RESTORE ? "restore" : "load", d->name,
+	    operation_text(d->operation), d->name,
 	    d->client[0] != '\0' ? d->client : "?",
 	    decision_text(d, buf, sizeof(buf)));
 }
@@ -253,6 +302,90 @@ overview(void)
 	return (0);
 }
 
+/*
+ * Record a root load or unload with the identity of the login session that
+ * asked: the login name and terminal, and the audit user and session when the
+ * kernel has audit support.  The broker logs the same decision with the
+ * switchboard label and the program nonce; this is the caller's side of it.
+ */
+static void
+log_root_request(const char *verb, const char *name, const char *outcome)
+{
+	auditinfo_addr_t ai;
+	char auid[16] = "none", asid[16] = "none";
+	const char *login, *tty;
+
+	memset(&ai, 0, sizeof(ai));
+	if (getaudit_addr(&ai, sizeof(ai)) == 0) {
+		if (ai.ai_auid != AU_DEFAUDITID)
+			(void)snprintf(auid, sizeof(auid), "%u",
+			    (unsigned)ai.ai_auid);
+		(void)snprintf(asid, sizeof(asid), "%d", (int)ai.ai_asid);
+	}
+	login = getlogin();
+	tty = ttyname(STDIN_FILENO);
+	openlog("sysextctl", LOG_PID, LOG_AUTH);
+	syslog(LOG_NOTICE, "%s %s by uid %u (login %s, audit user %s, audit "
+	    "session %s, tty %s): %s", verb, name, (unsigned)getuid(),
+	    login != NULL ? login : "?", auid, asid, tty != NULL ? tty : "none",
+	    outcome);
+	closelog();
+}
+
+/*
+ * load (as root without the full endpoint) and unload: the root-load endpoint
+ * that switchboard gives a UID 0 login session (root-load.ucl).  The broker
+ * loads only a /boot/kernel module file of an installed 5BSD base package that
+ * matches the package's checksum, and unloads only what such a load loaded.
+ */
+static int
+root_request(struct extensioncmp_session *session, int load, const char *name)
+{
+	struct service_extension_root_outcome outcome;
+	char buf[128];
+	const char *text;
+	int result;
+
+	result = load ? extensioncmp_root_load(session, name, &outcome) :
+	    extensioncmp_root_unload(session, name, &outcome);
+	if (result == -1) {
+		int error = errno;
+
+		log_root_request(load ? "load" : "unload", name,
+		    strerror(error));
+		extensioncmp_session_close(session);
+		errno = error;
+		if (error == EINVAL || error == ENAMETOOLONG)
+			err(EX_USAGE, "invalid module name or request");
+		err(error == EPROTO ? EX_PROTOCOL :
+		    error == EAGAIN ? EX_TEMPFAIL : EX_UNAVAILABLE,
+		    "SystemExtension %s", load ? "load" : "unload");
+	}
+	extensioncmp_session_close(session);
+	text = result_text(outcome.result, outcome.error, buf, sizeof(buf));
+	if (!load && outcome.result == SYSEXT_DECISION_FAILED) {
+		(void)snprintf(buf, sizeof(buf), "unload failed: %s",
+		    strerror(outcome.error));
+		text = buf;
+	}
+	log_root_request(load ? "load" : "unload", name, text);
+	switch (outcome.result) {
+	case SYSEXT_DECISION_LOADED:
+		printf("%s: loaded\n", name);
+		return (0);
+	case SYSEXT_DECISION_PRESENT:
+		printf("%s: already loaded\n", name);
+		return (0);
+	case SYSEXT_DECISION_UNLOADED:
+		printf("%s: unloaded\n", name);
+		return (0);
+	case SYSEXT_DECISION_FAILED:
+		errx(EX_OSERR, "%s: %s", name, text);
+	default:
+		errx(EX_NOPERM, "%s: %s", name, text);
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -278,6 +411,8 @@ main(int argc, char **argv)
 		operation = 3;
 	else if (argc == 2 && strcmp(verb, "reload") == 0)
 		operation = 4;
+	else if (argc == 3 && strcmp(verb, "unload") == 0)
+		operation = 6;
 	else {
 		operation = 5;
 		if (argc == 2 && strcmp(verb, "restore") == 0)
@@ -299,11 +434,31 @@ main(int argc, char **argv)
 	}
 	if (argc == 3)
 		name = argv[2];
+	/* Only a module name selects a file, and only in /boot/kernel. */
+	if ((operation == 3 || operation == 6) && strchr(name, '/') != NULL)
+		errx(EX_USAGE, "invalid module name or request: %s is a path; "
+		    "name a module in /boot/kernel (paths are refused)", name);
+	/* unload exists only on the root-load endpoint. */
+	if (operation == 6) {
+		if (extensioncmp_session_open_rootload(&session) == -1)
+			err(EX_UNAVAILABLE, "cannot reach the SystemExtension "
+			    "root-load endpoint");
+		return (root_request(session, 0, name));
+	}
 	if ((operation <= 2 ? open_read_only(&session) :
 	    extensioncmp_session_open(&session)) == -1) {
 		error = errno;
+		/*
+		 * A root login session has no full endpoint; switchboard gives
+		 * it the root-load endpoint for base package modules.
+		 */
+		if (operation == 3 && error == ENOENT && geteuid() == 0 &&
+		    extensioncmp_session_open_rootload(&session) == 0)
+			return (root_request(session, 1, name));
 		if (operation > 2 && error == ENOENT && geteuid() == 0)
-			warnx("a login session may only inspect: sysextctl status");
+			warnx("a login session may only inspect (sysextctl "
+			    "status) and load or unload base package modules "
+			    "(sysextctl load|unload)");
 		errno = error;
 		err(EX_UNAVAILABLE, "cannot reach SystemExtension capability");
 	}

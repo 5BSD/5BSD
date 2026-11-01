@@ -41,6 +41,14 @@
 .Fn extensioncmp_session_read_only "const struct extensioncmp_session *session"
 .Ft int
 .Fn extensioncmp_decision "struct extensioncmp_session *session" "uint64_t after" "struct service_extension_decision *decision"
+.Ft int
+.Fn extensioncmp_session_open_rootload "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_session_create_rootload "int fd" "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_root_load "struct extensioncmp_session *session" "const char *module" "struct service_extension_root_outcome *outcome"
+.Ft int
+.Fn extensioncmp_root_unload "struct extensioncmp_session *session" "const char *module" "struct service_extension_root_outcome *outcome"
 .Sh DESCRIPTION
 The context calls were part of
 .Xr libservice 3
@@ -235,19 +243,62 @@ the requester's switchboard
 .Fa client
 label,
 .Fa operation
-(1 Ensure, 10 Restore),
+(1 Ensure, 10 Restore, 14 root Load, 15 root Unload),
 .Fa result
 (a
 .Dv SYSEXT_DECISION_*
 value from
 .In sysext_proto.h :
 loaded, already present, not permitted, client limited to hardware drivers,
-administrator deny override, or failed) and, for a failed load,
+administrator deny override, or failed; for root loads also not a base
+package file, checksum mismatch, no regular file in
+.Pa /boot/kernel ,
+unloaded, not loaded by a root load, root loads not configured, package
+database unavailable, or file changed during the load) and, for a failed
+load,
 .Fa error .
+.Pp
+.Fn extensioncmp_session_open_rootload
+opens
+.Dq system.SystemExtension.RootLoad ,
+which speaks the
+.Sy SystemExtensionRootLoad
+protocol;
+.Fn extensioncmp_session_create_rootload
+adopts a held channel to it.
+.Xr switchboard 8
+resolves that name for UID 0 sessions outside a jail that hold no software
+grant
+.Pq Pa root-load.ucl ;
+other callers get
+.Er ENOENT .
+.Fn extensioncmp_root_load
+asks the broker to load
+.Pa /boot/kernel/ Ns Fa module Ns Pa .ko ,
+which it does only for a file that the package database records in a 5BSD
+base package and that matches the recorded checksum;
+.Fn extensioncmp_root_unload
+asks it to unload a module that a root load loaded.
+Both return 0 when the broker decided, with
+.Fa outcome->result
+set to a
+.Dv SYSEXT_DECISION_*
+value and
+.Fa outcome->error
+to the errno of a failed load or unload; a refusal is a decision, not an
+error.
+They fail with
+.Er EOPNOTSUPP
+on another kind of session, and every other operation fails with
+.Er EPERM
+on a root-load session without sending anything.
+See
+.Xr BSDExtension 8
+for the checks.
 .Sh RETURN VALUES
 .Fn extensioncmp_session_read_only
 returns 1 or 0.
-.Rv -std service_ensure_extension service_extension_stat service_extension_list extensioncmp_session_open extensioncmp_session_create extensioncmp_session_open_status extensioncmp_session_create_status extensioncmp_load extensioncmp_stat extensioncmp_list extensioncmp_reload extensioncmp_manage extensioncmp_info extensioncmp_decision
+.Rv -std service_ensure_extension service_extension_stat service_extension_list extensioncmp_session_open extensioncmp_session_create extensioncmp_session_open_status extensioncmp_session_create_status extensioncmp_load extensioncmp_stat extensioncmp_list extensioncmp_reload extensioncmp_manage extensioncmp_info extensioncmp_decision extensioncmp_session_open_rootload extensioncmp_session_create_rootload extensioncmp_root_load extensioncmp_root_unload
 .Sh ERRORS
 In addition to the provider's
 .Xr errno 2

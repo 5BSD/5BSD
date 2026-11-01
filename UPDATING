@@ -28,6 +28,31 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
 20261101:
+	Root can load a kernel module of the base system from a login shell
+	again: "sysextctl load NAME" from a root login shell (effective UID
+	0, not jailed, no software grant) uses the new endpoint
+	system.SystemExtension.RootLoad, which switchboard resolves per the
+	new /Capabilities/Config/switchboard/root-load.ucl.  BSDExtension
+	loads /boot/kernel/NAME.ko, by that path, only when the package
+	database (/var/db/pkg/local.sqlite) records the file in a base/
+	package installed from the repository named by the new policy key
+	root_load_repository (shipped "5BSD-base"), the file still matches
+	the checksum pkg recorded (BLAKE2b), no "sysextctl deny" names it,
+	and any dependency the kernel loads with it passes the same checks.
+	A file copied into /boot/kernel, a modified file, a ports module or
+	anything under /boot/modules is refused with its own message.
+	"sysextctl unload NAME" removes only what such a load loaded.  Every
+	request appears in "sysextctl status" and is logged (sysextctl
+	logs the login name, tty and audit ids to the auth facility).
+	kldload from a shell stays refused, other users and jailed root get
+	nothing, and the endpoint has no policy methods.  This guards
+	against mistakes; it does not contain a compromised root, which can
+	still edit the package database, install packages or edit
+	loader.conf (mac_veriexec is that control).  BSDExtension now links
+	libprivatesqlite3 (package libsqlite3) and reads /var/db/pkg; to
+	withdraw root loads remove root-load.ucl or the policy key.
+
+20261101:
 	Devices attached after boot get their drivers again with the
 	capability plane.  devd is now an adopted switchboard unit
 	(rc_adopt.conf): when /etc/rc exits, switchboard restarts it with

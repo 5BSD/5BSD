@@ -793,3 +793,28 @@ svc_authority_root_query(const struct svc_domain *domain,
 	    sender != NULL ? sender->uid : UINT32_MAX,
 	    sender != NULL ? sender->prison_id : -1, name));
 }
+
+/*
+ * root-load.ucl, installed by authority_policy.c: the same admission as
+ * root-query.ucl over its own list, so the read-only and the load endpoints
+ * are granted and withdrawn independently.
+ */
+static const struct svc_authority_scope *root_load_scope;
+
+void
+svc_authority_set_root_load(const struct svc_authority_scope *scope)
+{
+
+	root_load_scope = scope;
+}
+
+bool
+svc_authority_root_load(const struct svc_domain *domain,
+    const struct channel_sender *sender, const char *name)
+{
+
+	return (svc_authority_root_query_admits(root_load_scope,
+	    domain != NULL && domain->authority_identity != 0, sender != NULL,
+	    sender != NULL ? sender->uid : UINT32_MAX,
+	    sender != NULL ? sender->prison_id : -1, name));
+}

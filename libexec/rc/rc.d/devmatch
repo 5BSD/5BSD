@@ -87,14 +87,18 @@ devmatch_start()
 			# (boot-authority.ucl).  After boot only devd(8) holds it
 			# (service-authority.ucl), for hardware drivers alone, so a
 			# device attached later gets its driver through devd's
-			# nomatch action.  Any other caller, such as a login shell,
-			# has no authority: EX_UNAVAILABLE.
+			# nomatch action.  Other callers have no such authority
+			# (EX_UNAVAILABLE); from a root login shell sysextctl
+			# instead loads the driver only if it is a verified file
+			# of a base package (RootLoad; refusals exit 77).
 			sysextctl load "${m}"
 			case $? in
 			0) ;;
 			69) warn "Cannot autoload ${m}: only rc at boot and" \
 			    "devd(8) may load drivers; it loads when devd sees" \
 			    "the device or at the next boot (devmatch(8))" ;;
+			77) warn "Cannot autoload ${m}: not a verified base" \
+			    "package module (sysextctl status ${m})" ;;
 			*) warn "Cannot autoload ${m}" ;;
 			esac
 		else
