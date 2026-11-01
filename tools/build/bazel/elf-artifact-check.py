@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Compare Bazel programs and static archives with explicit maintained-Make artifacts.
 
-Programs: ELF identity, PIE/interpreter, NEEDED set, hardening, imported and
+Programs: ELF identity, PIE/interpreter, ordered NEEDED dependencies, hardening, imported and
 exported dynamic symbols with versions.  Archives: member set and the defined
 and undefined symbols of each member.  Section contents are recorded so byte
 differences can be explained; byte parity is not required.
@@ -124,6 +124,9 @@ def compare_program(readelf, objcopy, candidate, reference, scratch):
                 'exports', 'version_requirements'):
         if a[key] != b[key]:
             raise ValueError('Make program metadata mismatch: ' + key)
+    if a['needed_order'] != b['needed_order']:
+        raise ValueError('Make program metadata mismatch: needed_order: ' +
+                         json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
     return {'scope': 'program-metadata-comparison', 'readelf_sha256': sha(readelf),
@@ -157,6 +160,9 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
             raise ValueError('Make shared library metadata mismatch: ' + key + ': ' +
                              json.dumps({'bazel_only': sorted(set(map(str, a[key])) - set(map(str, b[key])))[:20],
                                          'make_only': sorted(set(map(str, b[key])) - set(map(str, a[key])))[:20]}))
+    if a['needed_order'] != b['needed_order']:
+        raise ValueError('Make shared library metadata mismatch: needed_order: ' +
+                         json.dumps({'candidate': a['needed_order'], 'make': b['needed_order']}))
     sa, sb = records['candidate']['sections'], records['make_reference']['sections']
     differing = sorted(n for n in set(sa) | set(sb) if sa.get(n) != sb.get(n))
     return {'scope': 'shared-library-metadata-comparison', 'readelf_sha256': sha(readelf),

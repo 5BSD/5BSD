@@ -47371,3 +47371,14 @@ paths, 16 debug CRCs and 2 autofs hardlink checks match fresh Make references.
 See [source ownership evidence](ROOT-HEADER-OWNERSHIP-QUALIFICATION.md) for
 explicit bhyve dependency-order and physical section differences, package-tag
 contexts and remaining runtime/system gates. This is no full-kernel claim.
+
+### Ordered dynamic dependency gate (2026-11-01)
+
+[ELF-NEEDED-ORDER-QUALIFICATION.md](ELF-NEEDED-ORDER-QUALIFICATION.md) records the
+new default program/shared-library ordered-NEEDED rejection gate, real ELF
+negative regressions, and bhyve's native link correction against a fresh
+post-HyperTrace-merge Make reference. Default bhyve matches all 21 ordered
+libraries and 86 installed paths/four CRCs; physical runtime-section parity,
+other configurations and VM behavior remain open. Historical report-only
+ordering differences in the otel/protobuf/dtrace probes now require correction
+before those probes pass this gate.

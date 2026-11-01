@@ -5041,3 +5041,17 @@ See
 for configuration freshness, final-link/post-processing preservation and
 remaining native kernel closure gates.
 Query success is not a kernel build or runtime qualification.
+.Pp
+The native ELF comparison helper now rejects a different ordered dynamic
+library dependency vector for both programs and shared libraries.
+Its standalone
+.Pa tools/build/bazel/elf-needed-order-test.py
+regression accepts explicit executable, shared-library, SONAME, inspector,
+object-copy and work-directory inputs and checks private negative ELF copies.
+This is an inspection regression, not a guest runtime test.
+The normal format-5 qualification path remains responsible for capturing the
+native build outputs; no library-order override is provided.
+See
+.Pa tools/build/bazel/ELF-NEEDED-ORDER-QUALIFICATION.md
+for the default bhyve link correction, fresh Make reference, installation
+checks, and remaining section, configuration and runtime gates.

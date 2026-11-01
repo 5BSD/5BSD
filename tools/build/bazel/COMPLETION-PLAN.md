@@ -91,3 +91,15 @@ that the active graph is qualified.
   link arguments/post-processing, missing generated sources and unresolved
   custom products. CFILES/SYSTEM_OBJS-only counts are insufficient. See
   KERNEL-INVENTORY.md for current evidence and analysis/build distinctions.
+
+### Ordered dynamic lookup and current-source references
+
+The common ELF checker now rejects ordered DT_NEEDED differences for programs
+and shared libraries, including existing probe callers. Follow
+[ELF-NEEDED-ORDER-QUALIFICATION.md](ELF-NEEDED-ORDER-QUALIFICATION.md): fix historical
+hwstat/bsdinstruments/dtrace ordering gaps in native dependencies, retain original
+failed evidence, and rerun immutable comparisons. bhyve default order/install
+passes a fresh post-merge Make reference; code/DOF/section parity and other
+configurations remain separate gates. Every reused Make receipt must still pass
+its recorded source hashes after merges; an old successful receipt is not a
+current-source baseline.
