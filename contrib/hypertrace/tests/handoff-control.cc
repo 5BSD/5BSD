@@ -2441,8 +2441,8 @@ main()
 						    header_wire) == 0 &&
 						    DTRACED_MSG_TYPE(header) == DTRACED_MSG_ELF &&
 						    header.elf.delivery_id == accepted_record.delivery_id &&
-						    header.elf.len == bare_payload.size() +
-						    SHA256_DIGEST_LENGTH &&
+						    /* bhyve's device takes a bare ELF. */
+						    header.elf.len == bare_payload.size() &&
 						    memcmp(header.elf.program_id,
 						    accepted_record.program_id.data(), 16) == 0 &&
 						    memcmp(header.elf.source_id,
@@ -2451,10 +2451,8 @@ main()
 						assert(recv(destination_outbound_pair[1], received.data(),
 						    received.size(), MSG_WAITALL) ==
 						    (ssize_t)received.size() &&
-						    memcmp(received.data(), accepted_record.payload_digest.data(),
-						    SHA256_DIGEST_LENGTH) == 0 &&
-						    memcmp(received.data() + SHA256_DIGEST_LENGTH,
-						    bare_payload.data(), bare_payload.size()) == 0);
+						    memcmp(received.data(), bare_payload.data(),
+						    bare_payload.size()) == 0);
 						dtraced_delivery_ack_t ack{};
 						ack.delivery_id = accepted_record.delivery_id;
 						uint8_t ack_wire[DTRACED_ACK_WIRE_SIZE];

@@ -29,7 +29,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd November 4, 2021
+.Dd November 1, 2026
 .Dt DTRACED 8
 .Os
 .Sh NAME
@@ -93,10 +93,14 @@ and overlord mode.
 These keys bind a signed source-release record to one trusted peer; they do
 not by themselves authorize cross-host restore.
 .It Fl Z
-Disable support for SHA256 hashing of all scripts.
-Hashes are used when moving them between the host and guest to detect
-integrity issues.
-They do not restore an interrupted tracing session.
+Do not prefix programs sent to consumers with their SHA256 digest.
+Programs sent to forwarders (a
+.Xr bhyve 8
+virtio-dtrace device on the host, the transport forwarder in a guest) are
+always bare ELF objects, optionally preceded by a VM target envelope; the
+device refuses any other framing.
+The digest detects integrity issues; it does not restore an interrupted
+tracing session.
 This flag exists for debugging purposes only.
 .It Fl d
 Debug mode.
