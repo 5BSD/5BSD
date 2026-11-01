@@ -21,3 +21,5 @@ bsd_source_headers(name = "tracing_module_headers", hdrs = ["_vm_radix.h", "pmap
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])

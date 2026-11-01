@@ -134,3 +134,5 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/cam:__pkg__"])
  for option in ["kdtrace", "ada", "cd", "da", "pass", "pt", "sa", "ses"]]
+
+filegroup(name = "fasttrap_global_option", srcs = [":opt_global"], visibility = ["//sys/cddl/contrib/opensolaris:__pkg__"])

@@ -5,3 +5,21 @@ cc_library(name = "sysdecode_headers", hdrs = ["linux.h", "linux_syscall.h"],
     deps = ["//sys/compat/linux:sysdecode_headers"],
     strip_include_prefix = ".", include_prefix = "amd64/linux",
     visibility = ["//usr.bin/kdump:__pkg__", "//lib/libsysdecode:__pkg__"])
+
+
+load("//tools/build/bazel:bsd_syscall_tables.bzl", "bsd_syscall_tables")
+bsd_syscall_tables(name = "linux_syscall_tables", master = "syscalls.master", config = "syscalls.conf",
+    outputs = {"systrace_args": "generated/amd64/linux/linux_systrace_args.c",
+        "syscalls": "generated/amd64/linux/linux_syscalls.c", "sysproto_h": "generated/amd64/linux/linux_proto.h",
+        "syscall_h": "generated/amd64/linux/linux_syscall.h"},
+    visibility = ["//sys/cddl/dev/systrace:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+[filegroup(name = "linux_syscall_tables_" + kind, srcs = [":linux_syscall_tables"], output_group = kind)
+ for kind in ["systrace_args", "syscalls", "sysproto_h", "syscall_h"]]
+cc_library(name = "linux_syscall_tables_headers", hdrs = [":linux_syscall_tables_sysproto_h", ":linux_syscall_tables_syscall_h"],
+    textual_hdrs = [":linux_syscall_tables_systrace_args", ":linux_syscall_tables_syscalls"],
+    strip_include_prefix = "generated", visibility = ["//sys/cddl/dev/systrace:__pkg__"])

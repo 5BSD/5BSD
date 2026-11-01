@@ -146,3 +146,5 @@ bsd_python_test(
     data = ["qualification_artifacts.py"],
     visibility = ["//visibility:public"],
 )
+
+exports_files(["syscall_tables.lua"])

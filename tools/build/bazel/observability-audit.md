@@ -9277,3 +9277,17 @@ mutations plus iscsid authentication, session lifecycle and failure visibility;
 absence of markers is a review queue, not proof of a defect or complete coverage.
 Only usage paths have run; all eleven installed CTL root cases remain guest-only
 qualification work. See CTL-ISCSID-QUALIFICATION.md.
+
+
+## 2026-11-01: syscall providers, fasttrap and dtrace_test
+
+Native builds retain original native/Linux syscall argument conversion,
+entry/return provider registration, fasttrap ISA and Unicode helper sources,
+and the original DTrace test module. Generated tables match independent original
+generation exactly; scan records preserve compiled source hashes/marker lines
+in bazel-dtrace-remaining-review-r2-20261101/observability.json. No new probe or
+audit call was added merely to satisfy a scan. Review load/unload error handling,
+native/Linux ABI arguments and compatibility calls, fasttrap patch/restore
+faults, permission denials and concurrency in isolated runtime qualification.
+The original kernel test module has only been built, not executed. See
+DTRACE-REMAINING-MODULES-QUALIFICATION.md for the bounded artifact/action gate.

@@ -47186,3 +47186,16 @@ actual debuglink checks and 27 source/option compile audits. Three safe usage
 executions passed; all eleven privileged CTL cases remain a guest runtime gate.
 No storage/session, cross-userland or performance claim is made. See
 [CTL-ISCSID-QUALIFICATION.md](CTL-ISCSID-QUALIFICATION.md).
+
+
+### Native syscall tracing and remaining tracing modules (2026-11-01)
+
+systrace and dtrace_test now have native candidates on amd64, ARM64 and RISC-V64;
+fasttrap and systrace_linux retain their maintained amd64 selection. Syscall
+headers/names/tracing C are generated from real master/config inputs with the
+unchanged Lua parser/generator APIs and a declared native flua execution tool.
+Six profiles passed sixteen module comparisons, twenty-four install records,
+twenty module compiles and sixteen original link orders. Seven generated files
+match the independently invoked full generator exactly. Whole-subtree/runtime
+and controlled performance qualification remain open. See
+[DTRACE-REMAINING-MODULES-QUALIFICATION.md](DTRACE-REMAINING-MODULES-QUALIFICATION.md).

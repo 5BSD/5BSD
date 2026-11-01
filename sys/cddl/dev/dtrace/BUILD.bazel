@@ -152,3 +152,27 @@ bsd_component_selected_objects(name = "riscv_source_6", group = ":riscv_core_mod
 bsd_component_selected_objects(name = "riscv_source_7", group = ":riscv_core_module_ctf", object_names = ["opensolaris_taskq.o"])
 
 filegroup(name = "riscv_ordered_module_objects", srcs = [":riscv_source_0", ":riscv_source_1", ":riscv_source_2", ":riscv_source_3", ":riscv_source_4", ":riscv_source_5", ":riscv_source_6", ":riscv_source_7"], visibility = ["//sys/modules/dtrace/dtrace:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["dtrace_cddl.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "dtrace_test_module", srcs = ["dtrace_test.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = [],
+    textual_hdrs = ["//sys/cddl/compat/opensolaris:sys/debug_compat.h"], copts = ["-include", "$(execpath //sys/cddl/compat/opensolaris:sys/debug_compat.h)"])
+bsd_component_selected_objects(name = "dtrace_test_ordered_objects", group = ":dtrace_test_module_ctf",
+    object_names = ["dtrace_test.o"], visibility = ["//sys/modules/dtrace/dtrace_test:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "dtrace_test_module", srcs = ["dtrace_test.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = [],
+    textual_hdrs = ["//sys/cddl/compat/opensolaris:sys/debug_compat.h"], copts = ["-include", "$(execpath //sys/cddl/compat/opensolaris:sys/debug_compat.h)"])
+bsd_component_selected_objects(name = "arm64_dtrace_test_ordered_objects", group = ":arm64_dtrace_test_module_ctf",
+    object_names = ["dtrace_test.o"], visibility = ["//sys/modules/dtrace/dtrace_test:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "dtrace_test_module", srcs = ["dtrace_test.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = [],
+    textual_hdrs = ["//sys/cddl/compat/opensolaris:sys/debug_compat.h"], copts = ["-include", "$(execpath //sys/cddl/compat/opensolaris:sys/debug_compat.h)"])
+bsd_component_selected_objects(name = "riscv_dtrace_test_ordered_objects", group = ":riscv_dtrace_test_module_ctf",
+    object_names = ["dtrace_test.o"], visibility = ["//sys/modules/dtrace/dtrace_test:__pkg__"])

@@ -4848,3 +4848,11 @@ tests retain their original root and kernel-module requirements and require a
 disposable guest for runtime qualification.
 These component checks do not establish working storage sessions or native
 package publication.
+
+.Pp
+Native systrace profiles generate syscall headers and textual tracing C from
+maintained master/configuration files using the original Lua generator API and
+an explicitly declared execution-platform flua tool.
+Native/Linux syscall tables, fasttrap and dtrace_test component qualifications
+cover original build/install contracts, not live syscall tracing or execution
+of the kernel test module.

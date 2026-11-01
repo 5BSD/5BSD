@@ -18,12 +18,12 @@ _FLAGS = ["-D_SYS_VMEM_H_", "-D__KERNEL__", "-DSMP"] + [
 
 # Source-only compatibility contexts preserve used Make include-root order.
 # No selected source consumes the additional os/freebsd/zfs search root.
-def amd64_cddl_module_objects(srcs, deps, name = "generic_module", header_overrides = [], leading_headers = [], copts = [], textual_hdrs = []):
+def amd64_cddl_module_objects(srcs, deps, name = "generic_module", header_overrides = [], leading_headers = [], copts = [], textual_hdrs = [], preinclude_headers = []):
     amd64_generic_module_objects(name = name, srcs = srcs, deps = deps,
         header_overrides = leading_headers + _COMPATIBILITY_HEADERS + header_overrides,
-        preinclude_headers = _FORCED_HEADERS[:1], textual_hdrs = _FORCED_HEADERS[1:] + textual_hdrs, copts = _FLAGS + copts)
+        preinclude_headers = preinclude_headers + _FORCED_HEADERS[:1], textual_hdrs = _FORCED_HEADERS[1:] + textual_hdrs, copts = _FLAGS + copts)
 
-def cross_cddl_module_objects(arch, srcs, deps, name = "generic_module", header_overrides = [], leading_headers = [], copts = [], textual_hdrs = []):
+def cross_cddl_module_objects(arch, srcs, deps, name = "generic_module", header_overrides = [], leading_headers = [], copts = [], textual_hdrs = [], preinclude_headers = []):
     cross_generic_module_objects(arch = arch, name = name, srcs = srcs, deps = deps,
         header_overrides = leading_headers + _COMPATIBILITY_HEADERS + header_overrides,
-        preinclude_headers = _FORCED_HEADERS[:1], textual_hdrs = _FORCED_HEADERS[1:] + textual_hdrs, copts = _FLAGS + copts)
+        preinclude_headers = preinclude_headers + _FORCED_HEADERS[:1], textual_hdrs = _FORCED_HEADERS[1:] + textual_hdrs, copts = _FLAGS + copts)
