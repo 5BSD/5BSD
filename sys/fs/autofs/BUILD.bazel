@@ -12,3 +12,7 @@ amd64_generic_module_objects(name = "autofs_module", srcs = ["autofs.c", "autofs
 [cross_generic_module_objects(arch = arch, name = "autofs_module", srcs = ["autofs.c", "autofs_vnops.c", "autofs_vfsops.c"],
     deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in []], copts = [])
  for arch in ["arm64", "riscv"]]
+
+# Userland daemon ioctl ABI, preserving its original basename include.
+cc_library(name = "ioctl_headers", hdrs = ["autofs_ioctl.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/autofs:__pkg__"])

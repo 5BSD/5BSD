@@ -47356,3 +47356,14 @@ difference; final PPP byte identity is not claimed. See
 [PPP qualification](PPP-QUALIFICATION.md) for exact setuid/group/configuration
 policy, safe usage tests, cache/log observations and isolated runtime/remaining
 configuration gates. Make remains production/default.
+
+### Header source ownership and configured kernel analysis (2026-11-01)
+
+Root header providers now respect ACPICA/evdev/autofs package ownership while
+preserving every physical header and logical include name. All 111 existing
+configured kernel groups analyze, including version/COPYRIGHT. Seven affected
+userland programs and fourteen binary/install targets build; 131 final installed
+paths, 16 debug CRCs and 2 autofs hardlink checks match fresh Make references.
+See [source ownership evidence](ROOT-HEADER-OWNERSHIP-QUALIFICATION.md) for
+explicit bhyve dependency-order and physical section differences, package-tag
+contexts and remaining runtime/system gates. This is no full-kernel claim.

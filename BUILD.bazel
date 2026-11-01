@@ -4,7 +4,8 @@ exports_files(["COPYRIGHT"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.
-cc_library(name = "bhyve_engine_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', 'sys/amd64/vmm/io/vioapic.h', 'sys/contrib/dev/acpica/include/acbuffer.h', 'sys/contrib/dev/acpica/include/acconfig.h', 'sys/contrib/dev/acpica/include/acexcep.h', 'sys/contrib/dev/acpica/include/acnames.h', 'sys/contrib/dev/acpica/include/acoutput.h', 'sys/contrib/dev/acpica/include/acpi.h', 'sys/contrib/dev/acpica/include/acpiosxf.h', 'sys/contrib/dev/acpica/include/acpixf.h', 'sys/contrib/dev/acpica/include/acrestyp.h', 'sys/contrib/dev/acpica/include/actbl.h', 'sys/contrib/dev/acpica/include/actbl1.h', 'sys/contrib/dev/acpica/include/actbl2.h', 'sys/contrib/dev/acpica/include/actbl3.h', 'sys/contrib/dev/acpica/include/actypes.h', 'sys/contrib/dev/acpica/include/platform/acenv.h', 'sys/contrib/dev/acpica/include/platform/acenvex.h', 'sys/contrib/dev/acpica/include/platform/acfreebsd.h', 'sys/contrib/dev/acpica/include/platform/acgcc.h', 'sys/contrib/dev/acpica/include/platform/acgccex.h', 'sys/dev/e1000/e1000_defines.h', 'sys/dev/e1000/e1000_regs.h', 'sys/dev/evdev/input-event-codes.h', 'sys/dev/evdev/input.h', 'sys/dev/ic/ns16550.h', 'sys/dev/io/iodev.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "bhyve_engine_headers", hdrs = ["sys/amd64/vmm/io/vhpet.h", "sys/amd64/vmm/io/vioapic.h", "sys/dev/e1000/e1000_defines.h", "sys/dev/e1000/e1000_regs.h", "sys/dev/ic/ns16550.h", "sys/dev/io/iodev.h"],
+    deps = ["//sys/contrib/dev/acpica/include:user_headers", "//sys/dev/evdev:bhyve_engine_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 cc_library(name = "bhyve_e1000_headers", hdrs = ['sys/dev/e1000/e1000_defines.h', 'sys/dev/e1000/e1000_regs.h'], strip_include_prefix = '/sys/dev/e1000', visibility = ["//usr.sbin/bhyve:__pkg__"])
 
@@ -12,10 +13,7 @@ cc_library(name = "bhyve_kernemu_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', '
 
 exports_files(['sys/amd64/vmm/vmm_instruction_emul.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
 
-cc_library(name = "autofs_ioctl_headers", hdrs = ["sys/fs/autofs/autofs_ioctl.h"], strip_include_prefix = "/sys/fs/autofs", visibility = ["//usr.sbin/autofs:__pkg__"])
 
-# ACPICA public header closure for native userland firmware utilities.
-cc_library(name = "acpi_user_headers", hdrs = ['sys/contrib/dev/acpica/include/acbuffer.h', 'sys/contrib/dev/acpica/include/acconfig.h', 'sys/contrib/dev/acpica/include/acexcep.h', 'sys/contrib/dev/acpica/include/acnames.h', 'sys/contrib/dev/acpica/include/acoutput.h', 'sys/contrib/dev/acpica/include/acpi.h', 'sys/contrib/dev/acpica/include/acpiosxf.h', 'sys/contrib/dev/acpica/include/acpixf.h', 'sys/contrib/dev/acpica/include/acrestyp.h', 'sys/contrib/dev/acpica/include/actbl.h', 'sys/contrib/dev/acpica/include/actbl1.h', 'sys/contrib/dev/acpica/include/actbl2.h', 'sys/contrib/dev/acpica/include/actbl3.h', 'sys/contrib/dev/acpica/include/actypes.h', 'sys/contrib/dev/acpica/include/platform/acenv.h', 'sys/contrib/dev/acpica/include/platform/acenvex.h', 'sys/contrib/dev/acpica/include/platform/acfreebsd.h', 'sys/contrib/dev/acpica/include/platform/acgcc.h', 'sys/contrib/dev/acpica/include/platform/acgccex.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi:__subpackages__"])
 
 # Explicit ACPICA debugger source/header inputs.
 exports_files([
@@ -209,53 +207,8 @@ exports_files([
     "sys/contrib/dev/acpica/os_specific/service_layers/osgendbg.c",
     "sys/contrib/dev/acpica/os_specific/service_layers/osunixxf.c"
 ], visibility = ["//usr.sbin/acpi/acpidb:__pkg__", "//usr.sbin/acpi/iasl:__pkg__"])
-cc_library(name = "acpidb_headers", hdrs = [
-    "sys/contrib/dev/acpica/compiler/asldefine.h",
-    "sys/contrib/dev/acpica/include/acapps.h",
-    "sys/contrib/dev/acpica/include/acbuffer.h",
-    "sys/contrib/dev/acpica/include/acclib.h",
-    "sys/contrib/dev/acpica/include/accommon.h",
-    "sys/contrib/dev/acpica/include/acconfig.h",
-    "sys/contrib/dev/acpica/include/acconvert.h",
-    "sys/contrib/dev/acpica/include/acdebug.h",
-    "sys/contrib/dev/acpica/include/acdisasm.h",
-    "sys/contrib/dev/acpica/include/acdispat.h",
-    "sys/contrib/dev/acpica/include/acevents.h",
-    "sys/contrib/dev/acpica/include/acexcep.h",
-    "sys/contrib/dev/acpica/include/acglobal.h",
-    "sys/contrib/dev/acpica/include/achware.h",
-    "sys/contrib/dev/acpica/include/acinterp.h",
-    "sys/contrib/dev/acpica/include/aclocal.h",
-    "sys/contrib/dev/acpica/include/acmacros.h",
-    "sys/contrib/dev/acpica/include/acnames.h",
-    "sys/contrib/dev/acpica/include/acnamesp.h",
-    "sys/contrib/dev/acpica/include/acobject.h",
-    "sys/contrib/dev/acpica/include/acopcode.h",
-    "sys/contrib/dev/acpica/include/acoutput.h",
-    "sys/contrib/dev/acpica/include/acparser.h",
-    "sys/contrib/dev/acpica/include/acpi.h",
-    "sys/contrib/dev/acpica/include/acpiosxf.h",
-    "sys/contrib/dev/acpica/include/acpixf.h",
-    "sys/contrib/dev/acpica/include/acpredef.h",
-    "sys/contrib/dev/acpica/include/acresrc.h",
-    "sys/contrib/dev/acpica/include/acrestyp.h",
-    "sys/contrib/dev/acpica/include/acstruct.h",
-    "sys/contrib/dev/acpica/include/actables.h",
-    "sys/contrib/dev/acpica/include/actbl.h",
-    "sys/contrib/dev/acpica/include/actbl1.h",
-    "sys/contrib/dev/acpica/include/actbl2.h",
-    "sys/contrib/dev/acpica/include/actbl3.h",
-    "sys/contrib/dev/acpica/include/actypes.h",
-    "sys/contrib/dev/acpica/include/acutils.h",
-    "sys/contrib/dev/acpica/include/acuuid.h",
-    "sys/contrib/dev/acpica/include/amlcode.h",
-    "sys/contrib/dev/acpica/include/amlresrc.h",
-    "sys/contrib/dev/acpica/include/platform/acenv.h",
-    "sys/contrib/dev/acpica/include/platform/acenvex.h",
-    "sys/contrib/dev/acpica/include/platform/acfreebsd.h",
-    "sys/contrib/dev/acpica/include/platform/acgcc.h",
-    "sys/contrib/dev/acpica/include/platform/acgccex.h"
-], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/acpidb:__pkg__", "//usr.sbin/acpi/iasl:__pkg__"])
+cc_library(name = "acpidb_headers", hdrs = ["sys/contrib/dev/acpica/compiler/asldefine.h"],
+    deps = ["//sys/contrib/dev/acpica/include:debugger_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/acpidb:__pkg__", "//usr.sbin/acpi/iasl:__pkg__"])
 
 # ACPICA ASL compiler inputs not already exported for acpidb.
 exports_files([
@@ -370,62 +323,8 @@ exports_files([
     "sys/contrib/dev/acpica/compiler/prscan.c",
     "sys/contrib/dev/acpica/compiler/prutils.c"
 ], visibility = ["//usr.sbin/acpi/iasl:__pkg__"])
-cc_library(name = "iasl_headers", hdrs = [
-    "sys/contrib/dev/acpica/compiler/aslcompiler.h",
-    "sys/contrib/dev/acpica/compiler/asldefine.h",
-    "sys/contrib/dev/acpica/compiler/aslglobal.h",
-    "sys/contrib/dev/acpica/compiler/aslmessages.h",
-    "sys/contrib/dev/acpica/compiler/aslsupport.l",
-    "sys/contrib/dev/acpica/compiler/asltypes.h",
-    "sys/contrib/dev/acpica/compiler/dtcompiler.h",
-    "sys/contrib/dev/acpica/compiler/dttemplate.h",
-    "sys/contrib/dev/acpica/compiler/preprocess.h",
-    "sys/contrib/dev/acpica/include/acapps.h",
-    "sys/contrib/dev/acpica/include/acbuffer.h",
-    "sys/contrib/dev/acpica/include/acclib.h",
-    "sys/contrib/dev/acpica/include/accommon.h",
-    "sys/contrib/dev/acpica/include/acconfig.h",
-    "sys/contrib/dev/acpica/include/acconvert.h",
-    "sys/contrib/dev/acpica/include/acdebug.h",
-    "sys/contrib/dev/acpica/include/acdisasm.h",
-    "sys/contrib/dev/acpica/include/acdispat.h",
-    "sys/contrib/dev/acpica/include/acevents.h",
-    "sys/contrib/dev/acpica/include/acexcep.h",
-    "sys/contrib/dev/acpica/include/acglobal.h",
-    "sys/contrib/dev/acpica/include/achware.h",
-    "sys/contrib/dev/acpica/include/acinterp.h",
-    "sys/contrib/dev/acpica/include/aclocal.h",
-    "sys/contrib/dev/acpica/include/acmacros.h",
-    "sys/contrib/dev/acpica/include/acnames.h",
-    "sys/contrib/dev/acpica/include/acnamesp.h",
-    "sys/contrib/dev/acpica/include/acobject.h",
-    "sys/contrib/dev/acpica/include/acopcode.h",
-    "sys/contrib/dev/acpica/include/acoutput.h",
-    "sys/contrib/dev/acpica/include/acparser.h",
-    "sys/contrib/dev/acpica/include/acpi.h",
-    "sys/contrib/dev/acpica/include/acpiosxf.h",
-    "sys/contrib/dev/acpica/include/acpixf.h",
-    "sys/contrib/dev/acpica/include/acpredef.h",
-    "sys/contrib/dev/acpica/include/acresrc.h",
-    "sys/contrib/dev/acpica/include/acrestyp.h",
-    "sys/contrib/dev/acpica/include/acstruct.h",
-    "sys/contrib/dev/acpica/include/actables.h",
-    "sys/contrib/dev/acpica/include/actbinfo.h",
-    "sys/contrib/dev/acpica/include/actbl.h",
-    "sys/contrib/dev/acpica/include/actbl1.h",
-    "sys/contrib/dev/acpica/include/actbl2.h",
-    "sys/contrib/dev/acpica/include/actbl3.h",
-    "sys/contrib/dev/acpica/include/actypes.h",
-    "sys/contrib/dev/acpica/include/acutils.h",
-    "sys/contrib/dev/acpica/include/acuuid.h",
-    "sys/contrib/dev/acpica/include/amlcode.h",
-    "sys/contrib/dev/acpica/include/amlresrc.h",
-    "sys/contrib/dev/acpica/include/platform/acenv.h",
-    "sys/contrib/dev/acpica/include/platform/acenvex.h",
-    "sys/contrib/dev/acpica/include/platform/acfreebsd.h",
-    "sys/contrib/dev/acpica/include/platform/acgcc.h",
-    "sys/contrib/dev/acpica/include/platform/acgccex.h"
-], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/iasl:__pkg__"])
+cc_library(name = "iasl_headers", hdrs = ["sys/contrib/dev/acpica/compiler/aslcompiler.h", "sys/contrib/dev/acpica/compiler/asldefine.h", "sys/contrib/dev/acpica/compiler/aslglobal.h", "sys/contrib/dev/acpica/compiler/aslmessages.h", "sys/contrib/dev/acpica/compiler/aslsupport.l", "sys/contrib/dev/acpica/compiler/asltypes.h", "sys/contrib/dev/acpica/compiler/dtcompiler.h", "sys/contrib/dev/acpica/compiler/dttemplate.h", "sys/contrib/dev/acpica/compiler/preprocess.h"],
+    deps = ["//sys/contrib/dev/acpica/include:compiler_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/iasl:__pkg__"])
 
 # Encoded firmware consumed by the native uathload installation.
 exports_files(["sys/contrib/dev/uath/ar5523.bin.uu"], visibility = ["//usr.sbin/uathload:__pkg__"])

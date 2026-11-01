@@ -74,3 +74,12 @@ that the active graph is qualified.
   root explanation. Neither build-progress counts nor execution-log size alone
   establish how many tools rebuilt or why. Qualify compact evidence logging
   before full-system scale and controlled performance comparisons.
+
+- Root header ownership is now corrected with unchanged physical/logical
+  source closure and actual configured version/COPYRIGHT analysis. Preserve
+  package boundaries in later source-owner conversions. Next reconcile the
+  exact bhyve dependency order (equal sets are insufficient) and investigate
+  actual acpidump/iasl/autofs/bhyve physical section differences. Retain shared
+  directory package-tag contexts when qualifying pkgbase splitting; final
+  staged metadata alone is not full package ownership evidence. See
+  ROOT-HEADER-OWNERSHIP-QUALIFICATION.md.

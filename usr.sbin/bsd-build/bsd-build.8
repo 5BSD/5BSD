@@ -5018,3 +5018,14 @@ See
 for original compiler/link-input audits, retained analysis failures and separate
 hardware, live tracing, alternate configuration and full-system gates.
 No host module loading is performed by these checks.
+
+.Pp
+Existing format-5 native inputs qualify the corrected source-owned ACPICA,
+evdev and autofs header providers without new command-line options.
+The real configured kernel query retains version and COPYRIGHT dependencies.
+See
+.Pa tools/build/bazel/ROOT-HEADER-OWNERSHIP-QUALIFICATION.md
+for seven affected userland build/install regressions and explicit bhyve
+dependency-order, physical-section and runtime reconciliation gates.
+Configured analysis and archive generation do not establish a complete
+native system, runtime qualification or split-package ownership.
