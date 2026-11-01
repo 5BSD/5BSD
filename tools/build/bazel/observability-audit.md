@@ -8749,3 +8749,22 @@ metadata, at
 `/usr/obj/usr/src/bazel-temperature-modules-make-reference-20261101/evidence/`.
 No module was loaded, and hardware monitoring, management writes, live probe
 firing and audit event coverage remain open runtime checks.
+
+### Device facility module batch (2026-11-01)
+
+The native `firmware`, `cuse` and `cryptodev` module artifacts retain seven,
+two and one SDT probe pointers respectively. Their provider/probe/argument/
+tracepoint sections and all relocation records compare exactly with fresh
+tied GENERIC Make output in the CTF/debug profile. The opencrypto provider is
+declared externally by cryptodev, as in its maintained source. The no-debug
+module files compare byte for byte, and the installed CTF/debug sections match
+apart from build-ID and debuglink identity. Evidence is under
+`/usr/obj/usr/src/bazel-device-facilities-parity-r5-20261101/` and
+`/usr/obj/usr/src/bazel-device-facilities-ctf-debug-parity-r3-20261101/`.
+
+Source review found no direct SDT/DTrace or audit markers in `backlight.c`,
+`cpuctl.c`, `filemon.c` or its included `filemon_wrapper.c`, and no direct audit
+markers in the other three module sources. Existing generic syscall audit
+behavior is not established by that source scan. The module conversion changes
+build declarations only. Module load/device/crypto behavior, live probe firing,
+audit event coverage and performance remain runtime qualification work.

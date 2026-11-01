@@ -11,3 +11,6 @@ amd64_generic_module_objects(name = "sha1_module", srcs = ["sha1.c"], deps = [":
 cc_library(name = "rc4_headers", hdrs = ["rc4/rc4.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/modules/rc4:__pkg__"])
 amd64_generic_module_objects(name = "rc4_module", srcs = ["rc4/rc4.c"], deps = [":rc4_headers"])
+
+cc_library(name = "curve25519_headers", hdrs = ["curve25519.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/opencrypto:__pkg__"])

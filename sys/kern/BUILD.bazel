@@ -450,3 +450,7 @@ exports_files(["subr_acl_posix1e.c"], visibility = [
 exports_files(["subr_capability.c"], visibility = ["//lib/libc/capability:__pkg__"])
 
 exports_files(["subr_vmem.c"], visibility = ["//lib/libuvmem:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+amd64_generic_module_objects(name = "generic_firmware_module", srcs = ["subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])

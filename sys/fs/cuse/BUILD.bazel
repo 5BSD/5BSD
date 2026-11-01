@@ -2,3 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["cuse_defs.h", "cuse_ioctl.h"],
     strip_include_prefix = ".", include_prefix = "fs/cuse", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+amd64_generic_module_objects(srcs = ["cuse.c"],
+    deps = [":headers", "//sys/vm:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])

@@ -80,12 +80,14 @@ def _module_source_path_map(source):
     mappings.append("-fdebug-prefix-map=$(execpath %s)=/usr/src/%s" % (label, source_path))
     return mappings
 
-def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = []):
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = []):
     """Compile a named source group with its own GENERIC headers and flags."""
-    cc_library(name = name + "_objects", srcs = srcs,
+    cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
+        # rules_cc permits execpath expansion in copts for these inputs.
+        additional_compiler_inputs = textual_hdrs,
         deps = AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
         copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + AMD64_KERNEL_WARNING_FLAGS + AMD64_KERNEL_DEBUG_FLAGS +
-            [mapping for source in srcs for mapping in _module_source_path_map(source)] + copts,
+            [mapping for source in srcs + textual_hdrs for mapping in _module_source_path_map(source)] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",

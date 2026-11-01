@@ -6,7 +6,7 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current status (2026-11-01):** the recursive Make inventory counts 729
-selected amd64 GENERIC kernel modules; 86 have direct Bazel module declarations.
+selected amd64 GENERIC kernel modules; 92 have direct Bazel module declarations.
 All 17 converted Netgraph modules currently pass `build-bsd` compilation and
 byte/installation-metadata parity against tied GENERIC Make output. The Bazel
 9.3.1 port bootstrap with output-query error-propagation fixes passed, but a
@@ -46762,3 +46762,73 @@ These corrections do not establish complete filesystem sandboxing or remove
 the documented host execution-runtime limits of the Kyua adapter. The normal
 build-bsd action uses these maintained rules directly; no new frontend option
 or alternate build backend was introduced.
+
+### Device facility module batch and textual includes (2026-11-01)
+
+Added native tied amd64 GENERIC targets for `backlight`, `cuse`, `cpuctl`,
+`filemon`, `firmware` and `cryptodev`, using the maintained Make source lists
+and export policies. `backlight` compiles the actual generated `backlight_if.c`
+and consumes its generated header through the existing makeobjops rule; its
+platform header comes from native config output. `filemon_wrapper.c` is an
+included translation-unit fragment, so the module helper now forwards
+`textual_hdrs` to rules_cc instead of compiling it as another object. The
+helper also supplies those files as `additional_compiler_inputs`, rules_cc's
+documented facility for `execpath` expansion in compiler flags. This applies
+the same canonical diagnostic source paths to textual includes as to ordinary
+sources. The recorded filemon compile input digest matches the current wrapper.
+No operating-system C source was changed.
+
+The first source declaration omitted the firmware macro load, and CPU control
+needed a declared CK epoch header dependency. Both were caught by normal Bazel
+analysis/compilation. The initial filemon output comparison caught a relative
+`__FILE__` pathname in the included wrapper; declaring and mapping the textual
+input fixes that difference. A first attempt to expand the textual input path
+through copts lacked `additional_compiler_inputs`; the final implementation uses
+the supported rules_cc facility. Failure evidence is retained alongside the
+successful runs, rather than replaced with success receipts.
+
+All six modules are byte-identical to fresh Make outputs with CTF and split
+debug disabled. All six installation records match Make dry runs. Evidence:
+`/usr/obj/usr/src/bazel-device-facilities-qualification-r5-20261101/`,
+`/usr/obj/usr/src/bazel-device-facilities-make-reference-20261101/evidence/`,
+and `/usr/obj/usr/src/bazel-device-facilities-parity-r5-20261101/`.
+
+The CTF/split-debug variant also built through maintained build-bsd. Every
+installed ELF section matches its Make reference except `.note.gnu.build-id`
+and `.gnu_debuglink`; both candidate and reference debuglink CRCs verify against
+their respective separate debug files. CTF, symbol tables (including separate
+debug symbol tables), relocations and all SDT sections compare exactly.
+All twelve module/debug installation records match. Whole DWARF/debug-file byte
+identity and source-level debugger path resolution remain unqualified. Evidence:
+`/usr/obj/usr/src/bazel-device-facilities-ctf-debug-qualification-r3-20261101/`,
+`/usr/obj/usr/src/bazel-device-facilities-ctf-debug-make-reference-20261101/evidence/`,
+and `/usr/obj/usr/src/bazel-device-facilities-ctf-debug-parity-r3-20261101/`.
+
+The strict generated-file byte comparison reports a difference for the
+backlight C/header pair: Make's generated banner names the absolute `.m` path,
+while the native action deliberately uses the stable input basename. Review
+confirmed the bodies after the generated banner are identical and the sole
+banner difference is that source pathname. Raw outputs, diffs and the bounded
+review are retained in the CTF/debug parity directory (`generated-parity.json`,
+`review.json`, and `backlight_if.*.diff`). The strict comparison's exit failure
+is retained; generated whole-file identity is not claimed. Neither output nor
+the maintained generator was rewritten to make that comparison pass.
+
+An unchanged-input repeat reuses all 25 selected module/full/debug/manifest and
+interface targets, with identical artifact manifests and zero external action
+spawns. The frontend recorded one internal action. Evidence:
+`/usr/obj/usr/src/bazel-device-facilities-ctf-debug-cache-20261101/cache-review.json`.
+This is local unchanged-input reuse, not source-mutation, remote-cache or
+cross-workspace qualification. The existing format-5 build-bsd contract selects
+these targets and settings; its maintained module backend changed with them,
+and no frontend option or manual contract changed. No module was installed or
+loaded. Device behavior, live probe firing, complete kernel/world/pkgbase and
+CPU/memory/disk performance gates remain open; Make stays production/default.
+
+The refreshed recursive Make inventory completed without query errors: 729
+selected leaf KMODs, 93 selected module directories with BUILD files, 92 direct
+native module declarations and 637 without direct declarations. Evidence:
+`/usr/obj/usr/src/bazel-module-coverage-device-facilities-20261101.json`
+(SHA-256 `d925986d19f6f270658d48659cc97153baa6f12d64dad3640006c0a5c847dd8d`).
+These are declaration counts for the selected amd64 GENERIC profile, not full
+kernel, runtime, other-architecture or world qualification counts.

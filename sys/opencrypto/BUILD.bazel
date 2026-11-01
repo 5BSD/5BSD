@@ -11,3 +11,11 @@ cc_library(name = "ed25519_headers", hdrs = ["cryptodesc_ed25519.h"], includes =
 cc_library(name = "if_enc_headers", hdrs = ["cbc_mac.h", "deflate.h", "gmac.h", "gfmult.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"], strip_include_prefix = "/sys",
     deps = ["//sys/crypto:sha1_headers", "//sys/crypto/camellia:kernel_headers", "//sys/crypto/rijndael:kernel_headers", "//sys/crypto/sha2:kernel_headers", ":cryptodev_headers"],
     visibility = ["//sys/net:__pkg__", "//sys/netipsec:__pkg__", "//sys/modules/if_enc:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+cc_library(name = "cryptodesc_kdf_headers", hdrs = ["cryptodesc_kdf.h"])
+amd64_generic_module_objects(name = "generic_cryptodev_module", srcs = ["cryptodev.c", "cryptodesc_kdf.c"],
+    deps = [":cryptodev_headers", ":if_enc_headers", ":ed25519_headers", ":cryptodesc_kdf_headers",
+        "//sys/crypto:curve25519_headers", "//sys/crypto/sha2:kernel_headers", "//sys/net:network_headers",
+        "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers",
+        "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
