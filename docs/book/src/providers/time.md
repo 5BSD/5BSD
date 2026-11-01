@@ -22,6 +22,25 @@ automatically. Quiescing closes all sessions before completing the provider's
 quiesce handshake. Every step and slew is logged with the caller's label and
 fires the `BSDTime` DTrace provider's `clock-set` or `clock-adjust` probe.
 
+## ntpd and the clock gate
+
+The gate claim refuses the clock privileges to every ambient process, root
+included, so ntpd(8) cannot use `clock_settime(2)` or `ntp_adjtime(2)`
+directly. rc.d/ntpd runs ntpd as the unprivileged `ntpd` user under
+mac_ntpd(4). mac_ntpd hands that uid to the gate, which then admits it for
+`PRIV_ADJTIME`, `PRIV_CLOCK_SETTIME` and `PRIV_NTP_ADJTIME` only, outside
+capability mode; mac_ntpd's own grant still decides the privilege check.
+Root, `PRIV_SETTIMEOFDAY` and every other uid stay behind the claim, and the
+gated `SYS_OP_SETTIME`/`SYS_OP_ADJTIME` operations still need the token.
+Setting `security.mac.ntpd.enabled=0` withdraws it. An ntpd running as root
+(when mac_ntpd is disabled or ntpd's options name files the ntpd user cannot
+write) is refused and logs `step-systime: Operation not permitted`.
+
+ntpd and BSDTime clients both move the same clock; they do not coordinate.
+The planned rework of the time service should make BSDTime the single
+clock-discipline authority (ntpd or an NTP client as a BSDTime client or a
+supervised unit holding a scoped grant) instead of this uid delegation.
+
 ## Unit
 
 Source: `usr.sbin/BSDTime/capbundle/BSDTime.ucl` and `Bundle.ucl`.
