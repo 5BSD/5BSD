@@ -111,6 +111,16 @@ linked bitcode is captured; only three DWARF sections differ. Installed daemon
 protocol/runtime remains open. See DTRACEDCTL-QUALIFICATION.md. This component
 result does not establish completion of the remaining inventory.
 
+PPP/pppctl now also have native source/install ownership with three explicit
+PPP configurations (57/53/51 C units), 26 component/configuration installation records, eight
+CRC checks, actual flags/header/link-object checks and three safe pppctl usage
+methods. PPP's relative __FILE__ literal and resulting final layout differences
+remain explicit; original objects otherwise match Make runtime sections and
+nondebug relocations. See PPP-QUALIFICATION.md. Real PPP sessions, custom
+PPP_CONFDIR/experimental netgraph, broader configurations and exec cache/log
+resource investigation remain open. This is component evidence, not whole
+userland or native package completion.
+
 Parent-export review found no directory-specific exports/SUBDIR_ENV in
 usr.sbin/Makefile, usr.sbin/Makefile.inc or base-accounts/test Makefiles. The
 maintained world traversal uses real Make buildenv; broader per-directory

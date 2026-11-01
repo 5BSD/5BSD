@@ -4994,3 +4994,16 @@ See
 .Pa tools/build/bazel/DTRACEDCTL-QUALIFICATION.md
 for captured linked bitcode and separate installed daemon/IPC runtime gates.
 No host tracing or daemon connection is activated by these tests.
+
+.Pp
+Native PPP uses existing typed format-5 source settings plus
+.Va pam_support , radius_support
+and the seven component
+.Va //usr.sbin/ppp:no_*
+selectors to preserve actual Make source/library selections and installation
+policy, including root:network setuid mode and private configuration files.
+See
+.Pa tools/build/bazel/PPP-QUALIFICATION.md
+for three qualified build profiles, retained source-diagnostic differences,
+pppctl usage tests and separate privileged/network/runtime gates.
+Custom configuration-directory and experimental netgraph inputs remain open.

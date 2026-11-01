@@ -47345,3 +47345,14 @@ per profile. Actual compiler/header/link-tool inputs and linked LLVM bitcode
 are checked. See [dtracedctl evidence](DTRACEDCTL-QUALIFICATION.md) for immutable
 bindings, three DWARF differences and the separate guest daemon/IPC gates.
 Typed format-5 configuration uses `dtrace_optimized`; Make remains production.
+
+### Native PPP family (2026-11-01)
+
+PPP default/global-reduced/local-exclusion profiles and pppctl pass native
+build/test/install and Make ELF contracts: 26 component/configuration installation records,
+eight debug CRC checks, 162 actual C compiles and 12,489 prerequisite hash
+checks. Original object sections isolate PPP's sole relative __FILE__ literal
+difference; final PPP byte identity is not claimed. See
+[PPP qualification](PPP-QUALIFICATION.md) for exact setuid/group/configuration
+policy, safe usage tests, cache/log observations and isolated runtime/remaining
+configuration gates. Make remains production/default.

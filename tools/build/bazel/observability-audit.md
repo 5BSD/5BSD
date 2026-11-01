@@ -9437,3 +9437,15 @@ cleanup/stats acknowledgements, malformed peers and deadline errors in isolated
 daemon integration; no live-probe or logging-delivery claim follows from the
 parser cases. No instrumentation was removed or added just for this scan.
 See DTRACEDCTL-QUALIFICATION.md and actual compile/link/ELF audits.
+
+## 2026-11-01: PPP family
+
+The 57 default PPP C units and pppctl retain their unchanged production source.
+No direct DTrace/SDT/BSM calls were found; PPP keeps openlog/vsyslog, session
+logging and error diagnostics. The existing sig.c diagnostic retains __FILE__
+semantics with a relative native source spelling, explicitly bounded by original
+object comparisons. Three pppctl argument-error methods return before network
+operations; logging delivery, privileged transitions, authentication and device
+negotiation remain isolated runtime gates. No probes or production behavior
+were changed for this scan. See PPP-QUALIFICATION.md for all captured evidence
+and dependency-library/runtime limits.

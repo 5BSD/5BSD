@@ -516,3 +516,7 @@ config_setting(name = "mailwrapper_enabled", flag_values = {":mailwrapper": "tru
 # Make's opt-in DTRACE_OPTIMIZED selects full compile/link LTO for userland.
 bool_flag(name = "dtrace_optimized", build_setting_default = False, visibility = ["//visibility:public"])
 config_setting(name = "dtrace_optimized_enabled", flag_values = {":dtrace_optimized": "true"}, visibility = ["//visibility:public"])
+
+# Feature support switches used by PPP's actual source/install graph.
+bool_flag(name = "pam_support", build_setting_default = True, visibility = ["//visibility:public"])
+bool_flag(name = "radius_support", build_setting_default = True, visibility = ["//visibility:public"])
