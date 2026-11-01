@@ -46,6 +46,7 @@ struct extensioncmp_session {
 	bool			 negotiated;
 	bool			 reopen;	/* process-wide: replace on failure */
 	bool			 status;	/* SystemExtensionStatus (read-only) */
+	bool			 rootload;	/* SystemExtensionRootLoad */
 	int			 failed;	/* explicit session: terminal */
 };
 
@@ -60,6 +61,7 @@ struct completion {
 	size_t max, count;
 	struct service_extension_info *info;
 	struct service_extension_decision *decision;
+	int root_result, root_error;	/* RootLoad Load/Unload */
 };
 
 static bool
@@ -349,7 +351,7 @@ decision_reply(void *context, int error,
 	    (d->client_size != 0 &&
 	    memchr(d->client, '\0', d->client_size) != NULL) ||
 	    d->result < SYSEXT_DECISION_LOADED ||
-	    d->result > SYSEXT_DECISION_FAILED || d->error > ELAST) {
+	    d->result > SYSEXT_DECISION_MAX || d->error > ELAST) {
 		malformed(result);
 		return;
 	}
@@ -362,6 +364,45 @@ decision_reply(void *context, int error,
 	out->result = (int)d->result;
 	out->error = (int)d->error;
 }
+
+/* The root-load endpoint's replies (bsd.extension.v1 SystemExtensionRootLoad). */
+#define	ROOT_REPLY(fn, method)						\
+static void								\
+fn(void *context, int error,						\
+    struct bsd_extension_v1_SystemExtensionRootLoad_##method##_Result *v) \
+{									\
+	struct completion *result = context;				\
+	const struct bsd_extension_v1_RootLoadOutcome *o;		\
+									\
+	result->done = true;						\
+	result->error = error;						\
+	if (error)							\
+		return;							\
+	if (v == NULL) {						\
+		malformed(result);					\
+		return;							\
+	}								\
+	if (v->tag ==							\
+	    bsd_extension_v1_SystemExtensionRootLoad_##method##_Result_err_tag) { \
+		domain_error(result, v->value.err);			\
+		return;							\
+	}								\
+	if (v->tag !=							\
+	    bsd_extension_v1_SystemExtensionRootLoad_##method##_Result_response_tag) { \
+		malformed(result);					\
+		return;							\
+	}								\
+	o = &v->value.response;						\
+	if (o->result < SYSEXT_DECISION_LOADED ||			\
+	    o->result > SYSEXT_DECISION_MAX || o->error > ELAST) {	\
+		malformed(result);					\
+		return;							\
+	}								\
+	result->root_result = (int)o->result;				\
+	result->root_error = (int)o->error;				\
+}
+ROOT_REPLY(root_load_reply, Load)
+ROOT_REPLY(root_unload_reply, Unload)
 
 /* ---------------------------------------------------------------- sessions */
 
@@ -458,7 +499,10 @@ begin_locked(struct extensioncmp_session *session, struct timespec *deadline)
 		return (errno = error, -1);
 	if (session->negotiated)
 		return (0);
-	error = session->status ?
+	error = session->rootload ?
+	    bsd_extension_v1_SystemExtensionRootLoad_GetProtocolInfo(
+	    session->connection, &empty, status_protocol_reply, &result, &txid) :
+	    session->status ?
 	    bsd_extension_v1_SystemExtensionStatus_GetProtocolInfo(
 	    session->connection, &empty, status_protocol_reply, &result, &txid) :
 	    bsd_extension_v1_SystemExtension_GetProtocolInfo(
@@ -604,7 +648,7 @@ extensioncmp_load(struct extensioncmp_session *session, const char *name)
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
-	if (session->status)
+	if (session->status || session->rootload)
 		return (errno = EPERM, -1);
 	if ((error = check_name(name, false)) != 0)
 		return (errno = error, -1);
@@ -623,7 +667,7 @@ extensioncmp_reload(struct extensioncmp_session *session)
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
-	if (session->status)
+	if (session->status || session->rootload)
 		return (errno = EPERM, -1);
 	return (CALL(session, &result,
 	    bsd_extension_v1_SystemExtension_Reload(CONN(session), &empty,
@@ -641,7 +685,7 @@ extensioncmp_stat(struct extensioncmp_session *session, const char *name,
 	if (session == NULL || loaded == NULL)
 		return (errno = EINVAL, -1);
 	*loaded = 0;
-	if (session->status)
+	if (session->status || session->rootload)
 		return (errno = EPERM, -1);
 	if ((error = check_name(name, false)) != 0)
 		return (errno = error, -1);
@@ -665,7 +709,7 @@ extensioncmp_list(struct extensioncmp_session *session,
 	if (session == NULL || names == NULL || count == NULL || max == 0)
 		return (errno = EINVAL, -1);
 	*count = 0;
-	if (session->status)
+	if (session->status || session->rootload)
 		return (errno = EPERM, -1);
 	result.names = names;
 	result.max = max;
@@ -690,7 +734,7 @@ extensioncmp_manage(struct extensioncmp_session *session,
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
-	if (session->status)
+	if (session->status || session->rootload)
 		return (errno = EPERM, -1);
 	if (action == SERVICE_EXTENSION_RESTORE)
 		return (CALL(session, &result,
@@ -738,6 +782,8 @@ extensioncmp_info(struct extensioncmp_session *session, const char *name,
 	if (session == NULL || info == NULL || (next != 0 && next != 1))
 		return (errno = EINVAL, -1);
 	memset(info, 0, sizeof(*info));
+	if (session->rootload)
+		return (errno = EPERM, -1);
 	if ((error = check_name(name, next != 0)) != 0)
 		return (errno = error, -1);
 	result.name = name;
@@ -795,6 +841,86 @@ extensioncmp_decision(struct extensioncmp_session *session, uint64_t after,
 		return (errno = error, -1);
 	}
 	return (0);
+}
+
+/*
+ * The root-load endpoint, system.SystemExtension.RootLoad
+ * (SystemExtensionRootLoad).  switchboard resolves it for UID 0 sessions outside
+ * a jail that hold no software authority (root-load.ucl).  Only
+ * extensioncmp_root_load() and extensioncmp_root_unload() work on it.
+ */
+int
+extensioncmp_session_open_rootload(struct extensioncmp_session **sessionp)
+{
+	int error, fd;
+
+	if (sessionp == NULL)
+		return (errno = EINVAL, -1);
+	if (service_open(SYSEXT_ROOTLOAD_SERVICE_NAME, &fd) == -1)
+		return (-1);
+	if (extensioncmp_session_create(fd, sessionp) == -1) {
+		error = errno;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	(*sessionp)->rootload = true;
+	return (0);
+}
+
+int
+extensioncmp_session_create_rootload(int fd,
+    struct extensioncmp_session **sessionp)
+{
+
+	if (extensioncmp_session_create(fd, sessionp) == -1)
+		return (-1);
+	(*sessionp)->rootload = true;
+	return (0);
+}
+
+static int
+root_call(struct extensioncmp_session *session, const char *name, bool load,
+    struct service_extension_root_outcome *outcome)
+{
+	struct completion result = { 0 };
+	struct bsd_extension_v1_Module module;
+	int error;
+
+	if (session == NULL || outcome == NULL)
+		return (errno = EINVAL, -1);
+	memset(outcome, 0, sizeof(*outcome));
+	if (!session->rootload)
+		return (errno = EOPNOTSUPP, -1);
+	if ((error = check_name(name, false)) != 0)
+		return (errno = error, -1);
+	module.name = name;
+	module.name_size = strlen(name);
+	if ((load ? CALL(session, &result,
+	    bsd_extension_v1_SystemExtensionRootLoad_Load(CONN(session), &module,
+	    root_load_reply, &result, &txid_)) :
+	    CALL(session, &result,
+	    bsd_extension_v1_SystemExtensionRootLoad_Unload(CONN(session),
+	    &module, root_unload_reply, &result, &txid_))) == -1)
+		return (-1);
+	outcome->result = result.root_result;
+	outcome->error = result.root_error;
+	return (0);
+}
+
+int
+extensioncmp_root_load(struct extensioncmp_session *session, const char *name,
+    struct service_extension_root_outcome *outcome)
+{
+
+	return (root_call(session, name, true, outcome));
+}
+
+int
+extensioncmp_root_unload(struct extensioncmp_session *session,
+    const char *name, struct service_extension_root_outcome *outcome)
+{
+
+	return (root_call(session, name, false, outcome));
 }
 
 /* ------------------------------------------------------ process-wide session */
