@@ -26,3 +26,5 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["audit.h", "audit_keve
 bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["audit.h", "audit_kevents.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
 
 bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["audit.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["audit.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

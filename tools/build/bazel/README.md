@@ -47262,3 +47262,15 @@ cases passed, including sandboxed local operation/state transfer and cleanup.
 The original tests compile in production sources; they do not exec the installed
 binary or qualify a guest. Full WASPNest harness packaging, live bhyve/guest and
 performance remain open. See [VIRTIOFSD-QUALIFICATION.md](VIRTIOFSD-QUALIFICATION.md).
+
+
+### Native ACPI support modules (2026-11-01)
+
+Sixteen amd64 and two ARM64 maintained ACPI support modules now have native
+GENERIC module/install candidates; the root excludes this family on RISC-V64.
+Four final profiles passed thirty-six artifact comparisons, fifty-four install
+records, exact warning/source/interface/option/link contracts and 3,870 physical
+Make source/header hash checks. A mistaken warning omission was rejected and
+removed before the final qualification. Runtime hardware/fault-injection and
+full-system/performance gates remain open. See
+[ACPI-SUPPORT-MODULES-QUALIFICATION.md](ACPI-SUPPORT-MODULES-QUALIFICATION.md).

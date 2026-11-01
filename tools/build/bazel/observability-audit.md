@@ -9345,3 +9345,16 @@ malformed frames, resource limits, disconnect/timeout and state-transfer failure
 with actual callers. Original local daemon tests passing does not establish live
 hypervisor/guest instrumentation, broad audit coverage or performance. See
 VIRTIOFSD-QUALIFICATION.md.
+
+
+## 2026-11-01: ACPI support modules
+
+All sixteen unchanged selected source files have native module candidates.
+The bounded direct DTrace/SDT/audit/CTR marker scan found no matched lines in
+these files; that is not a conclusion about shared-header/caller instrumentation.
+Review ACPI attach/detach, method evaluation and notification failures,
+WMI/backlight/input events, permission checks and APEI error visibility with
+actual hardware and core ACPI callers. Do not add probes solely to satisfy a
+marker scan. No runtime device/fault-injection result is inferred from module
+build success. See ACPI-SUPPORT-MODULES-QUALIFICATION.md and
+bazel-acpi-support-review-r3-20261101/observability.json.

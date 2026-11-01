@@ -8,7 +8,7 @@ cc_library(name = "ioctl_headers", hdrs = ["acpiio.h"], strip_include_prefix = "
 
 filegroup(name = "acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
 cc_library(name = "acpi_if_headers", hdrs = [":acpi_if_header_file"], strip_include_prefix = "acpi_if.generated",
-    visibility = ["//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
+    visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
 cc_library(name = "acpivar_headers", hdrs = ["acpivar.h"], strip_include_prefix = "/sys",
     deps = [":acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/sys:kernel_headers"],
     visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
@@ -16,3 +16,31 @@ cc_library(name = "acpivar_headers", hdrs = ["acpivar.h"], strip_include_prefix 
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["acpivar.h"],
     visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["acpiio.h", "acpivar.h", "apeivar.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+filegroup(name = "apei_if_header_file", srcs = [":apei_if"], output_group = "header")
+cc_library(name = "apei_if_headers", hdrs = [":apei_if_header_file"], strip_include_prefix = "apei_if.generated", visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "acpi_dock_module", srcs = ["acpi_dock.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/acpica:acpi_if_headers"])
+
+amd64_generic_module_objects(name = "acpi_video_module", srcs = ["acpi_video.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_evdev_header", "//sys/amd64/conf:generic_opt_kbd_header", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+amd64_generic_module_objects(name = "acpi_einj_module", srcs = ["acpi_einj.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:apei_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+cross_generic_module_objects(arch = "arm64", name = "acpi_einj_module", srcs = ["acpi_einj.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_acpi_header", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:apei_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+amd64_generic_module_objects(name = "acpi_ged_module", srcs = ["acpi_ged.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_evdev_header", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+cross_generic_module_objects(arch = "arm64", name = "acpi_ged_module", srcs = ["acpi_ged.c"],
+    deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_acpi_header", "//sys/arm64/conf:generic_opt_evdev_header", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
