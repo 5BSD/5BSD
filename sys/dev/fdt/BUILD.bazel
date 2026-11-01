@@ -2,3 +2,8 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["fdt_common.h"], visibility = ["//sys/dev/mii:__pkg__"])

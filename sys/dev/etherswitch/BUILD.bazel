@@ -5,3 +5,30 @@ cc_library(name = "headers", hdrs = ["etherswitch.h"], strip_include_prefix = "/
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["miiproxy.h"], visibility = ["//sys/dev/etherswitch:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_generic_module_objects(name = "mii_module", srcs = ["miiproxy.c"],
+    deps = ["//sys/bsm:mii_family_headers", "//sys/contrib/ck:mii_family_headers", "//sys/dev/etherswitch:mii_family_headers", "//sys/dev/mii:mii_family_headers", "//sys/net:mii_family_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers"],
+    copts = [])
+bsd_component_selected_objects(name = "ordered_module_objects", group = ":mii_module_ctf",
+    object_names = ["miiproxy.o"], visibility = ["//sys/modules/miiproxy:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "mii_module", srcs = ["miiproxy.c"],
+    deps = ["//sys/bsm:mii_family_headers", "//sys/contrib/ck:mii_family_headers", "//sys/dev/etherswitch:mii_family_headers", "//sys/dev/mii:mii_family_headers", "//sys/dev/ofw:mii_family_headers", "//sys/net:mii_family_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_platform_header", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"],
+    copts = [])
+bsd_component_selected_objects(name = "arm64_ordered_module_objects", group = ":arm64_mii_module_ctf",
+    object_names = ["miiproxy.o"], visibility = ["//sys/modules/miiproxy:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "mii_module", srcs = ["miiproxy.c"],
+    deps = ["//sys/bsm:mii_family_headers", "//sys/contrib/ck:mii_family_headers", "//sys/dev/etherswitch:mii_family_headers", "//sys/dev/mii:mii_family_headers", "//sys/dev/ofw:mii_family_headers", "//sys/net:mii_family_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_platform_header", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"],
+    copts = [])
+bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_mii_module_ctf",
+    object_names = ["miiproxy.o"], visibility = ["//sys/modules/miiproxy:__pkg__"])

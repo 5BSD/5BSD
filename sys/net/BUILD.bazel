@@ -225,3 +225,6 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["bpf.h", "debugnet.h",
 
 filegroup(name = "ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
 cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/aq:__pkg__"])
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])

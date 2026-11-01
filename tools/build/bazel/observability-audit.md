@@ -9388,3 +9388,13 @@ account-change audit delivery or transitive pw/libutil instrumentation; review
 those privileged account-write/error paths with their audit consumers. No
 probes were added solely for a scan. See BASE-ACCOUNTS-QUALIFICATION.md for
 unchanged source/test payload parity, guest identity and cleanup evidence.
+
+## 2026-11-01: MII, MDIO and miiproxy
+
+A direct scan of all 38 physical production C files found no DTrace/SDT/audit
+markers. Native builds retain the original sources and generated interface
+contracts on amd64, ARM64 and RISC-V64. Review link/autonegotiation, PHY reset,
+MDIO transactions and proxy attach/detach/error paths with network-stack
+callers. This scan does not establish missing transitive instrumentation or
+hardware behavior. No probes were added solely for a scan. See
+MII-FAMILY-QUALIFICATION.md and its retained input/observability audits.

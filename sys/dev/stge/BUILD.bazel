@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["if_stgereg.h"], visibility = ["//sys/dev/mii:__pkg__"])

@@ -4949,3 +4949,13 @@ See
 for bootstrap, configuration and system-level limits.
 This component gate does not qualify normal startup, host account migration,
 full pkgbase creation or system upgrades; Make remains production/default.
+
+.Pp
+Native MII-family profiles qualify miibus, mdio and miiproxy on amd64, ARM64
+and RISC-V64, including generated interfaces, FDT source selection, plain/CTF
+installation records, source/header inputs and original object order.
+See
+.Pa tools/build/bazel/MII-FAMILY-QUALIFICATION.md
+for exact comparisons and retained reference failures.
+The existing format-5 action is used; hardware operation and complete native
+world/kernel/pkgbase builds remain open.
