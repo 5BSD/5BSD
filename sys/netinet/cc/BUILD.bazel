@@ -63,3 +63,9 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["cc.h"], visibility = ["//sys/netinet:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/kern:__pkg__"])

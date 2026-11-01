@@ -5066,3 +5066,14 @@ See
 .Pa tools/build/bazel/NIC-TOOLS-QUALIFICATION.md
 for independent Make, immutable ELF, installation, object and input checks and
 remaining hardware, configuration and cross-userland gates.
+.Pp
+The existing format-5 target API also qualifies seventy-one amd64 GENERIC core
+kernel objects and an existing clock-conversion group.
+Per-source compiler exceptions retain stack-protector and assembly semantics;
+the CTF action converts a private copy and preserves assembly without C types.
+See
+.Pa tools/build/bazel/CORE-KERNEL-QUALIFICATION.md
+for the fresh linked Make reference, captured objects, input hashes and
+filename-related differences.
+The profile runs no runtime tests and does not qualify a complete native
+kernel link, installation, cross-kernel build or performance.

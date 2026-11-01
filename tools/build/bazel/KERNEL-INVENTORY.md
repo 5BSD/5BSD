@@ -92,3 +92,14 @@ backend, host installation, module loading or VM state is changed. Evidence
 logging, complete execution-platform closure, current full-world/kernel/pkgbase
 builds, VM acceptance and controlled CPU/memory/disk/cache qualification remain
 open. Make stays the production default; BIP remains excluded.
+
+## Subsequent compiled reference and core checkpoint
+
+After the configuration-only snapshot above, the fresh amd64 GENERIC reference
+was successfully compiled and linked by Make with sixteen jobs. Seventy-one
+previously unmatched physical core sources now have native amd64 object
+qualification. See [the core checkpoint](CORE-KERNEL-QUALIFICATION.md) for the
+retained full Make build, native artifacts, compiler/CTF fixes, prerequisites
+and precise filename/relocation differences. The earlier 2,183 unmatched count
+is an analysis snapshot of its inspected graph, not a newly measured remaining
+count after this batch. No full native kernel link or runtime claim follows.

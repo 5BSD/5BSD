@@ -9474,3 +9474,17 @@ of privileged register/filter/firmware/reset/dump operations as a future policy
 item. Only eight source-reviewed pre-device argument methods ran, never those
 privileged operations. See NIC-TOOLS-QUALIFICATION.md for actual compile/object,
 installation and hardware-runtime limits; no new tracing/audit policy is claimed.
+
+## Core kernel objects (2026-11-01)
+
+Seventy-one unchanged sys/kern source entries now have native amd64 object
+inspection. Twenty-seven contain direct SDT/DTrace, AUDIT, CTR or LOCKSTAT
+markers in the bounded line scan; forty-four have no such direct marker.
+The retained source hashes/lines are in
+/usr/obj/usr/src/bazel-kernel-core-review-r1-20261101/observability.json.
+Original machine code and CTF preservation are inspected as described in
+[the core checkpoint](CORE-KERNEL-QUALIFICATION.md). Source scanning and object
+parity do not prove live event delivery. Existing exec/jail, ptrace/socket/TTY,
+message queue, kTLS and vsock event paths must run on the matching test kernel;
+review shared coverage before adding events to marker-free sources. No tracing
+activation, new event policy or hot-path runtime change was introduced.

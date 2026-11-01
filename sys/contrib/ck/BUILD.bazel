@@ -531,3 +531,32 @@ bsd_source_headers(
         "//sys/dev/usb/net:__pkg__"
     ],
 )
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_intr_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_mbuf_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_pmc_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_trap_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_domain_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/kern:__pkg__"])

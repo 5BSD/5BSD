@@ -7,6 +7,11 @@ The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
 
+The [core kernel checkpoint](CORE-KERNEL-QUALIFICATION.md) adds seventy-one
+amd64 GENERIC objects qualified against a fresh, successfully linked Make
+reference kernel. Object inspection and input checks do not establish a full
+native kernel link, runtime qualification or cross-architecture completion.
+
 Bazel is experimental. `build-bsd` keeps `bsd-make` as its production backend;
 its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use

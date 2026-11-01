@@ -17,3 +17,9 @@ exports_files(['lib/common/entropy_common.c', 'lib/common/error_private.c', 'lib
 exports_files(["lib/zstd.h", "lib/zstd_errors.h", "programs/zstd.1"], visibility = ["//lib/libzstd:__pkg__", "//usr.bin/zstd:__pkg__"])
 
 cc_library(name = "kernel_headers", hdrs = ["lib/zstd.h", "lib/zstd_errors.h", "lib/freebsd/stddef.h", "lib/freebsd/limits.h", "lib/freebsd/zstd_kfreebsd.h"], includes = ["../.."], visibility = ["//visibility:public"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_subr_compressor_headers", hdrs = ["lib/freebsd/limits.h", "lib/freebsd/stddef.h", "lib/freebsd/zstd_kfreebsd.h", "lib/zstd.h", "lib/zstd_errors.h"],
+    includes = ["lib/freebsd"],
+    visibility = ["//sys/kern:__pkg__"])

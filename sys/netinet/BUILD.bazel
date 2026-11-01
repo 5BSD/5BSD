@@ -194,3 +194,19 @@ bsd_source_headers(
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
 cc_library(name = "cxgbetool_headers", hdrs = ['in.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["in.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_var.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["in.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_vnodedumper_headers", hdrs = ["in.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["in.h", "in_pcb.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_offload.h", "tcp_var.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["in.h", "ip.h", "ip6.h"],
+    visibility = ["//sys/kern:__pkg__"])

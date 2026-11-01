@@ -8,3 +8,8 @@ cc_library(name = "libc_headers", hdrs = ["chacha.h", "_chacha.h"],
 cc_library(name = "libc_embedded", hdrs = ["chacha.c"],
     strip_include_prefix = ".", deps = [":libc_headers"],
     visibility = ["//lib/libc/gen:__pkg__"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["_chacha.h", "chacha.h"],
+    visibility = ["//sys/kern:__pkg__"])

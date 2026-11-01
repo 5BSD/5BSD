@@ -125,3 +125,19 @@ bsd_source_headers(
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
 cc_library(name = "cxgbetool_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_vnodedumper_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/kern:__pkg__"])

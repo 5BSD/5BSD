@@ -32,3 +32,8 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
  for arch in ["arm64", "riscv"]]
 
 cc_library(name = "rpc_provider_headers", hdrs = ["_cryptodev.h", "cryptodev.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "ktls.h"],
+    visibility = ["//sys/kern:__pkg__"])

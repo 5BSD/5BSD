@@ -142,3 +142,103 @@ bsd_tree_file(name = "opt_bce", tree = ":generic_config", member = "opt_bce.h",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_bce_header", hdrs = [":opt_bce"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_tree_file(name = "opt_ekcd", tree = ":generic_config", member = "opt_ekcd.h",
+    output = "generic_options/opt_ekcd.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_gzio", tree = ":generic_config", member = "opt_gzio.h",
+    output = "generic_options/opt_gzio.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_kstack_usage_prof", tree = ":generic_config", member = "opt_kstack_usage_prof.h",
+    output = "generic_options/opt_kstack_usage_prof.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_maxphys", tree = ":generic_config", member = "opt_maxphys.h",
+    output = "generic_options/opt_maxphys.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_maxusers", tree = ":generic_config", member = "opt_maxusers.h",
+    output = "generic_options/opt_maxusers.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_mbuf_profiling", tree = ":generic_config", member = "opt_mbuf_profiling.h",
+    output = "generic_options/opt_mbuf_profiling.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_mbuf_stress_test", tree = ":generic_config", member = "opt_mbuf_stress_test.h",
+    output = "generic_options/opt_mbuf_stress_test.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_mprof", tree = ":generic_config", member = "opt_mprof.h",
+    output = "generic_options/opt_mprof.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_msgbuf", tree = ":generic_config", member = "opt_msgbuf.h",
+    output = "generic_options/opt_msgbuf.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_panic", tree = ":generic_config", member = "opt_panic.h",
+    output = "generic_options/opt_panic.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "core_kernel_opt_capsicum_header", hdrs = [":opt_capsicum"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_ekcd_header", hdrs = [":opt_ekcd"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_global_header", hdrs = [":opt_global"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_gzio_header", hdrs = [":opt_gzio"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_kstack_usage_prof_header", hdrs = [":opt_kstack_usage_prof"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_mac_header", hdrs = [":opt_mac"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_maxphys_header", hdrs = [":opt_maxphys"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_maxusers_header", hdrs = [":opt_maxusers"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_mbuf_profiling_header", hdrs = [":opt_mbuf_profiling"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_mbuf_stress_test_header", hdrs = [":opt_mbuf_stress_test"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_mprof_header", hdrs = [":opt_mprof"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_msgbuf_header", hdrs = [":opt_msgbuf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_nfs_header", hdrs = [":opt_nfs"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_panic_header", hdrs = [":opt_panic"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_param_header", hdrs = [":opt_param"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_printf_header", hdrs = [":opt_printf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_rss_header", hdrs = [":opt_rss"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_sched_header", hdrs = [":opt_sched"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_stack_header", hdrs = [":opt_stack"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_syscons_header", hdrs = [":opt_syscons"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_teken_header", hdrs = [":opt_teken"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_vm_header", hdrs = [":opt_vm"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_watchdog_header", hdrs = [":opt_watchdog"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_witness_header", hdrs = [":opt_witness"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+cc_library(name = "core_kernel_opt_zstdio_header", hdrs = [":opt_zstdio"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])

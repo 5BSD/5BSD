@@ -633,3 +633,27 @@ bsd_source_headers(
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
 cc_library(name = "cxgbetool_headers", hdrs = ['bpf.h', 'dlt.h', 'ethernet.h', 'sff8472.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_mbuf_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_vnodedumper_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_trap_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_domain_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["ethernet.h", "infiniband.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])

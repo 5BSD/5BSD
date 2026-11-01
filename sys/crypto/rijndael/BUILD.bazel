@@ -16,3 +16,8 @@ amd64_generic_module_objects(name = "wlan_module", srcs = ["rijndael-alg-fst.c",
 [cross_generic_module_objects(arch = arch, name = "wlan_module",
     srcs = ["rijndael-alg-fst.c", "rijndael-api.c"], deps = [":wlan_headers"])
  for arch in ["arm64", "riscv"]]
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["rijndael-api-fst.h", "rijndael.h"],
+    visibility = ["//sys/kern:__pkg__"])

@@ -10,3 +10,8 @@ exports_files(['adler32.c', 'compress.c', 'crc32.c', 'deflate.c', 'gzclose.c', '
 exports_files(["zlib.pc.in", "zlib.3", "zlib.h", "zconf.h"], visibility = ["//lib/libz:__pkg__"])
 
 cc_library(name = "kernel_headers", hdrs = ["zlib.h", "zconf.h", "zutil.h"], includes = ["../.."], visibility = ["//visibility:public"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_subr_compressor_headers", hdrs = ["zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/kern:__pkg__"])

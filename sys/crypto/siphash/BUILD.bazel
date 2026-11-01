@@ -5,3 +5,8 @@ cc_library(name = "kernel_headers", hdrs = ["siphash.h"], includes = ["../.."],
 
 cc_library(name = "packet_filter_headers", hdrs = ["siphash.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netpfil:__subpackages__"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["siphash.h"],
+    visibility = ["//sys/kern:__pkg__"])

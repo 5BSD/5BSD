@@ -7,3 +7,10 @@ cc_library(name = "internal_headers", hdrs = ["devfs_int.h"], includes = ["../..
     deps = [":kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 amd64_generic_kernel_objects(name = "generic", srcs = ["devfs_devs.c", "devfs_dir.c", "devfs_rule.c", "devfs_vfsops.c", "devfs_vnops.c"],
     deps = [":internal_headers", "//sys/security/mac:framework_headers"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_tty_headers", hdrs = ["devfs.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_tty_headers", hdrs = ["devfs.h", "devfs_int.h"],
+    visibility = ["//sys/kern:__pkg__"])

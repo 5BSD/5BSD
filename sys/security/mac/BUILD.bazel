@@ -26,3 +26,28 @@ amd64_generic_kernel_objects(name = "generic_network",
 amd64_generic_kernel_objects(name = "generic_vfs", srcs = ["mac_vfs.c"],
     deps = [":internal_headers", "//sys/amd64/conf:generic_opt_mac_header", "//sys/fs/devfs:kernel_headers"])
 filegroup(name = "generic_object_files", srcs = [":generic_control_object_files", ":generic_network_object_files", ":generic_vfs_object_files"], visibility = ["//visibility:public"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["mac_framework.h", "mac_policy.h", "mac_syscalls.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_ktrace_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_ucoredump_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_kdb_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_pts_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbuf2_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/kern:__pkg__"])
