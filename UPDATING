@@ -27,6 +27,34 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261101:
+	Devices attached after boot get their drivers again with the
+	capability plane.  devd is now an adopted switchboard unit
+	(rc_adopt.conf): when /etc/rc exits, switchboard restarts it with
+	"service devd onerestart" under a lasting grant from the new
+	/Capabilities/Config/switchboard/service-authority.ucl.  The grant
+	reaches only system.SystemExtension, has no administrative rights,
+	and survives exec only into sh, env, limits, devd and sysextctl.
+	BSDExtension's new driver_clients policy key limits the "devd"
+	client to hardware drivers (modules linker.hints records with PnP
+	data); sysextctl deny still excludes a driver.  A root shell still
+	cannot load modules: its sysextctl has no authority and kldload
+	stays refused by the gate.  Restart devd with "switchboardctl
+	restart devd", not "service devd restart", which starts a devd
+	without the grant.
+
+	ntpd can step and slew the clock again while BSDTime holds the
+	clock gate: mac_ntpd hands its uid (ntpd) to the gate, which admits
+	that uid for the three clock privileges mac_ntpd grants.  Root
+	remains refused.  rc.d/ntpd also removes a pidfile left by an ntpd
+	that ran as root, which made "service ntpd status" report "not
+	running" after an upgrade.
+
+	bhyve/vmm: hw.vmm.svm.nested now defaults to 1, so an AMD host
+	permits nested SVM without a loader tunable.  A guest still sees
+	SVM only with x86.nested_svm=true.  Set hw.vmm.svm.nested=0 in
+	loader.conf to refuse nested SVM on a host.
+
 20261031:
 	Base groups and users that an upgrade adds now appear even when pkg
 	cannot merge /etc/group or /etc/master.passwd and leaves .pkgnew
