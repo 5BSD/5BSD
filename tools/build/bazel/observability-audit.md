@@ -8897,3 +8897,13 @@ retains documented path/layout differences. All 22 original fstyp cases pass in
 a disposable guest, including original md cleanup, but live probes, audit
 delivery, full helper suites and overhead remain open. See
 [makefs/full-suite evidence](MAKEFS-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 GEOM and portable service modules (2026-11-01)
+
+The bounded 57-original-C-source scan records six SDT schemas in g_multipath.c.
+Two generated RAID interface sources and header/core/subsystem observation remain
+separate. No C/probe/audit path changed. Exact no-debug bytes and installed enabled
+code/CTF/relocation/SDT sections match Make, including both UZIP ZSTD branches.
+Matching-kernel provider and failure/recovery/key/I/O behavior, ALQ/null-modem/
+accept-filter operation, live event semantics and resource overhead remain open.
+See [storage/service evidence](CROSS-STORAGE-QUALIFICATION.md).

@@ -3,3 +3,11 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 cc_library(name = "headers", hdrs = ["g_gate.h"], includes = ["../.."], deps = ["//sys/geom:kernel_headers"])
 amd64_generic_module_objects(srcs = ["g_gate.c"], deps = [":headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["g_gate.c"],
+    deps = [":headers"],
+) for arch in ["arm64", "riscv"]]

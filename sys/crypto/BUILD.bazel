@@ -14,3 +14,12 @@ amd64_generic_module_objects(name = "rc4_module", srcs = ["rc4/rc4.c"], deps = [
 
 cc_library(name = "curve25519_headers", hdrs = ["curve25519.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/opencrypto:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "rc4_module",
+    srcs = ["rc4/rc4.c"],
+    deps = [":rc4_headers"],
+) for arch in ["arm64", "riscv"]]

@@ -9,3 +9,19 @@ amd64_generic_module(module = "geom_uzip", objects = [
     "//tools/build/bazel/config:kernel_zstdio_enabled": ["//sys/geom/uzip:g_uzip_zstd_object_files"],
     "//conditions:default": [],
 }))
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "geom_uzip",
+    objects = [
+        "//sys/geom/uzip:" + arch + "_g_uzip_object_files",
+        "//sys/geom/uzip:" + arch + "_g_uzip_zlib_object_files",
+        "//sys/geom/uzip:" + arch + "_g_uzip_lzma_object_files",
+        "//sys/geom/uzip:" + arch + "_g_uzip_wrkthr_object_files",
+    ] + select({
+        "//tools/build/bazel/config:kernel_zstdio_enabled": ["//sys/geom/uzip:" + arch + "_g_uzip_zstd_object_files"],
+        "//conditions:default": [],
+    }),
+) for arch in ["arm64", "riscv"]]

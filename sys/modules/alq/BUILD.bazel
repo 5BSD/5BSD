@@ -16,3 +16,22 @@ amd64_generic_module(
     objects = [":generic_module_object_files"],
     export_all = True,
 )
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["//sys/kern:kern_alq.c"],
+    deps = [
+        "//sys/" + arch + "/conf:generic_opt_mac_header",
+        "//sys/security/mac:framework_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module(
+    arch = arch,
+    module = "alq",
+    objects = [":" + arch + "_generic_module_object_files"],
+    export_all = True,
+) for arch in ["arm64", "riscv"]]

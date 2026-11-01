@@ -4,3 +4,11 @@ cc_library(name = "headers", hdrs = ["g_mirror.h"], strip_include_prefix = "/sys
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 amd64_generic_module_objects(srcs = ["g_mirror.c", "g_mirror_ctl.c"], deps = [":headers", "//sys/geom:disk_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["g_mirror.c", "g_mirror_ctl.c"],
+    deps = [":headers", "//sys/geom:disk_headers"],
+) for arch in ["arm64", "riscv"]]

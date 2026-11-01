@@ -12,3 +12,30 @@ cc_library(name = "module_headers", hdrs = ["g_label_msdosfs.h"],
     includes = ["../.."], deps = [":module_option_headers"])
 amd64_generic_module_objects(srcs = ["g_label.c", "g_label_disk_ident.c", "g_label_ext2fs.c", "g_label_flashmap.c", "g_label_gpt.c", "g_label_iso9660.c", "g_label_msdosfs.c", "g_label_ntfs.c", "g_label_ufs.c", "g_label_swaplinux.c"],
     deps = [":headers", ":module_headers", "//sys/geom:disk_headers", "//sys/geom:slice_headers", "//sys/geom:partition_headers", "//sys/geom/multipath:headers", "//sys/ufs/ffs:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = [
+        "g_label.c",
+        "g_label_disk_ident.c",
+        "g_label_ext2fs.c",
+        "g_label_flashmap.c",
+        "g_label_gpt.c",
+        "g_label_iso9660.c",
+        "g_label_msdosfs.c",
+        "g_label_ntfs.c",
+        "g_label_ufs.c",
+        "g_label_swaplinux.c",
+    ],
+    deps = [
+        ":headers",
+        ":module_headers",
+        "//sys/geom:disk_headers",
+        "//sys/geom:slice_headers",
+        "//sys/geom:partition_headers",
+        "//sys/geom/multipath:headers",
+        "//sys/ufs/ffs:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
