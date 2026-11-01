@@ -94,3 +94,9 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/geom:__subpackages__", "//sys/modules/geom:__subpackages__"])
  for option in ["geom", "zstdio"]]
+
+bsd_tree_file(name = "opt_bpf", tree = ":generic_config", member = "opt_bpf.h",
+    output = "generic_options/opt_bpf.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netgraph:__pkg__"])

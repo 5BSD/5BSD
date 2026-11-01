@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+amd64_generic_module(module = "ng_vjc", objects = ["//sys/netgraph:ng_vjc_module_object_files"], export_all = False)
+[cross_generic_module(arch = arch, module = "ng_vjc", objects = ["//sys/netgraph:" + arch + "_ng_vjc_module_object_files"], export_all = False)
+ for arch in ["arm64", "riscv"]]

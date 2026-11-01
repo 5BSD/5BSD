@@ -247,3 +247,21 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/vm:kernel_headers",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+load(":nodes.bzl", _NEW_NODE_COMMON_DEPS = "NETGRAPH_NODE_DEPS", _NETGRAPH_NEW_NODES = "NETGRAPH_NODES")
+
+[cc_library(name = node.name + "_node_headers", hdrs = node.hdrs, includes = [".."])
+ for node in _NETGRAPH_NEW_NODES]
+[amd64_generic_module_objects(
+    name = node.name + "_module",
+    srcs = node.srcs,
+    deps = [":" + node.name + "_node_headers"] + _NEW_NODE_COMMON_DEPS + node.deps +
+        ["//sys/amd64/conf:generic_" + option + "_header" for option in node.options],
+) for node in _NETGRAPH_NEW_NODES]
+[cross_generic_module_objects(
+    arch = arch,
+    name = node.name + "_module",
+    srcs = node.srcs,
+    deps = [":" + node.name + "_node_headers"] + _NEW_NODE_COMMON_DEPS + node.deps +
+        ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in node.options],
+) for arch in ["arm64", "riscv"] for node in _NETGRAPH_NEW_NODES]

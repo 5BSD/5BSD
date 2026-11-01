@@ -25,3 +25,8 @@ cc_library(name = "truss_headers", hdrs = ['in6.h'], strip_include_prefix = "/sy
 cc_library(name = "bhyve_engine_headers", hdrs = ['in6.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 exports_files(["in6_gif.c", "ip6_gre.c"], visibility = ["//sys/net:__pkg__", "//sys/modules:__subpackages__"])
+
+# Explicit header closure for the native Netgraph node/core candidates.
+cc_library(name = "netgraph_node_headers", hdrs = ["in6_fib.h", "scope6_var.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"],
+    deps = [":address_headers", ":ip6_headers"])

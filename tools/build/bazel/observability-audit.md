@@ -8907,3 +8907,14 @@ code/CTF/relocation/SDT sections match Make, including both UZIP ZSTD branches.
 Matching-kernel provider and failure/recovery/key/I/O behavior, ALQ/null-modem/
 accept-filter operation, live event semantics and resource overhead remain open.
 See [storage/service evidence](CROSS-STORAGE-QUALIFICATION.md).
+
+## Netgraph core and eighteen new module candidates (2026-11-01)
+
+The bounded twenty-three-original-C-source scan records four SDT schemas in
+ng_base.c, extending earlier leaf-module scans with actual core source coverage.
+Other scanned sources have no direct provider/schema/audit marker; header and
+network/socket observation remain separate. No C/probe/audit path changed.
+Exact no-debug bytes and installed CTF/debug code/SDT/relocation sections match
+Make across amd64, ARM64 and RISC-V64. Live event semantics, privileged graph/
+socket authorization, protocol/control/data/failure behavior and overhead remain
+open. See [new Netgraph evidence](NETGRAPH-CORE-NODES-QUALIFICATION.md).

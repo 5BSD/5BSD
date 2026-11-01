@@ -160,3 +160,10 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ["bridgestp.c"],
     deps = [":bridgestp_headers", "//sys/vm:kernel_headers"],
 ) for arch in ["arm64", "riscv"]]
+
+# Explicit header closure for the native Netgraph node/core candidates.
+cc_library(name = "netgraph_node_headers", hdrs = ["bpf.h", "bpf_jitter.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_gif.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "netisr.h", "route.h", "route/nhop.h", "route/route_ctl.h", "slcompress.h", "vnet.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"],
+    deps = [":interface_headers", ":route_headers", "//sys/netinet:ipv4_tunnel_headers", "//sys/netinet6:ip6_headers"])
+
+exports_files(["bpf_filter.c", "slcompress.c"], visibility = ["//sys/netgraph:__pkg__"])

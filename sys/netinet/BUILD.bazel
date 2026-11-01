@@ -56,3 +56,8 @@ exports_files(["accf_data.c", "accf_dns.c", "accf_http.c", "accf_tls.c", "in_gif
 cc_library(name = "virtio_driver_headers", hdrs = ["tcp_lro.h"], includes = [".."],
     deps = [":address_headers", ":ipv4_wire_headers", ":ip6_wire_headers", ":tcp_wire_headers", ":udp_wire_headers"],
     visibility = ["//sys/dev/virtio/network:__pkg__"])
+
+# Explicit header closure for the native Netgraph node/core candidates.
+cc_library(name = "netgraph_node_headers", hdrs = ["in.h", "in_fib.h", "in_systm.h", "ip.h", "ip6.h", "ip_var.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h", "tcp.h", "udp.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"],
+    deps = [":address_headers", ":pcb_headers", "//sys/netinet6:interface_state_headers"])
