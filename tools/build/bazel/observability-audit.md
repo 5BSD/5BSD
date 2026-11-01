@@ -9311,3 +9311,16 @@ or instrumentation. Earlier source-specific observability review queues remain
 open. No provider registration, probe firing, module lifecycle or kernel-test
 runtime result is inferred from aggregate build success. See
 DTRACE-FAMILY-QUALIFICATION.md.
+
+
+## 2026-11-01: opensolaris compatibility module
+
+Seven unchanged CPU/proc/atomic and SPL utility/allocation sources now have
+native component declarations. The bounded direct marker scan found no matched
+DTrace/SDT/audit/CTR lines in those seven source files. This is a review queue,
+not proof of missing or complete instrumentation: examine source/header and
+caller coverage for CPU/proc lifecycle, allocation failures, synchronization
+and permission/failure visibility with the dependent providers. Do not add probes
+solely to satisfy a marker scan. Actual module lifecycle and live DTrace
+integration remain open. See OPENSOLARIS-MODULE-QUALIFICATION.md and
+bazel-opensolaris-review-r2-20261101/observability.json.

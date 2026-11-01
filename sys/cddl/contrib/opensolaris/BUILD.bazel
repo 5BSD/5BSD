@@ -15,7 +15,7 @@ cc_library(name = "dtrace_public_headers", hdrs = ["uts/common/sys/dtrace.h", "u
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "tracing_module_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h"],
-    includes = ["uts/common"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+    includes = ["uts/common"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["common/util/strtolctype.h", "uts/common/dtrace/dtrace_xoroshiro128_plus.h", "uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/dtrace_link_elf.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])

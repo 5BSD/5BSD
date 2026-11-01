@@ -4872,3 +4872,10 @@ on ARM64 and RISC-V64; the parent system graph remains responsible for selecting
 the directory under its CDDL/DTrace configuration.
 Successful family builds and unchanged warm reuse do not establish whole-system
 kernel packaging or runtime tracing.
+
+.Pp
+Native opensolaris compatibility-module profiles retain all maintained sources,
+export-all behavior and the original complete OpenZFS header search order on
+amd64, ARM64 and RISC-V64.
+Artifact/install and physical-header comparisons qualify this component;
+actual module loading and DTrace dependency resolution remain runtime gates.

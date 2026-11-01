@@ -47138,7 +47138,8 @@ forced-header order. Six build-bsd profiles passed 48 artifact comparisons and
 regression passed on all three architectures after the optional helper input.
 See [DTRACE-PROVIDER-MODULES-QUALIFICATION.md](DTRACE-PROVIDER-MODULES-QUALIFICATION.md)
 for receipt-bound evidence and remaining tracing/runtime/performance gates.
-Core DTrace and the remaining tracing modules still need conversion/qualification.
+This provider checkpoint preceded the later core and remaining-module qualifications;
+see DTRACE-FAMILY-QUALIFICATION.md for the current directory composition gate.
 
 ### Native ntpd and original time-discipline probes (2026-11-01)
 
@@ -47222,3 +47223,22 @@ thirty-nine unique payloads with zero execution records. This is component-famil
 composition and warm reuse, not full kernel, runtime, source-invalidation or
 performance completion. See
 [DTRACE-FAMILY-QUALIFICATION.md](DTRACE-FAMILY-QUALIFICATION.md).
+
+
+### Native opensolaris compatibility module (2026-11-01)
+
+All seven original C sources now have native amd64/ARM64/RISC-V64 GENERIC module
+and installation candidates. Six plain/CTF profiles passed with six module
+comparisons, nine install records, forty-two compiles, eighty-four option hashes
+and six original link orders. The physical Make-header audit verified 5,282
+source/header hashes and exact OpenZFS search precedence. This includes the
+real os/freebsd/zfs context required by spl_misc.c. The DTrace runtime dependency
+now has a native candidate; loading and live behavior remain unqualified. See
+[OPENSOLARIS-MODULE-QUALIFICATION.md](OPENSOLARIS-MODULE-QUALIFICATION.md).
+
+
+The post-opensolaris amd64 GENERIC source inventory selects 729 leaf KMODs:
+191 selected directories have BUILD files, 190 contain direct native module
+macro declarations, and 539 lack those direct declarations. These are source
+presence counts only. The query completed without errors; evidence is
+`/usr/obj/usr/src/bazel-module-coverage-post-opensolaris-20261101.json`.
