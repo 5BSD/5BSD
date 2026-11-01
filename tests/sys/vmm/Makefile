@@ -35,6 +35,7 @@ ATF_TESTS_C+=	vmm_snapshot_envelope_test
 ATF_TESTS_C+=	vmm_snapshot_x86_fpu_test
 ATF_TESTS_C+=	vmm_mtrr_test
 ATF_TESTS_C+=	svm_nested_policy_test
+ATF_TESTS_C+=	svm_nested_default_test
 ATF_TESTS_C+=	vpvclock_model_test
 ATF_TESTS_C+=	vmm_event_state_test
 ATF_TESTS_C+=	vmm_startup_management_abi_test
@@ -56,6 +57,7 @@ CFLAGS.vmm_snapshot_x86_fpu_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
 CFLAGS.vmm_mtrr_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm
+LIBADD.svm_nested_default_test+=	elf
 CFLAGS.svm_nested_policy_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/amd64/vmm/amd
 CFLAGS.vpvclock_model_test+=	-I${SRCTOP}/sys \

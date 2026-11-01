@@ -20,6 +20,29 @@
 # refused.  Set it to false to require an explicit entry for every driver.
 #
 device_drivers = true;
+#
+# driver_clients names switchboard client labels admitted for the hardware
+# driver class ONLY: such a client never loads an allowed_extensions entry and,
+# with device_drivers = false, loads nothing.  "devd" is the lasting grant
+# switchboard gives devd(8) (/Capabilities/Config/switchboard/
+# service-authority.ucl) so a device attached after boot gets its driver
+# through devmatch(8).  A root login shell holds no grant and cannot reach this
+# service; kldload(2) itself stays refused once the gate is claimed.
+#
+driver_clients = ["devd"];
+#
+# root_load_repository names the pkg repository whose base packages a root
+# login shell may load kernel modules from with "sysextctl load"
+# (system.SystemExtension.RootLoad, granted by switchboard root-load.ucl).
+# The broker loads /boot/kernel/NAME.ko only when the local package database
+# records that file in a package with a base/ origin installed from this
+# repository (pkg's "repository" annotation) and the file still matches the
+# checksum pkg recorded.  Administrator denies ("sysextctl deny") still win.
+# Remove the line to refuse root loads.  The database and /boot/kernel are
+# root-writable: this stops mistakes and leaves a record; it does not contain a
+# compromised root (mac_veriexec(4) does).
+#
+root_load_repository = "5BSD-base";
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack

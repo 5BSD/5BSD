@@ -494,9 +494,10 @@ connect(int s, const struct sockaddr *name, socklen_t namelen)
 }
 
 /*
- * The host kernel's capability policy refuses pdself() to this test, so the
- * process-descriptor birth identity is interposed by dtraced-client-shim.so
- * (preloaded): pdself() returns a placeholder descriptor and only
+ * A real kernel cannot produce the malformed birth identities tested here, so
+ * the process-descriptor birth identity is interposed by dtraced-client-shim.so
+ * (preloaded): pdself() and pdopenpid(getpid()) (the ambient path; pdself is
+ * capability-mode only) return a placeholder descriptor and only
  * PDIOC_GET_BIRTH_IDENTITY on it is answered with a scripted identity.
  */
 enum birth { BIRTH_GOOD, BIRTH_PID, BIRTH_BADUSEC, BIRTH_ZERO, BIRTH_RESERVED };

@@ -292,6 +292,61 @@ ATF_TC_BODY(packaged_policy, tc)
 	for (i = 0; i < nitems(service); i++)
 		ATF_CHECK_MSG(extension_allowed(&cfg, service[i]),
 		    "%s is not allow-listed", service[i]);
+	/* devd's lasting grant is limited to the hardware-driver class. */
+	ATF_CHECK(sysext_driver_client(&cfg, "devd"));
+	ATF_CHECK(!sysext_driver_client(&cfg, "etc-rc"));
+}
+
+/*
+ * driver_clients: optional array of switchboard client labels limited to the
+ * hardware-driver class.  Unique, bounded, label syntax only; every other
+ * shape refuses the whole policy.
+ */
+ATF_TC_WITHOUT_HEAD(driver_clients_key);
+ATF_TC_BODY(driver_clients_key, tc)
+{
+	static const char *bad[] = {
+	    "driver_clients = \"devd\"; allowed_extensions = [];",
+	    "driver_clients = [1]; allowed_extensions = [];",
+	    "driver_clients = [\"\"]; allowed_extensions = [];",
+	    "driver_clients = [\"..\"]; allowed_extensions = [];",
+	    "driver_clients = [\"a/b\"]; allowed_extensions = [];",
+	    "driver_clients = [\"a b\"]; allowed_extensions = [];",
+	    "driver_clients = [\"devd\", \"devd\"]; allowed_extensions = [];",
+	    "driver_clients = [\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\"];"
+	    " allowed_extensions = [];",
+	    "driver_clients = [\"devd\"];",
+	    "driver_clients = [\"devd\"]; device_drivers = true;",
+	    "driver_clients = [\"devd\"]; device_drivers = true;"
+	    " allowed_extensions = []; extra = 1;",
+	    "driver_clients = []; driver_clients = []; allowed_extensions = [];",
+	};
+	struct sysext_config cfg;
+	size_t i;
+
+	(void)tc;
+	sysext_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, write_conf(
+	    "device_drivers = true;\ndriver_clients = [\"devd\", \"x.y-z_1\"];\n"
+	    "allowed_extensions = [\"a\"];")));
+	ATF_CHECK(cfg.device_drivers);
+	ATF_CHECK_EQ(2, cfg.ndriver_clients);
+	ATF_CHECK(sysext_driver_client(&cfg, "devd"));
+	ATF_CHECK(sysext_driver_client(&cfg, "x.y-z_1"));
+	ATF_CHECK(!sysext_driver_client(&cfg, "dev"));
+	ATF_CHECK(!sysext_driver_client(&cfg, NULL));
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, write_conf(
+	    "driver_clients = []; allowed_extensions = [];")));
+	ATF_CHECK_EQ(0, cfg.ndriver_clients);
+	ATF_REQUIRE_EQ(0, sysext_config_load(&cfg, write_conf(
+	    "allowed_extensions = [];")));
+	ATF_CHECK_EQ(0, cfg.ndriver_clients);
+	for (i = 0; i < nitems(bad); i++) {
+		sysext_config_defaults(&cfg);
+		ATF_CHECK_MSG(sysext_config_load(&cfg, write_conf(bad[i])) == -1,
+		    "accepted: %s", bad[i]);
+		ATF_CHECK_EQ(0, cfg.ndriver_clients);
+	}
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -302,5 +357,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, deny_override);
 	ATF_TP_ADD_TC(tp, installed_kernel);
 	ATF_TP_ADD_TC(tp, packaged_policy);
+	ATF_TP_ADD_TC(tp, driver_clients_key);
 	return (atf_no_error());
 }

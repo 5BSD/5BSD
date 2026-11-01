@@ -156,7 +156,9 @@ SwitchBoard starts `/etc/rc` as `sh /etc/rc autoboot` with a kernel-held
 discovery route. It supplies Capsule with a discovery route for getty children
 as well. Routes are separate from authority: temporary rc authority is bounded
 by `/Capabilities/Config/switchboard/boot-authority.ucl` and revoked when rc
-exits. Login shells do not receive that temporary authority.
+exits. Login shells do not receive that temporary authority. After rc exits,
+switchboard restarts the adopted devd under its lasting, narrower grant from
+`service-authority.ucl`, so devices attached later still get their drivers.
 
 The native units are already coming up while rc runs. That is safe because a
 born-in-capability-mode unit takes nothing from rc: its resources are the

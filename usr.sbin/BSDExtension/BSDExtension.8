@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 31, 2026
+.Dd November 1, 2026
 .Dt BSDEXTENSION 8
 .Os
 .Sh NAME
@@ -137,13 +137,76 @@ applies at once; without the directory the class permits nothing.
 Service modules, filesystems and modules under
 .Pa /boot/modules
 need an allow-list entry.
+.Pp
+A client whose switchboard label the policy lists in
+.Cm driver_clients
+is admitted for the hardware-driver class only: it never loads or queries an
+allow-listed module, and with
+.Cm device_drivers
+false it loads nothing.
+The label comes from the requester's kernel-stamped authority, never from the
+request.
+The packaged policy lists
+.Dq devd ,
+the lasting grant
+.Xr switchboard 8
+gives
+.Xr devd 8
+.Pq Pa service-authority.ucl ,
+so that a device attached after boot gets its driver through
+.Xr devmatch 8 .
+Each request is logged with its client label, for example
+.Dq ENSURE if_urndis (client devd, hardware driver): loaded .
+.Pp
+.Nm
+also serves
+.Dq system.SystemExtension.Status ,
+a read-only view over the
+.Sy SystemExtensionStatus
+protocol of the same
+.Sy bsd.extension.v1
+library.
+It has only
+.Sy GetProtocolInfo ,
+.Sy Info ,
+.Sy Next
+and
+.Sy NextDecision ;
+a frame for any other method is an unknown ordinal and closes the session,
+and the worker additionally decides nothing but
+.Sy Info
+and
+.Sy Next
+for a session that arrived on this name, whatever its rights.
+.Xr switchboard 8
+resolves it, besides for SYSTEM-domain callers, for UID 0 sessions that hold no
+software grant, such as a root login shell
+.Pq Pa root-query.ucl ;
+.Xr sysextctl 8
+.Cm status
+uses it.
+.Sy NextDecision
+returns the recent load decisions, oldest first:
+.Nm
+keeps the 64 most recent
+.Sy Ensure
+and
+.Sy Restore
+outcomes in memory since it started, each with the time, module, client
+label and result (loaded, already present, not permitted, client limited to
+hardware drivers, administrator deny override, or the load error).
+.Pp
 INFO reports a class driver as allowed; boot activation
 .Pq Cm enable
 still needs an explicit
 .Cm allow .
-There is deliberately no unload operation; safe removal would require
-explicit consumer release semantics; the service conservatively retains
-session and boot claims until reboot.
+The full protocol has deliberately no unload operation; safe removal would
+require explicit consumer release semantics; the service conservatively
+retains session and boot claims until reboot.
+The root
+.Sy Unload
+.Pq see Sx Root loads
+is the one exception, limited to what a root load loaded.
 .Pp
 A
 .Sy List
@@ -220,6 +283,133 @@ survive a reboot.
 Reclaim is soft: without the map or the delivered directories,
 .Nm
 serves loads exactly as before.
+.Ss Root loads
+.Nm
+serves a third name,
+.Dq system.SystemExtension.RootLoad ,
+over the
+.Sy SystemExtensionRootLoad
+protocol: only
+.Sy GetProtocolInfo ,
+.Sy Load
+and
+.Sy Unload .
+A frame for any other method, Ensure and the policy methods included, is an
+unknown ordinal and closes the session, and the full protocol's decision
+refuses every request from a session that arrived on this name.
+.Xr switchboard 8
+resolves it for the same UID 0 sessions as the read-only view
+.Pq Pa root-load.ucl ,
+so that root can load a module of the base system from a login shell with
+.Xr sysextctl 8 ,
+while
+.Xr kldload 2
+from that shell stays refused by the gate.
+.Pp
+.Sy Load
+does not consult the allow-list.
+It loads
+.Pa /boot/kernel/ Ns Ar NAME Ns Pa .ko
+(the module name with
+.Pa .ko
+added when absent), by that absolute path so that
+.Va kern.module_path
+cannot redirect it, only when the policy sets
+.Cm root_load_repository ,
+no administrator
+.Cm deny
+override names the module, and:
+.Bl -bullet
+.It
+the file, opened beneath the delivered
+.Pa /boot/kernel
+directory without following symbolic links, is a regular file;
+.It
+the package database
+.Pq Pa /var/db/pkg/local.sqlite ,
+read through the delivered
+.Pa /var/db/pkg
+directory, records that path in a package whose origin starts with
+.Dq base/
+and whose
+.Dq repository
+annotation, which
+.Xr pkg 8
+writes at installation, equals
+.Cm root_load_repository ;
+.It
+the file's BLAKE2b-512 checksum, in pkg's
+.Dq 2$
+encoding, equals the checksum pkg recorded for it;
+.It
+the file is unchanged (device, inode, size, modification time) from the check
+to after the load, and every other file the kernel linker loaded with it for
+its dependencies lies directly in
+.Pa /boot/kernel
+and passes the same package and checksum checks.
+.El
+.Pp
+Otherwise the load is refused or, when the kernel already loaded it, undone
+by unloading the file (which releases the dependencies it pulled in).
+A module already loaded or compiled into the kernel is reported as present
+without a check.
+The package database is not parsed in the broker: a
+.Xr pdfork 2 Ns ed
+child, which has no kldload token (it is close-on-fork) and closes every
+descriptor but the database directory and its reply pipe, maps
+.Pa local.sqlite
+privately and reads it with base's private sqlite library through
+.Fn sqlite3_deserialize
+read-only, with views, triggers and untrusted schema functions disabled, and
+returns one fixed-size record.
+.Pp
+.Sy Unload
+unloads only a module that a root
+.Sy Load
+loaded since
+.Nm
+started, through the held kldunload gate, and only while its file id still
+names that file.
+It refuses once any other client has asked for the module
+.Pq an Sy Ensure No that found it present ,
+and never unloads a security policy
+.Pq Pa mac_* ,
+a tracing provider
+.Pq DTrace, HyperTrace, kinst, fbt, sdt, systrace, fasttrap, profile ,
+ZFS, a packet filter, or vmm.
+The kernel refuses a module that is busy or that another module depends on.
+.Pp
+Each root request is recorded in the decision list with the client
+.Dq root (uid 0)
+and operation
+.Sy Load
+(14) or
+.Sy Unload
+(15), and logged with the switchboard label, the requester's program nonce,
+the result and the reason, for example
+.Dq ROOT LOAD x (uid 0 session, ...) -> DENIED (not a file of a 5BSD base package); no installed package records /boot/kernel/x.ko .
+The kernel stamp carries no login session or process id;
+.Xr sysextctl 8
+logs those, with the audit identifiers, on its side.
+The results are: loaded, already present, administrator deny override,
+failed (with the errno), not a file of a 5BSD base package (7), checksum
+differs from the package record (8), no regular file in
+.Pa /boot/kernel
+(9), unloaded (10), not loaded by a root load (11), root loads not
+configured (12), package database unavailable (13), file changed during the
+load (14).
+.Pp
+This is a guard against mistakes and an audit trail, not containment of root.
+The package database and
+.Pa /boot/kernel
+are writable by root: a root that edits the database, swaps a file between
+the check and the load, mounts over
+.Pa /boot/kernel ,
+installs a package, or edits
+.Xr loader.conf 5
+and reboots, defeats it.
+.Xr mac_veriexec 4
+is the control against a compromised root.
 .Sh ENVIRONMENT
 .Bl -tag -width BSDEXTENSION_RECLAIM_INTERVAL
 .It Ev BSDEXTENSION_RECLAIM_INTERVAL
@@ -240,7 +430,11 @@ capability bundle shipping
 Required allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array specifies the complete base list of named
 modules; the optional boolean device_drivers enables the hardware-driver
-class described above.
+class described above; the optional driver_clients array names up to eight
+client labels limited to that class; the optional root_load_repository string
+names the pkg repository whose base packages root loads accept (shipped:
+.Dq 5BSD-base ;
+absent refuses root loads).
 The executable contains no default module grants.
 Missing or malformed startup policy is fatal; a failed reload preserves the
 last accepted policy.
@@ -262,6 +456,8 @@ Use
 to manage persistent permission and activation overrides, or reload defaults.
 .It Pa /boot/kernel/linker.hints
 kernel module hints, read for the device_drivers class
+.It Pa /var/db/pkg/local.sqlite
+the package database root loads check, read by a forked child
 .It Pa /etc/bsdextension/overrides.ucl
 Persistent administrator overrides, managed through sysextctl.
 .It Pa /var/run/BSDExtension/modules.meta
@@ -289,12 +485,15 @@ fires after every reconcile pass with when (0 boot, 1 timer) and the pass's
 live, owned, orphaned, destroyed and failed counts.
 .Sh SEE ALSO
 .Xr kldload 2 ,
+.Xr pdfork 2 ,
 .Xr libextensioncmp 3 ,
 .Xr mac_capability 4 ,
+.Xr mac_veriexec 4 ,
 .Xr capsule 8 ,
 .Xr devmatch 8 ,
 .Xr kldload 8 ,
 .Xr kldxref 8 ,
+.Xr pkg 8 ,
 .Xr switchboard 8 ,
 .Xr sysextctl 8
 .Sh HISTORY

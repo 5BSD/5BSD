@@ -12,7 +12,7 @@ out.mkdir(parents=True, exist_ok=True)
 lib = root / 'cddl/contrib/opensolaris/lib/libdtrace/common'
 library = (lib / 'dt_subr.c').read_text()
 command = (root / 'cddl/contrib/opensolaris/cmd/dtrace/dtrace.c').read_text()
-a = library.index('static int\ndtraced_birth_ident(')
+a = library.index('static int\ndtraced_self_procdesc(')
 b = library.index('\n/* Serialize complete frames', a)
 send_start = b + 1
 send_end = library.index('\ntypedef struct {', send_start)

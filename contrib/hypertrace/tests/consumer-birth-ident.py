@@ -11,7 +11,7 @@ if not out.is_relative_to('/usr/obj'):
     raise SystemExit('Use /usr/obj')
 out.mkdir(parents=True, exist_ok=True)
 source = (root / 'cddl/contrib/opensolaris/lib/libdtrace/common/dt_subr.c').read_text()
-start = source.index('static int\ndtraced_birth_ident(')
+start = source.index('static int\ndtraced_self_procdesc(')
 end = source.index('\nint\nopen_dtraced_session(', start)
 producer = source[start:end]
 fixture = r'''
@@ -33,7 +33,7 @@ static void *worker(void *ptr) {
     assert(strcmp(ident, (char *)ptr) == 0);
     return NULL;
 }
-int main() {
+static void run(void) {
     for (birth_mock_error = 1; birth_mock_error <= 5; birth_mock_error++) {
         char failed[DTRACED_FDIDENTLEN], original[DTRACED_FDIDENTLEN];
         memset(failed, 0x5a, sizeof(failed)); memcpy(original, failed, sizeof(failed));
@@ -78,7 +78,13 @@ int main() {
         assert(pthread_create(&threads[i], NULL, worker, first) == 0);
     for (unsigned i = 0; i < 8; i++)
         assert(pthread_join(threads[i], NULL) == 0);
-    puts("PASS: consumer incarnation is stable per process and fork-distinct");
+    printf("PASS (%s): consumer incarnation is stable per process and fork-distinct\n",
+        birth_mock_capmode ? "capability mode, pdself" : "ambient, pdopenpid");
+}
+int main() {
+    /* Ambient first: dtrace(1) from a shell (pdself would be ENOTCAPABLE). */
+    for (birth_mock_capmode = 0; birth_mock_capmode <= 1; birth_mock_capmode++)
+        run();
 }
 '''.replace('PRODUCER', producer)
 cfile = out / 'consumer-birth-ident.c'

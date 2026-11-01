@@ -160,11 +160,16 @@ SYSCTL_INT(_hw_vmm_svm, OID_AUTO, kernel_startup_experimental,
     CTLFLAG_RDTUN, &kernel_startup_experimental, 0,
     "Enable experimental AMD kernel-owned INIT/SIPI for hardware tests");
 
-/* Require a host opt-in as well as the guest VM_CAP_NESTED_SVM setting. */
-static int nested_svm_allowed;
+/*
+ * Host policy for nested SVM.  On by default: the host permits nested SVM, but
+ * no guest sees SVM until its VMM client sets VM_CAP_NESTED_SVM for each vCPU
+ * (bhyve: x86.nested_svm=true).  Set the tunable to 0 before vmm loads to
+ * refuse every such request on this host.
+ */
+static int nested_svm_allowed = 1;
 SYSCTL_INT(_hw_vmm_svm, OID_AUTO, nested, CTLFLAG_RDTUN,
     &nested_svm_allowed, 0,
-    "Permit explicitly configured guests to use nested SVM");
+    "Permit explicitly configured guests to use nested SVM (default 1)");
 
 /* Maximum ASIDs supported by the processor */
 static uint32_t nasid;

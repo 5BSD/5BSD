@@ -2,9 +2,12 @@
 
 ## What it brokers
 
-BSDTrace is the DTrace descriptor broker. It is the only process that opens
-`/dev/dtrace`; everyone else who traces receives a rights-limited consumer
-descriptor from it and builds a libdtrace handle with dtrace_fdopen(3).
+BSDTrace is the DTrace descriptor broker. It is the only way for a
+capability-mode or switchboard-managed program to obtain a `/dev/dtrace`
+consumer: such a client receives a rights-limited consumer descriptor from
+it and builds a libdtrace handle with dtrace_fdopen(3). It does not take the
+device away from root: traditional tools opened by pathname keep working
+(see [Traditional tools and HyperTrace](#traditional-tools-and-hypertrace)).
 5BSD has it so that tracing, which reads arbitrary kernel and process
 state, is no longer tied to being root: the right to trace is a software attribute
 plus an allow-list entry, held by a label, not a uid. It ships in the
@@ -48,6 +51,39 @@ The supervisor admits at most 256 workers globally and 16 per authenticated
 client label, holds their process descriptors,
 and on quiesce stops admission, gives workers five seconds after SIGTERM,
 then kills stragglers before acknowledging switchboard.
+
+## Traditional tools and HyperTrace
+
+BSDTrace never reserves `/dev/dtrace/dtrace`. Root's pathname tools `dtrace(1)`,
+`bsdinstruments` without its broker mode, and the HyperTrace
+chain open the devices themselves, concurrently with brokered sessions, on a
+system with the capability plane enabled as on one without it. Their
+authority is root's, through device and directory permissions
+(`/dev/dtrace/*` and `/var/ddtrace` are root-only).
+
+The HyperTrace pieces are deliberately not BSDTrace clients:
+
+| Piece | Device or socket it needs | Why the broker cannot serve it |
+|---|---|---|
+| `dtraced(8)` overlord | `/dev/dtrace/hypertrace`, VM attestation descriptors from bhyve | BSDTrace brokers only the consumer device |
+| `dtraced(8)` minion | `/dev/dttransport`; runs `/usr/sbin/dtrace` as the guest consumer | not brokered; the guest consumer needs the HyperTrace ioctls |
+| `dtrace -E/-Y/-y` | `/var/ddtrace/sub.sock`; libdtrace HyperTrace ioctls (`AUGMENT`, `VPROBE_CREATE`, `DRAINABLE`, `HANDLE_ID`, `HANDLE_QUERY`) | outside the 15-ioctl set BSDTrace delegates; run as root from a shell, outside switchboard, so it has no unit label for the allow list |
+| bhyve virtio-dtrace backend | `/var/ddtrace` directory descriptor (opened before `cap_enter()`), `/dev/dtrace/hypertrace` gate | bhyve is its own Capsicum sandbox, not a switchboard unit |
+| `dtracedctl(8)` | `/var/ddtrace/sub.sock` | control only, no DTrace consumer |
+
+Making them broker clients would need a HyperTrace consumer profile in
+BSDTrace (a wider ioctl set, which widens what every listed label receives),
+brokering of the HyperTrace devices, and `dtraced` as a capability-bundle unit.
+That is design work recorded as a gap below, not a configuration change.
+No allow-list entry is shipped for them, so a locally edited
+`bsdtrace.allow` is unaffected by upgrades.
+
+A HyperTrace consumer proves its identity to `dtraced` with its process ID and
+kernel birth time. libdtrace gets the birth time from a process descriptor:
+`pdopenpid(getpid())` when ambient, `pdself(2)` only in capability mode
+(`pdself` is capability-mode-only and returns `ENOTCAPABLE` otherwise; until
+November 2026 libdtrace called it unconditionally, which made every
+`dtrace -E` from a shell fail with "Capabilities insufficient").
 
 ## Unit
 
@@ -206,4 +242,6 @@ the policy is coarse (who, not what); the delegated descriptor cannot bound
 D programs, so untrusted consumers still need a broker-owned query and
 aggregation protocol that does not exist; fasttrap (pid provider) is
 unavailable over a delegated descriptor; tracectl has no live verbs; the
-allow-list is not shipped, so tracing is off by default until configured.
+allow-list is not shipped, so tracing is off by default until configured;
+the HyperTrace tools are not broker clients (see
+[Traditional tools and HyperTrace](#traditional-tools-and-hypertrace)).

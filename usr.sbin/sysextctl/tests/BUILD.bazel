@@ -2,7 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(name = 'sysextctl_test_bin', srcs = ['//usr.sbin/sysextctl:sysextctl.c', 'fake_service.c'], deps = ['//lib/libextensioncmp:headers', '//lib/libservice:headers', '//lib/libcapsulert:headers', '//lib/libcapsulert:extension_protocol_headers'], copts = ['-fPIE'], linkopts = ['-pie'], linkstatic = True)
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
-CASES = ['installed', 'commands', 'usage', 'protocol']
+CASES = ['installed', 'commands', 'usage', 'protocol', 'root_status', 'root_mutation_refused', 'nonroot_refused', 'root_load']
 [bsd_atf_test(
     name = "native_" + case,
     case_name = case,

@@ -27,6 +27,71 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261101:
+	Root can load a kernel module of the base system from a login shell
+	again: "sysextctl load NAME" from a root login shell (effective UID
+	0, not jailed, no software grant) uses the new endpoint
+	system.SystemExtension.RootLoad, which switchboard resolves per the
+	new /Capabilities/Config/switchboard/root-load.ucl.  BSDExtension
+	loads /boot/kernel/NAME.ko, by that path, only when the package
+	database (/var/db/pkg/local.sqlite) records the file in a base/
+	package installed from the repository named by the new policy key
+	root_load_repository (shipped "5BSD-base"), the file still matches
+	the checksum pkg recorded (BLAKE2b), no "sysextctl deny" names it,
+	and any dependency the kernel loads with it passes the same checks.
+	A file copied into /boot/kernel, a modified file, a ports module or
+	anything under /boot/modules is refused with its own message.
+	"sysextctl unload NAME" removes only what such a load loaded.  Every
+	request appears in "sysextctl status" and is logged (sysextctl
+	logs the login name, tty and audit ids to the auth facility).
+	kldload from a shell stays refused, other users and jailed root get
+	nothing, and the endpoint has no policy methods.  This guards
+	against mistakes; it does not contain a compromised root, which can
+	still edit the package database, install packages or edit
+	loader.conf (mac_veriexec is that control).  BSDExtension now links
+	libprivatesqlite3 (package libsqlite3) and reads /var/db/pkg; to
+	withdraw root loads remove root-load.ucl or the policy key.
+
+20261101:
+	Devices attached after boot get their drivers again with the
+	capability plane.  devd is now an adopted switchboard unit
+	(rc_adopt.conf): when /etc/rc exits, switchboard restarts it with
+	"service devd onerestart" under a lasting grant from the new
+	/Capabilities/Config/switchboard/service-authority.ucl.  The grant
+	reaches only system.SystemExtension, has no administrative rights,
+	and survives exec only into sh, env, limits, devd and sysextctl.
+	BSDExtension's new driver_clients policy key limits the "devd"
+	client to hardware drivers (modules linker.hints records with PnP
+	data); sysextctl deny still excludes a driver.  A root shell still
+	cannot load modules: its sysextctl has no authority and kldload
+	stays refused by the gate.  Restart devd with "switchboardctl
+	restart devd", not "service devd restart", which starts a devd
+	without the grant.
+
+	Root can inspect module loading from a login shell again:
+	"sysextctl status" lists the modules built into the kernel, the
+	loaded module files and BSDExtension's recent load decisions with
+	the reason for each refusal; "sysextctl status MODULE", "config"
+	and "list" also work.  They use the new read-only endpoint
+	system.SystemExtension.Status, which switchboard resolves for
+	effective UID 0, unjailed callers without a software grant
+	(/Capabilities/Config/switchboard/root-query.ucl).  It has no
+	method that loads a module or changes policy; "sysextctl load" and
+	the policy commands from a login shell are still refused, and other
+	users get nothing.
+
+	ntpd can step and slew the clock again while BSDTime holds the
+	clock gate: mac_ntpd hands its uid (ntpd) to the gate, which admits
+	that uid for the three clock privileges mac_ntpd grants.  Root
+	remains refused.  rc.d/ntpd also removes a pidfile left by an ntpd
+	that ran as root, which made "service ntpd status" report "not
+	running" after an upgrade.
+
+	bhyve/vmm: hw.vmm.svm.nested now defaults to 1, so an AMD host
+	permits nested SVM without a loader tunable.  A guest still sees
+	SVM only with x86.nested_svm=true.  Set hw.vmm.svm.nested=0 in
+	loader.conf to refuse nested SVM on a host.
+
 20261031:
 	Base groups and users that an upgrade adds now appear even when pkg
 	cannot merge /etc/group or /etc/master.passwd and leaves .pkgnew

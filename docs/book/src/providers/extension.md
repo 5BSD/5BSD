@@ -10,7 +10,12 @@ user and performs each load through a Capsule-minted `kldload` system gate.
 and of anything running as root; moving it behind a named, allow-listed,
 SYSTEM-domain-only service means a compromised user service can never pull
 code into the kernel. Operators inspect the effective permissions and persistent
-boot activations with `sysextctl config`.
+boot activations with `sysextctl config`, and see what is built in, loaded
+and recently refused with `sysextctl status`, which works from a root login
+shell through the read-only view `system.SystemExtension.Status`. Root can
+also load a module that a 5BSD base package installed with `sysextctl load`,
+through `system.SystemExtension.RootLoad`, which checks the file against the
+package database (see [Root loads](#root-loads-from-a-login-shell)).
 
 A consumer that needs a driver or a filesystem module (BSDCrypto for
 `cryptodev`, BSDBluetooth for `vhid`, BSDFilesystem for `zfs`, the Linux
@@ -58,11 +63,11 @@ Source: `usr.sbin/BSDExtension/capbundle/Bundle.ucl` and
 
 | Field | Value |
 |---|---|
-| Wire name | `system.SystemExtension` |
+| Wire names | `system.SystemExtension`; `system.SystemExtension.Status` (read-only view) |
 | Bundle | `/Capabilities/System/SystemExtension.cap` (bundle_id `system.SystemExtension`) |
 | Unit | `Units/bsdextension.unit` |
 | Program | `Units/bsdextension.unit/bin/BSDExtension` |
-| Activation | `boot = true`, `ipc = ["system.SystemExtension"]` |
+| Activation | `boot = true`, `ipc = ["system.SystemExtension", "system.SystemExtension.Status"]` |
 | User | `capability` |
 | Launch mode | born in capability mode (`ambient` absent) |
 | Declared gates | `capabilities { system = ["kldload", "kldunload"] }` |
@@ -75,7 +80,9 @@ Source: `usr.sbin/BSDExtension/capbundle/Bundle.ucl` and
 
 `boot = true` because early consumers (storage, networking) may need a
 module before the general service population is up. No `visible` key is
-set, so the name stays SYSTEM-only. Each client is served on its own thread
+set, so both names stay SYSTEM-only; switchboard additionally resolves the
+read-only `system.SystemExtension.Status` for UID 0 sessions without a grant
+(see [Read-only status](#read-only-status)). Each client is served on its own thread
 rather than a pdfork worker so that the single held gate token, which is
 close-on-fork, is shared by every session.
 
@@ -106,6 +113,27 @@ Application errors are errno values.
 | `Restore` | empty | empty | ADMIN: load permitted entries with desired activation |
 | `Info` | module | `{ name, flags }` | Query effective policy and permitted loaded state |
 | `Next` | exclusive lexical cursor; empty starts | `{ name, flags }` | Return the next known policy entry; `ENOENT` ends enumeration |
+
+The read-only view `system.SystemExtension.Status` speaks a second protocol of
+the same library, `SystemExtensionStatus`:
+
+| Method | Request | Successful reply | Behavior |
+|---|---|---|---|
+| `GetProtocolInfo` | empty | wire version 1 | Negotiation |
+| `Info` | module | `{ name, flags }` | As on `SystemExtension` |
+| `Next` | cursor | `{ name, flags }` | As on `SystemExtension` |
+| `NextDecision` | `{ after }` (0 starts) | `{ sequence, time, module, client, operation, result, error }` | The oldest retained load decision after the cursor; `ENOENT` at the end |
+
+It has no `Ensure`, `Stat`, `List`, `Reload` or policy method: such a frame is
+an unknown ordinal and closes the session. The worker also marks a session
+that arrived on this name read-only and decides only `Info` and `Next` for it,
+whatever rights switchboard attached. `result` is `SYSEXT_DECISION_*` from
+`sysext_proto.h`: 1 loaded, 2 already present, 3 not permitted (not on the
+allow-list and not a class driver), 4 client limited to hardware drivers
+(`driver_clients`), 5 administrator deny override, 6 permitted but the load
+failed (`error` holds the errno). `operation` is 1 (Ensure) or 10 (Restore).
+BSDExtension keeps the 64 most recent decisions in memory; they are lost when
+it restarts.
 
 A method before negotiation, an unknown method, a malformed, truncated or
 oversized frame, a pre-FIDL record or an attached descriptor closes the
@@ -140,6 +168,7 @@ Manual: libextensioncmp(3).
 | Explicit session | `extensioncmp_session_open(&session)`, `extensioncmp_session_create(fd, &session)`, `extensioncmp_session_close(session)` |
 | Session operations | `extensioncmp_load`, `extensioncmp_stat`, `extensioncmp_list`, `extensioncmp_reload` |
 | Policy and discovery (session) | `extensioncmp_manage(session, action, name)`, `extensioncmp_info(session, name, next, &info)` |
+| Read-only view | `extensioncmp_session_open_status(&session)`, `extensioncmp_session_create_status(fd, &session)`, `extensioncmp_session_read_only(session)`, `extensioncmp_decision(session, after, &decision)`; on a status session every other operation is `EPERM` without a request |
 | Constants | `SERVICE_EXTENSION_NAME_MAX` (64), `SERVICE_EXTENSION_LIST_MAX` (32) |
 | Provider side (libservice, used by BSDExtension itself) | `service_system_kldload(token_fd, name, &fileid)`, `service_system_kldunload(token_fd, fileid, flags)`, `service_system_token_dup` |
 
@@ -181,6 +210,125 @@ pulled up on demand and may be restarting. Retry later, as described in
 sysextctl(8) is a thin session client. It uses the caller's own discovery
 authority, never calls kldload(2), and does not manage the unit.
 
+### Read-only status
+
+From a root login shell:
+
+```sh
+sysextctl status               # built-in modules, loaded files, recent load decisions
+sysextctl status if_axge       # one module's policy and its recent decisions
+sysextctl config               # every policy entry
+sysextctl list
+```
+
+`status` without a module lists the modules compiled into the kernel and
+the module files loaded since boot (kldstat(2) and modstat(2)), then the
+broker's recent load decisions, oldest first, for example:
+
+```
+recent load decisions (oldest first):
+  2026-11-01 05:12:07 load accf_http (client devd): refused: client may load hardware drivers only
+  2026-11-01 05:12:09 load if_axge (client devd): loaded
+```
+
+A root login shell, a root cron job and a command run after `/etc/rc` exits
+hold no software grant, so the SYSTEM-only `system.SystemExtension` is
+invisible to them. Switchboard resolves the read-only
+`system.SystemExtension.Status` for such a caller when the kernel-stamped
+sender of the lookup has effective UID 0 and is not jailed
+(`/Capabilities/Config/switchboard/root-query.ucl`); the session carries no
+administrative rights. `list`, `config` and `status MODULE` use the full
+endpoint when the caller reaches it (rc, devd) and the read-only view
+otherwise. `load` and the policy commands never use the read-only view: from a
+login shell the policy commands still fail with `EX_UNAVAILABLE`, `load` goes
+to the root-load endpoint below, and kldload(8) is still refused by the gate.
+Other users reach none of these endpoints and get nothing.
+Only decisions the broker made are listed: a direct kldload(8) refused by the
+gate, or a `sysextctl load` that could not reach the broker, leaves no entry.
+
+### Root loads from a login shell
+
+A root login shell may load a kernel module that the base system installed,
+and nothing else:
+
+```sh
+sysextctl load ext2fs          # /boot/kernel/ext2fs.ko from a 5BSD base package
+sysextctl status               # the decision: root load ext2fs (client root (uid 0)): loaded
+sysextctl unload ext2fs        # only what a root load loaded
+```
+
+Switchboard resolves `system.SystemExtension.RootLoad` for the same callers as
+the read-only view (effective UID 0 in the kernel stamp, not jailed, no
+software grant, not a unit), listed in its own file,
+`/Capabilities/Config/switchboard/root-load.ucl`, so the read-only list stays
+read-only and the load endpoint can be withdrawn alone. Its protocol,
+`SystemExtensionRootLoad`, has `Load` and `Unload` and nothing else: no
+Ensure, Stat, List, policy, Reload or Restore method, and the session carries
+no ADMIN right. kldload(8) from the shell stays refused by the gate.
+
+BSDExtension loads `/boot/kernel/NAME.ko`, by that absolute path (so
+`kern.module_path` cannot redirect it), only when all of these hold:
+
+- the policy sets `root_load_repository` (shipped: `5BSD-base`) and no
+  administrator `sysextctl deny` names the module; the allow-list is not
+  consulted;
+- the file, opened beneath the delivered `/boot/kernel` directory without
+  following symbolic links, is a regular file; `/boot/modules` and other
+  directories are never used;
+- the local package database (`/var/db/pkg/local.sqlite`) records that path
+  in a package whose origin starts with `base/` and whose `repository`
+  annotation (written by pkg at install time) is the configured repository;
+- the file's current checksum equals the one pkg recorded. pkg 2 records
+  `2$` and its own base32 of a BLAKE2b-512 digest, not SHA-256, so the
+  broker computes exactly that (sys/contrib/libb2);
+- the file is unchanged from the check to after the load, and any file the
+  kernel linker loaded with it for a `MODULE_DEPEND` dependency lies
+  directly in `/boot/kernel` and passes the same checks; otherwise the load
+  is undone.
+
+libpkg is not part of base and the broker never runs pkg(8). The database is
+read with base's private sqlite (`libprivatesqlite3`) in a pdfork(2)ed child
+that holds neither the kldload token (close-on-fork) nor any descriptor but
+the delivered `/var/db/pkg` directory and its reply pipe; it maps
+`local.sqlite` privately, opens it read-only with `sqlite3_deserialize`
+(views, triggers and untrusted schema functions off) and returns one
+fixed-size record. A malformed database therefore reaches a process that can
+load nothing.
+
+`sysextctl unload NAME` removes only a module that a root load loaded since
+the broker started, while its file id still names that file, and only if no
+other client has asked for it since; it never unloads `mac_*` policies,
+DTrace/HyperTrace/kinst providers, ZFS, pf/ipfw or vmm, and the kernel still
+refuses a busy module or one another module depends on.
+
+Every request is in the decision list with the client `root (uid 0)` and
+logged by the broker (`ROOT LOAD x (uid 0 session, client ..., program nonce
+...) -> DENIED (...); reason`). The kernel stamp carries no login session, so
+sysextctl also logs each request to the `auth` facility with the login name,
+terminal, and the audit user and session ids when the kernel has audit.
+Refusals print their reason and exit `EX_NOPERM`:
+
+| Message | Meaning |
+|---|---|
+| `not a file of an installed 5BSD base package` | no package records the file, or it belongs to a ports package or to another repository |
+| `the file does not match the checksum its package recorded` | modified or replaced after installation; reinstall the package |
+| `no regular module file of that name in /boot/kernel` | absent, a symbolic link, or only in another directory |
+| `denied by an administrator override` | `sysextctl reset NAME` removes the deny |
+| `root loads are not configured` | `root_load_repository` is absent from `bsdextension.ucl` |
+| `the package database could not be read` | `/var/db/pkg/local.sqlite` missing or unreadable |
+| `the module file changed during the load` | the load was undone |
+
+What this protects against: a root login shell (or a script run as root)
+loading an arbitrary file, a module copied into `/boot/kernel` by hand, a
+module modified after installation or a third-party module, by mistake; and
+every attempt is recorded. What it does not protect against: a compromised
+root. The package database and `/boot/kernel` are root-writable, so root can
+edit the database, swap the file between the check and the load, mount over
+`/boot/kernel`, install a package, or add the module to loader.conf(5) and
+reboot. mac_veriexec(4) is the defence against a compromised root.
+
+### Loading with a grant
+
 For interactive module loading on 5BSD, use `sysextctl load MODULE`, not
 `kldload MODULE`. Once the capability plane claims the loading gate, direct
 loads from callers without gate authority fail with `Operation not permitted`,
@@ -221,6 +369,8 @@ map to `EX_USAGE`, an unreachable broker to `EX_UNAVAILABLE`, a protocol
 fault to `EX_PROTOCOL`, and unattached administrator storage to `EX_TEMPFAIL`.
 The management commands (allow, deny, reset, enable, disable, reload, restore)
 require ADMIN rights on the service channel; UID 0 alone does not grant them.
+The only shipped holder of those rights is `/etc/rc` with its descendants while
+it runs (`boot-authority.ucl`); a login shell has none.
 See [The Management Model](../plane/management-model.md).
 
 ## Boot, services and hotplug
@@ -234,14 +384,25 @@ kldload(2) by root fails (kldload(8) reports `Exec format error`), so:
 - `devmatch` submits every hardware driver it matches at boot through the
   broker. The hardware-driver class below permits these drivers without a
   list entry.
-- After boot no module can be loaded for a device attached later. rc reaches
-  the broker through a temporary authority
+- rc reaches the broker through a temporary authority
   (`/Capabilities/Config/switchboard/boot-authority.ucl`) that ends when
-  `/etc/rc` exits, and devd(8) and its `nomatch` handler run with none.
-  devmatch reports `Cannot autoload NAME after boot` for such a device; its
-  driver loads at the next boot with the device attached. The drivers most
-  devices need are compiled into GENERIC (USB audio, video, Ethernet, HID,
-  mass storage, keyboards), so they attach on hotplug without a load.
+  `/etc/rc` exits.
+- After boot, devd(8) loads the driver of a device attached later. devd is
+  an adopted rc.d service (`rc_adopt.conf`); once `/etc/rc` exits,
+  switchboard restarts it (`service devd onerestart`) under a lasting grant
+  from `/Capabilities/Config/switchboard/service-authority.ucl`. Its
+  `nomatch` action runs `service devmatch quietstart`, and devmatch asks the
+  broker through `sysextctl load`. The broker sees the client label `devd`,
+  which `driver_clients` limits to the hardware-driver class below. The
+  drivers most devices need are compiled into GENERIC (USB audio, video,
+  Ethernet, HID, mass storage, keyboards), so they attach without a load.
+- Nothing else can load an allow-listed module or a driver after boot. A
+  root login shell holds no grant; it can inspect with `sysextctl status`
+  and load a verified base-package module through the root-load endpoint
+  above (devmatch run from such a shell takes the same path), and its
+  kldload(8) is refused by the gate. Other users and jailed root get
+  nothing; devmatch run by them reports `Cannot autoload NAME: only rc at
+  boot and devd(8) may load drivers`.
 - rc.subr(8) `load_kld`, used by rc.d scripts (`mac_ntpd` for ntpd, `if_vlan`,
   NFS, `geom_uzip`, the Bluetooth HID modules) and by `required_modules`,
   tries the direct load first, which works before the broker starts, and
@@ -261,11 +422,42 @@ input driver, see
 [USB mouse troubleshooting](../operations/troubleshooting.md#usb-mouse-is-detected-but-does-not-work-in-the-desktop)
 for the `hms` permission, immediate load, and persistent boot activation steps.
 
+### devd's grant
+
+The grant is a switchboard software authority, not a UNIX privilege, and it
+is narrower than rc's boot authority:
+
+| | rc (boot) | devd (after boot) |
+|---|---|---|
+| Policy file | `boot-authority.ucl` | `service-authority.ucl` |
+| Holder | `/etc/rc` and its descendants | the `devd` unit's start command and the daemon it starts |
+| Lifetime | until `/etc/rc` exits | until the unit is stopped, restarted or removed |
+| Executables | any | only `/bin/sh`, `/usr/bin/env`, `/usr/bin/limits`, `/sbin/devd`, `/usr/sbin/sysextctl`; exec of any other image drops it in that process |
+| Endpoints | `system.SystemExtension` | `system.SystemExtension` |
+| Administrative rights | yes | no |
+| Broker class | allow-list and hardware drivers | hardware drivers only (`driver_clients`) |
+
+Every request is logged by the broker with its client label, for example
+`ENSURE if_urndis (client devd, hardware driver): loaded`, and refusals as
+`ENSURE NAME (client devd) -> DENIED (client may load hardware drivers
+only)`. The broker's gated load is also an ordinary kernel module load for
+audit(4) and the OTel audit exporter when auditing is enabled. The
+`kldload` gate itself is unchanged: only the broker loads modules.
+
+This is not protection against a compromised root. Root can edit
+`/etc/devd.conf` or devd's rc.conf flags, so devd's actions can request any
+module in the class; and root can add a module with plug-and-play data to
+`/boot/kernel`, which the class then admits (the boot path admits it at the
+next boot as well). Signed-module enforcement (veriexec) is what stops the
+second case. `sysextctl deny NAME` removes a driver from the class for devd
+too.
+
 ## Policy
 
-The allow-list is default-deny and global (not per label). A module may
-load when it is permitted by the allow-list and administrator overrides, or
-when it belongs to the hardware-driver class.
+The allow-list is default-deny and global, except that a client named in
+`driver_clients` never uses it. A module may load when it is permitted by the
+allow-list and administrator overrides, or when it belongs to the
+hardware-driver class.
 
 The policy key `device_drivers = true` (shipped) enables the class: a module
 whose file `/boot/kernel/linker.hints` records with plug-and-play match data
@@ -291,6 +483,7 @@ then applied. An excerpt of the shipped file:
 
 ```ucl
 device_drivers = true;
+driver_clients = ["devd"];
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
@@ -305,9 +498,12 @@ allowed_extensions = [
 ```
 
 Rules the parser enforces: the file is an object with exactly
-`allowed_extensions` and optionally a boolean `device_drivers`; each entry is
-a single safe component; any other key, a non-array `allowed_extensions`, a
-non-boolean `device_drivers` or an invalid entry rejects the file wholesale
+`allowed_extensions`, optionally a boolean `device_drivers`, and optionally a
+`driver_clients` array of up to eight unique switchboard client labels
+(`[A-Za-z0-9._-]`); each `allowed_extensions` entry is a single safe
+component; any other key, a non-array `allowed_extensions`, a non-boolean
+`device_drivers`, a malformed `driver_clients` or an invalid entry rejects
+the file wholesale
 and the previous policy stays; the first array element must directly follow `[`
 because the bundled libucl mis-parses a leading comment inside an array. A
 reload replacement must be a regular file owned by the daemon's effective
@@ -341,15 +537,27 @@ installed under `/usr/tests/usr.sbin/BSDExtension`):
 | Program | Kind | Proves |
 |---|---|---|
 | `allowlist_test` | pure unit | allow and deny decisions, name validation (paths rejected, dotted names accepted, NUL termination), malformed/non-object/missing config falls back to defaults, config replaces defaults, STAT shares the ENSURE gate, reload authorization and last-good retention |
-| `provider_test` | real public capability-channel syscall; no privilege | the real server over a real channel with libextensioncmp: denied module, Stat loaded/unloaded/denied, List full, empty and too small, reload and management require ADMIN, discovery beyond the List limit; hand-built frames (before negotiation, unknown method, missing, truncated or oversized body, trailing bytes, pre-FIDL record, attached descriptor) close the session and an embedded NUL is `EINVAL` |
+| `provider_test` | real public capability-channel syscall; no privilege | the real server over a real channel with libextensioncmp: denied module, a `driver_clients` label refused an allow-listed module, Stat loaded/unloaded/denied, List full, empty and too small, reload and management require ADMIN, discovery beyond the List limit; hand-built frames (before negotiation, unknown method, missing, truncated or oversized body, trailing bytes, pre-FIDL record, attached descriptor) close the session and an embedded NUL is `EINVAL` |
 | `evolution_test` | real channel | the `bsd:1` libextensioncmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
 | `reclaim_test` | pure unit | owner-map round trip, dedup, unsafe names, unload only unshared own modules, busy module retried, unknown bundle no-op, epoch recorded, boot ownership retained |
 | `policy_test` | persistent policy | ADMIN enforcement, attachment, persistence and precedence, failed-write retention, corrupt-state rejection, concurrent updates and lexical discovery, writer-death recovery, real capability-mode persistence |
-| `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, an override deny beating the class, the installed kernel's hints and the packaged policy |
+| `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, the `driver_clients` key, an override deny beating the class, the installed kernel's hints and the packaged policy (devd is a driver client) |
+| `rootload_test` | real channel and sqlite fixtures; kernel linker stubbed; no privilege | root loads: pkg's BLAKE2b checksum against a value pkg recorded, the database lookup in a child, a package module loads by absolute path and unloads once, refusals for a file no package records, a ports or other-repository package, a modified file, a file outside the kernel directory or a symlink, an unverified dependency (load undone), a missing database, an administrator deny and an unset `root_load_repository`; the RootLoad endpoint closes Ensure, Stat, List, Reload, Allow, Restore and status frames, the library refuses them, and the status view reports every root decision |
+
+`provider_test` also proves the read-only view: Info and Next work over it,
+Ensure, Reload, Allow, Restore, Stat and List frames close the session even with
+ADMIN rights on it, the full-protocol client cannot negotiate on it, refusals made
+on the full endpoint are reported with their reasons and client labels, and the
+decision ring keeps the most recent 64 in order.
 
 `usr.sbin/sysextctl/tests/sysextctl_test.sh` drives the real CLI and client
-protocol implementation against a fake service (`commands`, `usage`, `protocol`
-cases). Build the current broker, library, CLI and tests before running Kyua;
+protocol implementation against a fake service (`commands`, `usage`, `protocol`,
+`root_status`, `root_mutation_refused`, `nonroot_refused` and `root_load` cases;
+the fake aborts if a load or policy call reaches the read-only view, or a policy
+call the root-load endpoint). Its `live` case runs the installed sysextctl as
+root on a running capability plane: `status` and `config` work, a name with no
+file in `/boot/kernel` is refused through the root-load endpoint and shows in
+`status`, `allow` is refused, and `nobody` is refused. Build the current broker, library, CLI and tests before running Kyua;
 installed binaries can lag source changes. Run each suite's generated Kyuafile.
 Provider cases skip if the capability-channel syscall is unavailable; a skip is
 not a pass. These tests do not establish successful gated module loading or
@@ -371,8 +579,9 @@ are unchanged by the migration, and the provider, libextensioncmp and
 sysextctl ship together (mixed peers fail at negotiation). `latency_bench`
 (installed with the tests) times Stat round trips for
 `tools/build/fuchsia/vm-daemons.sh`.
-Policy remains global rather than per label, and there is no wire UNLOAD by
-design. Permission does not install or authenticate module code: it must already
+Policy remains global rather than per label, and the full protocol has
+no UNLOAD by design (the root-load endpoint's `Unload` is limited to what a
+root load loaded). Permission does not install or authenticate module code: it must already
 be available through the kernel's module path. Hardware-package compatibility
 and release qualification are covered in
 [Release hardware packages](../develop/packaging.md#release-hardware-packages).

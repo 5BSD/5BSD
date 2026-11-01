@@ -8,7 +8,7 @@ if not out.is_relative_to('/usr/obj'): raise SystemExit('Use /usr/obj')
 out.mkdir(parents=True, exist_ok=True)
 lib = root / 'cddl/contrib/opensolaris/lib/libdtrace/common'
 source = (lib / 'dt_subr.c').read_text()
-a = source.index('static int\ndtraced_birth_ident(')
+a = source.index('static int\ndtraced_self_procdesc(')
 b = source.index('\nint\ndtrace_oformat_configure', a)
 c = source.index('int\ndtrace_program_source_id(', b)
 d = source.index('\nint\ndtrace_program_compiled_digest(', c)

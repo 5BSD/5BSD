@@ -134,11 +134,320 @@ ATF_TC_BODY(descriptor_bounds, tc)
 	free(text);
 }
 
+static int
+parse_services(const char *text, struct svc_service_authority *out,
+    unsigned max, unsigned *count)
+{
+	char path[] = "service-policy.XXXXXX";
+	int fd = mkstemp(path), result, saved;
+
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(unlink(path) == 0);
+	ATF_REQUIRE(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+	result = svc_authority_parse_services(fd, out, max, count);
+	saved = errno;
+	close(fd);
+	errno = saved;
+	return (result);
+}
+
+ATF_TC_WITHOUT_HEAD(service_valid);
+ATF_TC_BODY(service_valid, tc)
+{
+	struct svc_service_authority s[SVC_SERVICE_AUTHORITY_MAX];
+	unsigned count = 99;
+
+	(void)tc;
+	ATF_REQUIRE(parse_services("devd { endpoints=[\"system.SystemExtension\"];"
+	    "images=[\"/bin/sh\",\"/sbin/devd\"]; }"
+	    "other { images=[\"/usr/sbin/x\"]; endpoints=[\"a.b\",\"c.d\"]; }",
+	    s, SVC_SERVICE_AUTHORITY_MAX, &count) == 0);
+	ATF_REQUIRE_EQ(count, 2);
+	ATF_CHECK_STREQ(s[0].label, "devd");
+	ATF_CHECK_EQ(s[0].scope.count, 1);
+	ATF_CHECK_STREQ(s[0].scope.endpoints[0], "system.SystemExtension");
+	ATF_CHECK_EQ(s[0].nimages, 2);
+	ATF_CHECK_STREQ(s[0].images[1], "/sbin/devd");
+	ATF_CHECK_STREQ(s[1].label, "other");
+	ATF_CHECK_EQ(s[1].scope.count, 2);
+	ATF_CHECK_EQ(s[1].nimages, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(service_reject_malformed);
+ATF_TC_BODY(service_reject_malformed, tc)
+{
+	struct svc_service_authority s[2];
+	const char *bad[] = {
+	    "devd=true;",
+	    "devd { endpoints=[\"x.y\"]; }",
+	    "devd { images=[\"/sbin/devd\"]; }",
+	    "devd { endpoints=[]; images=[\"/sbin/devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/devd\"]; admin_rights=true; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/devd\"]; attributes=[\"a.b\"]; }",
+	    "devd { endpoints=[\"*\"]; images=[\"/sbin/devd\"]; }",
+	    "devd { endpoints=[\"x.y\",\"x.y\"]; images=[\"/sbin/devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"sbin/devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/../tmp/devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/./devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin//devd\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/a\",\"/a\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/a\",\"/b\",\"/c\",\"/d\","
+	    "\"/e\",\"/f\",\"/g\",\"/h\",\"/i\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[\"/a\\u0000b\"]; }",
+	    "devd { endpoints=[\"x.y\"]; images=[42]; }",
+	    "\"bad name\" { endpoints=[\"x.y\"]; images=[\"/a\"]; }",
+	    "a.b { endpoints=[\"x.y\"]; images=[\"/a\"]; }",
+	    "a { endpoints=[\"x.y\"]; images=[\"/a\"]; }"
+	    "b { endpoints=[\"x.y\"]; images=[\"/a\"]; }"
+	    "c { endpoints=[\"x.y\"]; images=[\"/a\"]; }",
+	    ".include \"elsewhere.ucl\"\n",
+	};
+	unsigned count;
+
+	(void)tc;
+	for (unsigned i = 0; i < sizeof(bad)/sizeof(bad[0]); i++) {
+		count = 99;
+		memset(s, 0xff, sizeof(s));
+		ATF_CHECK_MSG(parse_services(bad[i], s, 2, &count) == -1,
+		    "accepted malformed service policy: %s", bad[i]);
+		ATF_CHECK_EQ(count, 0);
+		ATF_CHECK_EQ(s[0].scope.count, 0);
+		ATF_CHECK_EQ(s[0].nimages, 0);
+	}
+}
+
+/* The packaged policy parses and gives devd exactly one endpoint. */
+ATF_TC(service_packaged_policy);
+ATF_TC_HEAD(service_packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The installed service-authority.ucl grants devd only SystemExtension");
+}
+ATF_TC_BODY(service_packaged_policy, tc)
+{
+	struct svc_service_authority s[SVC_SERVICE_AUTHORITY_MAX];
+	const char *path = "/Capabilities/Config/switchboard/service-authority.ucl";
+	unsigned count, i;
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		atf_tc_skip("no packaged policy at %s", path);
+	ATF_REQUIRE(svc_authority_parse_services(fd, s, SVC_SERVICE_AUTHORITY_MAX,
+	    &count) == 0);
+	close(fd);
+	for (i = 0; i < count; i++)
+		if (strcmp(s[i].label, "devd") == 0)
+			break;
+	ATF_REQUIRE_MSG(i < count, "devd has no lasting grant");
+	ATF_CHECK_EQ(s[i].scope.count, 1);
+	ATF_CHECK_STREQ(s[i].scope.endpoints[0], "system.SystemExtension");
+}
+
+static int
+parse_root_query(const char *text, struct svc_authority_scope *scope)
+{
+	char path[] = "root-query.XXXXXX";
+	int fd = mkstemp(path), result, saved;
+
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(unlink(path) == 0);
+	ATF_REQUIRE(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+	result = svc_authority_parse_root_query(fd, scope);
+	saved = errno;
+	close(fd);
+	errno = saved;
+	return (result);
+}
+
+ATF_TC_WITHOUT_HEAD(root_query_valid);
+ATF_TC_BODY(root_query_valid, tc)
+{
+	struct svc_authority_scope scope;
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\"];",
+	    &scope) == 0);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.Status");
+	ATF_REQUIRE(parse_root_query("endpoints=[\"a.b\",\"c.d\"];", &scope) == 0);
+	ATF_CHECK_EQ(scope.count, 2);
+}
+
+ATF_TC_WITHOUT_HEAD(root_query_reject_malformed);
+ATF_TC_BODY(root_query_reject_malformed, tc)
+{
+	struct svc_authority_scope scope;
+	const char *bad[] = {
+	    "",
+	    "endpoints=[];",
+	    "endpoints=\"a.b\";",
+	    "endpoints=[\"a.b\",\"a.b\"];",
+	    "endpoints=[\"*\"];",
+	    "endpoints=[42];",
+	    "endpoints=[\"a.b\"];admin_rights=true;",
+	    "endpoints=[\"a.b\"];attributes=[\"x.y\"];",
+	    "endpoints=[\"a.b\"];uid=0;",
+	    "endpoints=[\"a.b\"];endpoints=[\"c.d\"];",
+	    "endpoints=[\"a\\u0000b\"];",
+	    ".include \"elsewhere.ucl\"\n",
+	};
+
+	(void)tc;
+	for (unsigned i = 0; i < sizeof(bad)/sizeof(bad[0]); i++) {
+		memset(&scope, 0xff, sizeof(scope));
+		ATF_CHECK_MSG(parse_root_query(bad[i], &scope) == -1,
+		    "accepted malformed root query policy: %s", bad[i]);
+		ATF_CHECK_EQ(scope.count, 0);
+	}
+}
+
+/*
+ * Only an unauthorized, kernel-stamped, unjailed UID 0 sender reaches a listed
+ * name; every other caller, a name not listed, and control names are refused.
+ */
+ATF_TC_WITHOUT_HEAD(root_query_admits);
+ATF_TC_BODY(root_query_admits, tc)
+{
+	struct svc_authority_scope scope;
+	const char *status = "system.SystemExtension.Status";
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\","
+	    "\"x.Control\"];", &scope) == 0);
+	ATF_CHECK(svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    status));
+	/* Non-root users get nothing. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 1001, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 65534, 0,
+	    status));
+	/* Jailed root, an unstamped request, a caller with its own grant. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 3,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, false, 0, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, true, true, 0, 0,
+	    status));
+	/* The full broker endpoint is not read-only and is not listed. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    "system.SystemExtension"));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    "x.Control"));
+	ATF_CHECK(!svc_authority_root_query_admits(NULL, false, true, 0, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    NULL));
+}
+
+/* The packaged policy lists exactly the SystemExtension read-only view. */
+ATF_TC(root_query_packaged_policy);
+ATF_TC_HEAD(root_query_packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The installed root-query.ucl lists only system.SystemExtension.Status");
+}
+ATF_TC_BODY(root_query_packaged_policy, tc)
+{
+	struct svc_authority_scope scope;
+	const char *path = "/Capabilities/Config/switchboard/root-query.ucl";
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		atf_tc_skip("no packaged policy at %s", path);
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.Status");
+}
+
+/*
+ * root-load.ucl uses the same admission over its own list: the load endpoint
+ * reaches only an unauthorized, stamped, unjailed UID 0 sender, and a
+ * read-only list never admits it.
+ */
+ATF_TC_WITHOUT_HEAD(root_load_admits);
+ATF_TC_BODY(root_load_admits, tc)
+{
+	struct svc_authority_scope load, query;
+	const char *rootload = "system.SystemExtension.RootLoad";
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.RootLoad\"];",
+	    &load) == 0);
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\"];",
+	    &query) == 0);
+	ATF_CHECK(svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    rootload));
+	/* Non-root users, jailed root, unstamped, a caller with a grant. */
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 1001, 0,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 7,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, false, 0, 0,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, true, true, 0, 0,
+	    rootload));
+	/* Neither the full broker endpoint nor the status view. */
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    "system.SystemExtension"));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    "system.SystemExtension.Status"));
+	/* The read-only list never admits the load endpoint. */
+	ATF_CHECK(!svc_authority_root_query_admits(&query, false, true, 0, 0,
+	    rootload));
+}
+
+/* The packaged policies keep the load endpoint out of the read-only list. */
+ATF_TC(root_load_packaged_policy);
+ATF_TC_HEAD(root_load_packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The installed root-load.ucl lists only system.SystemExtension.RootLoad"
+	    " and root-query.ucl does not list it");
+}
+ATF_TC_BODY(root_load_packaged_policy, tc)
+{
+	struct svc_authority_scope scope;
+	const char *path = "/Capabilities/Config/switchboard/root-load.ucl";
+	unsigned i;
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		atf_tc_skip("no packaged policy at %s", path);
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.RootLoad");
+	fd = open("/Capabilities/Config/switchboard/root-query.ucl", O_RDONLY);
+	if (fd < 0)
+		return;
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	for (i = 0; i < scope.count; i++)
+		ATF_CHECK(strcmp(scope.endpoints[i],
+		    "system.SystemExtension.RootLoad") != 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, descriptor_bounds);
 	ATF_TP_ADD_TC(tp, valid_scope);
 	ATF_TP_ADD_TC(tp, reject_malformed);
 	ATF_TP_ADD_TC(tp, no_external_includes);
+	ATF_TP_ADD_TC(tp, service_valid);
+	ATF_TP_ADD_TC(tp, service_reject_malformed);
+	ATF_TP_ADD_TC(tp, service_packaged_policy);
+	ATF_TP_ADD_TC(tp, root_query_valid);
+	ATF_TP_ADD_TC(tp, root_query_reject_malformed);
+	ATF_TP_ADD_TC(tp, root_query_admits);
+	ATF_TP_ADD_TC(tp, root_query_packaged_policy);
+	ATF_TP_ADD_TC(tp, root_load_admits);
+	ATF_TP_ADD_TC(tp, root_load_packaged_policy);
 	return (atf_no_error());
 }

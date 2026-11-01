@@ -223,6 +223,7 @@ struct svc_runtime {
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
 	bool		rc_checking;		/* RC unit running "service ... onestatus" */
 	bool		rc_stopping;		/* RC unit running "service <label> onestop" */
+	bool		rc_service_grant;	/* RC start under its service-authority.ucl grant */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
 

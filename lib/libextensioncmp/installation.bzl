@@ -2,7 +2,7 @@
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest", "bsd_compress")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 
-MANUAL_ALIASES = ['extensioncmp_session_open', 'extensioncmp_session_create', 'extensioncmp_session_close', 'extensioncmp_load', 'extensioncmp_stat', 'extensioncmp_list', 'extensioncmp_reload', 'extensioncmp_manage', 'extensioncmp_info', 'service_ensure_extension', 'service_extension_stat', 'service_extension_list']
+MANUAL_ALIASES = ['extensioncmp_session_open', 'extensioncmp_session_create', 'extensioncmp_session_close', 'extensioncmp_load', 'extensioncmp_stat', 'extensioncmp_list', 'extensioncmp_reload', 'extensioncmp_manage', 'extensioncmp_info', 'extensioncmp_session_open_status', 'extensioncmp_session_create_status', 'extensioncmp_session_read_only', 'extensioncmp_decision', 'extensioncmp_session_open_rootload', 'extensioncmp_session_create_rootload', 'extensioncmp_root_load', 'extensioncmp_root_unload', 'service_ensure_extension', 'service_extension_stat', 'service_extension_list']
 
 def library_installation(name):
     bsd_debug_split(name = name + "_debug", src = ":extensioncmp_shared",

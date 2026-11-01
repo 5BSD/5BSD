@@ -57,6 +57,10 @@ _Static_assert(sizeof(struct wire_header) == 16, "FIDL header");
 #define	ORD_STAT	UINT64_C(0x318126ca32fd13e1)
 #define	ORD_LIST	UINT64_C(0x27d9ac31c7bce8c3)
 #define	ORD_RELOAD	UINT64_C(0x42969f6472d4b6ef)
+#define	ORD_ALLOW	UINT64_C(0x3d329bc1c82f3571)
+#define	ORD_RESTORE	UINT64_C(0x055ac9d5d610de33)
+/* SystemExtensionStatus (system.SystemExtension.Status). */
+#define	ORD_STATUS_PROTOCOL	UINT64_C(0x29dc67c4cb8fb696)
 
 /* Use the public channel-pair API.  The production plane deliberately
  * denies ambient opens of /dev/mac_capability, including opens by root. */
@@ -419,6 +423,40 @@ ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
 }
 
 /*
+ * A driver-only client (driver_clients, devd's lasting grant) never uses the
+ * allow-list: the same allow-listed name an ordinary client may Stat and Ensure
+ * is refused with EPERM.  The fixture's switchboard label is "test.client".
+ */
+ATF_TC(provider_driver_client_skips_allowlist);
+ATF_TC_HEAD(provider_driver_client_skips_allowlist, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A driver_clients label cannot load allow-listed non-driver modules");
+}
+ATF_TC_BODY(provider_driver_client_skips_allowlist, tc)
+{
+	struct sysext_config cfg;
+	struct fixture fixture;
+	int loaded = -1;
+
+	config_allow_one(&cfg, "kernel");
+	strlcpy(cfg.driver_clients[0], "test.client", SYSEXT_CLIENT_MAX);
+	cfg.ndriver_clients = 1;
+	fixture_create_cfg(&fixture, &cfg);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_stat(fixture.client, "kernel",
+	    &loaded) == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_load(fixture.client, "kernel") == -1);
+	fixture_destroy(&fixture);
+
+	/* Another label keeps the allow-list. */
+	strlcpy(cfg.driver_clients[0], "devd", SYSEXT_CLIENT_MAX);
+	fixture_create_cfg(&fixture, &cfg);
+	ATF_CHECK_EQ(0, extensioncmp_stat(fixture.client, "kernel", &loaded));
+	ATF_CHECK_EQ(1, loaded);
+	fixture_destroy(&fixture);
+}
+
+/*
  * THE Stat security regression: a Stat for a module that is not on the
  * allow-list is refused with EPERM before any query -- never answered with a
  * loaded/not-loaded result.  A client may Stat only a module it could Ensure,
@@ -575,6 +613,251 @@ ATF_TC_BODY(provider_discovery_over_list_limit, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * The read-only view (system.SystemExtension.Status): a worker bound to the
+ * SystemExtensionStatus handlers with every right, ADMIN included, as
+ * sysext_test_serve_status() serves it.
+ */
+static void
+status_fixture_start(struct fixture *fixture, bool raw)
+{
+	struct sysext_config cfg;
+	int client, provider;
+
+	test_base_policy(&cfg);
+	memset(fixture, 0, sizeof(*fixture));
+	channel_pair(&client, &provider);
+	fixture->child = fork();
+	ATF_REQUIRE(fixture->child >= 0);
+	if (fixture->child == 0) {
+		close(client);
+		_exit(sysext_test_serve_status(provider, "org.5bsd.user-session",
+		    &cfg));
+	}
+	close(provider);
+	if (raw)
+		ATF_REQUIRE_EQ(0, service_session_create(client,
+		    &fixture->session));
+	else
+		ATF_REQUIRE_EQ(0, extensioncmp_session_create_status(client,
+		    &fixture->client));
+}
+
+/*
+ * A load or policy request over the read-only view is refused: the protocol
+ * has no such method, so the frame is an unknown ordinal and the session is
+ * closed without a reply -- for an allow-listed module (zfs), with ADMIN
+ * rights on the session, after a successful negotiation.
+ */
+ATF_TC(provider_status_refuses_mutation);
+ATF_TC_HEAD(provider_status_refuses_mutation, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Ensure, Reload, Allow and Restore over the read-only view are refused");
+}
+ATF_TC_BODY(provider_status_refuses_mutation, tc)
+{
+	static const struct { uint64_t ordinal; bool named; } mutations[] = {
+		{ ORD_ENSURE, true }, { ORD_RELOAD, false },
+		{ ORD_ALLOW, true }, { ORD_RESTORE, false },
+		{ ORD_STAT, true }, { ORD_LIST, false },
+	};
+	struct module_frame body;
+	struct fixture fixture;
+	size_t length;
+
+	for (size_t i = 0; i < nitems(mutations); i++) {
+		status_fixture_start(&fixture, true);
+		ATF_REQUIRE_EQ(0, send_frame(fixture.session,
+		    ORD_STATUS_PROTOCOL, NULL, 0, -1));
+		length = mutations[i].named ? module_frame(&body, "zfs", 3) : 0;
+		ATF_CHECK_EQ_MSG(-1, send_frame(fixture.session,
+		    mutations[i].ordinal, &body, length, -1),
+		    "ordinal %#jx answered on the read-only view",
+		    (uintmax_t)mutations[i].ordinal);
+		/* Nothing later on the session is honoured. */
+		ATF_CHECK_EQ(-1, send_frame(fixture.session,
+		    ORD_STATUS_PROTOCOL, NULL, 0, -1));
+		fixture_destroy(&fixture);
+	}
+
+	/* The full-protocol client cannot even negotiate on it. */
+	{
+		struct sysext_config cfg;
+		int client, provider;
+
+		test_base_policy(&cfg);
+		memset(&fixture, 0, sizeof(fixture));
+		channel_pair(&client, &provider);
+		fixture.child = fork();
+		ATF_REQUIRE(fixture.child >= 0);
+		if (fixture.child == 0) {
+			close(client);
+			_exit(sysext_test_serve_status(provider,
+			    "org.5bsd.user-session", &cfg));
+		}
+		close(provider);
+		ATF_REQUIRE_EQ(0, extensioncmp_session_create(client,
+		    &fixture.client));
+		errno = 0;
+		ATF_CHECK(extensioncmp_load(fixture.client, "zfs") == -1);
+		ATF_CHECK(errno != 0 && errno != EPERM);
+		ATF_CHECK(extensioncmp_manage(fixture.client,
+		    SERVICE_EXTENSION_ALLOW, "evil") == -1);
+		fixture_destroy(&fixture);
+	}
+}
+
+/*
+ * The library refuses every operation but Info and decisions on a status
+ * session before sending anything, and Info and Next work over it.
+ */
+ATF_TC(provider_status_reads_policy);
+ATF_TC_HEAD(provider_status_reads_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Info and Next work over the read-only view; writes are EPERM");
+}
+ATF_TC_BODY(provider_status_reads_policy, tc)
+{
+	struct service_extension_info info;
+	struct service_extension_decision decision;
+	char names[1][SERVICE_EXTENSION_NAME_MAX];
+	struct fixture fixture;
+	size_t count;
+	int loaded;
+
+	status_fixture_start(&fixture, false);
+	ATF_CHECK_EQ(1, extensioncmp_session_read_only(fixture.client));
+	ATF_REQUIRE_EQ(0, extensioncmp_info(fixture.client, "zfs", 0, &info));
+	ATF_CHECK_STREQ("zfs", info.name);
+	ATF_CHECK(info.allowed);
+	ATF_REQUIRE_EQ(0, extensioncmp_info(fixture.client, "", 1, &info));
+	ATF_CHECK(info.name[0] != '\0');
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_load(fixture.client, "zfs") == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_reload(fixture.client) == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_stat(fixture.client, "zfs",
+	    &loaded) == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_list(fixture.client, names, 1,
+	    &count) == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_manage(fixture.client,
+	    SERVICE_EXTENSION_ALLOW, "evil") == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_manage(fixture.client,
+	    SERVICE_EXTENSION_RESTORE, NULL) == -1);
+	/* The session is still usable: nothing was sent. */
+	ATF_CHECK_EQ(0, extensioncmp_info(fixture.client, "zfs", 0, &info));
+	/* A fresh worker has made no decision. */
+	ATF_CHECK_ERRNO(ENOENT, extensioncmp_decision(fixture.client, 0,
+	    &decision) == -1);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * "Why didn't my module load?": refusals made on the full endpoint are
+ * readable, with their reasons and client labels, on the read-only view.  One
+ * worker process serves a devd session (a driver-only client), an ordinary
+ * client's session and then the status session, as the broker's threads share
+ * one decision ring.
+ */
+ATF_TC(provider_status_reports_decisions);
+ATF_TC_HEAD(provider_status_reports_decisions, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Refused loads are reported with reasons over the read-only view");
+}
+ATF_TC_BODY(provider_status_reports_decisions, tc)
+{
+	struct service_extension_decision d;
+	struct extensioncmp_session *devd, *other, *status;
+	struct sysext_config cfg;
+	int c[3], pr[3], st;
+	pid_t child;
+
+	test_base_policy(&cfg);
+	strlcpy(cfg.driver_clients[0], "devd", SYSEXT_CLIENT_MAX);
+	cfg.ndriver_clients = 1;
+	for (int i = 0; i < 3; i++)
+		channel_pair(&c[i], &pr[i]);
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		int r = 0;
+
+		for (int i = 0; i < 3; i++)
+			close(c[i]);
+		sysext_test_decisions_reset();
+		r |= sysext_test_serve(pr[0], "devd", &cfg);
+		r |= sysext_test_serve(pr[1], "test.client", &cfg);
+		r |= sysext_test_serve_status(pr[2], "org.5bsd.user-session",
+		    &cfg);
+		_exit(r);
+	}
+	for (int i = 0; i < 3; i++)
+		close(pr[i]);
+	ATF_REQUIRE_EQ(0, extensioncmp_session_create(c[0], &devd));
+	/* zfs is allow-listed, but devd may load hardware drivers only. */
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_load(devd, "zfs") == -1);
+	extensioncmp_session_close(devd);
+	ATF_REQUIRE_EQ(0, extensioncmp_session_create(c[1], &other));
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_load(other, "evil") == -1);
+	extensioncmp_session_close(other);
+
+	ATF_REQUIRE_EQ(0, extensioncmp_session_create_status(c[2], &status));
+	ATF_REQUIRE_EQ(0, extensioncmp_decision(status, 0, &d));
+	ATF_CHECK_EQ(1, d.sequence);
+	ATF_CHECK_STREQ("zfs", d.name);
+	ATF_CHECK_STREQ("devd", d.client);
+	ATF_CHECK_EQ(SYSEXT_OP_ENSURE, d.operation);
+	ATF_CHECK_EQ(SYSEXT_DECISION_DRIVERS_ONLY, d.result);
+	ATF_CHECK(d.time > 0);
+	ATF_REQUIRE_EQ(0, extensioncmp_decision(status, d.sequence, &d));
+	ATF_CHECK_EQ(2, d.sequence);
+	ATF_CHECK_STREQ("evil", d.name);
+	ATF_CHECK_STREQ("test.client", d.client);
+	ATF_CHECK_EQ(SYSEXT_DECISION_NOT_PERMITTED, d.result);
+	ATF_CHECK_ERRNO(ENOENT, extensioncmp_decision(status, d.sequence,
+	    &d) == -1);
+	/* Reading changes nothing: the walk repeats. */
+	ATF_REQUIRE_EQ(0, extensioncmp_decision(status, 0, &d));
+	ATF_CHECK_EQ(1, d.sequence);
+	extensioncmp_session_close(status);
+	ATF_REQUIRE_EQ(child, waitpid(child, &st, 0));
+	ATF_CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+}
+
+/* The ring keeps the most recent SYSEXT_DECISIONS_MAX decisions, in order. */
+ATF_TC_WITHOUT_HEAD(provider_decision_ring_bounded);
+ATF_TC_BODY(provider_decision_ring_bounded, tc)
+{
+	struct sysext_decision d;
+	char name[SYSEXT_NAME_MAX];
+	uint64_t after = 0, total = SYSEXT_DECISIONS_MAX + 6, seen = 0;
+
+	(void)tc;
+	sysext_test_decisions_reset();
+	ATF_CHECK_EQ(ENOENT, sysext_decision_next(0, &d));
+	for (uint64_t i = 1; i <= total; i++) {
+		snprintf(name, sizeof(name), "m%ju", (uintmax_t)i);
+		sysext_decision_record(name, "c", SYSEXT_OP_ENSURE,
+		    SYSEXT_DECISION_FAILED, ENOEXEC);
+	}
+	while (sysext_decision_next(after, &d) == 0) {
+		ATF_REQUIRE_EQ(after == 0 ? total - SYSEXT_DECISIONS_MAX + 1 :
+		    after + 1, d.sequence);
+		snprintf(name, sizeof(name), "m%ju", (uintmax_t)d.sequence);
+		ATF_CHECK_STREQ(name, d.module);
+		ATF_CHECK_EQ(ENOEXEC, (int)d.error);
+		after = d.sequence;
+		seen++;
+	}
+	ATF_CHECK_EQ(SYSEXT_DECISIONS_MAX, seen);
+	ATF_CHECK_EQ(total, after);
+	ATF_CHECK_EQ(ENOENT, sysext_decision_next(UINT64_MAX, &d));
+	/* A stale cursor restarts at the oldest retained entry. */
+	ATF_REQUIRE_EQ(0, sysext_decision_next(1, &d));
+	ATF_CHECK_EQ(total - SYSEXT_DECISIONS_MAX + 1, d.sequence);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -587,8 +870,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_stat_reports_loaded_module);
 	ATF_TP_ADD_TC(tp, provider_stat_reports_unloaded_module);
 	ATF_TP_ADD_TC(tp, provider_stat_denies_non_allowlisted_module);
+	ATF_TP_ADD_TC(tp, provider_driver_client_skips_allowlist);
 
 	ATF_TP_ADD_TC(tp, provider_list_returns_allowlist);
 	ATF_TP_ADD_TC(tp, provider_list_empty_allowlist);
+	ATF_TP_ADD_TC(tp, provider_status_refuses_mutation);
+	ATF_TP_ADD_TC(tp, provider_status_reads_policy);
+	ATF_TP_ADD_TC(tp, provider_status_reports_decisions);
+	ATF_TP_ADD_TC(tp, provider_decision_ring_bounded);
 	return (atf_no_error());
 }

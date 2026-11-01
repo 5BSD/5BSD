@@ -25,11 +25,12 @@ running jobs. [Sessions](sessions.md) covers these handoffs.
 
 ## rc adoption
 
-Some rc.d daemons should be supervised by switchboard rather than fire-and-forget by `/etc/rc`. The set is policy, not code: `/Capabilities/Config/switchboard/rc_adopt.conf` lists one rc.d service name per line (`#` comments, blank lines ignored). The shipped file adopts one service:
+Some rc.d daemons should be supervised by switchboard rather than fire-and-forget by `/etc/rc`. The set is policy, not code: `/Capabilities/Config/switchboard/rc_adopt.conf` lists one rc.d service name per line (`#` comments, blank lines ignored). The shipped file adopts two services:
 
 ```
 # switchboard rc.d adoption list
 cron
+devd
 ```
 
 An absent or empty file adopts nothing and logs a NOTICE; there is no hardcoded fallback. Under mac_veriexec the `/Capabilities` tree is integrity-protected, so the list is tamper-evident. Add `sshd` or `ntpd` on a line of their own to widen adoption; remove a line to stop supervising a service.
@@ -45,6 +46,34 @@ The mechanism lives in `usr.sbin/switchboard/rc_adopt.c` and `rc_ingest.c`. `rc_
 | initial state | `stopped`, launched by the boot loop |
 
 Launching an RC unit means running service(8), never exec'ing the daemon directly. The first command is `service cron onestatus`: on an upgraded image or one where the administrator left `cron_enable="YES"` in rc.conf, `/etc/rc` has already started cron, and a zero exit adopts that instance as-is (`rc unit cron: adopted existing instance` in the log) so nothing is started twice. A non-zero probe is followed by `service cron onestart`. The `one` prefix is deliberate: `faststart` honours the rcvar and would refuse a service that rc.conf disables, whereas switchboard must be able to start it regardless. Stopping runs `service cron onestop`, which reads the daemon's pidfile and signals the real process.
+
+### Lasting service grants
+
+`/Capabilities/Config/switchboard/service-authority.ucl` gives an adopted
+service a lasting software grant. The shipped file has one entry:
+
+```
+devd {
+    endpoints = ["system.SystemExtension"];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/sbin/devd",
+        "/usr/sbin/sysextctl"];
+}
+```
+
+For such a unit switchboard skips the status probe and runs
+`service devd onerestart`: an instance `/etc/rc` started holds only rc's
+temporary boot authority, which ends when rc exits, so it is replaced rather
+than adopted (the kernel queues device events while devd restarts). The
+command runs with a grant that reaches only the listed endpoints, carries no
+attributes or administrative rights, and survives exec only into the listed
+executables (the kernel pins them when the grant is issued); any other exec
+drops it in that process. The grant belongs to that launch: stopping,
+restarting or removing the unit ends it. An entry for a service that
+rc_adopt.conf does not adopt is inactive, an absent file grants nothing, and
+an invalid file grants nothing and is logged. A devd started from a login
+shell with `service devd restart` has no grant; use `switchboardctl restart
+devd`. What devd uses the grant for is in
+[system.SystemExtension](../providers/extension.md#devds-grant).
 
 The pidfile detail is the honest limit of adoption. An rc.d daemon daemonizes and reparents to init, so the process descriptor switchboard holds refers to the short-lived `onestart` wrapper, not to the daemon. Once the wrapper exits 0 the unit is `running` and switchboard has no further view of the daemon: `restart=on-failure` applies to a failed `onestart`, not to a cron that later dies. Native units are supervised through their process descriptor and channel; RC units are judged by their command's exit. That is why the adoption list is short and why the real migration path is to rewrite the daemon as a bundle (see [Migrating an rc Daemon](../develop/migrating-an-rc-daemon.md)).
 

@@ -3,6 +3,8 @@
 #define _EXTENSIONCMP_H_
 
 /* The system.SystemExtension client (bsd.extension.v1). */
+#include <sys/types.h>
+#include <stdint.h>
 #include <libservice.h>
 
 __BEGIN_DECLS
@@ -86,6 +88,67 @@ int	extensioncmp_manage(struct extensioncmp_session *,
  * Each entry is coherent; enumeration is not a snapshot across transactions. */
 int	extensioncmp_info(struct extensioncmp_session *, const char *, int,
 	    struct service_extension_info *);
+
+/*
+ * The read-only view, system.SystemExtension.Status (SystemExtensionStatus).
+ * switchboard resolves it for UID 0 sessions that hold no software authority
+ * (root login shells; /Capabilities/Config/switchboard/root-query.ucl), not for
+ * other users.  A status session answers extensioncmp_info() and
+ * extensioncmp_decision(); every other operation fails EPERM without sending
+ * anything, and the protocol itself has no method that loads a module or
+ * changes policy.  extensioncmp_session_create_status() adopts a held channel.
+ */
+int	extensioncmp_session_open_status(struct extensioncmp_session **);
+int	extensioncmp_session_create_status(int fd, struct extensioncmp_session **);
+/* 1 for a status session, else 0. */
+int	extensioncmp_session_read_only(const struct extensioncmp_session *);
+
+/*
+ * The broker's recent load decisions (Ensure and Restore), oldest first: the
+ * first retained decision with a sequence above `after` (0 starts); ENOENT
+ * ends.  The broker keeps the most recent 64 since it started.  EOPNOTSUPP on
+ * a session that is not a status session.  result is SYSEXT_DECISION_* from
+ * <sysext_proto.h>: 1 loaded, 2 already present, 3 not permitted, 4 client
+ * limited to hardware drivers, 5 administrator deny override, 6 load failed
+ * (error holds the errno); root loads add 7 not a base package file,
+ * 8 checksum mismatch, 9 no regular file in /boot/kernel, 10 unloaded, 11 not
+ * loaded by a root load, 12 root loads not configured, 13 package database
+ * unavailable, 14 file changed during the load.  operation is 1 (Ensure),
+ * 10 (Restore), 14 (root Load) or 15 (root Unload).
+ */
+struct service_extension_decision {
+    uint64_t sequence;
+    time_t time;
+    char name[SERVICE_EXTENSION_NAME_MAX];
+    char client[64];
+    int operation, result, error;
+};
+int	extensioncmp_decision(struct extensioncmp_session *, uint64_t after,
+	    struct service_extension_decision *);
+
+/*
+ * The root-load endpoint, system.SystemExtension.RootLoad
+ * (SystemExtensionRootLoad).  switchboard resolves it for UID 0 sessions outside
+ * a jail that hold no software authority (root login shells;
+ * /Capabilities/Config/switchboard/root-load.ucl).  extensioncmp_root_load()
+ * asks the broker to load /boot/kernel/NAME.ko, which it does only for a file
+ * the package database records in a 5BSD base package with a matching
+ * checksum; extensioncmp_root_unload() removes only a module a root load
+ * loaded.  Both return 0 when the broker decided (outcome->result is
+ * SYSEXT_DECISION_*, outcome->error the errno of a failed load or unload),
+ * -1 with errno otherwise (EINVAL: bad name; EOPNOTSUPP: not a root-load
+ * session).  Every other operation fails EPERM on such a session.
+ */
+struct service_extension_root_outcome {
+    int result, error;
+};
+int	extensioncmp_session_open_rootload(struct extensioncmp_session **);
+int	extensioncmp_session_create_rootload(int fd,
+	    struct extensioncmp_session **);
+int	extensioncmp_root_load(struct extensioncmp_session *, const char *,
+	    struct service_extension_root_outcome *);
+int	extensioncmp_root_unload(struct extensioncmp_session *, const char *,
+	    struct service_extension_root_outcome *);
 
 __END_DECLS
 

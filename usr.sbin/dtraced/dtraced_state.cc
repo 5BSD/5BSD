@@ -1945,7 +1945,21 @@ state::dispatch_read(client_fd *dfdp, struct kevent &event)
 	if (!dfdp->is_subscribed(DTD_SUB_READDATA) &&
 	    !dfdp->is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
 	    !dfdp->is_subscribed(DTD_SUB_RELEASE_RECOVERY)) {
-		/* ELF forwarders and identified host consumers return their
+		/* An identified host consumer registers its program (HPI1/HPI2)
+		 * on its ELF receiver before any delivery can reach it; that
+		 * frame needs a reader, or dtrace -E waits for its status until
+		 * it times out. read_data() accepts only the registration here. */
+		if (dfdp->kind == DTRACED_KIND_CONSUMER &&
+		    dfdp->is_subscribed(DTD_SUB_ELFWRITE) &&
+		    dfdp->consumer_birth_valid &&
+		    !dfdp->consumer_registration_acked.load()) {
+			if (!this->dispatch_event(event)) {
+				ERR("dispatch_event() failed");
+				return (false);
+			}
+			return (true);
+		}
+		/* ELF forwarders and registered host consumers return their
 		 * acknowledgments to the sending worker on this socket. */
 		if (!((dfdp->kind == DTRACED_KIND_FORWARDER ||
 		    dfdp->kind == DTRACED_KIND_CONSUMER) &&

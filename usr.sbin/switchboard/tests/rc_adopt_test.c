@@ -233,6 +233,20 @@ ATF_TC_BODY(status_argv_uses_onestatus, tc)
 	ATF_CHECK_STREQ("onestatus", rc_adopt_status_verb);
 }
 
+ATF_TC_WITHOUT_HEAD(restart_argv_uses_onerestart);
+ATF_TC_BODY(restart_argv_uses_onerestart, tc)
+{
+	const char *argv[4];
+
+	/* A unit with a lasting grant replaces the instance rc started. */
+	rc_adopt_restart_argv("devd", argv);
+	ATF_CHECK_STREQ("/usr/sbin/service", argv[0]);
+	ATF_CHECK_STREQ("devd", argv[1]);
+	ATF_CHECK_STREQ("onerestart", argv[2]);
+	ATF_CHECK(argv[3] == NULL);
+	ATF_CHECK_STREQ("onerestart", rc_adopt_restart_verb);
+}
+
 ATF_TC_WITHOUT_HEAD(stop_argv_uses_onestop);
 ATF_TC_BODY(stop_argv_uses_onestop, tc)
 {
@@ -322,6 +336,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, status_argv_uses_onestatus);
 	ATF_TP_ADD_TC(tp, launch_argv_uses_onestart);
 	ATF_TP_ADD_TC(tp, stop_argv_uses_onestop);
+	ATF_TP_ADD_TC(tp, restart_argv_uses_onerestart);
 	ATF_TP_ADD_TC(tp, verb_argv_layout);
 	ATF_TP_ADD_TC(tp, selects_only_allowlisted);
 	ATF_TP_ADD_TC(tp, absent_cron_zero_units);

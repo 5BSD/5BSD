@@ -4717,6 +4717,10 @@ done:
 				}
 				release_fd = -1;
 				BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, 0);
+				/* The checkpoint is published and the VM destroyed:
+				 * tell bhyvectl --suspend it succeeded before the
+				 * exit closes its connection unanswered. */
+				ipc_reply_success_before_exit();
 				exit(BHYVE_EXIT_SUSPEND);
 			}
 		}

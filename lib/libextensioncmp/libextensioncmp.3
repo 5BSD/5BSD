@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 12, 2026
+.Dd November 1, 2026
 .Dt LIBEXTENSIONCMP 3
 .Os
 .Sh NAME
@@ -33,6 +33,22 @@
 .Fn extensioncmp_manage "struct extensioncmp_session *session" "enum service_extension_action action" "const char *module"
 .Ft int
 .Fn extensioncmp_info "struct extensioncmp_session *session" "const char *name" "int next" "struct service_extension_info *info"
+.Ft int
+.Fn extensioncmp_session_open_status "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_session_create_status "int fd" "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_session_read_only "const struct extensioncmp_session *session"
+.Ft int
+.Fn extensioncmp_decision "struct extensioncmp_session *session" "uint64_t after" "struct service_extension_decision *decision"
+.Ft int
+.Fn extensioncmp_session_open_rootload "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_session_create_rootload "int fd" "struct extensioncmp_session **sessionp"
+.Ft int
+.Fn extensioncmp_root_load "struct extensioncmp_session *session" "const char *module" "struct service_extension_root_outcome *outcome"
+.Ft int
+.Fn extensioncmp_root_unload "struct extensioncmp_session *session" "const char *module" "struct service_extension_root_outcome *outcome"
 .Sh DESCRIPTION
 The context calls were part of
 .Xr libservice 3
@@ -182,8 +198,107 @@ This API avoids the list size limit.
 See
 .Xr sysextctl 8
 for operator commands and persistence semantics.
+.Pp
+.Fn extensioncmp_session_open_status
+opens the read-only view,
+.Dq system.SystemExtension.Status ,
+which speaks the
+.Sy SystemExtensionStatus
+protocol;
+.Fn extensioncmp_session_create_status
+adopts a held channel to it.
+.Xr switchboard 8
+resolves that name for SYSTEM-domain callers and for UID 0 sessions that hold
+no software grant, such as a root login shell; other callers get
+.Er ENOENT .
+On a status session only
+.Fn extensioncmp_info
+and
+.Fn extensioncmp_decision
+are sent; every other operation fails with
+.Er EPERM
+without sending anything, and the protocol has no method that loads a module
+or changes policy.
+.Fn extensioncmp_session_read_only
+returns 1 for a status session and 0 otherwise.
+.Pp
+.Fn extensioncmp_decision
+returns the first of the broker's retained load decisions whose
+.Fa sequence
+is above
+.Fa after
+(zero starts), and
+.Er ENOENT
+at the end; it fails with
+.Er EOPNOTSUPP
+on a session that is not a status session.
+The broker keeps the 64 most recent
+.Sy Ensure
+and
+.Sy Restore
+decisions since it started.
+A decision has
+.Fa sequence , time , name ,
+the requester's switchboard
+.Fa client
+label,
+.Fa operation
+(1 Ensure, 10 Restore, 14 root Load, 15 root Unload),
+.Fa result
+(a
+.Dv SYSEXT_DECISION_*
+value from
+.In sysext_proto.h :
+loaded, already present, not permitted, client limited to hardware drivers,
+administrator deny override, or failed; for root loads also not a base
+package file, checksum mismatch, no regular file in
+.Pa /boot/kernel ,
+unloaded, not loaded by a root load, root loads not configured, package
+database unavailable, or file changed during the load) and, for a failed
+load,
+.Fa error .
+.Pp
+.Fn extensioncmp_session_open_rootload
+opens
+.Dq system.SystemExtension.RootLoad ,
+which speaks the
+.Sy SystemExtensionRootLoad
+protocol;
+.Fn extensioncmp_session_create_rootload
+adopts a held channel to it.
+.Xr switchboard 8
+resolves that name for UID 0 sessions outside a jail that hold no software
+grant
+.Pq Pa root-load.ucl ;
+other callers get
+.Er ENOENT .
+.Fn extensioncmp_root_load
+asks the broker to load
+.Pa /boot/kernel/ Ns Fa module Ns Pa .ko ,
+which it does only for a file that the package database records in a 5BSD
+base package and that matches the recorded checksum;
+.Fn extensioncmp_root_unload
+asks it to unload a module that a root load loaded.
+Both return 0 when the broker decided, with
+.Fa outcome->result
+set to a
+.Dv SYSEXT_DECISION_*
+value and
+.Fa outcome->error
+to the errno of a failed load or unload; a refusal is a decision, not an
+error.
+They fail with
+.Er EOPNOTSUPP
+on another kind of session, and every other operation fails with
+.Er EPERM
+on a root-load session without sending anything.
+See
+.Xr BSDExtension 8
+for the checks.
 .Sh RETURN VALUES
-.Rv -std service_ensure_extension service_extension_stat service_extension_list extensioncmp_session_open extensioncmp_session_create extensioncmp_load extensioncmp_stat extensioncmp_list extensioncmp_reload extensioncmp_manage extensioncmp_info
+.Fn extensioncmp_session_read_only
+returns 1 or 0.
+.Rv -std service_ensure_extension service_extension_stat service_extension_list extensioncmp_session_open extensioncmp_session_create extensioncmp_session_open_status extensioncmp_session_create_status extensioncmp_load extensioncmp_stat extensioncmp_list extensioncmp_reload extensioncmp_manage extensioncmp_info extensioncmp_decision extensioncmp_session_open_rootload extensioncmp_session_create_rootload extensioncmp_root_load extensioncmp_root_unload
 .Sh ERRORS
 In addition to the provider's
 .Xr errno 2
