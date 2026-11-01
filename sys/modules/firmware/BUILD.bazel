@@ -1,3 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 amd64_generic_module(module = "firmware", objects = ["//sys/kern:generic_firmware_module_object_files"], export_all = True)
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+[cross_generic_module(arch = arch, module = "firmware", objects = ["//sys/kern:" + arch + "_generic_firmware_module_object_files"], export_all = True)
+ for arch in ["arm64", "riscv"]]

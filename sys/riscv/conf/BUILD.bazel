@@ -33,3 +33,10 @@ bsd_tree_file(name = "opt_global", tree = ":generic_config", member = "opt_globa
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
     strip_include_prefix = "generic_options", visibility = ["//visibility:public"])
+
+bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_platform.h",
+    output = "generic_options/opt_platform.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/backlight:__pkg__"])

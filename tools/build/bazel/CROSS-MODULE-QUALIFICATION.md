@@ -80,8 +80,9 @@ snapshots are retained at
 `/usr/obj/usr/src/bazel-filemon-cross-review-20261101/{review,summary}.json`.
 The amd64 regression receipt is `bazel-filemon-amd64-regression-r1-20261101`;
 both filemon and firmware are byte-identical to their pre-existing independently
-qualified outputs, covering export-NO and export-all branches. This does not
-qualify the new shared export-all path, which currently has no consumer.
+qualified outputs, covering export-NO and export-all branches. The initial filemon batch did not qualify shared export-all. That path now has
+actual backlight and firmware consumers with independent comparisons in
+[the next cohort](CROSS-FACILITIES-QUALIFICATION.md).
 
 ## Cache and failed expectations
 

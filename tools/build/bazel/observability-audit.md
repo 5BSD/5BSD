@@ -8814,3 +8814,17 @@ installed CTF/code/symbol/relocation parity in debug variants do not establish
 syscall wrapper behavior or event coverage. Matching-kernel load/unload and
 read/write/open/exec/fork/exit recording, enabled tracing/audit and overhead
 remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).
+
+## ARM64 / RISC-V backlight, firmware, CUSE, cryptodev (2026-11-01)
+
+The original sources carry firmware's seven lifecycle/wait/lookup SDT schemas,
+CUSE's command-start/command-done schemas, and cryptodev's opencrypto ioctl-error
+schema. Backlight and cryptodesc_kdf have no direct provider/probe/audit markers
+in this bounded scan; subsystem observation is a separate question. No C or
+probe was changed. Complete no-debug bytes and all enabled installed code/CTF/
+symbol/relocation/SDT sections match independent target Make builds. This
+preserves declarations/sites but does not demonstrate live firing, argument
+semantics, audit delivery or overhead. Matching-kernel firmware load/error/wait,
+CUSE command/copy/unload, crypto ioctl/KDF success/error and backlight registration/
+get/set/failure tests remain open. See
+[cohort evidence](CROSS-FACILITIES-QUALIFICATION.md).

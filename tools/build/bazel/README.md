@@ -57,6 +57,12 @@ runtime qualification remain open. See [module evidence](CROSS-MODULE-QUALIFICAT
 Four actual ATF cases pass; native iconv default-path resources, makefs and the
 privileged device case remain qualification work. See [fstyp evidence](FSTYP-QUALIFICATION.md).
 
+**ARM64/RISC-V facility modules** now add backlight, firmware, CUSE and cryptodev
+on both architectures: all eight no-debug files match Make completely; enabled
+CTF/debug installed sections and all 24 install records pass the scoped checks.
+See [cohort evidence](CROSS-FACILITIES-QUALIFICATION.md) for debug differences,
+SDT preservation, build-log overhead and remaining runtime/performance work.
+
 ## Current coverage audit and next work order (2026-10-27, refreshed)
 
 The current configured metadata survey covers **2,103 directories with no query

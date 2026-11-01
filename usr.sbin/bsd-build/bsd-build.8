@@ -4545,3 +4545,10 @@ The explicit ARM64 and RISC-V filemon module targets exercise relocatable
 linking, CTF/export processing and the target shared-module link, with the
 existing typed kernel CTF/debug settings and installation metadata.
 These candidates do not qualify complete module sets or runtime loading.
+
+.Pp
+Explicit target labels also cover ARM64 and RISC-V backlight, firmware,
+CUSE and cryptodev module candidates, using the same kernel profile, generated
+options/interfaces, CTF/debug settings and file installation metadata.
+Shared export-all and multi-object module linking are included in their
+independent Make artifact comparisons. Runtime loading remains unqualified.

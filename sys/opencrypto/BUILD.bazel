@@ -23,3 +23,10 @@ amd64_generic_module_objects(name = "generic_cryptodev_module", srcs = ["cryptod
 filegroup(name = "cryptodev_if_header_file", srcs = [":cryptodev_if"], output_group = "header")
 cc_library(name = "cryptodev_if_headers", hdrs = [":cryptodev_if_header_file"],
     strip_include_prefix = "cryptodev_if.generated", visibility = ["//sys/dev/virtio/crypto:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[cross_generic_module_objects(arch = arch, name = "generic_cryptodev_module", srcs = ["cryptodev.c", "cryptodesc_kdf.c"],
+    deps = [":cryptodev_headers", ":if_enc_headers", ":ed25519_headers", ":cryptodesc_kdf_headers",
+        "//sys/crypto:curve25519_headers", "//sys/crypto/sha2:kernel_headers", "//sys/net:network_headers",
+        "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+ for arch in ["arm64", "riscv"]]

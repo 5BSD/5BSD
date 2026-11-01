@@ -213,5 +213,6 @@ by this qualification. Make remains production/default; BIP stays out of scope.
 
 The next real module tranche now qualifies filemon on ARM64 and RISC-V,
 including the maintained shared link, CTF/export/debug/install stages. This is
-one explicit module per architecture, not portable coverage for the remaining
-amd64 declarations. See [shared-module evidence](CROSS-MODULE-QUALIFICATION.md).
+the initial explicit module per architecture, not portable coverage for the
+remaining amd64 declarations. Four further selected modules now have separate
+[facility/crypto comparisons](CROSS-FACILITIES-QUALIFICATION.md). See [shared-module evidence](CROSS-MODULE-QUALIFICATION.md).

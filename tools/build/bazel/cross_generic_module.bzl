@@ -16,9 +16,9 @@ _ARCH = {
         headers = [], linkopts = []),
 }
 
-def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = []):
+def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = [], name = "generic_module", copts = []):
     policy = _ARCH[arch]
-    name = arch + "_generic_module"
+    name = arch + "_" + name
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         additional_compiler_inputs = textual_hdrs,
         deps = ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
@@ -27,7 +27,7 @@ def cross_generic_module_objects(arch, srcs, textual_hdrs = [], deps = []):
         copts = ["-fno-strict-aliasing", "-fno-common", "-include", "opt_global.h", "-fPIC",
             "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer", "-fwrapv", "-fstack-protector-strong", "-std=gnu17",
             "-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
-            policy.copts + KERNEL_WARNING_FLAGS + KERNEL_DEBUG_FLAGS,
+            policy.copts + KERNEL_WARNING_FLAGS + KERNEL_DEBUG_FLAGS + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + policy.cpu,
             "//tools/build/bazel/kernel_toolchain:kernel"])

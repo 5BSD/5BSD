@@ -484,3 +484,8 @@ _CROSS_LAYOUT_FLAGS = ["-fno-strict-aliasing", "-fcommon", "-include", "opt_glob
 [cc_library(name = arch + "_generic_offset_header", hdrs = [":" + arch + "_generic_offset"],
     strip_include_prefix = arch + "_generic_layout", visibility = ["//visibility:public"])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[cross_generic_module_objects(arch = arch, name = "generic_firmware_module", srcs = ["subr_firmware.c"],
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+ for arch in ["arm64", "riscv"]]
