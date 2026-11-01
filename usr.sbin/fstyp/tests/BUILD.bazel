@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+_FIXTURES = ["befs.img.bz2", "dfr-01-xfat.img.bz2", "ext2.img.bz2", "ext3.img.bz2", "ext4.img.bz2", "ext4_with_label.img.bz2", "ntfs.img.bz2", "ntfs_with_label.img.bz2"]
+bsd_script_wrapper(name = "fstyp_test", body = "fstyp_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["fstyp_test"], interfaces = {"fstyp_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = ":" + source,
+    destination = "/usr/tests/usr.sbin/fstyp/" + dest, owner = "root", group = "wheel", mode = mode,
+    install_tags = ["package=tests"])
+ for name, source, dest, mode in [("shell", "fstyp_test", "fstyp_test", "0555"), ("kyuafile", "kyuafile", "Kyuafile", "0444")]]
+[bsd_install_file(name = "fixture_" + str(i), src = fixture,
+    destination = "/usr/tests/usr.sbin/fstyp/" + fixture, owner = "root", group = "wheel", mode = "0444",
+    install_tags = ["package=tests"]) for i, fixture in enumerate(_FIXTURES)]
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"] + [":fixture_" + str(i) for i in range(len(_FIXTURES))], visibility = ["//visibility:public"])
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# bzip2's maintained bzcat alias selects decompression through argv[0].
+copy_file(name = "bzcat_runtime", src = "//usr.bin/bzip2:bzip2", out = "bzcat", is_executable = True)
+# These cases need neither native makefs (not yet migrated), a root md device,
+# nor iconv's not-yet-declared runtime modules/data needed by every -l call.
+# The installed script above retains every one of the 22 maintained cases.
+_CASES = ["dir", "empty", "exfat", "zeros"]
+_TOOLS = ["//usr.sbin/fstyp:fstyp", ":bzcat_runtime", "//bin/mkdir:mkdir", "//usr.bin/touch:touch", "//usr.bin/truncate:truncate",
+    "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/dirname:dirname",
+    "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff", "//bin/rm:rm", "//bin/test:test"]
+_LIBS = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared",
+    "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared",
+    "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared",
+    "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libbz2:bz2_shared", "//lib/libgeom:geom_shared", "//lib/libufs:ufs_shared",
+    "//lib/libexpat:bsdxml_shared", "//lib/libsbuf:sbuf_shared",
+    "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"] + select({
+    "//tools/build/bazel/config:zfs_enabled": ["//cddl/lib/libnvpair:nvpair_shared", "//cddl/lib/libzfs:zfs_shared", "//cddl/lib/libspl:spl_shared",
+        "//lib/libthr:thr_shared", "//cddl/lib/libavl:avl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/librt:rt_shared",
+        "//cddl/lib/libumem:umem_shared", "//lib/libutil:util_shared", "//lib/libz:z_shared", "//cddl/lib/libzfs_core:zfs_core_shared", "//cddl/lib/libzutil:zutil_shared"],
+    "//conditions:default": [],
+})
+[bsd_atf_test(name = "native_" + case, case_name = case, body = "fstyp_test.sh", data = _FIXTURES,
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner",
+    runtime_bin = _TOOLS, runtime_lib = _LIBS, size = "medium") for case in _CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _CASES], visibility = ["//visibility:public"])
