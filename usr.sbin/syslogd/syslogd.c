@@ -1780,19 +1780,19 @@ fprintlog_write(struct filed *f, struct iovlist *il, int flags)
 		ssize_t lsent;
 
 		if (Debug) {
-			int domain, port, sockfd = f->f_addr_fds[0];
+			int domain, sockfd = f->f_addr_fds[0];
 			socklen_t len = sizeof(domain);
 
 			if (getsockopt(sockfd, SOL_SOCKET, SO_DOMAIN,
 			    &domain, &len) < 0)
 				err(1, "getsockopt");
 
-			port = -1;
 			printf(" %s", f->f_hname);
 			switch (domain) {
 #ifdef INET
 			case AF_INET: {
 				struct sockaddr_in sin;
+				int port = -1;
 
 				len = sizeof(sin);
 				if (getpeername(sockfd,
@@ -1807,6 +1807,7 @@ fprintlog_write(struct filed *f, struct iovlist *il, int flags)
 #ifdef INET6
 			case AF_INET6: {
 				struct sockaddr_in6 sin6;
+				int port = -1;
 
 				len = sizeof(sin6);
 				if (getpeername(sockfd,
