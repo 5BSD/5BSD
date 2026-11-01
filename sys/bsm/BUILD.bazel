@@ -11,3 +11,23 @@ cc_library(name = "truss_headers", hdrs = ['audit.h'], strip_include_prefix = "/
 
 # Userland PMC source ABI header closure.
 cc_library(name = "pmc_user_headers", hdrs = ['audit.h'], visibility = ["//lib/libpmc:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["audit.h", "audit_kevents.h"],
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["audit.h", "audit_internal.h", "audit_kevents.h"],
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["audit.h", "audit_kevents.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["audit.h", "audit_kevents.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["audit.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["audit.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["audit.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

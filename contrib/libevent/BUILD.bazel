@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+_VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
+_SOURCES = [
+    "buffer.c",
+    "bufferevent.c",
+    "bufferevent_filter.c",
+    "bufferevent_pair.c",
+    "epoll.c",
+    "evdns.c",
+    "event.c",
+    "event_tagging.c",
+    "evmap.c",
+    "evport.c",
+    "evrpc.c",
+    "evthread.c",
+    "evthread_pthread.c",
+    "evutil.c",
+    "evutil_rand.c",
+    "evutil_time.c",
+    "http.c",
+    "kqueue.c",
+    "listener.c",
+    "log.c",
+    "poll.c",
+    "select.c",
+    "signal.c",
+    "strlcpy.c",
+    "bufferevent_openssl.c",
+]
+exports_files(_SOURCES, visibility = _VISIBILITY)
+cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
+    strip_include_prefix = "include", visibility = _VISIBILITY)
+cc_library(name = "private_headers", hdrs = glob(["*.h"]), visibility = _VISIBILITY)
+filegroup(name = "random_fragment", srcs = ["arc4random.c"], visibility = _VISIBILITY)

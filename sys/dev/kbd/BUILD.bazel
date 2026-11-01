@@ -6,3 +6,7 @@ cc_library(name = 'kernel_headers', hdrs = ['kbdreg.h'],
     strip_include_prefix = "/sys",
     deps = ['//sys/amd64/conf:generic_opt_kbd_header'],
     visibility = ['//sys/dev/evdev:__pkg__'])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["kbdreg.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

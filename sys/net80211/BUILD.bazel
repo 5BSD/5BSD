@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+exports_files(["ieee80211_ioctl.h"], visibility = ["//usr.sbin/wlanstat:__pkg__"])
+
+cc_library(name = "module_headers", hdrs = ["_ieee80211.h", "ieee80211.h", "ieee80211_action.h", "ieee80211_adhoc.h", "ieee80211_ageq.h", "ieee80211_amrr.h", "ieee80211_crypto.h", "ieee80211_crypto_gcm.h", "ieee80211_dfs.h", "ieee80211_freebsd.h", "ieee80211_hostap.h", "ieee80211_ht.h", "ieee80211_input.h", "ieee80211_ioctl.h", "ieee80211_mesh.h", "ieee80211_monitor.h", "ieee80211_node.h", "ieee80211_phy.h", "ieee80211_power.h", "ieee80211_proto.h", "ieee80211_radiotap.h", "ieee80211_ratectl.h", "ieee80211_regdomain.h", "ieee80211_rssadapt.h", "ieee80211_scan.h", "ieee80211_scan_sw.h", "ieee80211_sta.h", "ieee80211_var.h", "ieee80211_vht.h", "ieee80211_wds.h"])
+
+_WLAN_DEPS = [":module_headers", "//sys/net:wlan_headers", "//sys/netinet:wlan_headers", "//sys/netinet6:wlan_headers", "//sys/ddb:wlan_headers", "//sys/crypto/rijndael:wlan_headers", "//sys/security/mac:framework_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"]
+
+# Keep the maintained link order and the five per-file warning overrides.
+_WLAN_SOURCES = ["ieee80211.c", "ieee80211_action.c", "ieee80211_ageq.c", "ieee80211_crypto.c", "ieee80211_crypto_none.c", "ieee80211_dfs.c", "ieee80211_freebsd.c", "ieee80211_input.c", "ieee80211_ioctl.c", "ieee80211_mesh.c", "ieee80211_node.c", "ieee80211_output.c", "ieee80211_phy.c", "ieee80211_power.c", "ieee80211_proto.c", "ieee80211_scan.c", "ieee80211_scan_sw.c", "ieee80211_scan_sta.c", "ieee80211_radiotap.c", "ieee80211_ratectl.c", "ieee80211_ratectl_none.c", "ieee80211_regdomain.c", "ieee80211_ht.c", "ieee80211_hwmp.c", "ieee80211_adhoc.c", "ieee80211_hostap.c", "ieee80211_monitor.c", "ieee80211_sta.c", "ieee80211_wds.c", "ieee80211_ddb.c", "ieee80211_tdma.c", "ieee80211_superg.c", "ieee80211_vht.c"]
+_WLAN_UNUSED_FUNCTION_SOURCES = ["ieee80211_adhoc.c", "ieee80211_crypto.c", "ieee80211_hostap.c", "ieee80211_mesh.c", "ieee80211_sta.c"]
+
+amd64_generic_module_objects(name = "wlan_default_module", srcs = [source for source in _WLAN_SOURCES if source not in _WLAN_UNUSED_FUNCTION_SOURCES],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_tdma_header", "//sys/amd64/conf:generic_opt_wlan_header"], copts = [])
+[cross_generic_module_objects(arch = arch, name = "wlan_default_module", srcs = [source for source in _WLAN_SOURCES if source not in _WLAN_UNUSED_FUNCTION_SOURCES],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_ddb", "opt_inet", "opt_inet6", "opt_tdma", "opt_wlan"]], copts = [])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_unused_function_module", srcs = _WLAN_UNUSED_FUNCTION_SOURCES,
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_tdma_header", "//sys/amd64/conf:generic_opt_wlan_header"], copts = ["-Wno-unused-function"])
+[cross_generic_module_objects(arch = arch, name = "wlan_unused_function_module", srcs = _WLAN_UNUSED_FUNCTION_SOURCES,
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_ddb", "opt_inet", "opt_inet6", "opt_tdma", "opt_wlan"]], copts = ["-Wno-unused-function"])
+ for arch in ["arm64", "riscv"]]
+
+# Forward compiler outputs in SRCS order without archive extraction actions.
+[bsd_component_selected_objects(
+    name = prefix + source[:-2] + "_object",
+    group = ":" + prefix + ("wlan_unused_function_module_ctf" if source in _WLAN_UNUSED_FUNCTION_SOURCES else "wlan_default_module_ctf"),
+    object_names = [source[:-2] + ".o"],
+) for prefix in ["", "arm64_", "riscv_"] for source in _WLAN_SOURCES]
+[filegroup(name = prefix + "wlan_module_object_files",
+    srcs = [":" + prefix + source[:-2] + "_object" for source in _WLAN_SOURCES],
+    visibility = ["//sys/modules/wlan:__pkg__"])
+ for prefix in ["", "arm64_", "riscv_"]]
+
+amd64_generic_module_objects(name = "wlan_acl_module", srcs = ["ieee80211_acl.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_acl_module", srcs = ["ieee80211_acl.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_amrr_module", srcs = ["ieee80211_amrr.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_amrr_module", srcs = ["ieee80211_amrr.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_ccmp_module", srcs = ["ieee80211_crypto_ccmp.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_ccmp_module", srcs = ["ieee80211_crypto_ccmp.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_gcmp_module", srcs = ["ieee80211_crypto_gcmp.c", "ieee80211_crypto_gcm.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_gcmp_module", srcs = ["ieee80211_crypto_gcmp.c", "ieee80211_crypto_gcm.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_rssadapt_module", srcs = ["ieee80211_rssadapt.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_rssadapt_module", srcs = ["ieee80211_rssadapt.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_tkip_module", srcs = ["ieee80211_crypto_tkip.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_tkip_module", srcs = ["ieee80211_crypto_tkip.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_wep_module", srcs = ["ieee80211_crypto_wep.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_wep_module", srcs = ["ieee80211_crypto_wep.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "wlan_xauth_module", srcs = ["ieee80211_xauth.c"],
+    deps = _WLAN_DEPS + ["//sys/amd64/conf:generic_opt_wlan_header"])
+[cross_generic_module_objects(arch = arch, name = "wlan_xauth_module", srcs = ["ieee80211_xauth.c"],
+    deps = _WLAN_DEPS + ["//sys/" + arch + "/conf:generic_opt_wlan_header"])
+ for arch in ["arm64", "riscv"]]

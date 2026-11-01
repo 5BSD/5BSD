@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "ext2fs_module", srcs = ["ext2_acl.c", "ext2_alloc.c", "ext2_balloc.c", "ext2_bmap.c", "ext2_csum.c", "ext2_extattr.c", "ext2_extents.c", "ext2_hash.c", "ext2_htree.c", "ext2_inode.c", "ext2_inode_cnv.c", "ext2_lookup.c", "ext2_subr.c", "ext2_vfsops.c", "ext2_vnops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/geom:kernel_headers", "//sys/ufs/ufs:filesystem_module_headers"] + ["//sys/amd64/conf:generic_opt_ddb_header", "//sys/amd64/conf:generic_opt_directio_header", "//sys/amd64/conf:generic_opt_quota_header", "//sys/amd64/conf:generic_opt_suiddir_header"], copts = [])
+[cross_generic_module_objects(arch = arch, name = "ext2fs_module", srcs = ["ext2_acl.c", "ext2_alloc.c", "ext2_balloc.c", "ext2_bmap.c", "ext2_csum.c", "ext2_extattr.c", "ext2_extents.c", "ext2_hash.c", "ext2_htree.c", "ext2_inode.c", "ext2_inode_cnv.c", "ext2_lookup.c", "ext2_subr.c", "ext2_vfsops.c", "ext2_vnops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/geom:kernel_headers", "//sys/ufs/ufs:filesystem_module_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_ddb", "opt_directio", "opt_quota", "opt_suiddir"]], copts = [])
+ for arch in ["arm64", "riscv"]]

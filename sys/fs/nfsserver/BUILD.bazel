@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "nfs_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+_SOURCES = ["nfs_fha_new.c", "nfs_nfsdserv.c", "nfs_nfsdcache.c", "nfs_nfsdkrpc.c", "nfs_nfsdsocket.c", "nfs_nfsdstate.c", "nfs_nfsdsubs.c", "nfs_nfsdport.c"]
+_DEPS = ["//sys/nfsclient:nfs_module_headers", "//sys/fs/nfsclient:nfs_module_headers", "//sys/fs/nfs:nfs_module_headers", "//sys/fs/nfsserver:nfs_module_headers", "//sys/nlm:nfs_module_headers", "//sys/nfs:nfs_module_headers", "//sys/rpc:nfs_module_headers", "//sys/kgssapi:nfs_module_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/ufs/ufs:filesystem_module_headers", "//sys/ufs/ffs:filesystem_module_headers", "//sys/net:nfs_module_headers", "//sys/netinet:nfs_module_headers", "//sys/netinet6:nfs_module_headers"]
+amd64_generic_module_objects(name = "nfsd_module", srcs = _SOURCES,
+    deps = _DEPS + ["//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_kgssapi_header", "//sys/amd64/conf:generic_opt_nfs_header", "//sys/amd64/conf:generic_opt_ufs_header"])
+[cross_generic_module_objects(arch = arch, name = "nfsd_module", srcs = _SOURCES,
+    deps = _DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_kern_tls", "opt_kgssapi", "opt_nfs", "opt_ufs"]])
+ for arch in ["arm64", "riscv"]]

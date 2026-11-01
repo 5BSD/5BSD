@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_cddl_module_objects(name = "systrace_module", srcs = ["systrace.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = ["//sys/kern:native_syscall_tables_headers"],
+    textual_hdrs = [], copts = [])
+bsd_component_selected_objects(name = "systrace_ordered_objects", group = ":systrace_module_ctf",
+    object_names = ["systrace.o"], visibility = ["//sys/modules/dtrace/systrace:__pkg__"])
+
+cross_cddl_module_objects(arch = "arm64", name = "systrace_module", srcs = ["systrace.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = ["//sys/kern:native_syscall_tables_headers"],
+    textual_hdrs = [], copts = [])
+bsd_component_selected_objects(name = "arm64_systrace_ordered_objects", group = ":arm64_systrace_module_ctf",
+    object_names = ["systrace.o"], visibility = ["//sys/modules/dtrace/systrace:__pkg__"])
+
+cross_cddl_module_objects(arch = "riscv", name = "systrace_module", srcs = ["systrace.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = ["//sys/kern:native_syscall_tables_headers"],
+    textual_hdrs = [], copts = [])
+bsd_component_selected_objects(name = "riscv_systrace_ordered_objects", group = ":riscv_systrace_module_ctf",
+    object_names = ["systrace.o"], visibility = ["//sys/modules/dtrace/systrace:__pkg__"])
+
+amd64_cddl_module_objects(name = "systrace_linux_module", srcs = ["systrace.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers", "//sys/amd64/linux:tracing_remaining_headers"], header_overrides = ["//sys/amd64/linux:linux_syscall_tables_headers"],
+    textual_hdrs = [], copts = ["-DLINUX_SYSTRACE"])
+bsd_component_selected_objects(name = "systrace_linux_ordered_objects", group = ":systrace_linux_module_ctf",
+    object_names = ["systrace.o"], visibility = ["//sys/modules/dtrace/systrace_linux:__pkg__"])

@@ -499,3 +499,12 @@ config_setting(name = "mfiutil_debug_enabled", flag_values = {":mfiutil_debug": 
 
 # Installer OSNAME, shared by the maintained dialog helpers.
 string_flag(name = "installer_osname", build_setting_default = "5BSD", visibility = ["//visibility:public"])
+
+# GENERIC enables NFS_ROOT on the three supported targets. Keep config and
+# nfs_diskless.c source selection tied to this same typed feature setting.
+bool_flag(name = "kernel_nfs_root", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "kernel_nfs_root_enabled", flag_values = {":kernel_nfs_root": "true"}, visibility = ["//visibility:public"])
+
+# Maintained MK_HTML input; documentation components opt in explicitly.
+bool_flag(name = "html", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "html_enabled", flag_values = {":html": "true"}, visibility = ["//visibility:public"])

@@ -30,3 +30,30 @@ exports_files(["in6_gif.c", "ip6_gre.c"], visibility = ["//sys/net:__pkg__", "//
 cc_library(name = "netgraph_node_headers", hdrs = ["in6_fib.h", "scope6_var.h"],
     strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"],
     deps = [":address_headers", ":ip6_headers"])
+
+cc_library(name = "nfs_module_headers", hdrs = ["in6.h", "in6_var.h"], strip_include_prefix = "/sys",
+    deps = [], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["in6.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "virtual_interface_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+cc_library(name = "packet_filter_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])
+
+# Physical source headers: the kernel compilation context supplies -Isys.
+cc_library(name = "wlan_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["in6.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["in6.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

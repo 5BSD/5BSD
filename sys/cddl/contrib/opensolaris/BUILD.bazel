@@ -12,3 +12,34 @@ exports_files(["uts/common/sys/ctf_api.h"], visibility = ["//cddl/lib/libdtrace:
 # for public libdtrace consumers; HyperTrace extended both after the staged SDK.
 cc_library(name = "dtrace_public_headers", hdrs = ["uts/common/sys/dtrace.h", "uts/common/sys/ctf_api.h"],
     strip_include_prefix = "uts/common", deps = ["//sys/sys:hypertrace_header"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h"],
+    includes = ["uts/common"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["common/util/strtolctype.h", "uts/common/dtrace/dtrace_xoroshiro128_plus.h", "uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/dtrace_link_elf.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "core_source_search_headers", hdrs = ["common/util/strtolctype.h", "uts/common/dtrace/dtrace_xoroshiro128_plus.h", "uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/dtrace_link_elf.h"], includes = ["uts/common/dtrace", "common/util"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+exports_files(["uts/common/dtrace/dtrace.c", "uts/common/dtrace/dtrace_xoroshiro128_plus.c"], visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h", "uts/common/sys/dtrace_impl.h", "uts/common/sys/fasttrap.h", "uts/common/sys/fasttrap_impl.h", "uts/intel/sys/fasttrap_isa.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_cddl_module_objects(name = "fasttrap_module", srcs = ["uts/common/dtrace/fasttrap.c", "uts/intel/dtrace/fasttrap_isa.c", "//sys/contrib/openzfs:module/zfs/u8_textprep.c"],
+    deps = ["//sys/bsm:tracing_remaining_headers", "//sys/cddl/compat/opensolaris:tracing_remaining_headers", "//sys/cddl/contrib/opensolaris:tracing_remaining_headers", "//sys/cddl/dev/dtrace:tracing_remaining_headers", "//sys/cddl/dev/dtrace/x86:tracing_remaining_headers", "//sys/compat/linux:tracing_remaining_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_remaining_headers", "//sys/contrib/openzfs:tracing_remaining_headers", "//sys/vm:tracing_remaining_headers"], header_overrides = [":fasttrap_isa_headers"],
+    preinclude_headers = ["//sys/amd64/conf:fasttrap_global_option"],
+    textual_hdrs = [], copts = ["-Wno-cast-qual", "-Wno-unused"])
+bsd_component_selected_objects(name = "fasttrap_ordered_objects", group = ":fasttrap_module_ctf",
+    object_names = ["fasttrap.o", "fasttrap_isa.o", "u8_textprep.o"], visibility = ["//sys/modules/dtrace/fasttrap:__pkg__"])
+
+bsd_source_headers(name = "fasttrap_isa_headers", hdrs = ["uts/intel/sys/fasttrap_isa.h"], includes = ["uts/intel"])

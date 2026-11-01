@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_rlreg.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

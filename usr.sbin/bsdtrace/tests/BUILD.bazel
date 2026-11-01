@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "bsdtrace_test", body = "bsdtrace_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsdtrace_test"], interfaces = {"bsdtrace_test": "atf"})
+[bsd_install_file(name = "install_" + name, src = ":" + source, destination = "/usr/tests/usr.sbin/bsdtrace/" + dest,
+    owner = "root", group = "wheel", mode = mode, install_tags = ["package=bsdtrace-tests"])
+ for name, source, dest, mode in [("script", "bsdtrace_test", "bsdtrace_test", "0555"), ("kyuafile", "kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_kyuafile"], visibility = ["//usr.sbin/bsdtrace:__pkg__"])
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# Install all thirteen cases unchanged. Two installed-path cases need a guest:
+# ptwrite_header_compiles and meta_unparsable_warns (/boot/kernel/kernel).
+_NATIVE_CASES = ["usage_surface", "list_runs", "decode_missing_files", "decode_empty_trace", "decode_corrupt_meta", "decode_truncated_pt", "exec_requires_command", "trace_requires_pid", "option_validation", "decode_capture_env", "decode_extended_meta"]
+_TOOLS = ["//usr.sbin/bsdtrace:bsdtrace", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/dd:dd", "//usr.bin/tr:tr", "//usr.bin/grep:grep", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/sed:sed", "//bin/rm:rm", "//bin/test:test", "//usr.bin/true:true"]
+_LIBS = ["//lib/libipt:ipt_shared", "//lib/libelf:elf_shared", "//lib/libdwarf:dwarf_shared", "//lib/libz:z_shared", "//lib/msun:m_shared", "//lib/libthr:thr_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared", "//lib/libregex:regex_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"]
+[bsd_atf_test(name = "native_" + case, body = "bsdtrace_test.sh", case_name = case,
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner", runtime_bin = _TOOLS, runtime_lib = _LIBS,
+    size = "small", visibility = ["//visibility:public"]) for case in _NATIVE_CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _NATIVE_CASES], visibility = ["//visibility:public"])

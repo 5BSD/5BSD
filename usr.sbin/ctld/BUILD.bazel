@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("//tools/build/bazel:bsd_lex_yacc.bzl", "bsd_lex", "bsd_yacc")
+
+# Preserve Make's y.tab.c/y.tab.h/y.output generation and parse.c copy.
+bsd_yacc(name = "parser", src = "parse.y", output = "y.tab.c", header = "y.tab.h", report = "y.output", yacc = "//usr.bin/yacc:yacc")
+filegroup(name = "parser_source", srcs = [":parser"], output_group = "source")
+filegroup(name = "parser_header", srcs = [":parser"], output_group = "header")
+copy_file(name = "parse_source", src = ":parser_source", out = "parse.c")
+bsd_lex(name = "lexer", src = "token.l", output = "token.c", lex = "//usr.bin/lex:lex", m4 = "//usr.bin/m4:m4")
+cc_library(name = "headers", hdrs = ["conf.h", "ctld.hh", "iscsi.hh", "isns.hh", "nvmf.hh", ":parser_header"], strip_include_prefix = ".")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_LIBRARIES = ["//lib/libexpat:bsdxml", "//lib/libiscsiutil:iscsiutil_pie", "//lib/libmd:md_link", "//lib/libnvmf:nvmf_pie", "//lib/libnv:nv", "//lib/libsbuf:sbuf", "//lib/libutil:util", "//lib/libucl:ucl", "//lib/msun:m", "//lib/libutil++:utilpp_pie", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt"]
+_DEPS = [":headers", "//sys/cam:headers", "//sys/dev/iscsi:user_headers", "//contrib/libucl:cxx_headers"] + _LIBRARIES
+_PIE = ["-fPIE", "-DPIC"]
+# Program source groups always link, preserving constructor/registration units.
+# Dependencies retain normal archive extraction. C parser units keep C language.
+cc_library(name = "cxx_objects", srcs = ["ctld.cc", "conf.cc", "discovery.cc", "iscsi.cc", "isns.cc", "kernel.cc", "login.cc", "nvmf.cc", "nvmf_discovery.cc"],
+    deps = _DEPS, copts = _PIE + ["-std=gnu++17", "-nostdinc++"], alwayslink = True, target_compatible_with = _PLATFORM)
+cc_library(name = "ucl_objects", srcs = ["uclparse.cc"], deps = _DEPS,
+    copts = _PIE + ["-std=gnu++17", "-nostdinc++", "-Wno-shadow", "-Wno-cast-qual"], alwayslink = True, target_compatible_with = _PLATFORM)
+cc_library(name = "parser_objects", srcs = [":parse_source", ":lexer"], deps = _DEPS,
+    copts = _PIE, alwayslink = True, target_compatible_with = _PLATFORM)
+cc_binary(name = "ctld", deps = [":cxx_objects", ":parser_objects", ":ucl_objects"] + _LIBRARIES,
+    dynamic_deps = ["//lib/libexpat:bsdxml_shared", "//lib/libmd:md_shared", "//lib/libnv:nv_shared", "//lib/libsbuf:sbuf_shared", "//lib/libutil:util_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"],
+    linkopts = ["-pie"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_compress", "bsd_install_file")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+bsd_compress(name = "format_manual", src = "ctl.conf.5", output = "ctl.conf.5.gz", arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip",
+    redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_format_manual", src = ":format_manual", destination = "/usr/share/man/man5/ctl.conf.5.gz", owner = "root", group = "wheel", mode = "0444",
+    install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=ctl-man"], "//conditions:default": ["package=ctl"]}))
+utility_installation(name = "install_manifest", program = "ctld", manual = "ctld.8", man_section = "8", package = "ctl", bindir = "/usr/sbin", extra_entries = [":install_format_manual"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ctl","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "help_test", src = "help-test.py", data = [":ctld"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libexpat:bsdxml_shared", "//lib/libmd:md_shared", "//lib/libnv:nv_shared", "//lib/libsbuf:sbuf_shared", "//lib/libutil:util_shared", "//lib/libucl:ucl_shared", "//lib/msun:m_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared"], visibility = ["//visibility:public"])

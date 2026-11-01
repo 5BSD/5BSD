@@ -1,11 +1,22 @@
 # Bazel qualification
 
+The resumed full-system scope and completion gates are maintained in
+[the completion plan](COMPLETION-PLAN.md).
+
 Bazel is experimental. `build-bsd` keeps `bsd-make` as its production backend;
 its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
-**Current status (2026-11-01):** the architecture-checked Make inventory counts 729
+**Current module inventory (2026-11-01):** the maintained recursive amd64
+GENERIC audit selects 729 modules, with 219 direct native declarations and
+510 without them. This is source inventory, not a count of qualified builds.
+The newest qualified cohort is documented in
+[PCI Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md). Evidence:
+`/usr/obj/usr/src/bazel-module-coverage-post-pci-ethernet-20261101.json`.
+Complete native world/kernel/pkgbase and system qualification remain open.
+
+**Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.
 See [VirtIO qualification](VIRTIO-QUALIFICATION.md) for the fourteen new modules
 and the limits of that count.
@@ -73,6 +84,11 @@ modules/data and native makefs/newfs/mdconfig, including original privileged
 md cleanup. See [makefs/full-suite evidence](MAKEFS-QUALIFICATION.md). See [fstyp evidence](FSTYP-QUALIFICATION.md) and
 [iconv runtime evidence](ICONV-RUNTIME-QUALIFICATION.md) for exact artifact
 comparisons, explicit fixture inputs, bootstrap boundaries and resource limits.
+The complete 63-case makefs inventory, original source skips, reduced settings
+and bounded guest qualification are recorded in
+[makefs runtime evidence](MAKEFS-RUNTIME-QUALIFICATION.md).
+Explicit emulation deadline profiles preserve original timeout metadata and
+report scaled results separately; the original-scale full-suite gate remains open.
 
 **ARM64/RISC-V facility modules** now add backlight, firmware, CUSE and cryptodev
 on both architectures: all eight no-debug files match Make completely; enabled
@@ -46935,3 +46951,362 @@ header inputs. The original KLD fallback enables compression/encryption with
 GENERIC's actual option header, which defines neither MPPC feature. Custom option/source-variable combinations,
 runtime traffic/loading and performance remain unqualified. See
 [MPPC qualification](NETGRAPH-MPPC-QUALIFICATION.md) for evidence and limitations.
+
+### Seven Bluetooth kernel modules on three architectures (2026-11-01)
+
+Native declarations cover ng_bluetooth, ng_hci, ng_l2cap, ng_btsocket, ng_ubt,
+ubtbcmfw and ng_hci_virt on amd64, ARM64 and RISC-V64. All 42 independent
+Make/native artifact comparisons and 63 install records pass. The original USB
+ID generator uses declared native tools/data; its output matches all 12 Make
+copies. A RISC-V repeat preserves 21 artifact hashes with zero spawned actions.
+All 43 selected Netgraph leaves now have native declarations; this is not
+complete module/configuration/runtime coverage. See
+[Bluetooth module qualification](BLUETOOTH-MODULES-QUALIFICATION.md) for exact
+compiler, tracing, inventory, bootstrap and performance limits.
+
+### POSIX and System V IPC module candidates (2026-11-01)
+
+Native mqueuefs, sem, sysvmsg, sysvsem and sysvshm module/install candidates now
+cover amd64, ARM64 and RISC-V64. All 30 independent Make/native comparisons and
+45 install records pass with original export policy and audit/MAC C unchanged.
+Three real System V Make SRCS omissions now explicitly declare vnode_if.h;
+initial cross-reference failures remain retained. Runtime IPC/authorization and
+complete kernel/module coverage remain open. See
+[IPC module qualification](IPC-MODULES-QUALIFICATION.md).
+
+### Eight additional filesystem module candidates (2026-11-01)
+
+Native autofs, ext2fs, fusefs, msdosfs, msdosfs_iconv, p9fs, tarfs and ufs now
+cover amd64, ARM64 and RISC-V64. All 48 default Make/native comparisons and
+72 install records pass; six additional tarfs ZSTD-disabled comparisons and
+nine install records pass. Original C/audit/MAC paths are unchanged. The actual
+msdosfs_iconv Make generated-vnode dependency and FUSE textual input are declared.
+See [filesystem module qualification](FILESYSTEM-MODULES-QUALIFICATION.md) for
+compiler/cache attribution, fresh inventory, failed attempts, startup overhead
+and explicit remaining kernel/runtime/performance gates.
+
+### NFS module candidates and typed NFS-root selection (2026-11-01)
+
+Native nfscl, nfscommon, nfsd, nfslockd and nfssvc module/install candidates cover
+amd64, ARM64 and RISC-V64. All 30 default Make/native comparisons and 45 install
+records pass. Six additional root-disabled client comparisons and nine install
+records pass. The typed kernel_nfs_root setting connects actual target config
+with optional diskless-object selection; existing kernel NLM RPC sources remain
+source-controlled inputs. See [NFS module qualification](NFS-MODULES-QUALIFICATION.md)
+for failed attempts, compiler/tracing evidence and remaining protocol/runtime gates.
+
+### RPC/GSS modules on three architectures (2026-11-01)
+
+Native krpc, kgssapi and kgssapi_krb5 module/install targets cover amd64, ARM64
+and RISC-V64. All 18 independent Make/native comparisons and 27 file/debug
+install records pass; nine plain modules are byte-identical, installed CTF
+sections match except build-ID/debuglink and both actual debuglinks validate.
+The audit covers 384 target compiles and 78 generated input comparisons. RPC
+outputs match exactly; KOBJ outputs retain an explicitly recorded provenance
+comment difference. The krpc Makefile now declares its missing vnode_if.h input.
+See [RPC-GSS-MODULES-QUALIFICATION.md](RPC-GSS-MODULES-QUALIFICATION.md) for the
+independent generation setup, corrected stdout/header-guard semantics, retained
+failures, debug limits and open runtime/full-system/performance gates.
+
+### Virtual-network modules on three architectures (2026-11-01)
+
+Native CARP, bridge, epair, lagg and VLAN module/install targets now cover amd64,
+ARM64 and RISC-V64. All 30 independent Make/native comparisons and 45 file/debug
+install records pass. Fifteen plain artifacts are byte-identical; installed CTF
+sections match except build-ID/debuglink, and both actual debuglinks validate.
+All 42 target compile actions and their actual GENERIC option-header hashes are
+audited. See [VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md](VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md)
+for source ownership, evidence, debug limits and open runtime/system gates.
+
+### Native NTP library and ntptime (2026-11-01)
+
+The native NTP candidate now owns all 106 private-library translation units,
+separate ordinary/PIE variants, the original version generator and ntptime's
+four pkgbase install records. Default and OpenSSL-disabled builds/tests and
+independent Make artifact/install comparisons pass. Explicit serial/revision
+outputs match Make exactly; an unchanged repeat retains all 11 output files
+with zero spawned actions. See [NTP-QUALIFICATION.md](NTP-QUALIFICATION.md) for
+input ownership, retained failures, debug differences and the remaining six
+programs, three libraries, package/documentation and clock-control runtime gates.
+
+### Full makefs emulation run and shell diagnostic portability (2026-11-01)
+
+The complete scale-5 run attempted all 63 cases: 59 passed, three retained source
+skips, and one failed on the permission diagnostic's capitalization under the
+configured default Zsh. Per-case and final cleanup passed and the guest shut
+down normally. The maintained test now accepts either capitalization while
+retaining every permission/nonzero-exit assertion; account and PAM policy are
+unchanged. Native refresh r12 passes 176 targets/27 test targets. A new complete
+VM outcome is recorded below; see [MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md)
+for the retained failed run and resource limits.
+
+### Complete makefs suite: 60 passes and three source skips (2026-11-01)
+
+Fresh r6 completed all 63 maintained cases using the native r12 artifacts and
+explicit uniform scale-5 profile: 60 PASS, three intentional CD9660 source SKIP,
+all per-case/final cleanup checks passed and a normal guest shutdown. The
+permissions diagnostic fix retains every mode/exit assertion and normal account,
+PAM and Zsh inputs. Resource observations stayed within the declared disk-backed
+2GiB/4CPU profile and sampled host caps. See
+[MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md) for exact reports,
+input bindings, retained failures and remaining original-timeout, full-system,
+cross-architecture and controlled performance limits.
+
+### Native OpenBSD PF and dummynet modules (2026-11-01)
+
+Native PF/dummynet module/install targets now cover amd64, ARM64 and RISC-V64.
+All twelve independent Make/native comparisons and eighteen file/debug install
+records pass; six plain modules are byte-identical, installed CTF sections match
+except build-ID/debuglink and both actual debuglinks validate. The audit covers
+240 target compiles, source-owned compatibility header precedence, exact PF
+warning policies and all twelve actual link object orders. Existing generated
+kgssapi modules also remain byte-identical on all three architectures. See
+[PACKET-FILTER-MODULES-QUALIFICATION.md](PACKET-FILTER-MODULES-QUALIFICATION.md)
+for source ownership, retained attempts/cache provenance, debug limits and open
+runtime/full-system/performance gates.
+
+### NTP control clients and capture selection (2026-11-01)
+
+Native ntpdc, ntpq and private AutoOpts candidates pass default and OpenSSL-off
+builds/tests and independent Make archive/ELF/install comparisons. The family
+now has three program and two private-library candidates; daemon, remaining
+programs/libraries, documentation and package aggregation remain open. See
+[NTP-CLIENTS-QUALIFICATION.md](NTP-CLIENTS-QUALIFICATION.md).
+
+Artifact comparisons now support explicit --qualification, --target and
+--output-suffix selection from the receipt's captured files. Manifest/payload
+hashes, containment and unambiguous selection are checked; raw --candidate files
+are labeled separately. Twelve regressions pass as
+//tools/build/bazel:qualification_artifacts_test. All fourteen earlier/new NTP
+comparisons were rerun with captured selection; old reports are retained. Do not
+use mutable bazel-bin aliases to identify a qualified configuration.
+
+### Native WLAN modules on three architectures (2026-11-01)
+
+Nine GENERIC-tied WLAN modules now have source-owned native Bazel candidates
+on amd64, ARM64 and RISC-V64. The core preserves all 33 C sources, original link
+order and five per-file warning overrides; CCMP/GCMP share declared AES objects.
+Six maintained build-bsd profiles passed 54 artifact comparisons and 81 file
+metadata comparisons against fresh Make. Actual actions establish 264 unique
+compilations, 2,616 authentic option-header checks and 54 original link orders.
+The moved source-header owner also passed a wlanstat/install regression.
+See [WLAN-MODULES-QUALIFICATION.md](WLAN-MODULES-QUALIFICATION.md) for evidence
+and exact limitations. Radios, firmware/drivers, live Wi-Fi, non-GENERIC options,
+full kernels/world/pkgbase and controlled performance remain open.
+
+### Native NTP private library closure (2026-11-01)
+
+All four NTP private libraries now have native candidates. The added libparse
+and libntpevent preserve ordinary/PIE objects, 21 parse sources, 24 event sources
+and the conditional OpenSSL source, with maintained configuration/textual inputs.
+Two normal frontend builds and four fresh Make references passed eight captured
+archive symbol/order comparisons and audits of 182 actual compilations.
+See [NTP-PRIVATE-LIBRARIES-QUALIFICATION.md](NTP-PRIVATE-LIBRARIES-QUALIFICATION.md).
+Remaining NTP programs, documentation/package aggregation and runtime remain open.
+
+### Native NVMe, NVD and AHCI modules (2026-11-01)
+
+Source-owned native storage module candidates cover amd64, ARM64 and RISC-V64,
+including ARM64's extra generic AHCI source and real ACPI/OFW inputs. Six normal
+build-bsd profiles passed eighteen artifact and 27 installed-file comparisons
+against fresh Make; audits cover 92 C compilations, 520 authentic option-header
+checks and eighteen original link orders. NVMe's maintained Makefile now declares
+its previously implicit generated vnode_if.h dependency. Existing storage probes
+are carried forward. See [STORAGE-MODULES-QUALIFICATION.md](STORAGE-MODULES-QUALIFICATION.md)
+for provenance and open live I/O, failure/recovery and performance gates. No host
+storage state changed. Make remains production/default.
+
+### Native remaining NTP clients (2026-11-01)
+
+ntpdate, ntp-keygen and sntp now have native source, option-test and pkgbase
+installation candidates. Final default/OpenSSL-off profiles each pass nine
+targets and three tests; six captured ELF contracts, 24 install records and
+12 debuglink CRC checks match fresh Make. Original inherited Version ownership
+and corrected sntp math/digest ordering are preserved. See
+[NTP-REMAINING-CLIENTS-QUALIFICATION.md](NTP-REMAINING-CLIENTS-QUALIFICATION.md).
+Six of seven programs and all four private libraries have candidates; ntpd,
+documentation, package aggregation, protocol/runtime and performance remain open.
+
+### Native CAM core and peripheral module (2026-11-01)
+
+CAM's thirty maintained C sources now have native GENERIC-tied module/install
+candidates on amd64, ARM64 and RISC-V64. Six build-bsd profiles passed six module
+artifact comparisons and nine installed-file comparisons against fresh Make.
+Audits verify 180 C compilations, 4,680 real option-header hashes and all six
+original link orders. The module's previously implicit opt_kdtrace.h dependency
+is now explicit in both Make and Bazel; genuine config contents preserve tracing.
+See [CAM-MODULE-QUALIFICATION.md](CAM-MODULE-QUALIFICATION.md) for evidence and
+open transport/peripheral, recovery, runtime and performance gates.
+
+### Native tracing provider and transport modules (2026-11-01)
+
+Eight module candidates now cover dttransport, HyperTrace, audit/malloc/NFS
+providers, profile, prototype and SDT on amd64, ARM64 and RISC-V64. The native
+CDDL wrapper preserves real compatibility inputs and ccompile/global/debug
+forced-header order. Six build-bsd profiles passed 48 artifact comparisons and
+72 installed-file comparisons against fresh Make. Audits verify 54 C actions,
+108 authentic option-header hashes and 48 link orders. An unchanged if_epair
+regression passed on all three architectures after the optional helper input.
+See [DTRACE-PROVIDER-MODULES-QUALIFICATION.md](DTRACE-PROVIDER-MODULES-QUALIFICATION.md)
+for receipt-bound evidence and remaining tracing/runtime/performance gates.
+This provider checkpoint preceded the later core and remaining-module qualifications;
+see DTRACE-FAMILY-QUALIFICATION.md for the current directory composition gate.
+
+### Native ntpd and original time-discipline probes (2026-11-01)
+
+ntpd now retains all 64 maintained C sources plus version.c, the actual GPSD
+textual parser, original four-probe provider/static anchor and package config
+ownership. Default/OpenSSL-off/DTrace-off profiles each pass three targets and
+one early option test. Three captured ELF/install comparisons, 24 unique install
+records, six debug CRCs, 195 source/flag audits and real probe/site checks pass.
+See [NTPD-QUALIFICATION.md](NTPD-QUALIFICATION.md). All seven NTP programs and four
+private libraries have candidates; documentation/package aggregation and live
+service/protocol, cross-architecture and performance gates remain open.
+
+### NTP documentation and complete installation aggregation (2026-11-01)
+
+Native NTP now owns all seven programs, four private libraries, 235 HTML/data
+files and nine manuals. The combined install target composes the actual component
+manifests. Default and HTML-disabled/split-manpage profiles pass exact Make doc
+payload/metadata comparison and family inventories of 273/30 records. Every
+program/debug/config payload matches its prior immutable native qualification.
+Use typed format-5 `//tools/build/bazel/config:html`; the C frontend has no
+`--with-option`/`--without-option` CLI. See
+[NTP-DOCUMENTATION-QUALIFICATION.md](NTP-DOCUMENTATION-QUALIFICATION.md).
+Native package creation/dependency closure, full service/protocol and performance
+remain unqualified; Make stays production/default.
+
+
+### Native core DTrace and instrumentation modules (2026-11-01)
+
+Core DTrace, FBT, kinst and dtraceall now have native GENERIC module/install
+candidates for amd64, ARM64 and RISC-V64. Six plain/CTF profiles passed with
+24 module comparisons, 36 install records, 12 exact generated-constant files,
+84 module compiles and 24 original object orders. Layout constants come from
+real target compilation; assembly remains outside CTF conversion. Installed
+plain modules are byte-identical to Make; installed CTF sections match except
+build-ID/debuglink, whose actual CRCs verify. Runtime loading/firing and full
+kernel integration remain open. See
+[DTRACE-CORE-MODULES-QUALIFICATION.md](DTRACE-CORE-MODULES-QUALIFICATION.md).
+
+### Native CTL administration and iSCSI initiator daemon (2026-11-01)
+
+ctladm and iscsid have source-owned amd64 program/install candidates, preserving
+original CTL tests and the typed ISCSI option. Default and ISCSI-disabled profiles
+passed three program/two private archive contracts, 21 install records, six
+actual debuglink checks and 27 source/option compile audits. Three safe usage
+executions passed; all eleven privileged CTL cases remain a guest runtime gate.
+No storage/session, cross-userland or performance claim is made. See
+[CTL-ISCSID-QUALIFICATION.md](CTL-ISCSID-QUALIFICATION.md).
+
+
+### Native syscall tracing and remaining tracing modules (2026-11-01)
+
+systrace and dtrace_test now have native candidates on amd64, ARM64 and RISC-V64;
+fasttrap and systrace_linux retain their maintained amd64 selection. Syscall
+headers/names/tracing C are generated from real master/config inputs with the
+unchanged Lua parser/generator APIs and a declared native flua execution tool.
+Six profiles passed sixteen module comparisons, twenty-four install records,
+twenty module compiles and sixteen original link orders. Seven generated files
+match the independently invoked full generator exactly. Whole-subtree/runtime
+and controlled performance qualification remain open. See
+[DTRACE-REMAINING-MODULES-QUALIFICATION.md](DTRACE-REMAINING-MODULES-QUALIFICATION.md).
+
+### Native CTL target daemon (2026-11-01)
+
+ctld now owns its ten original C++ units plus native yacc/lex C outputs, including
+verbose parser reporting and the original parse.c copy. Program/four private
+archive contracts, six install records, actual debug links, 26 compile records
+and four generated outputs passed against fresh Make references. One safe usage
+test passed. Real configuration parsing reaches kernel initialization and remains
+a disposable-guest gate with CTL sessions/reload and original root tests. See
+[CTLD-QUALIFICATION.md](CTLD-QUALIFICATION.md). Make stays production/default.
+
+
+### Complete native DTrace directory composition (2026-11-01)
+
+The DTrace directory now exposes native module/debug/install groups with exact
+maintained Make membership and order: fifteen amd64 modules and thirteen each
+on ARM64 and RISC-V64. Six plain/CTF profiles passed; all eighty-two module
+configurations and 123 installed payloads/records equal previously qualified
+immutable component captures. An unchanged RISC-V64 CTF repeat retained all
+thirty-nine unique payloads with zero execution records. This is component-family
+composition and warm reuse, not full kernel, runtime, source-invalidation or
+performance completion. See
+[DTRACE-FAMILY-QUALIFICATION.md](DTRACE-FAMILY-QUALIFICATION.md).
+
+
+### Native opensolaris compatibility module (2026-11-01)
+
+All seven original C sources now have native amd64/ARM64/RISC-V64 GENERIC module
+and installation candidates. Six plain/CTF profiles passed with six module
+comparisons, nine install records, forty-two compiles, eighty-four option hashes
+and six original link orders. The physical Make-header audit verified 5,282
+source/header hashes and exact OpenZFS search precedence. This includes the
+real os/freebsd/zfs context required by spl_misc.c. The DTrace runtime dependency
+now has a native candidate; loading and live behavior remain unqualified. See
+[OPENSOLARIS-MODULE-QUALIFICATION.md](OPENSOLARIS-MODULE-QUALIFICATION.md).
+
+
+The post-opensolaris amd64 GENERIC source inventory selects 729 leaf KMODs:
+191 selected directories have BUILD files, 190 contain direct native module
+macro declarations, and 539 lack those direct declarations. These are source
+presence counts only. The query completed without errors; evidence is
+`/usr/obj/usr/src/bazel-module-coverage-post-opensolaris-20261101.json`.
+
+### Native OpenBSD tcpdump (2026-11-01)
+
+The actual OpenBSD implementation plus 5BSD glue now has an 87-source native
+program/install candidate. Default and INET6_SUPPORT-disabled profiles passed
+ELF contracts/NEEDED order, ten install records, four debug CRCs, 174 source
+compiles and 2,754 original Make source/header hash checks. Five offline packet
+methods pass per profile; the initial SDK/source-wrapper mismatch and correction
+are retained. Live capture/security controls and performance remain open. See
+[TCPDUMP-QUALIFICATION.md](TCPDUMP-QUALIFICATION.md). Make remains the default.
+
+### Native virtiofsd and original daemon cases (2026-11-01)
+
+All nine daemon C sources have native amd64 program/install ownership. Five
+installation records, actual debug links, original Make source/header hashes
+and ELF contracts pass. A safe usage test plus all three original daemon ATF
+cases passed, including sandboxed local operation/state transfer and cleanup.
+The original tests compile in production sources; they do not exec the installed
+binary or qualify a guest. Full WASPNest harness packaging, live bhyve/guest and
+performance remain open. See [VIRTIOFSD-QUALIFICATION.md](VIRTIOFSD-QUALIFICATION.md).
+
+
+### Native ACPI support modules (2026-11-01)
+
+Sixteen amd64 and two ARM64 maintained ACPI support modules now have native
+GENERIC module/install candidates; the root excludes this family on RISC-V64.
+Four final profiles passed thirty-six artifact comparisons, fifty-four install
+records, exact warning/source/interface/option/link contracts and 3,870 physical
+Make source/header hash checks. A mistaken warning omission was rejected and
+removed before the final qualification. Runtime hardware/fault-injection and
+full-system/performance gates remain open. See
+[ACPI-SUPPORT-MODULES-QUALIFICATION.md](ACPI-SUPPORT-MODULES-QUALIFICATION.md).
+
+**bsdtrace upgrade checkpoint (2026-11-01):** the unqualified fourteen-source
+native candidate is saved as an inert tracked patch, with a fresh Make
+reference, verified post-upgrade SDK snapshot and canceled native attempt.
+No native test/parity pass is claimed. See
+[resume evidence and gates](BSDTRACE-CHECKPOINT.md) before reusing host-bound
+inputs after the next upgrade.
+
+**bsdtrace resumed component qualification (2026-11-01):** fourteen native
+GNU C17/PIE sources, 763 Make source/header checks, all nine installation records,
+ELF/dependency order and both debug CRCs pass. Eleven original safe ATF cases
+pass; all thirteen are installed, with two guest-path and live hardware gates
+still open. See [bounded evidence](BSDTRACE-QUALIFICATION.md). Make remains the
+production backend; the saved checkpoint patch is historical.
+
+### Native PCI Ethernet drivers (2026-11-01)
+
+Thirteen amd64 and ten ARM64/RISC-V64 selections now pass all six plain/CTF
+profiles: 66 modules, 99 installation records, 104 compiler actions, 540 option
+hashes and 14,934 physical source/header checks. Plain modules equal Make
+bytes; installed CTF sections and actual debug CRCs pass the scoped checks.
+Original USB/MII generated headers match, and object orders are hash-bound.
+See [Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md) for preserved query
+and capture corrections, disk reserve guards and runtime/performance limits.
+No complete world/kernel/package build is claimed.

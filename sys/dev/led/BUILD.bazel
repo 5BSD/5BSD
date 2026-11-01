@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["led.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

@@ -1,3 +1,42 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = glob(["**/*.h"]), includes = ["."], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["sys/cpuvar.h", "sys/cpuvar_defs.h", "sys/debug_compat.h", "sys/elf.h", "sys/modctl.h", "sys/pcpu.h"],
+    includes = ["."], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+exports_files(["sys/debug_compat.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["sys/cpuvar.h", "sys/cpuvar_defs.h", "sys/debug_compat.h", "sys/elf.h", "sys/modctl.h", "sys/pcpu.h", "sys/random.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+exports_files(["kern/opensolaris_taskq.c"], visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["sys/cpuvar.h", "sys/cpuvar_defs.h", "sys/debug_compat.h", "sys/elf.h", "sys/modctl.h", "sys/pcpu.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["sys/cpuvar.h", "sys/cpuvar_defs.h", "sys/debug_compat.h", "sys/pcpu.h", "sys/random.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+_OPENSOLARIS_CONTEXT = ["//sys/contrib/openzfs:tracing_module_headers", "//sys/contrib/openzfs:opensolaris_zfs_headers", "//sys/cddl/compat/opensolaris:tracing_module_headers", "//sys/cddl/contrib/opensolaris:tracing_module_headers"]
+
+amd64_cddl_module_objects(name = "opensolaris_module", compatibility_headers = _OPENSOLARIS_CONTEXT, srcs = ["kern/opensolaris.c", "kern/opensolaris_proc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_cmn_err.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_kmem.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_misc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_sunddi.c", "kern/opensolaris_atomic.c"],
+    deps = ["//sys/bsm:opensolaris_module_headers", "//sys/cddl/compat/opensolaris:opensolaris_module_headers", "//sys/compat/linuxkpi/common/include/linux:opensolaris_module_headers", "//sys/contrib/openzfs:opensolaris_module_headers", "//sys/contrib/pcg-c:opensolaris_module_headers", "//sys/vm:opensolaris_module_headers"])
+bsd_component_selected_objects(name = "opensolaris_ordered_objects", group = ":opensolaris_module_ctf",
+    object_names = ["opensolaris.o", "opensolaris_proc.o", "spl_cmn_err.o", "spl_kmem.o", "spl_misc.o", "spl_sunddi.o", "opensolaris_atomic.o"],
+    visibility = ["//sys/modules/opensolaris:__pkg__"])
+
+cross_cddl_module_objects(arch = "arm64", name = "opensolaris_module", compatibility_headers = _OPENSOLARIS_CONTEXT, srcs = ["kern/opensolaris.c", "kern/opensolaris_proc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_cmn_err.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_kmem.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_misc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_sunddi.c", "kern/opensolaris_atomic.c"],
+    deps = ["//sys/bsm:opensolaris_module_headers", "//sys/cddl/compat/opensolaris:opensolaris_module_headers", "//sys/compat/linuxkpi/common/include/linux:opensolaris_module_headers", "//sys/contrib/openzfs:opensolaris_module_headers", "//sys/contrib/pcg-c:opensolaris_module_headers", "//sys/vm:opensolaris_module_headers"])
+bsd_component_selected_objects(name = "arm64_opensolaris_ordered_objects", group = ":arm64_opensolaris_module_ctf",
+    object_names = ["opensolaris.o", "opensolaris_proc.o", "spl_cmn_err.o", "spl_kmem.o", "spl_misc.o", "spl_sunddi.o", "opensolaris_atomic.o"],
+    visibility = ["//sys/modules/opensolaris:__pkg__"])
+
+cross_cddl_module_objects(arch = "riscv", name = "opensolaris_module", compatibility_headers = _OPENSOLARIS_CONTEXT, srcs = ["kern/opensolaris.c", "kern/opensolaris_proc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_cmn_err.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_kmem.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_misc.c", "//sys/contrib/openzfs:module/os/freebsd/spl/spl_sunddi.c", "kern/opensolaris_atomic.c"],
+    deps = ["//sys/bsm:opensolaris_module_headers", "//sys/cddl/compat/opensolaris:opensolaris_module_headers", "//sys/compat/linuxkpi/common/include/linux:opensolaris_module_headers", "//sys/contrib/openzfs:opensolaris_module_headers", "//sys/contrib/pcg-c:opensolaris_module_headers", "//sys/vm:opensolaris_module_headers"])
+bsd_component_selected_objects(name = "riscv_opensolaris_ordered_objects", group = ":riscv_opensolaris_module_ctf",
+    object_names = ["opensolaris.o", "opensolaris_proc.o", "spl_cmn_err.o", "spl_kmem.o", "spl_misc.o", "spl_sunddi.o", "opensolaris_atomic.o"],
+    visibility = ["//sys/modules/opensolaris:__pkg__"])

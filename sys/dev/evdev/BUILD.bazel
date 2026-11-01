@@ -6,3 +6,7 @@ cc_library(name = 'kernel_headers', hdrs = ['evdev.h', 'input.h', 'input-event-c
     strip_include_prefix = "/sys",
     deps = ['//sys/dev/kbd:kernel_headers', '//sys/contrib/ck:kernel_headers'],
     visibility = ['//sys/dev/virtio/input:__pkg__'])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

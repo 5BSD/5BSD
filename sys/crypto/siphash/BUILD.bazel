@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = ["siphash.h"], includes = ["../.."],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/fs/fuse:__pkg__"])
+
+cc_library(name = "packet_filter_headers", hdrs = ["siphash.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])

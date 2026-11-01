@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "nfs_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+_SOURCES = ["nfs_clrpcops.c", "nfs_clkrpc.c", "nfs_clstate.c", "nfs_clcomsubs.c", "nfs_clport.c", "nfs_clbio.c", "nfs_clnfsiod.c", "nfs_clnode.c", "nfs_clsubs.c", "nfs_clvfsops.c", "nfs_clvnops.c"]
+_DEPS = ["//sys/nfsclient:nfs_module_headers", "//sys/fs/nfsclient:nfs_module_headers", "//sys/fs/nfs:nfs_module_headers", "//sys/fs/nfsserver:nfs_module_headers", "//sys/nlm:nfs_module_headers", "//sys/nfs:nfs_module_headers", "//sys/rpc:nfs_module_headers", "//sys/kgssapi:nfs_module_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/ufs/ufs:filesystem_module_headers", "//sys/ufs/ffs:filesystem_module_headers", "//sys/net:nfs_module_headers", "//sys/netinet:nfs_module_headers", "//sys/netinet6:nfs_module_headers"]
+amd64_generic_module_objects(name = "nfscl_module", srcs = _SOURCES,
+    deps = _DEPS + ["//sys/amd64/conf:generic_opt_bootp_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_kgssapi_header", "//sys/amd64/conf:generic_opt_nfs_header", "//sys/amd64/conf:generic_opt_nfsroot_header", "//sys/amd64/conf:generic_opt_ufs_header"])
+[cross_generic_module_objects(arch = arch, name = "nfscl_module", srcs = _SOURCES,
+    deps = _DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_bootp", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_kgssapi", "opt_nfs", "opt_nfsroot", "opt_ufs"]])
+ for arch in ["arm64", "riscv"]]
+
+# Select the optional object group at module assembly, matching the source
+# list's NFS_ROOT condition without iterating a configurable value in a macro.
+amd64_generic_module_objects(name = "nfs_diskless_module", srcs = ["//sys/nfs:nfs_diskless.c"],
+    deps = _DEPS + ["//sys/amd64/conf:generic_" + option + "_header" for option in ["opt_bootp", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_kgssapi", "opt_nfs", "opt_nfsroot", "opt_ufs"]])
+[cross_generic_module_objects(arch = arch, name = "nfs_diskless_module", srcs = ["//sys/nfs:nfs_diskless.c"],
+    deps = _DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_bootp", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_kgssapi", "opt_nfs", "opt_nfsroot", "opt_ufs"]])
+ for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["nfs_kdtrace.h"],
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+amd64_cddl_module_objects(name = "dtnfscl_module", srcs = ["nfs_clkdtrace.c"],
+    deps = ["//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+[cross_cddl_module_objects(arch = arch, name = "dtnfscl_module", srcs = ["nfs_clkdtrace.c"],
+    deps = ["//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+ for arch in ["arm64", "riscv"]]

@@ -68,3 +68,6 @@ load("//tools/build/bazel:bsd_pkg_layout.bzl", "bsd_pkg_layout")
 bsd_pkg_layout(name = "package_layout", scope = "component", manifests = [":install_manifest"],
     packages = ["runtime", "runtime-dbg"] + select({"//tools/build/bazel/config:split_manpages_enabled": ["runtime-man"], "//conditions:default": []}),
     suffix_tags = ["dbg"], visibility = ["//visibility:public"])
+
+# Standard login policy inputs for the isolated full makefs suite.
+exports_files(["login.conf", "login.access"], visibility = ["//tools/build/bazel:__pkg__"])

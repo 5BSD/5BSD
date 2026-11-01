@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+_SOURCES = ["virtiofsd.c", "virtiofsd_export.c", "virtiofsd_fuse.c", "virtiofsd_handle.c", "virtiofsd_server.c", "virtiofsd_session.c"]
+_HEADERS = ["virtiofsd_export.h", "virtiofsd_fuse.h", "virtiofsd_handle.h", "virtiofsd_server.h", "virtiofsd_session.h"]
+cc_library(name = "headers", hdrs = _HEADERS, strip_include_prefix = ".", deps = ["//usr.sbin/bhyve:virtiofsd_headers"])
+cc_binary(name = "virtiofsd", srcs = _SOURCES + ["//usr.sbin/bhyve:" + source for source in ["virtio_fs_backend.c", "virtio_fs_backend_io.c", "virtio_fs_outbox.c"]],
+    deps = [":headers", "//lib/libthr:thr"], dynamic_deps = ["//lib/libthr:thr_shared"],
+    copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_library(name = "test_inputs", hdrs = _HEADERS, textual_hdrs = _SOURCES, strip_include_prefix = ".", visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "virtiofsd", manual = "virtiofsd.8", man_section = "8", package = "bhyve", bindir = "/usr/sbin")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bhyve","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "usage_test", src = "usage-test.py", data = [":virtiofsd"], runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/libthr:thr_shared"], visibility = ["//visibility:public"])

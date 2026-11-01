@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "nfs_module_headers", hdrs = ["nfs.h", "nfsargs.h", "nfsmount.h", "nfsstats.h"],
+    strip_include_prefix = "/sys", visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])

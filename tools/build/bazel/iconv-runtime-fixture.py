@@ -11,6 +11,7 @@ import re
 import subprocess
 import stat
 import tarfile
+import runtime_profile
 
 
 def digest(path):
@@ -98,6 +99,50 @@ def inventory(root):
     return records
 
 
+def native_elf_closure(root, readelf):
+    """Require the declared inner runtime to resolve without host loader state."""
+    records = {}
+    for source in sorted(root.rglob('*')):
+        if source.is_relative_to(root/'usr/lib/debug') or not source.is_file() or source.is_symlink():
+            continue
+        with source.open('rb') as stream:
+            if stream.read(4) != b'\x7fELF':
+                continue
+        dynamic = subprocess.check_output([readelf, '-d', str(source)], text=True)
+        if re.search(r'\((?:RPATH|RUNPATH)\)', dynamic):
+            raise ValueError('native fixture runtime must not depend on embedded library search paths: '+str(source))
+        dependencies = re.findall(r'\(NEEDED\).*?\[([^]]+)\]', dynamic)
+        for needed in dependencies:
+            if '/' in needed or not any((root/d/needed).is_file() for d in ['lib','usr/lib']):
+                raise ValueError('unresolved declared native dependency: '+str(source)+': '+needed)
+        headers = subprocess.check_output([readelf, '-l', str(source)], text=True)
+        for interpreter in re.findall(r'Requesting program interpreter: ([^\]]+)', headers):
+            if '..' in PurePosixPath(interpreter).parts or not (root/interpreter.lstrip('/')).is_file():
+                raise ValueError('missing declared native interpreter: '+interpreter)
+        records[str(source.relative_to(root))] = dependencies
+    return records
+
+
+def kernel_modules(entries, kernel):
+    """Bind explicit execution-kernel bootstrap modules to its selected build."""
+    if not isinstance(entries, dict):
+        raise ValueError('explicit kernel module map required')
+    kernel = kernel.resolve(strict=True)
+    kernel_hash = digest(kernel)
+    result = {}
+    for name, entry in entries.items():
+        if (not re.fullmatch(r'[A-Za-z0-9_+.-]+\.ko', name) or
+                not isinstance(entry, dict) or set(entry) != {'path', 'sha256', 'kernel_sha256'}):
+            raise ValueError('explicit module basename/path/hash/kernel binding required')
+        source = Path(entry['path']).resolve(strict=True)
+        if not source.is_file() or not source.is_relative_to(kernel.parent / 'modules'):
+            raise ValueError('bootstrap module must come from selected kernel build modules')
+        if entry['kernel_sha256'] != kernel_hash or entry['sha256'] != digest(source):
+            raise ValueError('bootstrap module or selected kernel hash mismatch')
+        result[name] = dict(entry, path=str(source), scope='execution kernel bootstrap; not native Bazel module qualification')
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--qualification', type=Path, required=True)
@@ -117,8 +162,10 @@ def main():
         raise ValueError('native artifact manifest mismatch')
     manifest = json.loads(manifest_path.read_text())
     plan = json.loads(args.plan.read_text())
-    if set(plan) != {'format', 'archives', 'files', 'kernel', 'boot_directory', 'guest_driver', 'checker', 'daemon_fixtures', 'readelf'} or type(plan['format']) is not int or plan['format'] != 1:
+    required = {'format', 'archives', 'files', 'kernel', 'boot_directory', 'guest_driver', 'checker', 'daemon_fixtures', 'readelf'}
+    if not required <= set(plan) or set(plan) - required - {'kernel_modules', 'checker_profile'} or type(plan['format']) is not int or plan['format'] != 1:
         raise ValueError('versioned explicit fixture plan required')
+    profile = runtime_profile.validate(plan.get('checker_profile', {'timeout_scale': 1}))
     selected = {}
     for target in manifest['targets']:
         label = target['target']['label']
@@ -149,13 +196,16 @@ def main():
     driver = artifact(plan['guest_driver'])
     sdk = Path(receipt['sdk_repository']).resolve(strict=True) / 'toolchain'
     bootstrap_inputs = [sdk / 'bin/extra_python', sdk / 'execution-runtime/libexec/ld-elf.so.1',
-                        Path(plan['kernel']), Path(plan['checker']), Path(plan['readelf'])]
+                        Path(plan['kernel']), Path(plan['checker']), Path(plan['readelf']),
+                        Path(__file__).with_name('runtime_profile.py')]
     for source in bootstrap_inputs:
         if not source.is_file():
             raise ValueError('missing explicit bootstrap input: ' + str(source))
     for name, source in plan['daemon_fixtures'].items():
         relative(name)
         bootstrap_inputs.append(Path(source))
+    modules = kernel_modules(plan.get('kernel_modules', {}), Path(plan['kernel']))
+    bootstrap_inputs.extend(Path(entry['path']) for entry in modules.values())
     before = {str(path): digest(path) for path in bootstrap_inputs}
     output.mkdir(mode=0o700, parents=True)
     extra = output / 'extra-root'
@@ -169,9 +219,15 @@ def main():
     (fixture / 'dev').mkdir(exist_ok=True)
     (fixture / 'tmp').mkdir(exist_ok=True)
     (fixture / 'tmp').chmod(0o1777)
+    for name, entry in modules.items():
+        put(Path(entry['path']), fixture / 'boot/kernel' / name, 0o555)
+    native_dependencies = native_elf_closure(fixture, plan['readelf'])
     files = {str(path.relative_to(fixture)): digest(path) for path in fixture.rglob('*') if path.is_file()}
     runtime = extra / 'runtime'
     runtime.mkdir()
+    (runtime / 'checker-profile.json').write_text(json.dumps(profile, sort_keys=True) + '\n')
+    (runtime / 'checker-profile.json').chmod(0o444)
+    put(Path(__file__).with_name('runtime_profile.py'), runtime / 'runtime_profile.py', 0o444)
     (runtime / 'fixture-manifest.json').write_text(json.dumps({'format': 1, 'files': files}, indent=2) + '\n')
     # The bootstrap interpreter runtime is separate from the native test root.
     shutil.copytree(sdk / 'execution-runtime', extra, dirs_exist_ok=True)
@@ -206,7 +262,7 @@ def main():
                 raise ValueError('unresolved declared bootstrap dependency: ' + str(source) + ': ' + needed)
     shutil.copytree(sdk / 'python-home', runtime / 'python-home')
     put(sdk / 'bin/extra_python', runtime / 'python', 0o555)
-    put(Path(plan['checker']), runtime / 'iconv-chroot-check.py', 0o444)
+    put(Path(plan['checker']), runtime / Path(plan['checker']).name, 0o444)
     chroot = next(entry for entry in plan['files'] if entry['destination'] == 'usr/sbin/chroot')
     put(artifact(chroot['target']), extra / 'usr/sbin/chroot', 0o555)
     # Stage only boot inputs; the VM harness independently verifies the kernel.
@@ -224,8 +280,9 @@ def main():
     report = {'format': 1, 'scope': 'explicit native fixture plus separately identified SDK Python/loader bootstrap',
               'qualification_receipt': {'path': str(receipt_path), 'sha256': digest(receipt_path)},
               'plan': {'path': str(args.plan.resolve()), 'sha256': digest(args.plan)},
-              'implementation_sha256': digest(Path(__file__)), 'artifact_bindings': bindings,
-              'bootstrap_inputs': before, 'extra_root': str(extra), 'fixture_objtop': str(fixture_objtop),
+              'implementation_sha256': digest(Path(__file__)), 'checker_profile': profile,
+              'checker_profile_scope': 'explicit checker deadline input; wrapper and VM limits are separate', 'artifact_bindings': bindings,
+              'bootstrap_inputs': before, 'kernel_modules': modules, 'native_elf_dependencies': native_dependencies, 'extra_root': str(extra), 'fixture_objtop': str(fixture_objtop),
               'boot_root': str(boot_root), 'boot_files': inventory(boot_root),
               'sdk_repository': str(sdk.parent), 'bootstrap_sonames': sonames, 'files': records, 'payload_bytes': sum(r.get('size', 0) for r in records.values()),
               'runtime_qualified': False, 'host_installed': False}

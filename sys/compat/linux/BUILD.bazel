@@ -15,3 +15,10 @@ cc_library(
     include_prefix = "compat/linux",
     visibility = ["//usr.bin/kdump:__pkg__", "//lib/libsysdecode:__pkg__", "//sys/amd64/linux:__pkg__"],
 )
+
+cc_library(name = "fuse_errno_headers", hdrs = ["linux_errno.h"], textual_hdrs = ["linux_errno.inc"], strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/fuse:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux_siginfo.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])

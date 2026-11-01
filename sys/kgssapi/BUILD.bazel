@@ -4,3 +4,36 @@ load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
 
 exports_files(["gssd.x", "gssd_prot.c"], visibility = ["//usr.sbin/gssd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "nfs_module_headers", hdrs = glob(["*.h", "krb5/*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+load("//tools/build/bazel:bsd_kernel_rpc.bzl", "kernel_rpc_protocol")
+kernel_rpc_protocol(name = "gssd", source = "gssd.x")
+cc_library(name = "generated_rpc_headers", hdrs = [":gssd.h"], strip_include_prefix = ".", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+filegroup(name = "kgss_if.c", srcs = [":kgss_if"], output_group = "source")
+filegroup(name = "kgss_if_header_file", srcs = [":kgss_if"], output_group = "header")
+cc_library(name = "interface_headers", hdrs = [":kgss_if_header_file"], strip_include_prefix = "kgss_if.generated")
+cc_library(name = "provider_headers", hdrs = glob(["*.h", "krb5/*.h"]), strip_include_prefix = "/sys",
+    deps = [":generated_rpc_headers", ":interface_headers"], visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+_KGSSAPI_SOURCES = ["gss_accept_sec_context.c", "gss_add_oid_set_member.c", "gss_acquire_cred.c", "gss_canonicalize_name.c", "gss_create_empty_oid_set.c", "gss_delete_sec_context.c", "gss_display_status.c", "gss_export_name.c", "gss_get_mic.c", "gss_init_sec_context.c", "gss_impl.c", "gss_import_name.c", "gss_ip_to_dns.c", "gss_names.c", "gss_pname_to_uid.c", "gss_release_buffer.c", "gss_release_cred.c", "gss_release_name.c", "gss_release_oid_set.c", "gss_set_cred_option.c", "gss_test_oid_set_member.c", "gss_unwrap.c", "gss_verify_mic.c", "gss_wrap.c", "gss_wrap_size_limit.c", "gssd_prot.c", "//sys/rpc:rpcsec_gss/rpcsec_gss.c", "//sys/rpc:rpcsec_gss/rpcsec_gss_conf.c", "//sys/rpc:rpcsec_gss/rpcsec_gss_misc.c", "//sys/rpc:rpcsec_gss/rpcsec_gss_prot.c", "//sys/rpc:rpcsec_gss/svc_rpcsec_gss.c", ":kgss_if.c", ":gssd_xdr.c", ":gssd_clnt.c"]
+_KGSSAPI_DEPS = ["//sys/rpc:provider_headers", "//sys/kgssapi:provider_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/net:rpc_provider_headers", "//sys/netinet:rpc_provider_headers", "//sys/netinet6:rpc_provider_headers"]
+amd64_generic_module_objects(name = "kgssapi_module", srcs = _KGSSAPI_SOURCES,
+    deps = _KGSSAPI_DEPS)
+[cross_generic_module_objects(arch = arch, name = "kgssapi_module", srcs = _KGSSAPI_SOURCES,
+    deps = _KGSSAPI_DEPS)
+ for arch in ["arm64", "riscv"]]
+
+_KGSSAPI_KRB5_SOURCES = ["krb5/krb5_mech.c", "krb5/kcrypto.c", "krb5/kcrypto_aes.c"]
+_KGSSAPI_KRB5_DEPS = ["//sys/rpc:provider_headers", "//sys/kgssapi:provider_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/net:rpc_provider_headers", "//sys/netinet:rpc_provider_headers", "//sys/netinet6:rpc_provider_headers", "//sys/opencrypto:rpc_provider_headers"]
+amd64_generic_module_objects(name = "kgssapi_krb5_module", srcs = _KGSSAPI_KRB5_SOURCES,
+    deps = _KGSSAPI_KRB5_DEPS + ["//sys/amd64/conf:generic_opt_inet6_header"])
+[cross_generic_module_objects(arch = arch, name = "kgssapi_krb5_module", srcs = _KGSSAPI_KRB5_SOURCES,
+    deps = _KGSSAPI_KRB5_DEPS + ["//sys/" + arch + "/conf:generic_opt_inet6_header"])
+ for arch in ["arm64", "riscv"]]

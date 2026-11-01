@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "autofs_module", srcs = ["autofs.c", "autofs_vnops.c", "autofs_vfsops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"] + [], copts = [])
+[cross_generic_module_objects(arch = arch, name = "autofs_module", srcs = ["autofs.c", "autofs_vnops.c", "autofs_vfsops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in []], copts = [])
+ for arch in ["arm64", "riscv"]]

@@ -15,7 +15,7 @@ cc_library(name = "kernel_headers", hdrs = ["netgraph.h", "ng_message.h", "ng_pa
         "@platforms//cpu:aarch64": ["//sys/arm64/conf:generic_opt_kdb_header", "//sys/arm64/conf:generic_opt_netgraph_header"],
         "@platforms//cpu:riscv64": ["//sys/riscv/conf:generic_opt_kdb_header", "//sys/riscv/conf:generic_opt_netgraph_header"],
     }, no_match_error = "Netgraph kernel headers require a supported target architecture") + ["//sys/sys:kernel_headers"],
-    visibility = ["//visibility:private"])
+    visibility = ["//sys/netgraph/bluetooth:__pkg__"])
 cc_library(name = "async_module_headers", hdrs = ["ng_async.h"], includes = [".."],
     deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/async:__pkg__"])
 cc_library(name = "hub_module_headers", hdrs = ["ng_hub.h"], includes = [".."],

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Standard versioned policy inputs for explicit isolated qualification.
+exports_files(["su", "system", "other"], visibility = ["//tools/build/bazel:__pkg__"])

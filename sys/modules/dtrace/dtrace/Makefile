@@ -31,7 +31,7 @@ SRCS+=		instr_size.c dtrace_immstack.c
 
 CFLAGS+= ${OPENZFS_CFLAGS}
 
-SRCS+=		bus_if.h device_if.h vnode_if.h
+SRCS+=		bus_if.h device_if.h linker_if.h vnode_if.h
 
 # Needed for dtrace_asm.S
 DPSRCS+=	assym.inc

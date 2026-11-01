@@ -8928,3 +8928,452 @@ unchanged. Compile/artifact/install checks do not establish compression or
 encryption behavior, privileged graph/control audit coverage, framework probe
 firing or cryptographic suitability. Review those using matching-kernel runtime
 traffic and error cases; custom MPPC option combinations remain open.
+
+## Seven Bluetooth kernel modules on three architectures (2026-11-01)
+
+The bounded 24-source scan retains 138 direct marker lines in 14 files, including
+47 SDT schema macro lines and 74 probe-call macro lines. Original C is unchanged;
+SDT provider/probe/argument sections and relocations match independent Make
+artifacts where present across amd64, ARM64 and RISC-V64. These are textual and
+artifact checks. Live probe firing/arguments, virtual and USB controller traffic,
+firmware paths, privileged sockets/control audit coverage, errors and hardware
+runtime remain unqualified. See BLUETOOTH-MODULES-QUALIFICATION.md and retained
+`bazel-bluetooth-review-20261101/observability.json` for scope and evidence.
+
+## POSIX and System V IPC modules on three architectures (2026-11-01)
+
+The bounded five-source scan retains 173 direct audit/tracing marker lines in
+uipc_mqueue.c, uipc_sem.c, sysv_msg.c, sysv_sem.c and sysv_shm.c. Original C and
+its existing audit/MAC paths are unchanged; default GENERIC module code and
+metadata compare against independent Make artifacts on amd64, ARM64 and RISC-V64.
+Live IPC/control permissions, audit arguments, failures, credentials/namespaces,
+resource bounds and concurrency remain unqualified. See
+IPC-MODULES-QUALIFICATION.md and retained
+`bazel-ipc-modules-review-20261101/observability.json` for bounded evidence.
+
+## Complete makefs runtime fixture (2026-11-01)
+
+The complete 63-case native inventory preserves the original scripts, root
+requirements, helper/kernel requirements, timeouts and cleanup. Native runtime
+helpers retain their existing build instrumentation, including rmdir's declared
+DTrace provider. This tranche changes no production C or original test bodies.
+The guest uses the matching execution kernel as explicit bootstrap, without
+claiming native ZFS module coverage. Live probe firing/arguments and audit-event
+coverage remain unqualified; running filesystem tests does not establish them.
+See MAKEFS-RUNTIME-QUALIFICATION.md for the open runtime gate and retained
+fixture failures.
+
+## Eight filesystem modules on three architectures (2026-11-01)
+
+The bounded sixty-four-source scan retains 312 audit/tracing marker lines in
+twenty-nine files across
+autofs, ext2fs, FUSE, FAT/iconv, 9P, tarfs and UFS/FFS. Original C and existing
+SDT/audit/MAC paths are unchanged; default modules compare with independent Make
+artifacts, including preserved SDT metadata where present. Both tarfs ZSTD
+branches compare separately. Live mount/IO/control authorization, corruption,
+credential/namespace and concurrency cases, probe/audit arguments and storage
+performance remain unqualified. See FILESYSTEM-MODULES-QUALIFICATION.md and
+`bazel-filesystem-modules-review-20261101/observability.json` for bounded evidence.
+
+## NFS modules on three architectures (2026-11-01)
+
+The bounded thirty-two-source scan retains 92 SDT/KDTRACE/audit/CTR marker lines
+in eleven files; a separate nfs_kdtrace.h scan retains nineteen wrapper/config
+lines. Original C and existing server SDT schemas/client callback paths are
+unchanged. Default artifacts compare with Make including SDT sections and
+relocations where present; NFS-root enabled/disabled selections compare separately.
+These textual/artifact checks do not establish live client/server/provider probes,
+lock/authentication/TLS/GSS paths, credential/MAC/audit denials or NFS-root boot.
+See NFS-MODULES-QUALIFICATION.md and retained source/header scan JSON for scope.
+
+### RPC/GSS module source audit (2026-11-01)
+
+krpc, kgssapi and kgssapi_krb5 preserve 57 maintained C sources plus seven
+generated C sources across amd64, ARM64 and RISC-V64. The bounded static scan
+records thirteen existing SDT marker lines in clnt_dg.c, clnt_rc.c and replay.c.
+This is a textual inventory, not a runtime probe count or proof of complete
+audit/DTrace coverage. Generated interfaces and installed module sections
+compare with independent Make references; matching-kernel load/unload, provider
+registration, TLS/GSS/Kerberos authentication/denials, live arguments and NFS
+recovery still need qualification. Evidence: bazel-rpc-gss-review-20261101.
+
+### Virtual-network module source audit (2026-11-01)
+
+The seven original C sources for CARP, bridge, epair, lagg and VLAN are preserved
+on amd64, ARM64 and RISC-V64. A bounded scan records twenty existing SDT marker
+lines in if_bridge.c, if_epair.c, if_lagg.c and if_vlan.c. ip_carp.c,
+ieee8023ad_lacp.c and sha1.c have no matches for the audited patterns; failover
+and LACP state-transition observability need review during runtime qualification.
+Compiled installed sections compare with Make, but provider registration, live
+arguments, traffic/failure paths and privilege/MAC/audit denials remain untested.
+Evidence: bazel-virtual-interface-review-20261101; scope and limits are in
+VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: libntp and ntptime
+
+Reviewed the 105 maintained libntp C sources, generated version source and
+ntptime. Neither selected Make graph declares a component DTrace provider or
+BSM source/hook; original sources and clock syscalls are retained unchanged.
+Native qualification covers ordinary/PIE compilation, conditional OpenSSL,
+installation and the help path that exits before clock calls. Isolated
+privileged clock-adjustment behavior and its syscall/security-audit coverage
+remain a separate review/runtime gate. No new instrumentation or tracing
+performance claim is made. See NTP-QUALIFICATION.md for artifact evidence.
+
+### PF/dummynet source and wrapper audit (2026-11-01)
+
+Forty original C sources remain unchanged across amd64, ARM64 and RISC-V64.
+The bounded scan records 134 direct SDT/KDTRACE/audit/CTR marker lines, plus
+44 PF wrapper marker lines and 49 marker/configuration lines in the forced
+openbsd_compat.h header. Categories can overlap and do not count active probes.
+Installed compiled sections match independent Make references. Live provider
+registration/arguments and runtime filtering, flow export, VNET/jails, MAC/audit
+denials, state/queue recovery and failure/concurrency paths remain unqualified.
+
+The following sources have no matches for these audited marker patterns. This
+is a review queue, not a requirement to add a probe indiscriminately: review
+interface/rule lifecycle and NAT64, queue/AQM/drop decisions, quota/pfsync and
+jail boundaries as their runtime tests are implemented.
+
+- `contrib/openbsd-pf/sys/net/pf_if.c`
+- `contrib/openbsd-pf/sys/net/pf_osfp.c`
+- `contrib/openbsd-pf/sys/net/pf_ruleset.c`
+- `contrib/openbsd-pf/sys/net/radix.c`
+- `contrib/openbsd-pf/sys/netinet/in4_cksum.c`
+- `contrib/openbsd-pf/sys/netinet/inet_nat64.c`
+- `sys/netpfil/dummynet/dn_aqm_codel.c`
+- `sys/netpfil/dummynet/dn_aqm_pie.c`
+- `sys/netpfil/dummynet/dn_heap.c`
+- `sys/netpfil/dummynet/dn_sched_fifo.c`
+- `sys/netpfil/dummynet/dn_sched_fq_codel.c`
+- `sys/netpfil/dummynet/dn_sched_fq_pie.c`
+- `sys/netpfil/dummynet/dn_sched_prio.c`
+- `sys/netpfil/dummynet/dn_sched_qfq.c`
+- `sys/netpfil/dummynet/dn_sched_rr.c`
+- `sys/netpfil/dummynet/dn_sched_wf2q.c`
+- `sys/netpfil/dummynet/ip_dummynet.c`
+- `sys/netpfil/openbsd-pf/openbsd_compat.c`
+- `sys/netpfil/openbsd-pf/openbsd_ifq.c`
+- `sys/netpfil/openbsd-pf/openbsd_net.c`
+- `sys/netpfil/openbsd-pf/pf_divert.c`
+- `sys/netpfil/openbsd-pf/pf_pfsync.c`
+- `sys/netpfil/openbsd-pf/pf_quota.c`
+- `sys/netpfil/openbsd-pf/pf_sysctl.c`
+
+Evidence and exact scans: bazel-packet-filter-review-20261101. Scope and remaining
+gates: PACKET-FILTER-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: NTP control clients and AutoOpts
+
+ntpdc, ntpq and the private AutoOpts amalgamation preserve their maintained
+sources and conditional OpenSSL behavior. No component provider/BSM hook occurs
+in these selected sources. Tests cover help/version after ordinary readiness
+initialization; remote-control authentication, rejection and network behavior
+remain runtime review gates. The remaining ntpd Make graph explicitly declares
+timediscipline_provider.d, DTRACE_STATIC_ANCHOR and WITH_COVERAGE_DTRACE, which
+must survive its future native migration. See NTP-CLIENTS-QUALIFICATION.md.
+
+## 2026-11-01: WLAN core, policy, rate and software crypto modules
+
+The 44 unique maintained C inputs retain 14 direct textual probe/audit/CTR
+marker lines. Exact compile/object and installed CTF sections match Make;
+this inventory does not prove live probe coverage. Review association,
+authentication/key lifecycle, scan/roaming, crypto failures, ACL/rate decisions,
+mesh/TDMA and packet-drop observability alongside the matching-kernel runtime
+suite. The following sources have no direct marker matched by this scan;
+shared headers and callers may provide observability and require review:
+
+- `sys/crypto/rijndael/rijndael-alg-fst.c`
+- `sys/crypto/rijndael/rijndael-api.c`
+- `sys/net80211/ieee80211.c`
+- `sys/net80211/ieee80211_acl.c`
+- `sys/net80211/ieee80211_action.c`
+- `sys/net80211/ieee80211_adhoc.c`
+- `sys/net80211/ieee80211_ageq.c`
+- `sys/net80211/ieee80211_amrr.c`
+- `sys/net80211/ieee80211_crypto.c`
+- `sys/net80211/ieee80211_crypto_ccmp.c`
+- `sys/net80211/ieee80211_crypto_gcm.c`
+- `sys/net80211/ieee80211_crypto_gcmp.c`
+- `sys/net80211/ieee80211_crypto_none.c`
+- `sys/net80211/ieee80211_crypto_tkip.c`
+- `sys/net80211/ieee80211_crypto_wep.c`
+- `sys/net80211/ieee80211_ddb.c`
+- `sys/net80211/ieee80211_dfs.c`
+- `sys/net80211/ieee80211_freebsd.c`
+- `sys/net80211/ieee80211_hostap.c`
+- `sys/net80211/ieee80211_ht.c`
+- `sys/net80211/ieee80211_hwmp.c`
+- `sys/net80211/ieee80211_input.c`
+- `sys/net80211/ieee80211_ioctl.c`
+- `sys/net80211/ieee80211_mesh.c`
+- `sys/net80211/ieee80211_monitor.c`
+- `sys/net80211/ieee80211_node.c`
+- `sys/net80211/ieee80211_output.c`
+- `sys/net80211/ieee80211_phy.c`
+- `sys/net80211/ieee80211_power.c`
+- `sys/net80211/ieee80211_radiotap.c`
+- `sys/net80211/ieee80211_ratectl.c`
+- `sys/net80211/ieee80211_ratectl_none.c`
+- `sys/net80211/ieee80211_regdomain.c`
+- `sys/net80211/ieee80211_rssadapt.c`
+- `sys/net80211/ieee80211_scan_sta.c`
+- `sys/net80211/ieee80211_scan_sw.c`
+- `sys/net80211/ieee80211_superg.c`
+- `sys/net80211/ieee80211_tdma.c`
+- `sys/net80211/ieee80211_vht.c`
+- `sys/net80211/ieee80211_wds.c`
+- `sys/net80211/ieee80211_xauth.c`
+
+Evidence: bazel-wlan-review-20261101/observability.json. Scope and open gates:
+WLAN-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: remaining NTP private libraries
+
+Reviewed the maintained 21 libparse and 24 plus optional OpenSSL libevent
+translation units and declared textual inputs. Neither Make component declares
+a DTrace provider or explicit BSM submission; the bounded source scan found no
+direct DTrace/SDT or audit-submission markers. This does not qualify transitive
+observability or runtime. All source and option branches remain declared;
+ntpd's separate timediscipline provider/static anchor/coverage requirement stays
+open for its forthcoming migration. See NTP-PRIVATE-LIBRARIES-QUALIFICATION.md.
+
+## 2026-11-01: NVMe, NVD and AHCI storage modules
+
+Sixteen unique C sources retain seventeen direct textual SDT/DTRACE marker lines
+in NVMe controller/queue and AHCI reset paths. Matching installed sections prove
+retention, not live firing or argument coverage. Review submit/completion/error,
+queue/abort/reset timing, namespace/GEOM and controller lifecycle, attachment,
+DMA/IOMMU and hotplug visibility with matching-kernel runtime tests. Audit policy
+requirements need contextual review; ordinary disk I/O is not automatically a
+per-operation audit event. Sources without a direct matched marker:
+
+- `sys/dev/ahci/ahci_generic.c`
+- `sys/dev/ahci/ahci_pci.c`
+- `sys/dev/ahci/ahciem.c`
+- `sys/dev/nvd/nvd.c`
+- `sys/dev/nvme/nvme.c`
+- `sys/dev/nvme/nvme_ahci.c`
+- `sys/dev/nvme/nvme_ctrlr_cmd.c`
+- `sys/dev/nvme/nvme_ns.c`
+- `sys/dev/nvme/nvme_ns_cmd.c`
+- `sys/dev/nvme/nvme_pci.c`
+- `sys/dev/nvme/nvme_sim.c`
+- `sys/dev/nvme/nvme_sysctl.c`
+- `sys/dev/nvme/nvme_test.c`
+
+Exact scan: bazel-storage-review-20261101/observability.json. Scope/open gates:
+STORAGE-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: ntpdate, ntp-keygen and sntp
+
+Reviewed the selected ntpdate source, two keygen sources and eight sntp sources.
+Their maintained Make components declare no DTrace provider, and the bounded
+source scan found no direct SDT/DTrace or explicit BSM submission. Native
+migration preserves all twelve compilation units including ntpdate version.c,
+plus actual private-library dependencies and option branches. This does not
+prove transitive instrumentation or protocol/clock/key-generation runtime.
+ntpd's maintained timediscipline provider/static anchor/coverage selection is
+still open. See NTP-REMAINING-CLIENTS-QUALIFICATION.md for bounded evidence.
+
+## 2026-11-01: CAM core and peripheral module
+
+Thirty original C inputs retain eighteen direct textual SDT/DTRACE/audit/CTR
+marker lines. The opt_kdtrace.h input is explicit and extracted from genuine
+GENERIC config output; no tracing option was disabled. Matching module sections
+establish retention, not runtime probe counts or argument coverage. Review
+transport/SIM/peripheral discovery, scheduling/queue pressure, command lifecycle,
+errors/timeouts/retries/reset and audit policy with matching-kernel runtime tests.
+Sources without a directly matched marker are contextual review candidates:
+
+- `sys/cam/ata/ata_all.c`
+- `sys/cam/ata/ata_pmp.c`
+- `sys/cam/ata/ata_xpt.c`
+- `sys/cam/cam_compat.c`
+- `sys/cam/cam_iosched.c`
+- `sys/cam/cam_queue.c`
+- `sys/cam/cam_sim.c`
+- `sys/cam/nvme/nvme_all.c`
+- `sys/cam/nvme/nvme_xpt.c`
+- `sys/cam/scsi/scsi_all.c`
+- `sys/cam/scsi/scsi_cd.c`
+- `sys/cam/scsi/scsi_ch.c`
+- `sys/cam/scsi/scsi_enc.c`
+- `sys/cam/scsi/scsi_enc_safte.c`
+- `sys/cam/scsi/scsi_enc_ses.c`
+- `sys/cam/scsi/scsi_pass.c`
+- `sys/cam/scsi/scsi_pt.c`
+- `sys/cam/scsi/scsi_sa.c`
+- `sys/cam/scsi/scsi_sg.c`
+- `sys/cam/scsi/scsi_targ_bh.c`
+- `sys/cam/scsi/scsi_target.c`
+- `sys/cam/scsi/scsi_xpt.c`
+- `sys/cam/scsi/smp_all.c`
+- `sys/dev/nvme/nvme_util.c`
+
+Exact scan: bazel-cam-review-20261101/observability.json. Scope and remaining
+gates: CAM-MODULE-QUALIFICATION.md.
+
+## 2026-11-01: DTrace provider and HyperTrace transport modules
+
+Nine original C inputs retain 72 direct textual SDT/DTRACE/audit/CTR marker
+lines, including provider/control definitions. Matching artifacts establish
+retention, not active probes, successful trace sessions or correct live arguments.
+The source without a direct matched marker is:
+
+- `sys/dev/dttransport/dttransport.c`
+
+Review queue/session lifecycle, enqueue/backpressure, registration/teardown,
+authentication/denial and failure visibility with callers and live HyperTrace
+protocol tests. Qualify provider attach/detach, actual audit/NFS/allocation/
+profile/SDT firing, permissions, VM forwarding and concurrency separately.
+Evidence: bazel-dtrace-providers-review-20261101/observability.json.
+Scope/open gates: DTRACE-PROVIDER-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: ntpd time discipline
+
+Preserved the maintained timediscipline select-start/select-done and
+adjust-start/adjust-done provider, WITH_COVERAGE_DTRACE and static DOF anchor.
+Default/OpenSSL-off native and Make outputs match all four schemas, five
+ordinary/nine is-enabled sites and actual AMD64 patched instruction checks.
+DTrace-off removes the provider/anchor as Make does. Live registration/firing
+is still unqualified. The bounded daemon-source scan found no direct BSM audit
+submission; authentication/control/configuration auditing beyond existing
+logging, and broader packet/refclock instrumentation, remain review gaps rather
+than automatically added probes. See NTPD-QUALIFICATION.md.
+
+## 2026-11-01: NTP family installation aggregation
+
+The combined archive retains byte-identical program/debug/config payloads from
+prior immutable component qualifications. Additional checks on actual installed
+native/Make ntpd binaries validate all four maintained time-discipline schemas
+and five ordinary/nine is-enabled sites after stripping, with separate debug
+symbols and the combined native payload hash. This does not qualify live probe
+registration/firing, broader audit coverage or live service behavior. Pure doc
+inventory/manual transformation adds no runtime instrumentation.
+
+
+## 2026-11-01: core DTrace, FBT, kinst and dtraceall
+
+The original core, ISA/decoder/stack-walk, FBT and instruction-tracing sources
+are carried forward unchanged, including embedded textual C fragments. Actual
+compile inputs, target layout constants, assembly guards and object order
+were checked for all three architectures. The bounded compiled-source marker
+scan retained 862 matching lines in observability.json; absence of a direct
+marker does not imply a defect in decoder, assembly, task queue or aggregator
+code. Review lifecycle/failure visibility, permission denials, stack-walk faults,
+FBT/kinst attach/detach and user-visible audit integration with actual callers.
+No probes or audit calls were added just to satisfy a scan. Runtime module
+loading, actual probe firing, concurrency and complete BSM audit coverage remain
+open. See DTRACE-CORE-MODULES-QUALIFICATION.md and
+bazel-dtrace-core-review-r4-20261101/observability.json for the per-source queue.
+
+## 2026-11-01: ctladm and iscsid
+
+The unchanged source closure and ISCSI/proxy defines are checked against actual
+compile records. No direct DTrace/SDT or explicit BSM submission marker was found
+in this bounded program C/header scan. Review CTL privileged denials and port
+mutations plus iscsid authentication, session lifecycle and failure visibility;
+absence of markers is a review queue, not proof of a defect or complete coverage.
+Only usage paths have run; all eleven installed CTL root cases remain guest-only
+qualification work. See CTL-ISCSID-QUALIFICATION.md.
+
+
+## 2026-11-01: syscall providers, fasttrap and dtrace_test
+
+Native builds retain original native/Linux syscall argument conversion,
+entry/return provider registration, fasttrap ISA and Unicode helper sources,
+and the original DTrace test module. Generated tables match independent original
+generation exactly; scan records preserve compiled source hashes/marker lines
+in bazel-dtrace-remaining-review-r2-20261101/observability.json. No new probe or
+audit call was added merely to satisfy a scan. Review load/unload error handling,
+native/Linux ABI arguments and compatibility calls, fasttrap patch/restore
+faults, permission denials and concurrency in isolated runtime qualification.
+The original kernel test module has only been built, not executed. See
+DTRACE-REMAINING-MODULES-QUALIFICATION.md for the bounded artifact/action gate.
+
+## 2026-11-01: ctld target service
+
+Original C/C++/grammar/lexer sources are unchanged; actual generator/source
+inputs and C/C++/PIE selections were checked. The bounded source scan found no
+direct DTrace/SDT provider or explicit BSM submission. Review configuration and
+privileged port mutations, authentication, session lifecycle and recovery with
+actual service callers. Only the pre-kernel usage path ran; no live-service,
+probe-firing or transitive audit-coverage claim is made. See CTLD-QUALIFICATION.md.
+
+
+## 2026-11-01: complete DTrace directory composition
+
+All maintained directory modules are now included in native per-architecture
+module/debug/install groups. Exact artifacts match their earlier component
+captures across all six plain/CTF profiles; aggregation does not modify sources
+or instrumentation. Earlier source-specific observability review queues remain
+open. No provider registration, probe firing, module lifecycle or kernel-test
+runtime result is inferred from aggregate build success. See
+DTRACE-FAMILY-QUALIFICATION.md.
+
+
+## 2026-11-01: opensolaris compatibility module
+
+Seven unchanged CPU/proc/atomic and SPL utility/allocation sources now have
+native component declarations. The bounded direct marker scan found no matched
+DTrace/SDT/audit/CTR lines in those seven source files. This is a review queue,
+not proof of missing or complete instrumentation: examine source/header and
+caller coverage for CPU/proc lifecycle, allocation failures, synchronization
+and permission/failure visibility with the dependent providers. Do not add probes
+solely to satisfy a marker scan. Actual module lifecycle and live DTrace
+integration remain open. See OPENSOLARIS-MODULE-QUALIFICATION.md and
+bazel-opensolaris-review-r2-20261101/observability.json.
+
+## 2026-11-01: OpenBSD tcpdump and 5BSD glue
+
+All 87 maintained translation units and physical Make source/header closure
+were checked in both INET6_SUPPORT configurations. The bounded compiled-source
+scan found no direct DTrace/SDT provider or explicit BSM submission. Review live
+capture authorization, BPF/drop failures, interface control and privileged
+operation visibility with actual callers. Existing direct 5BSD privsep glue is
+preserved; offline packet tests do not qualify a new isolation design, live
+capture, runtime probes or complete audit coverage. See TCPDUMP-QUALIFICATION.md.
+
+## 2026-11-01: virtiofsd and shared filesystem backend
+
+All nine unchanged production translation units and Make source/header inputs
+are checked. Three original daemon ATF cases retain the real source integration
+and timeout; no direct DTrace/SDT or explicit BSM marker was found by the bounded
+compiled-source scan. Review peer credentials, export/path/handle denials,
+malformed frames, resource limits, disconnect/timeout and state-transfer failures
+with actual callers. Original local daemon tests passing does not establish live
+hypervisor/guest instrumentation, broad audit coverage or performance. See
+VIRTIOFSD-QUALIFICATION.md.
+
+
+## 2026-11-01: ACPI support modules
+
+All sixteen unchanged selected source files have native module candidates.
+The bounded direct DTrace/SDT/audit/CTR marker scan found no matched lines in
+these files; that is not a conclusion about shared-header/caller instrumentation.
+Review ACPI attach/detach, method evaluation and notification failures,
+WMI/backlight/input events, permission checks and APEI error visibility with
+actual hardware and core ACPI callers. Do not add probes solely to satisfy a
+marker scan. No runtime device/fault-injection result is inferred from module
+build success. See ACPI-SUPPORT-MODULES-QUALIFICATION.md and
+bazel-acpi-support-review-r3-20261101/observability.json.
+
+## 2026-11-01: bsdtrace userland
+
+All fourteen production sources and 763 Make source/header prerequisites are
+checked. A bounded direct SDT/DTrace/BSM marker scan found no matches; review
+trace authorization/ioctl errors, target credentials, attach/exec/exit, capture
+and metadata failures and lost/overflowed buffers with HWT/kernel callers.
+Eleven safe CLI/offline cases do not establish live tracing, root boundaries
+or transitive instrumentation. No probes were added solely for a scan. See
+BSDTRACE-QUALIFICATION.md and bazel-bsdtrace-parity-r2-20261101/observability.json.
+
+## 2026-11-01: PCI Ethernet drivers
+
+All 26 production C units across alc/ale/aq/bce/bge/et/jme/msk/nfe/re/rge/sge/vte
+were scanned for direct DTrace/SDT/audit markers; none were found. This does
+not establish missing transitive network/MII instrumentation. Review firmware,
+reset, link transitions, ring allocation/exhaustion, interrupts and error paths
+with network-stack callers. No probes were added solely to satisfy the scan.
+See PCI-ETHERNET-QUALIFICATION.md and the retained compile/observability audit.

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["aarch64/fbt_isa.h", "fbt.h", "riscv/fbt_isa.h", "x86/fbt_isa.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "module_search_headers", hdrs = ["fbt.h"], includes = ["."],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "amd64_module_search_headers", hdrs = ["x86/fbt_isa.h"], includes = ["x86"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "arm64_module_search_headers", hdrs = ["aarch64/fbt_isa.h"], includes = ["aarch64"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "riscv_module_search_headers", hdrs = ["riscv/fbt_isa.h"], includes = ["riscv"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_cddl_module_objects(srcs = ["fbt.c", "x86/fbt_isa.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers"], leading_headers = [":amd64_module_search_headers"])
+bsd_component_selected_objects(name = "ordered_module_objects", group = ":generic_module_ctf",
+    object_names = ["fbt.o", "fbt_isa.o"], visibility = ["//sys/modules/dtrace/fbt:__pkg__"])
+
+cross_cddl_module_objects(arch = "arm64", srcs = ["fbt.c", "aarch64/fbt_isa.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers"], leading_headers = [":arm64_module_search_headers"])
+bsd_component_selected_objects(name = "arm64_ordered_module_objects", group = ":arm64_generic_module_ctf",
+    object_names = ["fbt.o", "fbt_isa.o"], visibility = ["//sys/modules/dtrace/fbt:__pkg__"])
+
+cross_cddl_module_objects(arch = "riscv", srcs = ["fbt.c", "riscv/fbt_isa.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers"], leading_headers = [":riscv_module_search_headers"])
+bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_generic_module_ctf",
+    object_names = ["fbt.o", "fbt_isa.o"], visibility = ["//sys/modules/dtrace/fbt:__pkg__"])

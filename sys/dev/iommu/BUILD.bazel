@@ -2,3 +2,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "kernel_headers", hdrs = ["iommu.h", "iommu_types.h"], includes = ["../.."],
     deps = ["//sys/vm:kernel_headers", "//sys/dev/pci:register_headers"], visibility = ["//sys/kern:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["iommu.h", "iommu_types.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

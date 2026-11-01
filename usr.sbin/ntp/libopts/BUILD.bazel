@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//usr.sbin/ntp:common.bzl", "PLATFORM", "common_defines")
+# Preserve the maintained single-TU AutoOpts amalgamation in both object variants.
+[cc_library(name = "opts" + suffix,
+    srcs = ["//contrib/ntp:sntp/libopts/libopts.c"],
+    textual_hdrs = ["//contrib/ntp:opts_fragments"],
+    deps = ["//usr.sbin/ntp:config_headers", "//contrib/ntp:headers", "//contrib/ntp:opts_headers"],
+    local_defines = common_defines(), copts = ["-fpie", "-DPIC"] if suffix else [],
+    linkstatic = True, target_compatible_with = PLATFORM,
+    visibility = ["//usr.sbin/ntp:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":opts"], visibility = ["//usr.sbin/ntp:__subpackages__"])
+bsd_component_archive(name = "pie_archive", groups = [":opts_pie"], visibility = ["//usr.sbin/ntp:__subpackages__"])

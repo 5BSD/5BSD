@@ -171,3 +171,57 @@ exports_files(["bpf_filter.c", "slcompress.c"], visibility = ["//sys/netgraph:__
 exports_files(["mppcc.c", "mppcd.c"], visibility = ["//sys/netgraph:__pkg__"])
 cc_library(name = "mppc_headers", hdrs = ["mppc.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netgraph:__pkg__"])
+
+cc_library(name = "nfs_module_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"], strip_include_prefix = "/sys",
+    deps = [], visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["vnet.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "virtual_interface_headers", hdrs = ["bpf.h", "bridgestp.h", "dlt.h", "ethernet.h", "ieee8023ad_lacp.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_clone.h", "if_dl.h", "if_lagg.h", "if_llatbl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "infiniband.h", "netisr.h", "pfil.h", "route.h", "vnet.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+amd64_generic_module_objects(name = "if_bridge_module", srcs = ["if_bridge.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_carp_header"])
+[cross_generic_module_objects(arch = arch, name = "if_bridge_module", srcs = ["if_bridge.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_carp"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_epair_module", srcs = ["if_epair.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_rss_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header"])
+[cross_generic_module_objects(arch = arch, name = "if_epair_module", srcs = ["if_epair.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_rss", "opt_inet", "opt_inet6"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_lagg_module", srcs = ["if_lagg.c", "ieee8023ad_lacp.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_ratelimit_header"])
+[cross_generic_module_objects(arch = arch, name = "if_lagg_module", srcs = ["if_lagg.c", "ieee8023ad_lacp.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_kern_tls", "opt_ratelimit"]])
+ for arch in ["arm64", "riscv"]]
+
+amd64_generic_module_objects(name = "if_vlan_module", srcs = ["if_vlan.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_ipsec_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_vlan_header", "//sys/amd64/conf:generic_opt_ratelimit_header"])
+[cross_generic_module_objects(arch = arch, name = "if_vlan_module", srcs = ["if_vlan.c"],
+    deps = ["//sys/net:virtual_interface_headers", "//sys/netinet:virtual_interface_headers", "//sys/netinet6:virtual_interface_headers", "//sys/netlink:virtual_interface_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet", "opt_inet6", "opt_ipsec", "opt_kern_tls", "opt_vlan", "opt_ratelimit"]])
+ for arch in ["arm64", "riscv"]]
+
+cc_library(name = "packet_filter_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])
+
+# Physical source headers: the kernel compilation context supplies -Isys.
+cc_library(name = "wlan_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["vnet.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "netmap.h", "netmap_legacy.h", "rss_config.h", "vnet.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+filegroup(name = "ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
+cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/aq:__pkg__"])

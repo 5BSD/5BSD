@@ -10,3 +10,7 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['bridge.h', 'mmcreg.h'], strip
 
 cc_library(name = "cam_headers", hdrs = ["mmcreg.h", "bridge.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/cam:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["bridge.h", "mmcreg.h"],
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

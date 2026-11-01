@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+cc_library(name = "module_headers", hdrs = ["dn_aqm.h", "dn_aqm_codel.h", "dn_aqm_pie.h", "dn_heap.h", "dn_packet.h", "dn_sched.h", "dn_sched_fq_codel.h", "dn_sched_fq_codel_helper.h", "ip_dn_private.h"], strip_include_prefix = "/sys")
+
+_DUMMYNET_SOURCES = ["ip_dummynet.c", "ip_dn_io.c", "dn_aqm_codel.c", "dn_aqm_pie.c", "dn_heap.c", "dn_sched_fifo.c", "dn_sched_qfq.c", "dn_sched_rr.c", "dn_sched_wf2q.c", "dn_sched_prio.c", "dn_sched_fq_codel.c", "dn_sched_fq_pie.c"]
+_DUMMYNET_DEPS = ["//sys/net:packet_filter_headers", "//sys/netinet:packet_filter_headers", "//sys/netinet/cc:packet_filter_headers", "//sys/netinet6:packet_filter_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":module_headers"]
+amd64_generic_module_objects(srcs = _DUMMYNET_SOURCES, deps = _DUMMYNET_DEPS + ["//sys/amd64/conf:generic_opt_inet6_header"])
+[cross_generic_module_objects(arch = arch, srcs = _DUMMYNET_SOURCES,
+    deps = _DUMMYNET_DEPS + ["//sys/" + arch + "/conf:generic_opt_inet6_header"])
+ for arch in ["arm64", "riscv"]]
+
+cc_library(name = "packet_headers", hdrs = ["dn_packet.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil/openbsd-pf:__pkg__"])

@@ -2168,6 +2168,25 @@ records native makefs default/reduced builds, complete helper installation,
 and all 22 original fstyp cases including guest-only md/newfs and cleanup.
 The standard base group file is an explicit fixture input;
 root-only requirements and original test assertions are retained.
+The complete makefs suite inventory and disposable guest runner are described in
+.Pa tools/build/bazel/MAKEFS-RUNTIME-QUALIFICATION.md .
+Typed ZFS selection retains the original conditional suite installation.
+The maintained harness supports a separate private sparse scratch disk with
+explicit sampled host allocation/free-space bounds; it stages no world tools
+when used independently of its ZFS bootstrap mode.
+Original ATF requirements, timeouts, cleanup and source skips are preserved.
+The maintained permissions test accepts either capitalization of the configured
+shell's permission-denied diagnostic; mode and nonzero-exit checks remain intact.
+The explicit fixture plan may supply checker_profile.timeout_scale, an integer
+from 1 through 20 with default 1.
+The checker records both original ATF deadlines and uniformly scaled effective
+body/cleanup deadlines; it permits no per-case exceptions.
+Scaled emulation results remain distinct from original-timeout qualification.
+Outer adapter/VM budgets are separate recorded harness inputs.
+The complete maintained makefs fixture suite has executed all 63 identities
+under the explicit scale-5 profile: 60 pass, three retain source skips, and
+per-case/final cleanup and normal shutdown pass.
+This does not qualify corrected-fixture execution under original deadlines.
 This fixture does not qualify normal Capsule startup, SSH,
 complete pkgbase images or controlled performance.
 .Pp
@@ -4640,3 +4659,277 @@ with GENERIC's existing compression/encryption defaults.
 Independent comparisons cover plain and CTF/debug artifacts and install metadata.
 Custom MPPC option/source-variable combinations, live traffic and module loading
 remain unqualified; no new frontend option or security policy is introduced.
+
+.Pp
+Seven Bluetooth kernel module/install candidates also cover amd64, ARM64 and
+RISC-V64, including USB transports and virtual HCI.
+Target-generated USB/bus options and the original native USB device-ID generator
+feed existing module, CTF/debug and installation rules.
+Artifact/metadata comparisons and unchanged-profile cache reuse do not establish
+live controller/socket/firmware behavior or complete kernels and module sets.
+
+.Pp
+Native mqueuefs, sem, sysvmsg, sysvsem and sysvshm module/install candidates cover
+amd64, ARM64 and RISC-V64 with actual target option headers and original exports.
+The maintained System V Makefiles also declare their missing vnode interface.
+Artifact and metadata comparisons do not establish IPC runtime/authorization,
+module loading or complete kernels and module sets.
+
+.Pp
+Native autofs, ext2fs, fusefs, msdosfs, msdosfs_iconv, p9fs, tarfs and ufs
+module/install candidates cover amd64, ARM64 and RISC-V64 with real target options
+and original exports.
+Tarfs comparisons cover both values of the existing kernel_zstdio setting.
+The maintained msdosfs_iconv Makefile also declares its missing vnode interface.
+Artifact/metadata checks do not qualify live filesystem behavior, storage
+performance or complete kernels/module sets.
+
+.Pp
+Native NFS client, common, server, locking and nfssvc module/install candidates
+cover amd64, ARM64 and RISC-V64.
+The format-5 build-settings boolean
+.Dq //tools/build/bazel/config:kernel_nfs_root
+selects both actual target NFS_ROOT configuration and the optional diskless
+object group; GENERIC defaults true and comparisons cover both values.
+Kernel NLM RPC C/headers retain their maintained source-controlled contract.
+Artifact checks do not qualify NFS traffic, RPC authentication, lock recovery,
+NFS-root boot or complete kernels/module sets.
+.Pp
+Native krpc, kgssapi and kgssapi_krb5 module/install candidates declare
+amd64, ARM64 and RISC-V64 object groups.
+Kernel RPC generation declares schemas, rpcgen, preprocessor and filter tools;
+stdout generation preserves the maintained header-guard semantics before
+applying the original kernel include filters.
+KOBJ interfaces use the maintained generator.
+Plain artifacts, installed CTF sections, generated inputs and file install
+metadata compare with independent Make references on all three architectures.
+Separate DWARF layout and KOBJ source-provenance comments differ.
+These artifact checks do not establish live TLS/GSS/Kerberos authentication or
+matching-kernel module operation.
+
+.Pp
+Native CARP, bridge, epair, lagg and VLAN module/install candidates cover
+amd64, ARM64 and RISC-V64.
+Declared option headers are extracted from the actual target GENERIC config;
+artifact and file install-metadata comparisons cover plain and CTF/debug modes.
+These checks do not qualify live networking, failover, alternate kernel options
+or complete kernels; separate DWARF layout remains outside the artifact gate.
+
+.Pp
+Native libntp and ntptime candidates use the existing format-5 target list.
+The source-owned build settings
+.Li //usr.sbin/ntp:version_serial
+and
+.Li //usr.sbin/ntp:version_cset
+select an explicit positive version counter and revision token;
+defaults reproduce a fresh Make object tree.
+A private action runs the maintained version script with declared tools.
+Ordinary and PIE internal archives remain separate.
+Default and OpenSSL-disabled artifact/install comparisons and help-only tests
+are qualified; clock-control runtime, remaining NTP programs and complete
+package aggregation remain open.
+
+.Pp
+Native OpenBSD PF and dummynet module/install candidates cover amd64, ARM64
+and RISC-V64 through the existing format-5 kernel profile.
+PF preserves its compatibility-header precedence, distinct object-group warning
+and define policies, and maintained final link order.
+Artifact and file metadata comparisons cover plain and CTF/debug modes; they do
+not qualify live packet filtering, queues, synchronization, probe arguments or
+complete kernels. Separate DWARF layout remains outside this artifact gate.
+
+.Pp
+Native ntpdc, ntpq and private AutoOpts candidates preserve ordinary/PIE object
+variants, optional OpenSSL, per-program version actions and their Make paths.
+Help/version and artifact/install comparisons are qualified; NTP protocol and
+daemon runtime remain open.
+Artifact comparison tooling can select captured outputs with
+.Fl -qualification ,
+.Fl -target
+and
+.Fl -output-suffix ;
+it verifies the receipt's manifest, content hashes and containment and rejects
+ambiguous selections.
+Raw
+.Fl -candidate
+files carry no native qualification binding.
+The regression target
+.Li //tools/build/bazel:qualification_artifacts_test
+uses the normal format-5 target/test lists.
+
+.Pp
+Native wlan, wlan_acl, wlan_amrr, wlan_ccmp, wlan_gcmp, wlan_rssadapt,
+wlan_tkip, wlan_wep and wlan_xauth module/install candidates cover amd64,
+ARM64 and RISC-V64 GENERIC in plain and CTF/debug modes.
+Source ownership, per-file warnings, shared AES objects, generated option headers,
+link order and file metadata have independent Make comparisons.
+Radio/firmware, live wireless behavior, complete kernels and controlled performance
+remain outside this artifact qualification.
+.Pp
+Native NTP libparse and libntpevent archive candidates preserve ordinary and PIE
+objects, maintained event configuration and conditional OpenSSL sources.
+The normal format-5 target lists and OpenSSL setting select these builds;
+no frontend-specific replacement build is required.
+Captured archive symbol/order comparisons and actual compile-option audits
+cover both settings; remaining NTP program/runtime and package aggregation
+gates remain open.
+
+.Pp
+Native nvme, nvd and ahci module/install candidates cover amd64, ARM64 and
+RISC-V64 GENERIC in plain and CTF/debug modes, including ARM64's additional
+AHCI source and ACPI/OFW interfaces. Source/option inputs, warnings, object order,
+probe sections and installed file metadata have independent Make comparisons.
+Live controller/disk I/O, recovery, full kernels and controlled performance remain
+outside this artifact qualification.
+.Pp
+Native ntpdate, ntp-keygen and sntp candidates preserve their maintained version
+ownership, optional OpenSSL, PIE and pkgbase installation metadata.
+Default and OpenSSL-disabled format-5 profiles cover build/install contracts
+and bounded usage/help/version exits through the normal test action.
+Server queries, clock changes, key generation and daemon runtime are not
+qualified by these tests.
+
+.Pp
+Native CAM core/peripheral module and install candidates cover amd64, ARM64
+and RISC-V64 GENERIC in plain and CTF/debug modes. All thirty original C sources,
+generated option inputs including opt_kdtrace.h, warnings, probe sections,
+object order and installed file metadata have independent Make comparisons.
+Live devices, transport/peripheral behavior, recovery, complete kernels and
+controlled performance remain outside this artifact qualification.
+
+.Pp
+Native dttransport, hypertrace, dtaudit, dtmalloc, dtnfscl, profile, prototype
+and sdt module/install candidates cover amd64, ARM64 and RISC-V64 GENERIC in
+plain and CTF/debug modes. CDDL compatibility headers and forced-header order
+are declared inputs; normal generic-helper behavior has an if_epair regression.
+Artifacts, options, export/object order and file metadata have independent Make
+comparisons. Live tracing/transport, core DTrace and remaining modules, complete
+kernels and controlled performance remain outside this qualification.
+.Pp
+Native ntpd candidates retain the original time-discipline DTrace provider,
+static anchor, generated version, refclock sources and package configuration.
+Default, OpenSSL-disabled and DTrace-disabled format-5 profiles cover emitted
+probe/site and build/install contracts plus early help/version exits.
+These checks do not qualify a running time service, live probe firing, clock
+changes or complete NTP package aggregation.
+.Pp
+Native NTP documentation and family installation archives use the maintained
+format-5 target lists.
+The typed
+.Li //tools/build/bazel/config:html
+boolean defaults true; false omits HTML/data files and their directories while
+retaining all nine manuals.
+The existing
+.Li //tools/build/bazel/config:split_manpages
+setting selects separate manual package tags.
+These are entries in the native JSON
+.Li build-settings
+object; this frontend does not offer
+.Fl -with-option
+or
+.Fl -without-option
+CLI switches.
+Independent Make references use those switches on the reference helper.
+The combined installation archive is not a completed native package repository.
+
+.Pp
+Native core DTrace, FBT, kinst and dtraceall component profiles use genuine
+GENERIC target-generated interfaces and assembly constants on amd64, ARM64 and
+RISC-V64, retaining original object order and C-only CTF conversion.
+The format-5 module and install targets qualify captured artifacts against
+independent Make outputs; profiles without runtime test targets do not establish
+module loading, probe firing or a complete native kernel build.
+
+.Pp
+Native ctladm and iscsid program/install targets use existing typed ISCSI
+configuration and the normal format-5 qualification route.
+Safe usage tests run before device or service operations; installed CTL port
+tests retain their original root and kernel-module requirements and require a
+disposable guest for runtime qualification.
+These component checks do not establish working storage sessions or native
+package publication.
+
+.Pp
+Native systrace profiles generate syscall headers and textual tracing C from
+maintained master/configuration files using the original Lua generator API and
+an explicitly declared execution-platform flua tool.
+Native/Linux syscall tables, fasttrap and dtrace_test component qualifications
+cover original build/install contracts, not live syscall tracing or execution
+of the kernel test module.
+
+.Pp
+Native ctld targets declare the original C++ sources, yacc/lex generation and
+installation metadata through normal format-5 inputs.
+The usage test exits before kernel initialization; configuration-test mode
+invokes the kernel and remains part of disposable-guest qualification.
+Component builds do not establish a working CTL service or storage sessions.
+
+.Pp
+The native DTrace directory exposes per-architecture module, debug and install
+manifest groups matching maintained directory membership and order.
+Six plain/CTF component profiles cover fifteen amd64 modules and thirteen each
+on ARM64 and RISC-V64; the parent system graph remains responsible for selecting
+the directory under its CDDL/DTrace configuration.
+Successful family builds and unchanged warm reuse do not establish whole-system
+kernel packaging or runtime tracing.
+
+.Pp
+Native opensolaris compatibility-module profiles retain all maintained sources,
+export-all behavior and the original complete OpenZFS header search order on
+amd64, ARM64 and RISC-V64.
+Artifact/install and physical-header comparisons qualify this component;
+actual module loading and DTrace dependency resolution remain runtime gates.
+
+.Pp
+Native tcpdump uses the maintained OpenBSD sources and 5BSD compatibility glue.
+The existing typed inet6_support setting and normal format-5 inputs select
+program/install/offline-test targets.
+Offline tests consume private PCAP files; they do not qualify live capture,
+interface controls or privilege separation.
+
+.Pp
+Native virtiofsd program/install targets and the original daemon ATF cases use
+normal format-5 qualification inputs.
+The unchanged tests embed production sources and exercise private local sockets;
+they do not establish a complete guest filesystem or execution of the installed
+daemon binary.
+
+.Pp
+Native ACPI support profiles preserve maintained root/directory selection:
+sixteen modules on amd64 and two on ARM64; RISC-V64 does not select this family.
+Artifact, compiler-policy, interface/option and physical-header comparisons
+qualify component build/install behavior, not hardware operation or fault
+injection.
+
+.Pp
+The historical deferred bsdtrace native candidate is preserved in
+.Pa tools/build/bazel/checkpoints/bsdtrace-20261101.patch
+with resume evidence in
+.Pa tools/build/bazel/BSDTRACE-CHECKPOINT.md .
+The saved patch itself is not evidence of a passed qualification.
+Its first attempt rejected a changed SDK tool after host upgrade; a fresh
+snapshot passed hash verification, but the subsequent native build was
+canceled for another requested upgrade checkpoint.
+Revalidate all host-bound SDK and Make-reference inputs before resuming.
+
+.Pp
+The resumed native bsdtrace component now qualifies fourteen explicit GNU C17
+translation units, nine installation records, ELF dependency/hardening metadata,
+both installed debug CRCs and eleven original safe ATF cases.
+All thirteen original cases are installed; the public-header compiler and
+kernel-image default-path cases remain disposable-guest gates.
+See
+.Pa tools/build/bazel/BSDTRACE-QUALIFICATION.md
+for immutable artifact bindings, source-header checks, retained failed attempts
+and live hardware/runtime/performance limits.
+The normal format-5 bazel-test action is used; Make remains production/default.
+
+.Pp
+Native PCI Ethernet profiles cover thirteen maintained amd64 selections and
+ten each on ARM64 and RISC-V64, with plain and CTF installation comparisons,
+original generated device IDs, option/header inputs and object order.
+See
+.Pa tools/build/bazel/PCI-ETHERNET-QUALIFICATION.md
+for exact evidence and resource guards.
+These are component build gates; hardware operation and full system builds
+remain unqualified. The existing format-5 action is used.

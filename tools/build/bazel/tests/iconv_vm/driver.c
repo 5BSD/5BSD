@@ -69,9 +69,19 @@ ATF_TC_BODY(default_paths, tc)
 }
 ATF_TC_CLEANUP(default_paths, tc)
 {
+	struct statfs fs;
+	const char *paths[] = { "/fixture/tmp", "/fixture/dev" };
+	int failed = 0;
 	(void)tc;
-	ATF_REQUIRE_MSG(unmount("/fixture/tmp", 0) == 0, "unmount fixture tmpfs: %s", strerror(errno));
-	ATF_REQUIRE_MSG(unmount("/fixture/dev", 0) == 0, "unmount fixture devfs: %s", strerror(errno));
+	for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+		if (statfs(paths[i], &fs) != 0 ||
+		    (strcmp(fs.f_mntonname, paths[i]) == 0 && unmount(paths[i], 0) != 0)) {
+			fprintf(stderr, "fixture cleanup %s: %s\n", paths[i], strerror(errno));
+			failed = 1;
+		}
+	}
+	if (failed)
+		_exit(1);
 }
 ATF_TP_ADD_TCS(tp)
 {

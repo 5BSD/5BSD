@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":sources.bzl", "LIBNTP_SOURCES", "LIBPARSE_SOURCES", "NTPD_SOURCES")
+_VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
+exports_files(LIBNTP_SOURCES + ["util/ntptime.c", "sources.bzl"], visibility = _VISIBILITY)
+cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
+    textual_hdrs = ["include/ssl_applink.c"],
+    strip_include_prefix = "include", visibility = _VISIBILITY)
+cc_library(name = "isc_headers", hdrs = glob(["libntp/lib/isc/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/include", visibility = _VISIBILITY)
+cc_library(name = "isc_unix_headers", hdrs = glob(["libntp/lib/isc/unix/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/unix/include", visibility = _VISIBILITY)
+cc_library(name = "isc_pthread_headers", hdrs = glob(["libntp/lib/isc/pthreads/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/pthreads/include", visibility = _VISIBILITY)
+cc_library(name = "opts_headers", hdrs = glob(["sntp/libopts/**/*.h"]),
+    strip_include_prefix = "sntp/libopts", visibility = _VISIBILITY)
+
+filegroup(name = "isc_unix_fragments",
+    srcs = ["libntp/lib/isc/unix/" + n for n in ["ifiter_getifaddrs.c", "ifiter_sysctl.c", "ifiter_ioctl.c"]],
+    visibility = _VISIBILITY)
+
+# Private quoted includes live beside maintained translation units.
+cc_library(name = "private_headers",
+    hdrs = ["libntp/lib/isc/task_p.h", "libntp/lib/isc/unix/errno2result.h"],
+    visibility = _VISIBILITY)
+
+# Checked-in AutoOpts amalgamation and client option tables used by Make.
+exports_files(["sntp/libopts/libopts.c"] + [directory + "/" + source
+    for directory, sources in {
+        "ntpdc": ["ntpdc.c", "ntpdc_ops.c", "ntpdc-opts.c"],
+        "ntpq": ["ntpq.c", "ntpq-opts.c", "ntpq-subs.c"],
+    }.items() for source in sources], visibility = _VISIBILITY)
+filegroup(name = "opts_fragments",
+    srcs = glob(["sntp/libopts/**/*.c"], exclude = ["sntp/libopts/libopts.c"]),
+    visibility = _VISIBILITY)
+cc_library(name = "ntpdc_headers", hdrs = glob(["ntpdc/*.h"]), visibility = _VISIBILITY)
+cc_library(name = "ntpq_headers", hdrs = glob(["ntpq/*.h"]), visibility = _VISIBILITY)
+
+exports_files(LIBPARSE_SOURCES, visibility = _VISIBILITY)
+
+# Remaining maintained client sources and their quoted private headers.
+exports_files(["ntpdate/ntpdate.c", "util/ntp-keygen.c", "util/ntp-keygen-opts.c"] +
+    ["sntp/" + n + ".c" for n in ["crypto", "kod_management", "log", "main", "networking", "sntp-opts", "sntp", "utilities"]],
+    visibility = _VISIBILITY)
+cc_library(name = "ntpdate_headers", hdrs = glob(["ntpdate/*.h"]), visibility = _VISIBILITY)
+cc_library(name = "keygen_headers", hdrs = ["util/ntp-keygen-opts.h"], visibility = _VISIBILITY)
+cc_library(name = "sntp_headers", hdrs = glob(["sntp/*.h"]),
+    strip_include_prefix = "sntp", visibility = _VISIBILITY)
+
+exports_files(NTPD_SOURCES, visibility = _VISIBILITY)
+cc_library(name = "ntpd_headers", hdrs = glob(["ntpd/*.h"]),
+    strip_include_prefix = "ntpd", visibility = _VISIBILITY)
+
+# GPSD clock parses JSON by textually including this maintained implementation.
+filegroup(name = "jsmn_fragment", srcs = ["libjsmn/jsmn.c", "libjsmn/jsmn.h"], visibility = _VISIBILITY)
+
+load(":documentation.bzl", "DOC_SOURCES", "MANUAL_TEMPLATES")
+exports_files(DOC_SOURCES + MANUAL_TEMPLATES.values(), visibility = _VISIBILITY)

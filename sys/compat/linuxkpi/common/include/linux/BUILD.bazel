@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["compiler.h", "compiler_attributes.h", "compiler_types.h"],
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["compiler.h", "compiler_attributes.h", "compiler_types.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["compiler.h", "compiler_attributes.h", "compiler_types.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["compiler.h", "compiler_attributes.h", "compiler_types.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])

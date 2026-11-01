@@ -19,7 +19,8 @@ SRCS =	nvme.c			\
 	nvme_if.h		\
 	opt_cam.h		\
 	opt_nvme.h		\
-	pci_if.h
+	pci_if.h		\
+	vnode_if.h
 
 EXPORT_SYMS=	YES
 

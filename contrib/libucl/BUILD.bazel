@@ -16,3 +16,7 @@ exports_files(["COPYING"], visibility = ["//usr.sbin/BSDDevice/tests:__pkg__", "
 exports_files(["lua/lua_ucl.c"], visibility = ["//libexec/flua/libucl:__pkg__"])
 cc_library(name = "lua_headers", hdrs = ["include/lua_ucl.h"], strip_include_prefix = "include",
     visibility = ["//libexec/flua/libucl:__pkg__"])
+
+# Original C++ facade consumed by the CTL configuration reader.
+cc_library(name = "cxx_headers", hdrs = ["include/ucl++.h"], strip_include_prefix = "include",
+    deps = [":headers", "//contrib/llvm-project/libcxx/include:headers"], visibility = ["//usr.sbin/ctld:__pkg__"])

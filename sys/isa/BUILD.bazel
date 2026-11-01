@@ -6,3 +6,10 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(name = "kernel_headers", hdrs = glob(["*.h"]), strip_include_prefix = ".", include_prefix = "isa", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["rtc.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["rtc.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

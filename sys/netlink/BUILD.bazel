@@ -7,3 +7,8 @@ cc_library(name = "truss_headers", hdrs = ['netlink.h'], strip_include_prefix = 
 
 cc_library(name = "tunnel_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "netlink_var.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"], strip_include_prefix = "/sys",
     deps = ["//sys/net:interface_headers", "//sys/net:network_headers", "//sys/netinet:address_headers"], visibility = ["//sys/net:__pkg__"])
+
+cc_library(name = "rpc_provider_headers", hdrs = ["netlink.h", "netlink_ctl.h", "netlink_generic.h", "netlink_message_parser.h", "netlink_message_writer.h"], strip_include_prefix = "/sys", visibility = ["//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__"])
+
+cc_library(name = "virtual_interface_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_generic.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

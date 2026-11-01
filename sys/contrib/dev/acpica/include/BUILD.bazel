@@ -23,3 +23,11 @@ cc_library(name = "kernel_headers", hdrs = [
     "platform/acgcc.h",
     "platform/acgccex.h",
 ], strip_include_prefix = "/sys", visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["acbuffer.h", "accommon.h", "acconfig.h", "acexcep.h", "acglobal.h", "achware.h", "aclocal.h", "acmacros.h", "acnames.h", "acobject.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "acstruct.h", "actables.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "acutils.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])

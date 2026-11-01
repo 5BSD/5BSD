@@ -24,3 +24,6 @@ amd64_generic_module_objects(name = "sha512_module", srcs = ["sha512c.c"], deps 
 
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 amd64_generic_kernel_objects(name = "generic_builtin", srcs = ["sha256c.c", "sha512c.c"], deps = [":module_headers"])
+
+cc_library(name = "packet_filter_headers", hdrs = ["sha256.h", "sha512.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netpfil:__subpackages__"])

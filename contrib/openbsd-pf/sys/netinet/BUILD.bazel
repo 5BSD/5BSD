@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["inet_nat64.c", "in4_cksum.c"], visibility = ["//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "tcpdump_headers", hdrs = ["ip_ether.h", "ip_ipsp.h"], visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])

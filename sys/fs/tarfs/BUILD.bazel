@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_include_prefix = "/sys",
+    visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+amd64_generic_module_objects(name = "tarfs_module", srcs = ["tarfs_io.c", "tarfs_subr.c", "tarfs_vnops.c", "tarfs_vfsops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/geom:kernel_headers", "//sys/contrib/zstd:kernel_headers"] + ["//sys/amd64/conf:generic_opt_tarfs_header", "//sys/amd64/conf:generic_opt_zstdio_header"], copts = ["-Isys/contrib/zstd/lib/freebsd"])
+[cross_generic_module_objects(arch = arch, name = "tarfs_module", srcs = ["tarfs_io.c", "tarfs_subr.c", "tarfs_vnops.c", "tarfs_vfsops.c"],
+    deps = [":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/geom:kernel_headers", "//sys/contrib/zstd:kernel_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_tarfs", "opt_zstdio"]], copts = ["-Isys/contrib/zstd/lib/freebsd"])
+ for arch in ["arm64", "riscv"]]

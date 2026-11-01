@@ -10,3 +10,26 @@ cc_library(name = "vmmapi_headers", hdrs = ['vm.h'],
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['vm.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h"],
+    visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h"],
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+# Source-tree user ABI closure selected by the maintained bsdtrace build.
+cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', 'vm_map.h', 'vm_param.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bsdtrace:__pkg__"])
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

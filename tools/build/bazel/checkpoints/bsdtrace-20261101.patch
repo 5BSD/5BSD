@@ -1,0 +1,90 @@
+diff --git a/contrib/processor-trace/BUILD.bazel b/contrib/processor-trace/BUILD.bazel
+index bc2d74c0db9..ca86dd5d9f0 100644
+--- a/contrib/processor-trace/BUILD.bazel
++++ b/contrib/processor-trace/BUILD.bazel
+@@ -2,3 +2,9 @@
+ load("@rules_cc//cc:defs.bzl", "cc_library")
+ cc_library(name = "headers", hdrs = ['include/posix/threads.h', 'include/pt_compiler.h', 'include/pt_version.h', 'libipt/internal/include/posix/pt_section_posix.h', 'libipt/internal/include/pt_asid.h', 'libipt/internal/include/pt_block_cache.h', 'libipt/internal/include/pt_block_decoder.h', 'libipt/internal/include/pt_config.h', 'libipt/internal/include/pt_cpu.h', 'libipt/internal/include/pt_cpuid.h', 'libipt/internal/include/pt_decoder_function.h', 'libipt/internal/include/pt_encoder.h', 'libipt/internal/include/pt_event_queue.h', 'libipt/internal/include/pt_ild.h', 'libipt/internal/include/pt_image.h', 'libipt/internal/include/pt_image_section_cache.h', 'libipt/internal/include/pt_insn.h', 'libipt/internal/include/pt_insn_decoder.h', 'libipt/internal/include/pt_last_ip.h', 'libipt/internal/include/pt_mapped_section.h', 'libipt/internal/include/pt_msec_cache.h', 'libipt/internal/include/pt_opcodes.h', 'libipt/internal/include/pt_packet.h', 'libipt/internal/include/pt_packet_decoder.h', 'libipt/internal/include/pt_query_decoder.h', 'libipt/internal/include/pt_retstack.h', 'libipt/internal/include/pt_section.h', 'libipt/internal/include/pt_section_file.h', 'libipt/internal/include/pt_sync.h', 'libipt/internal/include/pt_time.h', 'libipt/internal/include/pt_tnt_cache.h', 'libipt/internal/include/pti-disp-defs.h', 'libipt/internal/include/pti-disp.h', 'libipt/internal/include/pti-disp_default.h', 'libipt/internal/include/pti-imm-defs.h', 'libipt/internal/include/pti-imm.h', 'libipt/internal/include/pti-modrm-defs.h', 'libipt/internal/include/pti-modrm.h', 'libipt/internal/include/pti-sib.h'], includes = ["libipt/internal/include/posix", "libipt/internal/include", "include"], visibility = ["//lib/libipt:__pkg__"])
+ exports_files(['libipt/src/pt_asid.c', 'libipt/src/pt_block_cache.c', 'libipt/src/pt_block_decoder.c', 'libipt/src/pt_config.c', 'libipt/src/pt_cpu.c', 'libipt/src/posix/pt_cpuid.c', 'libipt/src/pt_decoder_function.c', 'libipt/src/pt_encoder.c', 'libipt/src/pt_error.c', 'libipt/src/pt_event_queue.c', 'libipt/src/pt_ild.c', 'libipt/src/pt_image_section_cache.c', 'libipt/src/pt_image.c', 'libipt/src/pt_insn_decoder.c', 'libipt/src/pt_insn.c', 'libipt/src/pt_last_ip.c', 'libipt/src/pt_msec_cache.c', 'libipt/src/pt_packet_decoder.c', 'libipt/src/pt_packet.c', 'libipt/src/pt_query_decoder.c', 'libipt/src/pt_retstack.c', 'libipt/src/pt_section_file.c', 'libipt/src/posix/pt_section_posix.c', 'libipt/src/pt_section.c', 'libipt/src/pt_sync.c', 'libipt/src/pt_time.c', 'libipt/src/pt_tnt_cache.c', 'libipt/src/pt_version.c', 'libipt/internal/include/pt_cpu.h', 'libipt/internal/include/pt_last_ip.h', 'libipt/internal/include/pt_time.h', 'include/pt_compiler.h', 'libipt/include/intel-pt.h.in'], visibility = ["//lib/libipt:__pkg__"])
++
++load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
++# Preserve bsdtrace's actual source public-header preference over the library's
++# separately generated installed public header.
++bsd_source_headers(name = "bsdtrace_headers", hdrs = ["libipt/include/intel-pt.h", "libipt/internal/include/pt_cpu.h", "include/pt_compiler.h"],
++    includes = ["libipt/include", "libipt/internal/include", "include"], visibility = ["//usr.sbin/bsdtrace:__pkg__"])
+diff --git a/sys/sys/BUILD.bazel b/sys/sys/BUILD.bazel
+index abf56444b72..9695530c327 100644
+--- a/sys/sys/BUILD.bazel
++++ b/sys/sys/BUILD.bazel
+@@ -81,3 +81,6 @@ cc_library(name = "pmc_user_headers", hdrs = ['_align.h', '_bitset.h', '_callout
+ # HyperTrace ABI; uts/common/sys/dtrace.h includes <sys/hypertrace.h> (Make: -I sys).
+ cc_library(name = "hypertrace_header", hdrs = ["hypertrace.h", "hypertrace_wire.h"], strip_include_prefix = "/sys", visibility = ["//visibility:public"])
+ exports_files(['capsicum.h', 'event.h', 'fcntl.h', 'file.h', 'filedesc.h', 'mbuf.h', 'procctl.h', 'procdesc.h', 'ptrace.h', 'sysent.h', 'un.h', 'user.h', 'wait.h'], visibility = ["//usr.sbin/bsdinstall/tests:__pkg__"])
++
++# Source-tree user ABI closure selected by the maintained bsdtrace build.
++cc_library(name = "bsdtrace_headers", hdrs = ['_align.h', '_bitset.h', '_callout.h', '_clock_id.h', '_cpuset.h', '_decls.h', '_domainset.h', '_endian.h', '_exterr.h', '_iovec.h', '_lock.h', '_maxphys.h', '_mutex.h', '_null.h', '_offsetof.h', '_param.h', '_pctrie.h', '_pthreadtypes.h', '_pv_entry.h', '_rangeset.h', '_seqc.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_smr.h', '_sockaddr_storage.h', '_stdint.h', '_sx.h', '_timespec.h', '_timeval.h', '_types.h', '_ucontext.h', '_uio.h', '_visible.h', '_winsize.h', 'bitcount.h', 'bitset.h', 'callout.h', 'caprights.h', 'cdefs.h', 'condvar.h', 'cpuctl.h', 'cpuset.h', 'elf32.h', 'elf64.h', 'elf_common.h', 'errno.h', 'event.h', 'filedesc.h', 'filio.h', 'hwt.h', 'hwt_record.h', 'ioccom.h', 'ioctl.h', 'kassert.h', 'ktr_class.h', 'limits.h', 'linker.h', 'lock.h', 'lock_profile.h', 'mman.h', 'mutex.h', 'osd.h', 'param.h', 'priority.h', 'proc.h', 'procctl.h', 'queue.h', 'resource.h', 'resourcevar.h', 'rtprio.h', 'select.h', 'seqc.h', 'sigio.h', 'signal.h', 'signalvar.h', 'smr_types.h', 'socket.h', 'sockio.h', 'stat.h', 'sx.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timespec.h', 'ttycom.h', 'types.h', 'ucontext.h', 'ucred.h', 'uio.h', 'unistd.h', 'user.h', 'wait.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bsdtrace:__pkg__"])
+diff --git a/sys/vm/BUILD.bazel b/sys/vm/BUILD.bazel
+index 810b6981e98..8bc1bd4ac43 100644
+--- a/sys/vm/BUILD.bazel
++++ b/sys/vm/BUILD.bazel
+@@ -27,3 +27,6 @@ bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["_vm_phys.h", "_v
+ bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+ bsd_source_headers(name = "acpi_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
++
++# Source-tree user ABI closure selected by the maintained bsdtrace build.
++cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', 'vm_map.h', 'vm_param.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bsdtrace:__pkg__"])
+diff --git a/usr.sbin/bsdtrace/BUILD.bazel b/usr.sbin/bsdtrace/BUILD.bazel
+new file mode 100644
+index 00000000000..5fea84d3bfd
+--- /dev/null
++++ b/usr.sbin/bsdtrace/BUILD.bazel
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: BSD-2-Clause
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++_SOURCES = ["bsdtrace.c", "cmd_decode.c", "cmd_exec.c", "cmd_list.c", "cmd_trace.c", "decode.c", "dwarf.c", "elf.c", "format.c", "hwt.c", "meta.c", "resolve.c", "symbols.c", "trace.c"]
++cc_library(name = "headers", hdrs = ["bsdtrace.h"], strip_include_prefix = ".",
++    deps = ["//sys/sys:bsdtrace_headers", "//sys/vm:bsdtrace_headers", "//sys/bsm:kernel_headers", "//contrib/processor-trace:bsdtrace_headers"])
++cc_binary(name = "bsdtrace", srcs = _SOURCES, deps = [":headers", "//lib/libipt:ipt", "//lib/libelf:elf", "//lib/libdwarf:dwarf", "//lib/libz:z", "//lib/msun:m"],
++    dynamic_deps = ["//lib/libipt:ipt_shared", "//lib/libelf:elf_shared", "//lib/libdwarf:dwarf_shared", "//lib/libz:z_shared", "//lib/msun:m_shared"],
++    copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
++    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
++cc_library(name = "ptwrite_header", hdrs = ["bsdtrace_ptwrite.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
++load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
++bsd_install_file(name = "install_ptwrite", src = "bsdtrace_ptwrite.h", destination = "/usr/include/bsdtrace_ptwrite.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdtrace", "dev"])
++load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
++utility_installation(name = "install_manifest", program = "bsdtrace", manual = "bsdtrace.8", man_section = "8", package = "bsdtrace", bindir = "/usr/sbin", extra_entries = [":install_ptwrite"])
++load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
++bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/bsdtrace/tests:install_manifest"], "//conditions:default": []}),
++    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdtrace","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} |
++        select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/usr.sbin/bsdtrace": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdtrace-tests"]}'}, "//conditions:default": {}}),
++    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
++    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
++    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
++    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+diff --git a/usr.sbin/bsdtrace/tests/BUILD.bazel b/usr.sbin/bsdtrace/tests/BUILD.bazel
+new file mode 100644
+index 00000000000..871d1037953
+--- /dev/null
++++ b/usr.sbin/bsdtrace/tests/BUILD.bazel
+@@ -0,0 +1,20 @@
++# SPDX-License-Identifier: BSD-2-Clause
++load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
++load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
++bsd_script_wrapper(name = "bsdtrace_test", body = "bsdtrace_test.sh", interpreter = "/usr/libexec/atf-sh",
++    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
++bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["bsdtrace_test"], interfaces = {"bsdtrace_test": "atf"})
++[bsd_install_file(name = "install_" + name, src = ":" + source, destination = "/usr/tests/usr.sbin/bsdtrace/" + dest,
++    owner = "root", group = "wheel", mode = mode, install_tags = ["package=bsdtrace-tests"])
++ for name, source, dest, mode in [("script", "bsdtrace_test", "bsdtrace_test", "0555"), ("kyuafile", "kyuafile", "Kyuafile", "0444")]]
++bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_kyuafile"], visibility = ["//usr.sbin/bsdtrace:__pkg__"])
++load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
++# Install all thirteen cases unchanged. Two installed-path cases need a guest:
++# ptwrite_header_compiles and meta_unparsable_warns (/boot/kernel/kernel).
++_NATIVE_CASES = ["usage_surface", "list_runs", "decode_missing_files", "decode_empty_trace", "decode_corrupt_meta", "decode_truncated_pt", "exec_requires_command", "trace_requires_pid", "option_validation", "decode_capture_env", "decode_extended_meta"]
++_TOOLS = ["//usr.sbin/bsdtrace:bsdtrace", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/dd:dd", "//usr.bin/tr:tr", "//usr.bin/grep:grep", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/sed:sed", "//bin/rm:rm", "//bin/test:test", "//usr.bin/true:true"]
++_LIBS = ["//lib/libipt:ipt_shared", "//lib/libelf:elf_shared", "//lib/libdwarf:dwarf_shared", "//lib/libz:z_shared", "//lib/msun:m_shared", "//lib/libthr:thr_shared", "//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared", "//lib/libregex:regex_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"]
++[bsd_atf_test(name = "native_" + case, body = "bsdtrace_test.sh", case_name = case,
++    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner", runtime_bin = _TOOLS, runtime_lib = _LIBS,
++    size = "small", visibility = ["//visibility:public"]) for case in _NATIVE_CASES]
++test_suite(name = "tests", tests = [":native_" + case for case in _NATIVE_CASES], visibility = ["//visibility:public"])

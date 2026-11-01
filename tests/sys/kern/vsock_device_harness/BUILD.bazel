@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+# One original harness program; other harness programs remain migration work.
+_SHARED = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libthr:thr_shared"]
+cc_binary(name = "virtiofsd_daemon_test", srcs = ["virtiofsd_daemon_test.c"],
+    deps = ["//usr.sbin/virtiofsd:test_inputs", "//usr.sbin/bhyve:virtiofsd_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_CASES = ["pending_limit_validation", "silent_authenticated_client_times_out", "foreground_daemon_is_sandboxed_event_driven_and_cleans"]
+[bsd_atf_test(name = case, case_name = case, body = ":virtiofsd_daemon_test", interface = "program",
+    runtime_lib = _SHARED + ["//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _CASES]
+test_suite(name = "virtiofsd_tests", tests = [":" + case for case in _CASES], visibility = ["//visibility:public"])

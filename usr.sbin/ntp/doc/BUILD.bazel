@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//contrib/ntp:documentation.bzl", "DOC_INPUTS", "DOC_DIRECTORIES", "MANUAL_TEMPLATES")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_compress", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_version_filter.bzl", "bsd_version_filter")
+_HTML = "//tools/build/bazel/config:html_enabled"
+[bsd_version_filter(name = "source_" + name, template = "//contrib/ntp:" + source,
+    output = name, arguments = ["/^\\.Dt /s/5mdoc/5/" if name.endswith(".5") else "/^\\.Dt /s/1[a-z-][a-z-]*/8/"],
+    sed = "//usr.bin/sed:sed", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:sed_runtime"])
+ for name, source in MANUAL_TEMPLATES.items()]
+_MANUALS = list(MANUAL_TEMPLATES) + ["ntpdate.8", "ntptime.8"]
+[bsd_compress(name = "compressed_" + name,
+    src = ":source_" + name if name in MANUAL_TEMPLATES else name, output = name + ".gz",
+    arguments = ["-cn"], compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+ for name in _MANUALS]
+[bsd_install_file(name = "manual_" + name, src = ":compressed_" + name,
+    destination = "/usr/share/man/man" + name[-1] + "/" + name + ".gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=ntp-man"], "//conditions:default": ["package=ntp"]}))
+ for name in _MANUALS]
+[bsd_install_file(name = "html_" + destination, src = "//contrib/ntp:" + source,
+    destination = "/usr/share/doc/ntp/" + destination,
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=ntp"])
+ for destination, source in DOC_INPUTS.items()]
+bsd_install_manifest(name = "install_manifest", entries = [":manual_" + name for name in _MANUALS] +
+    select({_HTML: [":html_" + destination for destination in DOC_INPUTS], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = select({_HTML: DOC_DIRECTORIES, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])

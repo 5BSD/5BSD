@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# All maintained Lua modules are action inputs; no ambient Lua search path.
+filegroup(name = "modules", srcs = glob(["**/*.lua"]), visibility = ["//tools/build/bazel:__pkg__"])
+exports_files(["config.lua"], visibility = ["//tools/build/bazel:__pkg__"])

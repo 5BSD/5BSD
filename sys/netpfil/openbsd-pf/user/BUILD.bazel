@@ -7,3 +7,8 @@ cc_library(name = "util_headers", hdrs = ["util.h"], strip_include_prefix = ".",
 
 cc_library(name = "pfctl_headers", hdrs = ["openbsd_compat.h", "util.h", "sys/refcnt.h", "sys/timeout.h"], strip_include_prefix = ".", visibility = ["//sbin/pfctl:__subpackages__"])
 exports_files(["pfctl_jail.c", "pfctl_ether.c"], visibility = ["//sbin/pfctl:__subpackages__"])
+
+# Physical wrappers used by the OpenBSD tcpdump compatibility include order.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tcpdump_headers", hdrs = ["openbsd_compat.h", "sys/refcnt.h", "sys/timeout.h"], includes = ["."],
+    visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])

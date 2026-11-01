@@ -9,7 +9,7 @@ filegroup(name = "backlight_if_header_file", srcs = [":backlight_if"], output_gr
 filegroup(name = "backlight_if_source", srcs = [":backlight_if"], output_group = "source")
 cc_library(name = "kernel_headers", hdrs = ["backlight.h"], strip_include_prefix = "/sys")
 cc_library(name = "interface_headers", hdrs = [":backlight_if_header_file"],
-    strip_include_prefix = "backlight_if.generated")
+    strip_include_prefix = "backlight_if.generated", visibility = ["//sys/dev/acpi_support:__pkg__"])
 
 amd64_generic_module_objects(name = "backlight_driver", srcs = ["backlight.c"],
     deps = [":kernel_headers", ":interface_headers", "//sys/amd64/conf:generic_opt_platform_header",
@@ -30,3 +30,7 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     copts = ["-fmacro-prefix-map=$(execpath :backlight_if_source)=backlight_if.c",
         "-fdebug-prefix-map=$(execpath :backlight_if_source)=backlight_if.c"])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["backlight.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
