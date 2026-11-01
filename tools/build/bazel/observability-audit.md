@@ -9426,3 +9426,14 @@ userland macro/warning reconciliation remains a separate completion gate.
 The pre-existing dmagent_enabled selector's extra CRYPT condition is also an
 explicit follow-up, outside this source-correct mailwrapper selection graph.
 See MAILWRAPPER-QUALIFICATION.md and the retained final artifact/compile audits.
+
+## 2026-11-01: dtracedctl
+
+The unchanged C source has no direct DTrace/SDT/BSM hooks. It retains stderr
+parser diagnostics and the real deadline-bounded daemon IO/wire helpers. Both
+plain/full-LTO profiles retain Make runtime sections; parser-only tests return
+before daemon connection. Inspect authorization, connection/handshake failures,
+cleanup/stats acknowledgements, malformed peers and deadline errors in isolated
+daemon integration; no live-probe or logging-delivery claim follows from the
+parser cases. No instrumentation was removed or added just for this scan.
+See DTRACEDCTL-QUALIFICATION.md and actual compile/link/ELF audits.

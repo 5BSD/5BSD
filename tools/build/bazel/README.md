@@ -47336,3 +47336,12 @@ compile matches Make's warning/macro settings and 50 prerequisite hashes.
 See [mailwrapper evidence](MAILWRAPPER-QUALIFICATION.md) for preserved initial
 policy/hash issues, exact conditional ownership and privileged/MTA/runtime
 limits. This uses the normal format-5 frontend; Make remains production.
+
+### Native dtracedctl (2026-11-01)
+
+Plain and full-LTO profiles pass native/Make ELF contracts, ten installation
+records, exact manuals, four debug CRC checks and six pre-connect test methods
+per profile. Actual compiler/header/link-tool inputs and linked LLVM bitcode
+are checked. See [dtracedctl evidence](DTRACEDCTL-QUALIFICATION.md) for immutable
+bindings, three DWARF differences and the separate guest daemon/IPC gates.
+Typed format-5 configuration uses `dtrace_optimized`; Make remains production.

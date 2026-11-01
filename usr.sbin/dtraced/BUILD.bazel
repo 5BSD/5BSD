@@ -5,3 +5,8 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = glob(["*.h"]), includes = ["."],
     visibility = ["//cddl/lib/libdtrace:__pkg__", "//cddl/usr.sbin/dtrace:__pkg__", "//cddl/usr.sbin/bsdinstruments:__subpackages__", "//usr.sbin/bhyve:__pkg__"])
+
+# The control client's actual public wire/IO closure; keep unrelated daemon
+# headers out of its compilation context.
+cc_library(name = "ctl_headers", hdrs = ["dtraced.h", "dtraced_io.h", "dtraced_wire.h"],
+    strip_include_prefix = ".", visibility = ["//usr.sbin/dtracedctl:__pkg__"])

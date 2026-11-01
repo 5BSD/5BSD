@@ -104,9 +104,12 @@ installation records, including actual conditional MTA configuration/aliases,
 four program ELF contracts, eight debug CRC checks and four unprivileged
 dispatch/error cases. The corrected compiler action matches Make warnings,
 macros and 50 prerequisite hashes; see MAILWRAPPER-QUALIFICATION.md. The next
-inspected ordinary source gap is dtracedctl: its actual WARNS=3 profile, shared
-dtraced protocol headers and conditional DTRACE_OPTIMIZED/LTO need ownership
-and independent qualification. It has not been converted by this review.
+reviewed component, dtracedctl, now qualifies plain/full-LTO builds with actual
+WARNS=3 macro/header/link-tool policy, ten exact installation records, matching
+runtime sections and six safe pre-connect test methods per profile. Genuine
+linked bitcode is captured; only three DWARF sections differ. Installed daemon
+protocol/runtime remains open. See DTRACEDCTL-QUALIFICATION.md. This component
+result does not establish completion of the remaining inventory.
 
 Parent-export review found no directory-specific exports/SUBDIR_ENV in
 usr.sbin/Makefile, usr.sbin/Makefile.inc or base-accounts/test Makefiles. The
