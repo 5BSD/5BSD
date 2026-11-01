@@ -27,6 +27,8 @@
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
 
 #define	SYSEXT_MAX_ALLOW	256	/* allow-list capacity */
+#define	SYSEXT_MAX_DRIVER_CLIENTS 8	/* driver_clients capacity */
+#define	SYSEXT_CLIENT_MAX	64	/* switchboard label bound */
 #define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
 /*
  * Bundle-relative config filename, opened via the switchboard-delivered Config
@@ -49,6 +51,15 @@ struct sysext_config {
 	 * driver devmatch(8) selects), unless an administrator denied it.
 	 */
 	bool	device_drivers;
+	/*
+	 * driver_clients: switchboard client labels (service_identity
+	 * client_label) admitted for the hardware-driver class only.  Such a
+	 * client never loads an allowed_extensions entry; with device_drivers
+	 * false it loads nothing.  devd's lasting grant (switchboard
+	 * service-authority.ucl) is the intended member.
+	 */
+	char	driver_clients[SYSEXT_MAX_DRIVER_CLIENTS][SYSEXT_CLIENT_MAX];
+	size_t	ndriver_clients;
 };
 
 struct sysext_policy;
@@ -104,6 +115,7 @@ void sysext_test_policy_commit_abandon(struct sysext_policy *);
 bool	valid_module_name(const char *name);
 void	sysext_config_defaults(struct sysext_config *cfg);
 bool	extension_allowed(const struct sysext_config *cfg, const char *name);
+bool	sysext_driver_client(const struct sysext_config *cfg, const char *client);
 int	sysext_config_load(struct sysext_config *cfg, const char *path);
 int	sysext_config_load_fd(struct sysext_config *cfg, int fd);
 

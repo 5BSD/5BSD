@@ -20,6 +20,16 @@
 # refused.  Set it to false to require an explicit entry for every driver.
 #
 device_drivers = true;
+#
+# driver_clients names switchboard client labels admitted for the hardware
+# driver class ONLY: such a client never loads an allowed_extensions entry and,
+# with device_drivers = false, loads nothing.  "devd" is the lasting grant
+# switchboard gives devd(8) (/Capabilities/Config/switchboard/
+# service-authority.ucl) so a device attached after boot gets its driver
+# through devmatch(8).  A root login shell holds no grant and cannot reach this
+# service; kldload(2) itself stays refused once the gate is claimed.
+#
+driver_clients = ["devd"];
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack

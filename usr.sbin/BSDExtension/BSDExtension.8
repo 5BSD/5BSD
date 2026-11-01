@@ -137,6 +137,26 @@ applies at once; without the directory the class permits nothing.
 Service modules, filesystems and modules under
 .Pa /boot/modules
 need an allow-list entry.
+.Pp
+A client whose switchboard label the policy lists in
+.Cm driver_clients
+is admitted for the hardware-driver class only: it never loads or queries an
+allow-listed module, and with
+.Cm device_drivers
+false it loads nothing.
+The label comes from the requester's kernel-stamped authority, never from the
+request.
+The packaged policy lists
+.Dq devd ,
+the lasting grant
+.Xr switchboard 8
+gives
+.Xr devd 8
+.Pq Pa service-authority.ucl ,
+so that a device attached after boot gets its driver through
+.Xr devmatch 8 .
+Each request is logged with its client label, for example
+.Dq ENSURE if_urndis (client devd, hardware driver): loaded .
 INFO reports a class driver as allowed; boot activation
 .Pq Cm enable
 still needs an explicit
@@ -240,7 +260,8 @@ capability bundle shipping
 Required allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array specifies the complete base list of named
 modules; the optional boolean device_drivers enables the hardware-driver
-class described above.
+class described above; the optional driver_clients array names up to eight
+client labels limited to that class.
 The executable contains no default module grants.
 Missing or malformed startup policy is fatal; a failed reload preserves the
 last accepted policy.

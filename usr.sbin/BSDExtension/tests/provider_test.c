@@ -419,6 +419,40 @@ ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
 }
 
 /*
+ * A driver-only client (driver_clients, devd's lasting grant) never uses the
+ * allow-list: the same allow-listed name an ordinary client may Stat and Ensure
+ * is refused with EPERM.  The fixture's switchboard label is "test.client".
+ */
+ATF_TC(provider_driver_client_skips_allowlist);
+ATF_TC_HEAD(provider_driver_client_skips_allowlist, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A driver_clients label cannot load allow-listed non-driver modules");
+}
+ATF_TC_BODY(provider_driver_client_skips_allowlist, tc)
+{
+	struct sysext_config cfg;
+	struct fixture fixture;
+	int loaded = -1;
+
+	config_allow_one(&cfg, "kernel");
+	strlcpy(cfg.driver_clients[0], "test.client", SYSEXT_CLIENT_MAX);
+	cfg.ndriver_clients = 1;
+	fixture_create_cfg(&fixture, &cfg);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_stat(fixture.client, "kernel",
+	    &loaded) == -1);
+	ATF_CHECK_ERRNO(EPERM, extensioncmp_load(fixture.client, "kernel") == -1);
+	fixture_destroy(&fixture);
+
+	/* Another label keeps the allow-list. */
+	strlcpy(cfg.driver_clients[0], "devd", SYSEXT_CLIENT_MAX);
+	fixture_create_cfg(&fixture, &cfg);
+	ATF_CHECK_EQ(0, extensioncmp_stat(fixture.client, "kernel", &loaded));
+	ATF_CHECK_EQ(1, loaded);
+	fixture_destroy(&fixture);
+}
+
+/*
  * THE Stat security regression: a Stat for a module that is not on the
  * allow-list is refused with EPERM before any query -- never answered with a
  * loaded/not-loaded result.  A client may Stat only a module it could Ensure,
@@ -587,6 +621,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_stat_reports_loaded_module);
 	ATF_TP_ADD_TC(tp, provider_stat_reports_unloaded_module);
 	ATF_TP_ADD_TC(tp, provider_stat_denies_non_allowlisted_module);
+	ATF_TP_ADD_TC(tp, provider_driver_client_skips_allowlist);
 
 	ATF_TP_ADD_TC(tp, provider_list_returns_allowlist);
 	ATF_TP_ADD_TC(tp, provider_list_empty_allowlist);

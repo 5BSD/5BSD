@@ -189,6 +189,43 @@ extension_allowed(const struct sysext_config *cfg, const char *name)
 }
 
 /*
+ * True iff client is admitted for the hardware-driver class only.  The label is
+ * switchboard's, derived from the requester's kernel-stamped authority, never
+ * from the request payload.
+ */
+SYSEXT_STATIC bool
+sysext_driver_client(const struct sysext_config *cfg, const char *client)
+{
+	size_t i;
+
+	if (client == NULL)
+		return (false);
+	for (i = 0; i < cfg->ndriver_clients; i++)
+		if (strcmp(cfg->driver_clients[i], client) == 0)
+			return (true);
+	return (false);
+}
+
+/* A switchboard client label: [A-Za-z0-9._-], not "." or "..". */
+static bool
+valid_client_label(const char *label, size_t len)
+{
+	size_t i;
+
+	if (len == 0 || len >= SYSEXT_CLIENT_MAX || strcmp(label, ".") == 0 ||
+	    strcmp(label, "..") == 0)
+		return (false);
+	for (i = 0; i < len; i++) {
+		char c = label[i];
+
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-'))
+			return (false);
+	}
+	return (true);
+}
+
+/*
  * Hardware-driver class.  kldxref(8) writes linker.hints as an int version
  * followed by records: an int-aligned int length (covering the type and
  * data), an int type, then data.  An MDT_MODULE record carries the module
@@ -309,12 +346,13 @@ sysext_driver_module(int dirfd, const char *name)
  * denies the name.  *driver reports a class grant (for logging).
  */
 static bool
-request_allowed(const struct sysext_config *cfg, const char *name,
-    bool *driver)
+request_allowed(const struct sysext_config *cfg, const char *client,
+    const char *name, bool *driver)
 {
 
 	*driver = false;
-	if (extension_allowed(cfg, name))
+	/* A driver-only client (driver_clients) never uses the allow-list. */
+	if (!sysext_driver_client(cfg, client) && extension_allowed(cfg, name))
 		return (true);
 	if (!cfg->device_drivers || active_policy == NULL ||
 	    sysext_policy_denied(active_policy, name))
@@ -333,7 +371,7 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 {
 	struct sysext_config candidate;
 	ucl_object_t *root;
-	const ucl_object_t *arr, *ent, *drivers;
+	const ucl_object_t *arr, *ent, *drivers, *clients;
 	ucl_object_iter_t it = NULL;
 	const char *name;
 	size_t i;
@@ -345,16 +383,39 @@ sysext_config_parse_fd(struct sysext_config *cfg, int fd)
 	if (root == NULL)
 		return (-1);
 	memset(&candidate, 0, sizeof(candidate));
-	if (ucl_object_type(root) != UCL_OBJECT || root->len < 1 || root->len > 2)
+	if (ucl_object_type(root) != UCL_OBJECT || root->len < 1 || root->len > 3)
 		goto done;
 	/* Optional: the hardware-driver class (see struct sysext_config). */
 	drivers = ucl_object_lookup(root, "device_drivers");
-	if (root->len == 2 && (drivers == NULL || drivers->next != NULL ||
+	if (drivers != NULL && (drivers->next != NULL ||
 	    drivers->keylen != strlen("device_drivers") ||
 	    ucl_object_type(drivers) != UCL_BOOLEAN))
 		goto done;
-	if (root->len == 1 && drivers != NULL)
+	/* Optional: clients limited to the hardware-driver class. */
+	clients = ucl_object_lookup(root, "driver_clients");
+	if (clients != NULL && (clients->next != NULL ||
+	    clients->keylen != strlen("driver_clients") ||
+	    ucl_object_type(clients) != UCL_ARRAY))
 		goto done;
+	/* Every key is one of the three, each at most once: no unknown key. */
+	if (root->len != 1 + (drivers != NULL) + (clients != NULL))
+		goto done;
+	it = NULL;
+	while (clients != NULL &&
+	    (ent = ucl_object_iterate(clients, &it, true)) != NULL) {
+		if (candidate.ndriver_clients == SYSEXT_MAX_DRIVER_CLIENTS ||
+		    ucl_object_type(ent) != UCL_STRING ||
+		    (name = ucl_object_tostring(ent)) == NULL ||
+		    strlen(name) != ent->len ||
+		    !valid_client_label(name, ent->len))
+			goto done;
+		for (i = 0; i < candidate.ndriver_clients; i++)
+			if (strcmp(candidate.driver_clients[i], name) == 0)
+				goto done;
+		strlcpy(candidate.driver_clients[candidate.ndriver_clients++],
+		    name, SYSEXT_CLIENT_MAX);
+	}
+	it = NULL;
 	arr = ucl_object_lookup(root, "allowed_extensions");
 	if (arr == NULL || arr->next != NULL ||
 	    arr->keylen != strlen("allowed_extensions") ||
@@ -617,7 +678,7 @@ sysext_handle(const struct sysext_client *identity,
 		 */
 		if ((irp->flags & SYSEXT_STATE_ALLOWED) == 0 &&
 		    sysext_policy_snapshot(active_policy, &cfg) == 0 &&
-		    request_allowed(&cfg, irp->name, &driver))
+		    request_allowed(&cfg, NULL, irp->name, &driver))
 			irp->flags |= SYSEXT_STATE_ALLOWED;
 		/* Do not disclose loaded state for a denied module. */
 		if ((irp->flags & SYSEXT_STATE_ALLOWED) != 0) {
@@ -703,12 +764,14 @@ sysext_handle(const struct sysext_client *identity,
 	 * non-allow-listed name is EPERM rather than a loaded/not-loaded answer —
 	 * denial leaks no information about the module set.
 	 */
-	if (!request_allowed(&cfg, rq->name, &driver)) {
+	if (!request_allowed(&cfg, client, rq->name, &driver)) {
 		rp->status = EPERM;
 		syslog(LOG_WARNING,
-		    "%s %s (client %s) -> DENIED (not on allow-list)",
+		    "%s %s (client %s) -> DENIED (%s)",
 		    rq->op == SYSEXT_OP_STAT ? "STAT" : "ENSURE", rq->name,
-		    client);
+		    client, sysext_driver_client(&cfg, client) ?
+		    "client may load hardware drivers only" :
+		    "not on allow-list");
 		return (SYSEXT_REPLY_BASIC);
 	}
 
