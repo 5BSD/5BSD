@@ -5055,3 +5055,14 @@ See
 .Pa tools/build/bazel/ELF-NEEDED-ORDER-QUALIFICATION.md
 for the default bhyve link correction, fresh Make reference, installation
 checks, and remaining section, configuration and runtime gates.
+.Pp
+Native component qualification now includes cxgbetool and mlx5tool through the
+existing format-5 target and test lists.
+Their package manifests preserve the original driver-interface headers,
+textually included register tables, manuals and package tags.
+The pre-device argument tests run as an ordinary user and do not qualify NIC
+operations or firmware changes.
+See
+.Pa tools/build/bazel/NIC-TOOLS-QUALIFICATION.md
+for independent Make, immutable ELF, installation, object and input checks and
+remaining hardware, configuration and cross-userland gates.

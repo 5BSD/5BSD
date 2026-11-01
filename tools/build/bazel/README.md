@@ -47382,3 +47382,13 @@ libraries and 86 installed paths/four CRCs; physical runtime-section parity,
 other configurations and VM behavior remain open. Historical report-only
 ordering differences in the otel/protobuf/dtrace probes now require correction
 before those probes pass this gate.
+
+### NIC utilities native candidate (2026-11-01)
+
+[NIC-TOOLS-QUALIFICATION.md](NIC-TOOLS-QUALIFICATION.md) records cxgbetool's ten
+native C entries and mlx5tool's one, exact source-owned interface/header and
+warning policies, 384 prerequisite hash checks, both strict ELF contracts, ten
+install records/four debug CRCs and eight non-root pre-device test methods.
+All eleven raw object text sections match Make. The documented cxgbetool
+source-filename/relocation layout difference and real hardware, cross-userland,
+other configurations, pkg creation and performance gates remain open.

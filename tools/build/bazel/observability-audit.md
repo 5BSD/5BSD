@@ -9464,3 +9464,13 @@ Review existing shared probes and disabled/enabled overhead before adding hot
 packet-path instrumentation. No live probe firing, USB hardware operation or
 new event coverage is claimed. Scan hashes and lines are retained in
 /usr/obj/usr/src/bazel-usb-ethernet-review-r3-20261101/observability.json.
+
+### cxgbetool / mlx5tool (2026-11-01)
+
+The eleven unchanged production C entries have no DTrace/SDT provider, FIDL
+code generation or explicit BSM audit calls. Native ownership retains all
+original C/table/header inputs; no probes were removed. Review audit coverage
+of privileged register/filter/firmware/reset/dump operations as a future policy
+item. Only eight source-reviewed pre-device argument methods ran, never those
+privileged operations. See NIC-TOOLS-QUALIFICATION.md for actual compile/object,
+installation and hardware-runtime limits; no new tracing/audit policy is claimed.

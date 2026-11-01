@@ -630,3 +630,6 @@ bsd_source_headers(
         "//sys/dev/usb/net:__pkg__"
     ],
 )
+
+# Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
+cc_library(name = "cxgbetool_headers", hdrs = ['bpf.h', 'dlt.h', 'ethernet.h', 'sff8472.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])

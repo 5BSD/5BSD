@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+# Maintained Make WARNS=2 policy, including Clang exceptions.
+_WARNINGS = ['-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter']
+cc_library(name = "local_headers", hdrs = ["tcb_common.h"], textual_hdrs = ["reg_defs_t4.c", "reg_defs_t4vf.c", "reg_defs_t5.c", "reg_defs_t6.c", "reg_defs_t7.c"], strip_include_prefix = ".")
+cc_binary(name = "cxgbetool", srcs = ['cxgbetool.c', 'tcb_common.c', 'tcbinfot4.c', 'tcbshowt4.c', 'tcbinfot5.c', 'tcbshowt5.c', 'tcbinfot6.c', 'tcbshowt6.c', 'tcbinfot7.c', 'tcbshowt7.c'],
+    deps = [':local_headers', '//sys/dev/cxgbe:tool_headers', '//sys/sys:cxgbetool_headers', '//sys/net:cxgbetool_headers', '//sys/netinet:cxgbetool_headers', '//sys/netinet6:cxgbetool_headers', '//lib/libpcap:pcap'],
+    dynamic_deps = ["//lib/libpcap:pcap_shared"],
+    copts = ["-std=gnu17", "-fpie", "-DPIC", "-fPIE", "-pipe", "-fno-common", "-Qunused-arguments", "-Wno-format-zero-length", "-Wsystem-headers"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}) + _WARNINGS,
+    linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "cxgbetool", manual = "cxgbetool.8", package = "cxgbe-tools", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=cxgbe-tools","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+_RDMA_RUNTIME = select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed/libibverbs:ibverbs_shared", "//lib/ofed/libbnxtre:bnxtre_shared", "//lib/ofed/libmlx5:mlx5_shared", "//lib/libthr:thr_shared"], "//conditions:default": []})
+bsd_python_test(name = "predevice_test", src = "predevice_test.py", data = [':cxgbetool', '//lib/libc:c_shared', '//lib/libsys:sys_shared', '//lib/libpcap:pcap_shared'] + _RDMA_RUNTIME)

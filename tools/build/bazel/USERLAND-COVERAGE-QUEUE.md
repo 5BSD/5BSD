@@ -143,3 +143,13 @@ Existing format-5 component qualification and the read-only maintained inventory
 APIs cover this refresh without frontend C/backend changes. Resource reserves
 must remain enforced; no receipt/evidence, boot environment or snapshot was
 deleted by this userland work to make a test pass.
+
+The cxgbetool/mlx5tool cohort now owns eleven maintained C translation units and
+all original included register tables, package installation and manuals. Eight
+pre-device test methods, strict dynamic metadata, ten install records/four CRCs,
+384 declared prerequisite checks and eleven exact raw object text sections pass;
+see NIC-TOOLS-QUALIFICATION.md for the retained cxgbetool filename/layout
+qualification limit and hardware/cross/configuration gates. This closes these
+two local source-owner gaps, not the configured world inventory. The earlier
+inventory is a dated snapshot: switchboard-nss must be re-surveyed after merged
+NSS source changes, rather than recreated solely because an old queue names it.
