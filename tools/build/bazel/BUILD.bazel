@@ -111,3 +111,16 @@ bsd_python_test(
     src = "source-settings-test.py",
     data = ["source_graph.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py"],
 )
+
+# Input-boundary checks for the isolated native iconv VM fixture assembler.
+bsd_python_test(
+    name = "iconv_runtime_fixture_test",
+    src = "iconv-runtime-fixture-test.py",
+    data = ["iconv-runtime-fixture.py"],
+)
+
+bsd_python_test(
+    name = "daemon_extra_root_test",
+    src = "//tools/test/daemon-runtime:extra_root_test.py",
+    data = ["//tools/test/daemon-runtime:extra_root.py"],
+)

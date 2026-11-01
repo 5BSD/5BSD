@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Expose the maintained fixture-boundary regression without migrating PID 1.
+exports_files(["extra_root.py", "extra_root_test.py"], visibility = ["//tools/build/bazel:__pkg__"])

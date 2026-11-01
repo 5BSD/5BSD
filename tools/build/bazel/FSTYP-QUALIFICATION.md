@@ -31,20 +31,16 @@ copy_file rule. Sparse temporary files remain ordinary test data; no memory
 filesystem, host block device, pool, module loading or host service change is
 needed by these four cases.
 
-The other eighteen cases remain runtime gates:
+The follow-up [iconv runtime qualification](ICONV-RUNTIME-QUALIFICATION.md)
+executes sixteen original cases in a fresh bounded QEMU guest, including the
+four above and twelve additional file/label cases at installed paths. All pass
+with native iconv modules and complete conversion data; no host data fallback is
+used. This resolves those label-conversion gates for the tested amd64 fixture.
 
-- Five need native makefs, which has only header exports at this point.
-- Twelve additional file-based cases use `-l`; every label request preloads
-  iconv conversions, including when recognizing a non-NTFS filesystem. Native
-  iconv modules/data are not yet declared, matching the existing libc iconv
-  runtime qualification gap. Host conversion resources are not substituted.
-- One root-only case creates an md device and runs newfs. Its requirements and
-  cleanup remain in the installed suite, without execution on the host.
-
-These boundaries are explicit; four passing cases would not qualify the full
-suite or Unicode label conversion. Cross compilation, non-little-endian test
-selection and complete system/pkgbase test products remain unqualified; current
-native library and SDK coverage limits the evidence to amd64.
+Six cases remain runtime gates: five need native makefs, and one root-only case
+creates an md device and runs newfs. Their original requirements and cleanup
+remain installed. Cross compilation, non-little-endian selection, live device
+behavior and complete system/pkgbase test products remain unqualified.
 
 ## Build/install evidence
 
@@ -105,6 +101,6 @@ fallback. Later results must reference their own completed receipts.
 No direct DTrace provider, SDT probe or explicit audit submission was found in
 these recognizer source files. Existing native dependency instrumentation stays
 in the graph. Device access, Capsicum behavior against real devices, ZFS label
-recognition, decoding of Unicode labels, live tracing, audit coverage and
-performance are not established by component build/install checks. The four
-safe passing ATF cases only qualify their actual file-image/error behavior.
+recognition, live tracing, audit coverage and performance remain open. The
+subsequent VM adds concrete file-image/Unicode-label conversion evidence for
+sixteen original cases, as described in ICONV-RUNTIME-QUALIFICATION.md.

@@ -61,8 +61,11 @@ CTF/debug installed sections pass the scoped Make comparisons; loading and
 runtime qualification remain open. See [module evidence](CROSS-MODULE-QUALIFICATION.md).
 
 **fstyp** now has native ZFS/iconv options and complete 22-case suite installation.
-Four actual ATF cases pass; native iconv default-path resources, makefs and the
-privileged device case remain qualification work. See [fstyp evidence](FSTYP-QUALIFICATION.md).
+Sixteen original cases now pass in a bounded disposable guest with native iconv
+modules and complete default-path data; makefs and the privileged device case
+remain open. See [fstyp evidence](FSTYP-QUALIFICATION.md) and
+[iconv runtime evidence](ICONV-RUNTIME-QUALIFICATION.md) for exact artifact
+comparisons, explicit fixture inputs, bootstrap boundaries and resource limits.
 
 **ARM64/RISC-V facility modules** now add backlight, firmware, CUSE and cryptodev
 on both architectures: all eight no-debug files match Make completely; enabled

@@ -2147,6 +2147,24 @@ runs maintained native amd64 qualification and explicitly selected
 cross-target kernel artifact qualification.
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
+.Pp
+Native iconv and fstyp default-path qualification uses the normal format-5
+.Cm bazel-test
+artifact/test selection plus the explicit-input preparer
+.Pa tools/build/bazel/iconv-runtime-fixture.py .
+The preparer requires a completed qualification and a versioned JSON plan naming
+native archives, artifact destinations, kernel, boot inputs and fixture helpers.
+It stages a disposable guest fixture under /usr/obj;
+it does not install on the host or publish an OS image.
+The maintained daemon-runtime QEMU harness supplies the disk-backed guest and
+resource bounds.
+SDK Python/loader bootstrap inputs remain separately identified.
+See
+.Pa tools/build/bazel/ICONV-RUNTIME-QUALIFICATION.md
+for input schema, retained independent comparisons and actual runtime evidence.
+This fixture does not qualify normal Capsule startup, SSH,
+complete pkgbase images or controlled performance.
+.Pp
 .Fl bazel Ar path
 selects the executable; the default is
 .Pa /usr/local/bin/bazel ,

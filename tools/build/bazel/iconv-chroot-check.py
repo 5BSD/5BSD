@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 
 
 def main():
@@ -16,6 +17,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--uid', type=int, required=True)
     parser.add_argument('--gid', type=int, required=True)
+    parser.add_argument('--fstyp-tests', action='store_true',
+                        help='run the sixteen maintained fstyp cases without makefs or device access')
     args = parser.parse_args()
     if os.geteuid() != 0 or args.uid <= 0 or args.gid <= 0:
         parser.error('root is required for chroot; test uid/gid must be nonzero')
@@ -24,6 +27,9 @@ def main():
         parser.error('a private prepared root is required')
     inventory = json.loads(args.manifest.read_text())
     for name, digest in inventory['files'].items():
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts or str(relative) != name:
+            raise ValueError('invalid fixture inventory path: ' + name)
         path = (root / name).resolve(strict=True)
         if not path.is_relative_to(root) or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError('fixture content mismatch: ' + name)
@@ -31,16 +37,29 @@ def main():
               '-G', str(args.gid), str(root)]
     results = []
 
-    def run(name, command, data=b'', expected=None, failure=False):
-        result = subprocess.run(prefix + command, input=data, capture_output=True,
-                                env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}, timeout=30)
-        passed = (result.returncode != 0 if failure else result.returncode == 0)
+    def run(name, command, data=b'', expected=None, failure=False, directory=None):
+        if directory is not None:
+            command = ['/bin/sh', '-c', 'cd "$1" && shift && exec "$@"',
+                       'iconv-runtime', directory] + command
+        try:
+            result = subprocess.run(prefix + command, input=data, capture_output=True,
+                                    env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}, timeout=30)
+        except subprocess.TimeoutExpired as error:
+            result = subprocess.CompletedProcess(prefix + command, 124,
+                                                 error.stdout or b'', error.stderr or b'timeout')
+        except OSError as error:
+            result = subprocess.CompletedProcess(prefix + command, 125, b'', str(error).encode())
+        passed = (result.returncode == 1 if failure else result.returncode == 0)
         if expected is not None:
             passed = passed and result.stdout == expected
         results.append({'name': name, 'passed': passed, 'status': result.returncode,
                         'stderr': result.stderr.decode(errors='replace')})
         return result
 
+    if args.fstyp_tests:
+        run('child uid', ['/usr/bin/id', '-u'], expected=f'{args.uid}\n'.encode())
+        run('child gid', ['/usr/bin/id', '-g'], expected=f'{args.gid}\n'.encode())
+        run('child supplementary groups', ['/usr/bin/id', '-G'], expected=f'{args.gid}\n'.encode())
     run('iconvctl_trivialp_test', ['/tests/iconvctl_test', '-r', '/tmp/iconvctl.result',
                                  'iconvctl_trivialp_test'])
     result_file = root / 'tmp/iconvctl.result'
@@ -61,8 +80,26 @@ def main():
     run('unknown encoding rejected', ['/usr/bin/iconv', '-f', 'NO_SUCH_ENCODING', '-t', 'UTF-8'], failure=True)
     result = run('encoding listing', ['/usr/bin/iconv', '-l'])
     results[-1]['passed'] = results[-1]['passed'] and b'UTF-8' in result.stdout.upper()
+    if args.fstyp_tests:
+        cases = ['befs', 'dir', 'empty', 'exfat', 'exfat_label', 'ext2', 'ext3', 'ext4',
+                 'ext4_label', 'fat12', 'fat16', 'fat32', 'fat32_label', 'ntfs', 'ntfs_with_label', 'zeros']
+        for case in cases:
+            work = root / 'tmp' / ('fstyp-' + case)
+            work.mkdir(mode=0o700)
+            os.chown(work, args.uid, args.gid)
+            result = run('fstyp:' + case,
+                         ['/usr/tests/usr.sbin/fstyp/fstyp_test', '-s', '/usr/tests/usr.sbin/fstyp',
+                          '-r', 'atf.result', case], directory='/tmp/' + work.name)
+            result_file = work / 'atf.result'
+            results[-1]['passed'] = (results[-1]['passed'] and result_file.exists()
+                                      and result_file.read_text().strip() == 'passed')
+            results[-1]['stdout'] = result.stdout.decode(errors='replace')
+            results[-1]['atf_result'] = result_file.read_text() if result_file.exists() else None
+            # Match Kyua's work-directory cleanup; bound live image storage to one case.
+            if results[-1]['passed']:
+                shutil.rmtree(work)
     report = {'passed': all(item['passed'] for item in results), 'checks': results,
-              'limitations': ['host kernel and loader', 'selected conversion cases, not every encoding']}
+              'limitations': ['kernel and loader supplied by the execution harness', 'selected conversion cases, not every encoding']}
     args.output.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': report['passed'], 'checks': len(results), 'report': str(args.output)}))
     return 0 if report['passed'] else 1
