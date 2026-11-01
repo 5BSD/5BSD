@@ -8873,3 +8873,13 @@ and error paths against existing tracing/audit coverage; absence in these leaf
 sources alone is not a basis to add or declare adequate instrumentation. Matching-
 kernel forwarding/control/failure/security behavior, event delivery and overhead
 remain open. See [Netgraph evidence](CROSS-NETGRAPH-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 TCP and virtual-interface modules (2026-11-01)
+
+The bounded nineteen-C-source scan records three SDT schemas in if_gif.c and
+three in if_gre.c. Other scanned sources have no direct provider/schema/audit
+marker; header-defined and TCP/network/core observation remain separate. No C,
+probe or audit path changed. Exact no-debug bytes and installed enabled code,
+CTF, relocations and SDT match Make. Matching-kernel traffic/control/error/security
+behavior, live probes, audit delivery and TCP/congestion/resource performance
+remain open. See [network evidence](CROSS-NETWORK-QUALIFICATION.md).

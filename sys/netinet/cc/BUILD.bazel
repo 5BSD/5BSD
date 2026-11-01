@@ -36,3 +36,19 @@ _CC_MODULES = [
     )
     for name, deps in _CC_MODULES
 ]
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+[
+    cross_generic_module_objects(
+        arch = arch,
+        name = name + "_module",
+        srcs = [name + ".c"],
+        deps = [
+            "//sys/" + arch + "/conf:generic_opt_kern_tls_header",
+            "//sys/contrib/ck:kernel_headers",
+            "//sys/vm:kernel_headers",
+        ] + deps,
+    )
+    for arch in ["arm64", "riscv"]
+    for name, deps in _CC_MODULES
+]

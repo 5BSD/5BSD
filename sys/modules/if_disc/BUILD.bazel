@@ -2,3 +2,11 @@
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "if_disc", objects = ["//sys/net:if_disc_module_object_files"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "if_disc",
+    objects = ["//sys/net:" + arch + "_if_disc_module_object_files"],
+) for arch in ["arm64", "riscv"]]

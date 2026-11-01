@@ -1,3 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 amd64_generic_module(module = "cc_cubic", objects = ["//sys/netinet/cc:cc_cubic_module_object_files"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "cc_cubic",
+    objects = ["//sys/netinet/cc:" + arch + "_cc_cubic_module_object_files"],
+) for arch in ["arm64", "riscv"]]
