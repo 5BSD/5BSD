@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Audit Make-selected kernel module leaves against native Bazel descriptions."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+import os
 import json
 from pathlib import Path
 import re
@@ -34,7 +36,7 @@ def resolve_subdir(modules_root, parent, child):
     candidate = (modules_root / parent / child).resolve(strict=False)
     root = Path(modules_root).resolve(strict=True)
     if not candidate.is_relative_to(root):
-        raise ValueError("SUBDIR escapes sys/modules: " + child)
+        raise ValueError("SUBDIR escapes sys/modules: " + str(child))
     return candidate.relative_to(root)
 
 
@@ -50,7 +52,7 @@ def module_description(src, relative, kmod):
     }
 
 
-def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, env_conf):
+def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, env_conf, jobs=1):
     src = Path(src).resolve(strict=True)
     modules_root = src / "sys/modules"
     kernel_build_dir = Path(kernel_build_dir).resolve(strict=True)
@@ -59,50 +61,72 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
     visited = set()
     records = []
     errors = []
-    while queue:
-        relative = queue.pop()
-        if relative in visited:
-            continue
-        visited.add(relative)
-        directory = modules_root / relative
-        if not directory.is_relative_to(modules_root) or not (directory / "Makefile").is_file():
-            errors.append({"dir": relative.as_posix(), "error": "selected SUBDIR has no Makefile"})
-            continue
+    if jobs < 1:
+        raise ValueError("positive query job count required")
+
+    def query(relative):
         command = [
-            make, "-C", str(directory), "SRCTOP=" + str(src),
+            make, "-C", str(modules_root / relative), "SRCTOP=" + str(src),
             "TARGET=" + target, "TARGET_ARCH=" + target_arch,
+            "MACHINE=" + target, "MACHINE_ARCH=" + target_arch,
             "KERNBUILDDIR=" + str(kernel_build_dir), "KERN_OPTS=" + options,
             "SRCCONF=" + srconf, "__MAKE_CONF=" + make_conf,
             "SRC_ENV_CONF=" + env_conf, "-V", "SUBDIR", "-V", "KMOD",
+            "-V", "MACHINE", "-V", "MACHINE_ARCH",
         ]
-        result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode:
-            errors.append({"dir": relative.as_posix(), "error": result.stderr.strip()[-1000:]})
-            continue
-        try:
-            children, kmod = parse_make_query(result.stdout)
-        except ValueError as error:
-            errors.append({"dir": relative.as_posix(), "error": str(error)})
-            continue
-        if kmod:
-            records.append(module_description(src, relative, kmod))
-        for child in children:
-            child_path = Path(child)
-            if child_path.is_absolute():
-                errors.append({"dir": relative.as_posix(), "error": "absolute SUBDIR entry: " + child})
-                continue
-            try:
-                queue.append(resolve_subdir(modules_root, relative, child_path))
-            except ValueError as error:
-                errors.append({"dir": relative.as_posix(), "error": str(error)})
+        return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # Each Make query is read-only and independent once its parent has selected
+    # the directory. Keep traversal, duplicate detection and diagnostics here;
+    # workers never mutate the queue or substitute cached selection results.
+    with ThreadPoolExecutor(max_workers=jobs) as workers:
+        while queue:
+            batch = []
+            for relative in sorted(queue):
+                if relative in visited:
+                    continue
+                visited.add(relative)
+                directory = modules_root / relative
+                if not directory.is_relative_to(modules_root) or not (directory / "Makefile").is_file():
+                    errors.append({"dir": relative.as_posix(), "error": "selected SUBDIR has no Makefile"})
+                    continue
+                batch.append(relative)
+            queue = []
+            for relative, result in zip(batch, workers.map(query, batch)):
+                if result.returncode:
+                    errors.append({"dir": relative.as_posix(), "error": result.stderr.strip()[-1000:]})
+                    continue
+                try:
+                    lines = result.stdout.splitlines()
+                    if len(lines) != 4:
+                        raise ValueError("expected SUBDIR, KMOD, MACHINE and MACHINE_ARCH output")
+                    if lines[2:] != [target, target_arch]:
+                        raise ValueError("queried machine/architecture differs from requested target")
+                    children, kmod = parse_make_query("\n".join(lines[:2]) + "\n")
+                except ValueError as error:
+                    errors.append({"dir": relative.as_posix(), "error": str(error)})
+                    continue
+                if kmod:
+                    records.append(module_description(src, relative, kmod))
+                for child in children:
+                    child_path = Path(child)
+                    if child_path.is_absolute():
+                        errors.append({"dir": relative.as_posix(), "error": "absolute SUBDIR entry: " + child})
+                        continue
+                    try:
+                        queue.append(resolve_subdir(modules_root, relative, child_path))
+                    except ValueError as error:
+                        errors.append({"dir": relative.as_posix(), "error": str(error)})
+    errors.sort(key=lambda record: (record["dir"], record["error"]))
     records.sort(key=lambda record: (record["dir"], record["kmod"]))
     makefiles = [p for p in modules_root.rglob("Makefile") if p.is_file() and p.parent != modules_root]
     direct_targets = sum(record["direct_module_macro"] for record in records)
     build_files = sum(record["build_file"] for record in records)
     return {
         "format": 1,
+        "query_jobs": jobs,
         "status": "complete" if not errors else "incomplete",
-        "scope": "recursive Make SUBDIR selection; direct Bazel module macro presence is a source inventory, not build or runtime qualification",
+        "scope": "architecture-checked recursive Make SUBDIR selection; amd64-specific Bazel module macro presence is a source inventory, not target build or runtime qualification",
         "target": target,
         "target_arch": target_arch,
         "kernel_build_dir": str(kernel_build_dir),
@@ -130,10 +154,14 @@ def main():
     parser.add_argument("--make-conf", default="/dev/null")
     parser.add_argument("--source-env-conf", default="/dev/null")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                        help="maximum independent read-only Make queries (default: logical CPU count)")
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
     report = audit(args.src, args.make, args.target, args.target_arch,
                    args.kernel_build_dir, args.src_conf, args.make_conf,
-                   args.source_env_conf)
+                   args.source_env_conf, args.jobs)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

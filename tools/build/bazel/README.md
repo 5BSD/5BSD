@@ -5,9 +5,8 @@ its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
-**Current status (2026-11-01):** the recursive Make inventory counts 729
-selected amd64 GENERIC kernel modules; the latest declaration refresh finds 106
-with direct Bazel module declarations against that recorded selection.
+**Current status (2026-11-01):** the architecture-checked Make inventory counts 729
+selected amd64 GENERIC kernel modules, with 106 direct Bazel module declarations.
 See [VirtIO qualification](VIRTIO-QUALIFICATION.md) for the fourteen new modules
 and the limits of that count.
 All 17 converted Netgraph modules currently pass `build-bsd` compilation and
@@ -24,6 +23,13 @@ have also been corrected and their full and installed policy payloads verified.
 Other CAPIMAGE_MANIFEST consumers still need this integration as their production
 binary targets are migrated. BSDNotify daemon installation now also passes. These checks
 verify unsigned inputs; signing and runtime trust qualification remain separate.
+
+**syslogd** now has native program and complete installation candidates for
+normal and local-only configurations. A constructor-only source omission was
+caught and fixed with native alwayslink attributes; the maintained source also
+now builds with both IP families disabled. See [component evidence](SYSLOGD-QUALIFICATION.md)
+for tracing/install parity, the constructor regression and open runtime/debug
+and required-Casper configuration-policy gates.
 
 **notifyctl** now has native program, maintained test and installation targets.
 Its eleven ATF cases pass; see [component evidence](NOTIFYCTL-QUALIFICATION.md)
@@ -136,6 +142,12 @@ it cannot prove operation of every physical device. Record hardware-dependent
 runtime gaps explicitly. Keep architecture results separate until all required
 products pass. This scope clarification changes no frontend input or backend
 semantics; `build-bsd` remains on its existing experimental Bazel path.
+
+ARM64 and RISC-V GENERIC configuration generation now has complete literal
+Make-reference parity for 734 generated files across normal/debug variants.
+This is host-executed configuration generation, not cross-compiled kernel or
+module coverage. See [cross-architecture foundations](CROSS-ARCHITECTURE-QUALIFICATION.md)
+for evidence, the corrected architecture-aware inventory audit and open gates.
 
 ### Ownership and public interface
 
