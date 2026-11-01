@@ -45470,3 +45470,41 @@ are substituted and no source-change class is silently ignored.
 Frontend review: rejected wiring has been removed; the discovery utility is
 not a new build input or user-facing option, so no frontend/backend change is
 required by this committed diagnostic step.
+
+### Type-aware repository directory invalidation (2026-11-01)
+
+The 9.3.1 port candidate changes `RepoRecordedInput.Dirents` fingerprints to
+include each entry's name and type. This preserves directory-membership watching
+without watching every entry's contents. The maintained port patch is
+`devel/bazel9/files/patch-src_main_java_com_google_devtools_build_lib_rules_repository_RepoRecordedInput.java`
+in `/usr/obj/5BSD-ports`; a dry-run against the pristine 9.3.1 source applies
+cleanly.
+
+The maintained Bazel port recipe built the patched source on the native host:
+5,611 actions completed, including 4,820 local actions, in 1,229.891 seconds.
+The output is under
+`/usr/obj/usr/src/bazel931-bootstrap-query-20261025/work/usr/obj/5BSD-ports/devel/bazel9/work/bazel9-9.3.1/output/bazel`.
+The standalone `bazel-dirent-invalidation-test.py` then passed five stages:
+initial regular-file discovery and same-name transitions from file to
+directory, directory to symlink, symlink to file, and file to symlink. Against
+the unpatched `/usr/local/bin/bazel` 9.3.1, the same test failed at
+file-to-directory and retained the stale `is_dir: false` result. This
+demonstrates that the test detects the original defect and that the port
+candidate fixes it. The test only
+exercises repository re-evaluation; it does not prove installer inventory
+parity or full-system incremental correctness.
+
+The test discovers the generated repository under Bazel's output tree rather
+than assuming an `external/<repo-name>` path, since Bzlmod canonical repository
+names are implementation-generated. Five transition results and stage elapsed
+times are available from `result.json` in
+`/usr/obj/usr/src/bazel-dirent-invalidation-test-20261101-r2/`. The negative
+control failure is captured in
+`/usr/obj/usr/src/bazel-dirent-invalidation-baseline-20261101-r2/unpatched-control.log`.
+
+This is a Bazel executable/port fix. `build-bsd` already accepts an explicit
+Bazel 9 executable for `bazel-test`; its inputs and outputs do not change, so
+no frontend or manual change is required. The locally installed Bazel remains
+unpatched and was used only as a negative regression control. The corrected
+port candidate still needs integration into the installed build environment
+before repository-based installer inventory generation can rely on it.
