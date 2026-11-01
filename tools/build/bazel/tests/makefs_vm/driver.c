@@ -97,7 +97,8 @@ ATF_TC_BODY(full_suite, tc)
 	char *const checker[] = { "/runtime/python", "-B", "/runtime/makefs-runtime-check.py",
 	    "--root", "/fixture", "--manifest", "/runtime/fixture-manifest.json",
 	    "--inventory", "/fixture/tests/runtime_suite_inventory.json",
-	    "--output", "/tmp/makefs-runtime-results.json", NULL };
+	    "--output", "/tmp/makefs-runtime-results.json",
+	    "--profile", "/runtime/checker-profile.json", NULL };
 	/* Print retained detail even on a failing checker. */
 	pid_t child = fork();
 	int status;

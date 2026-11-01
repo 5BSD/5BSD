@@ -76,6 +76,8 @@ comparisons, explicit fixture inputs, bootstrap boundaries and resource limits.
 The complete 63-case makefs inventory, original source skips, reduced settings
 and bounded guest qualification are recorded in
 [makefs runtime evidence](MAKEFS-RUNTIME-QUALIFICATION.md).
+Explicit emulation deadline profiles preserve original timeout metadata and
+report scaled results separately; the original-scale full-suite gate remains open.
 
 **ARM64/RISC-V facility modules** now add backlight, firmware, CUSE and cryptodev
 on both architectures: all eight no-debug files match Make completely; enabled

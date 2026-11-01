@@ -57,7 +57,7 @@ cache or between-sample peaks, and do not establish a performance comparison.
 ## Native build and reduced configuration
 
 The final full-helper receipt is
-/usr/obj/usr/src/bazel-makefs-suite-qualification-r10-20261101/receipt.json:
+/usr/obj/usr/src/bazel-makefs-suite-qualification-r11-20261101/receipt.json:
 176 selected targets and 27 passing Bazel test targets. Test results can be
 cached; selected targets are not a count of newly migrated programs. Focused
 regressions cover inventory/source reconciliation, required-program rejection,
@@ -97,12 +97,56 @@ All serial, failure and resource reports remain under the distinct
 bazel-makefs-suite-vm-r1/r2/r3-20261101 directories. Earlier failed fixtures do
 not count as runtime qualification.
 
-The current VM r4 uses fixture r5/native r8. It has already recorded two FFS
-version-case failures; source review identified the missing dumpfs helper.
-A complete direct review of all four scripts and their common helper also found
-the ZFS empty_dir rmdir prerequisite. Native r10 includes both at their normal
-paths and preflight now requires both. No nested Python tool is used by these
-scripts. Fixture r6 is prepared for the next run. The active r4 ZFS suite and
-its eventual retained stderr must finish before any full-suite result is claimed.
-At this commit the complete runtime gate is explicitly OPEN. Earlier source-skip
-and successful individual-case observations do not override a failing suite.
+VM r4 used fixture r5/native r8 at the original timeout scale. It attempted
+37 identities: 31 passes, three source skips and three failures. Both FFS
+version cases failed with actual dumpfs exec status 127; their normal cleanup
+restored baseline. A direct review of all four scripts and the common helper
+also identified the rmdir prerequisite for ZFS empty_dir. Native r10 includes
+both helpers and preflight requires both; no script/assertion was changed.
+
+Compression completed several algorithm iterations, then hit its original
+600-second limit while importing the gzip-2 pool. This was not a random-input
+stall. Original cleanup returned zero but left the pool and three dataset
+mounts: the test writes its pool-name file only after import returns. The
+independent inventory gate correctly rejected that leaked state and refused
+the remaining 26 identities. Final scratch unmount failed as busy. Shutdown
+suspended the partially imported pool after syncing buffers. Only this failed
+QEMU was manually terminated; manual-termination.json records the exact PID,
+command, reason and signal. The harness's forced_termination field is false
+because it did not initiate that external termination. This is a failed
+qualification, not a successful shutdown/cleanup result.
+
+The retained result is bazel-makefs-suite-vm-r4-20261101/result.json, alongside
+the complete extracted makefs-runtime-results.json and serial log. Observations
+are 1022.955 seconds, 782.79 QEMU CPU seconds, 1296977920 maximum sampled RSS
+bytes and 15864320 maximum sampled scratch allocation bytes. No controlled
+performance comparison is inferred.
+
+## Explicit emulation deadline profile
+
+The preparer's optional checker_profile contains only integer timeout_scale,
+validated from 1 through 20, default 1. It is part of the hashed explicit plan,
+copied to checker-profile.json and recorded in fixture.json. The shared validator
+implementation is also a hashed bootstrap input. Unknown fields, booleans,
+strings, fractions and case-specific exceptions are rejected. Every original
+ATF timeout remains in metadata; the checker records its source limit, uniformly
+scaled effective limit and each actual invocation's deadline. The same factor
+applies to every body and declared cleanup, without changing test contents or
+failure/skip/contamination rules.
+
+The next TCG profile declares factor 5. It does not supersede the original-scale
+FAIL or establish timing/performance qualification at factor 1. The outer adapter
+uses the maintained --atf-case-budget tests/iconv_vm_driver:full_suite=7200
+input, preserving its original 3600-second metadata; the separate VM limit is
+8000 seconds. RAM/CPU/disk bounds remain unchanged. Failure records are emitted
+in full immediately after cleanup/inventory checks with explicit delimiters and
+truncated=false, as well as in the final complete report.
+
+Bhyve exists on this host, but /dev/vmmctl is root:vmm mode 0660 and this user's
+groups do not include vmm; /dev/vmm is absent. No permission, group or device
+changes were made. Accelerated bhyve execution would require an operator with
+the OS's VMM/device access (normally root) to run a reviewed maintained harness;
+no privileged host setup or accelerated qualification is claimed here.
+
+At this commit the complete runtime gate remains OPEN. A separately labeled
+scaled-emulation result will be recorded only after actual execution terminates.

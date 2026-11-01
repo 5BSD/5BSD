@@ -11,6 +11,7 @@ import re
 import shutil
 import signal
 import subprocess
+import runtime_profile
 
 
 def listing(text):
@@ -66,12 +67,20 @@ def require_programs(root, names):
     return paths
 
 
+def failure_report(record):
+    """Preserve complete failing output before any later guest/kernel failure."""
+    print('MAKEFS_CASE_FAILURE_REPORT_BEGIN', flush=True)
+    print(json.dumps({'truncated': False, 'record': record}), flush=True)
+    print('MAKEFS_CASE_FAILURE_REPORT_END', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ['root', 'manifest', 'inventory', 'output']:
+    for name in ['root', 'manifest', 'inventory', 'output', 'profile']:
         parser.add_argument('--'+name, type=Path, required=True)
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
+    profile = runtime_profile.validate(json.loads(args.profile.read_text()))
     if os.geteuid() != 0 or root == Path('/'):
         parser.error('a private disposable guest root and guest root privileges are required')
     for name, digest in json.loads(args.manifest.read_text())['files'].items():
@@ -84,7 +93,7 @@ def main():
     if inventory.get('format') != 1 or not inventory.get('suites'):
         raise ValueError('native suite inventory format1 required')
     prefix = ['/usr/sbin/chroot', '-u', '0', '-g', '0', '-G', '0', str(root)]
-    report = {'status':'RUNNING','cases':[], 'suite_listings':{}, 'setup':{}, 'limitations':[
+    report = {'status':'RUNNING','checker_profile':profile,'cases':[], 'suite_listings':{}, 'setup':{}, 'limitations':[
         'explicit execution kernel/module bootstrap, not native kernel qualification',
         'disposable fixture PID1, not normal Capsule startup or complete pkgbase system',
         'resource samples are not controlled performance comparisons']}
@@ -108,10 +117,10 @@ def main():
                 except ProcessLookupError: pass
                 stdout, stderr = child.communicate()
                 status = 124
-            return {'status':status, 'stdout':stdout.decode(errors='replace'),
+            return {'status':status, 'timeout_seconds':timeout, 'stdout':stdout.decode(errors='replace'),
                     'stderr':stderr.decode(errors='replace')}
         except OSError as error:
-            return {'status':125,'stdout':'','stderr':str(error)}
+            return {'status':125,'timeout_seconds':timeout,'stdout':'','stderr':str(error)}
 
     def snapshot():
         result = {}
@@ -170,11 +179,15 @@ def main():
                 work = root/directory.lstrip('/')
                 work.mkdir(mode=0o755)
                 base = [suite['program'],'-s','/usr/tests/usr.sbin/makefs']
-                record = {'suite':name,'case':case,'metadata':fields,'state':'FAIL'}
+                source_timeout = int(fields.get('timeout','300'))
+                effective_timeout = runtime_profile.deadline(source_timeout, profile)
+                record = {'suite':name,'case':case,'metadata':fields,'state':'FAIL',
+                          'source_timeout_seconds':source_timeout,
+                          'effective_timeout_seconds':effective_timeout}
                 before = snapshot()
                 print('MAKEFS_CASE_START '+name+':'+case,flush=True)
                 try:
-                    body=invoke(base+['-r','atf.result',case],directory,int(fields.get('timeout','300')),directory)
+                    body=invoke(base+['-r','atf.result',case],directory,effective_timeout,directory)
                     record['body']=body
                     result=(work/'atf.result').read_text().strip() if (work/'atf.result').is_file() else ''
                     record['atf_result']=result
@@ -185,7 +198,7 @@ def main():
                         record['state']='SKIP' if suite['source_skips'].get(case)==reason else 'UNEXPECTED_SKIP'
                 finally:
                     if fields.get('has.cleanup','false')=='true':
-                        cleanup=invoke(base+['-r','cleanup.result',case+':cleanup'],directory,int(fields.get('timeout','300')),directory)
+                        cleanup=invoke(base+['-r','cleanup.result',case+':cleanup'],directory,effective_timeout,directory)
                         record['cleanup']=cleanup
                         if cleanup['status']:
                             record['state']='FAIL'
@@ -195,6 +208,8 @@ def main():
                         record['state']='FAIL';record['before']=before;record['after']=after
                     report['cases'].append(record)
                     save()
+                if record['state'] not in ['PASS','SKIP']:
+                    failure_report(record)
                 print('MAKEFS_CASE_'+record['state']+' '+name+':'+case,flush=True)
                 if record['state'] in ['PASS','SKIP']:
                     shutil.rmtree(work)

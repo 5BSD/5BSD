@@ -11,6 +11,7 @@ import re
 import subprocess
 import stat
 import tarfile
+import runtime_profile
 
 
 def digest(path):
@@ -162,8 +163,9 @@ def main():
     manifest = json.loads(manifest_path.read_text())
     plan = json.loads(args.plan.read_text())
     required = {'format', 'archives', 'files', 'kernel', 'boot_directory', 'guest_driver', 'checker', 'daemon_fixtures', 'readelf'}
-    if not required <= set(plan) or set(plan) - required - {'kernel_modules'} or type(plan['format']) is not int or plan['format'] != 1:
+    if not required <= set(plan) or set(plan) - required - {'kernel_modules', 'checker_profile'} or type(plan['format']) is not int or plan['format'] != 1:
         raise ValueError('versioned explicit fixture plan required')
+    profile = runtime_profile.validate(plan.get('checker_profile', {'timeout_scale': 1}))
     selected = {}
     for target in manifest['targets']:
         label = target['target']['label']
@@ -194,7 +196,8 @@ def main():
     driver = artifact(plan['guest_driver'])
     sdk = Path(receipt['sdk_repository']).resolve(strict=True) / 'toolchain'
     bootstrap_inputs = [sdk / 'bin/extra_python', sdk / 'execution-runtime/libexec/ld-elf.so.1',
-                        Path(plan['kernel']), Path(plan['checker']), Path(plan['readelf'])]
+                        Path(plan['kernel']), Path(plan['checker']), Path(plan['readelf']),
+                        Path(__file__).with_name('runtime_profile.py')]
     for source in bootstrap_inputs:
         if not source.is_file():
             raise ValueError('missing explicit bootstrap input: ' + str(source))
@@ -222,6 +225,9 @@ def main():
     files = {str(path.relative_to(fixture)): digest(path) for path in fixture.rglob('*') if path.is_file()}
     runtime = extra / 'runtime'
     runtime.mkdir()
+    (runtime / 'checker-profile.json').write_text(json.dumps(profile, sort_keys=True) + '\n')
+    (runtime / 'checker-profile.json').chmod(0o444)
+    put(Path(__file__).with_name('runtime_profile.py'), runtime / 'runtime_profile.py', 0o444)
     (runtime / 'fixture-manifest.json').write_text(json.dumps({'format': 1, 'files': files}, indent=2) + '\n')
     # The bootstrap interpreter runtime is separate from the native test root.
     shutil.copytree(sdk / 'execution-runtime', extra, dirs_exist_ok=True)
@@ -274,7 +280,8 @@ def main():
     report = {'format': 1, 'scope': 'explicit native fixture plus separately identified SDK Python/loader bootstrap',
               'qualification_receipt': {'path': str(receipt_path), 'sha256': digest(receipt_path)},
               'plan': {'path': str(args.plan.resolve()), 'sha256': digest(args.plan)},
-              'implementation_sha256': digest(Path(__file__)), 'artifact_bindings': bindings,
+              'implementation_sha256': digest(Path(__file__)), 'checker_profile': profile,
+              'checker_profile_scope': 'explicit checker deadline input; wrapper and VM limits are separate', 'artifact_bindings': bindings,
               'bootstrap_inputs': before, 'kernel_modules': modules, 'native_elf_dependencies': native_dependencies, 'extra_root': str(extra), 'fixture_objtop': str(fixture_objtop),
               'boot_root': str(boot_root), 'boot_files': inventory(boot_root),
               'sdk_repository': str(sdk.parent), 'bootstrap_sonames': sonames, 'files': records, 'payload_bytes': sum(r.get('size', 0) for r in records.values()),

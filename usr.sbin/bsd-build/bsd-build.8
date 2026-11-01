@@ -2175,6 +2175,12 @@ The maintained harness supports a separate private sparse scratch disk with
 explicit sampled host allocation/free-space bounds; it stages no world tools
 when used independently of its ZFS bootstrap mode.
 Original ATF requirements, timeouts, cleanup and source skips are preserved.
+The explicit fixture plan may supply checker_profile.timeout_scale, an integer
+from 1 through 20 with default 1.
+The checker records both original ATF deadlines and uniformly scaled effective
+body/cleanup deadlines; it permits no per-case exceptions.
+Scaled emulation results remain distinct from original-timeout qualification.
+Outer adapter/VM budgets are separate recorded harness inputs.
 This fixture does not qualify normal Capsule startup, SSH,
 complete pkgbase images or controlled performance.
 .Pp
