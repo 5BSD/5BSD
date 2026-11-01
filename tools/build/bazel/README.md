@@ -47176,3 +47176,13 @@ plain modules are byte-identical to Make; installed CTF sections match except
 build-ID/debuglink, whose actual CRCs verify. Runtime loading/firing and full
 kernel integration remain open. See
 [DTRACE-CORE-MODULES-QUALIFICATION.md](DTRACE-CORE-MODULES-QUALIFICATION.md).
+
+### Native CTL administration and iSCSI initiator daemon (2026-11-01)
+
+ctladm and iscsid have source-owned amd64 program/install candidates, preserving
+original CTL tests and the typed ISCSI option. Default and ISCSI-disabled profiles
+passed three program/two private archive contracts, 21 install records, six
+actual debuglink checks and 27 source/option compile audits. Three safe usage
+executions passed; all eleven privileged CTL cases remain a guest runtime gate.
+No storage/session, cross-userland or performance claim is made. See
+[CTL-ISCSID-QUALIFICATION.md](CTL-ISCSID-QUALIFICATION.md).

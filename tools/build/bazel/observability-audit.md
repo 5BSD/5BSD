@@ -9267,3 +9267,13 @@ No probes or audit calls were added just to satisfy a scan. Runtime module
 loading, actual probe firing, concurrency and complete BSM audit coverage remain
 open. See DTRACE-CORE-MODULES-QUALIFICATION.md and
 bazel-dtrace-core-review-r4-20261101/observability.json for the per-source queue.
+
+## 2026-11-01: ctladm and iscsid
+
+The unchanged source closure and ISCSI/proxy defines are checked against actual
+compile records. No direct DTrace/SDT or explicit BSM submission marker was found
+in this bounded program C/header scan. Review CTL privileged denials and port
+mutations plus iscsid authentication, session lifecycle and failure visibility;
+absence of markers is a review queue, not proof of a defect or complete coverage.
+Only usage paths have run; all eleven installed CTL root cases remain guest-only
+qualification work. See CTL-ISCSID-QUALIFICATION.md.

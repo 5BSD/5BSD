@@ -4839,3 +4839,12 @@ RISC-V64, retaining original object order and C-only CTF conversion.
 The format-5 module and install targets qualify captured artifacts against
 independent Make outputs; profiles without runtime test targets do not establish
 module loading, probe firing or a complete native kernel build.
+
+.Pp
+Native ctladm and iscsid program/install targets use existing typed ISCSI
+configuration and the normal format-5 qualification route.
+Safe usage tests run before device or service operations; installed CTL port
+tests retain their original root and kernel-module requirements and require a
+disposable guest for runtime qualification.
+These component checks do not establish working storage sessions or native
+package publication.

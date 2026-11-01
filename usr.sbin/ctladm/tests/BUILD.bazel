@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+bsd_script_wrapper(name = "port", body = "port.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect")
+# Preserve every original root/CTL/module requirement. No host port operations.
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["port"], interfaces = {"port": "atf"})
+[bsd_install_file(name = "install_" + name, src = ":" + source,
+    destination = "/usr/tests/usr.sbin/ctladm/" + dest, owner = "root", group = "wheel", mode = mode,
+    install_tags = ["package=tests"])
+ for name, source, dest, mode in [("shell", "port", "port", "0555"), ("kyuafile", "kyuafile", "Kyuafile", "0444")]]
+bsd_install_manifest(name = "install_manifest", entries = [":install_shell", ":install_kyuafile"], visibility = ["//visibility:public"])
