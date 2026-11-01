@@ -5,11 +5,11 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "intake_headers", hdrs = ["intake.h"], includes = [".."], visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
-cc_library(name = "sha1_headers", hdrs = ["sha1.h"], includes = [".."], visibility = ["//sys/security/mac_veriexec:__pkg__", "//sys/opencrypto:__pkg__"])
+cc_library(name = "sha1_headers", hdrs = ["sha1.h"], includes = [".."], visibility = ["//sys/security/mac_veriexec:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netgraph:__pkg__"])
 amd64_generic_module_objects(name = "sha1_module", srcs = ["sha1.c"], deps = [":sha1_headers"])
 
 cc_library(name = "rc4_headers", hdrs = ["rc4/rc4.h"], strip_include_prefix = "/sys",
-    visibility = ["//sys/modules/rc4:__pkg__"])
+    visibility = ["//sys/modules/rc4:__pkg__", "//sys/netgraph:__pkg__"])
 amd64_generic_module_objects(name = "rc4_module", srcs = ["rc4/rc4.c"], deps = [":rc4_headers"])
 
 cc_library(name = "curve25519_headers", hdrs = ["curve25519.h"], strip_include_prefix = "/sys",
@@ -23,3 +23,5 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = ["rc4/rc4.c"],
     deps = [":rc4_headers"],
 ) for arch in ["arm64", "riscv"]]
+
+exports_files(["sha1.c"], visibility = ["//sys/netgraph:__pkg__"])

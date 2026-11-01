@@ -46923,3 +46923,15 @@ native module declarations and 637 without direct declarations. Evidence:
 (SHA-256 `d925986d19f6f270658d48659cc97153baa6f12d64dad3640006c0a5c847dd8d`).
 These are declaration counts for the selected amd64 GENERIC profile, not full
 kernel, runtime, other-architecture or world qualification counts.
+
+### MPPC default GENERIC module on three architectures (2026-11-01)
+
+The shared native Netgraph inventory now adds ng_mppc for amd64, ARM64 and
+RISC-V64. Six independent Make/Bazel artifact comparisons cover plain and
+CTF/debug builds: three exact plain modules, three CTF modules matching all
+sections except build-ID/debuglink, validated debuglinks and nine exact install
+records. All 24 actual compile actions use target freestanding tools without SDK
+header inputs. The original KLD fallback enables compression/encryption with
+GENERIC's actual option header, which defines neither MPPC feature. Custom option/source-variable combinations,
+runtime traffic/loading and performance remain unqualified. See
+[MPPC qualification](NETGRAPH-MPPC-QUALIFICATION.md) for evidence and limitations.

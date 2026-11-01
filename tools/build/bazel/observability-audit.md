@@ -8918,3 +8918,13 @@ Exact no-debug bytes and installed CTF/debug code/SDT/relocation sections match
 Make across amd64, ARM64 and RISC-V64. Live event semantics, privileged graph/
 socket authorization, protocol/control/data/failure behavior and overhead remain
 open. See [new Netgraph evidence](NETGRAPH-CORE-NODES-QUALIFICATION.md).
+
+## ng_mppc on amd64, ARM64 and RISC-V64 (2026-11-01)
+
+The four original C sources (ng_mppc, mppcc, mppcd and sha1) contain no direct
+SDT/DTrace/audit/CTR markers in the bounded scan retained with
+`bazel-netgraph-mppc-review-20261101/observability.json`. Existing C code is
+unchanged. Compile/artifact/install checks do not establish compression or
+encryption behavior, privileged graph/control audit coverage, framework probe
+firing or cryptographic suitability. Review those using matching-kernel runtime
+traffic and error cases; custom MPPC option combinations remain open.

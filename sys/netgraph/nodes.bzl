@@ -11,6 +11,15 @@ NETGRAPH_NODE_DEPS = [
     "//sys/netinet6:netgraph_node_headers",
 ]
 NETGRAPH_NODES = [
+    # GENERIC defines neither MPPC option, selecting the source's KLD fallback:
+    # compression and encryption enabled, matching Make's default source list.
+    struct(
+        name = "ng_mppc",
+        srcs = ["ng_mppc.c", "//sys/net:mppcc.c", "//sys/net:mppcd.c", "//sys/crypto:sha1.c"],
+        hdrs = ["netgraph.h", "ng_message.h", "ng_mppc.h"],
+        deps = ["//sys/net:mppc_headers", "//sys/crypto:sha1_headers", "//sys/crypto:rc4_headers"],
+        options = ["opt_netgraph"],
+    ),
     struct(
         name = "ng_bpf",
         srcs = ["ng_bpf.c", "//sys/net:bpf_filter.c"],

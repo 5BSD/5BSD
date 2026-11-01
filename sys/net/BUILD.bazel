@@ -167,3 +167,7 @@ cc_library(name = "netgraph_node_headers", hdrs = ["bpf.h", "bpf_jitter.h", "dlt
     deps = [":interface_headers", ":route_headers", "//sys/netinet:ipv4_tunnel_headers", "//sys/netinet6:ip6_headers"])
 
 exports_files(["bpf_filter.c", "slcompress.c"], visibility = ["//sys/netgraph:__pkg__"])
+
+exports_files(["mppcc.c", "mppcd.c"], visibility = ["//sys/netgraph:__pkg__"])
+cc_library(name = "mppc_headers", hdrs = ["mppc.h"], strip_include_prefix = "/sys",
+    visibility = ["//sys/netgraph:__pkg__"])
