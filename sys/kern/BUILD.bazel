@@ -489,3 +489,13 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 [cross_generic_module_objects(arch = arch, name = "generic_firmware_module", srcs = ["subr_firmware.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
  for arch in ["arm64", "riscv"]]
+
+load(":ipc_modules.bzl", "IPC_MODULES")
+_IPC_MODULE_DEPS = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
+    "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"]
+[amd64_generic_module_objects(name = "ipc_" + node.name + "_module", srcs = node.srcs,
+    deps = _IPC_MODULE_DEPS + ["//sys/amd64/conf:generic_opt_" + option + "_header" for option in node.options])
+ for node in IPC_MODULES]
+[cross_generic_module_objects(arch = arch, name = "ipc_" + node.name + "_module", srcs = node.srcs,
+    deps = _IPC_MODULE_DEPS + ["//sys/" + arch + "/conf:generic_opt_" + option + "_header" for option in node.options])
+ for arch in ["arm64", "riscv"] for node in IPC_MODULES]

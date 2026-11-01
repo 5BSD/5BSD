@@ -109,3 +109,12 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/netgraph/bluetooth:__pkg__"])
  for option in ["bus", "usb"]]
+
+# IPC option contents are generated from the actual target configuration.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["posix", "sysvipc", "capsicum"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+ for option in ["posix", "sysvipc", "capsicum"]]

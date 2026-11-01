@@ -1,7 +1,7 @@
 .PATH: ${SRCTOP}/sys/kern
 
 KMOD=	sysvshm
-SRCS=	sysv_shm.c opt_sysvipc.h
+SRCS=	sysv_shm.c opt_sysvipc.h vnode_if.h
 
 EXPORT_SYMS=	YES
 

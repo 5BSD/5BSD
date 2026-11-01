@@ -8939,3 +8939,14 @@ artifact checks. Live probe firing/arguments, virtual and USB controller traffic
 firmware paths, privileged sockets/control audit coverage, errors and hardware
 runtime remain unqualified. See BLUETOOTH-MODULES-QUALIFICATION.md and retained
 `bazel-bluetooth-review-20261101/observability.json` for scope and evidence.
+
+## POSIX and System V IPC modules on three architectures (2026-11-01)
+
+The bounded five-source scan retains 173 direct audit/tracing marker lines in
+uipc_mqueue.c, uipc_sem.c, sysv_msg.c, sysv_sem.c and sysv_shm.c. Original C and
+its existing audit/MAC paths are unchanged; default GENERIC module code and
+metadata compare against independent Make artifacts on amd64, ARM64 and RISC-V64.
+Live IPC/control permissions, audit arguments, failures, credentials/namespaces,
+resource bounds and concurrency remain unqualified. See
+IPC-MODULES-QUALIFICATION.md and retained
+`bazel-ipc-modules-review-20261101/observability.json` for bounded evidence.

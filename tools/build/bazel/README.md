@@ -46947,3 +46947,13 @@ All 43 selected Netgraph leaves now have native declarations; this is not
 complete module/configuration/runtime coverage. See
 [Bluetooth module qualification](BLUETOOTH-MODULES-QUALIFICATION.md) for exact
 compiler, tracing, inventory, bootstrap and performance limits.
+
+### POSIX and System V IPC module candidates (2026-11-01)
+
+Native mqueuefs, sem, sysvmsg, sysvsem and sysvshm module/install candidates now
+cover amd64, ARM64 and RISC-V64. All 30 independent Make/native comparisons and
+45 install records pass with original export policy and audit/MAC C unchanged.
+Three real System V Make SRCS omissions now explicitly declare vnode_if.h;
+initial cross-reference failures remain retained. Runtime IPC/authorization and
+complete kernel/module coverage remain open. See
+[IPC module qualification](IPC-MODULES-QUALIFICATION.md).
