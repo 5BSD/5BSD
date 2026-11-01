@@ -1,5 +1,8 @@
 # Bazel qualification
 
+The resumed full-system scope and completion gates are maintained in
+[the completion plan](COMPLETION-PLAN.md).
+
 Bazel is experimental. `build-bsd` keeps `bsd-make` as its production backend;
 its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
