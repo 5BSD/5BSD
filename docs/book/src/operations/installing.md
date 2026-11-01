@@ -138,6 +138,8 @@ the host is in [Jails](../compat/jails.md).
     Config/
         switchboard/
             boot-authority.ucl   packaged boot-script limits
+            service-authority.ucl  lasting grants of adopted services (devd)
+            rc_adopt.conf        rc.d services switchboard supervises
         bsdfilesystem.ucl        pool= written by tzfspool
     Run/                         tmpfs, mode 0700, per-unit launch containers
     State/

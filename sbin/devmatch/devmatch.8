@@ -68,9 +68,36 @@ tables with that PNP info cannot be found.
 .It Fl v Fl -verbose
 Produce more verbose output.
 .El
+.Sh CAPABILITY PLANE
+.Nm
+only reports module names.
+With the 5BSD capability plane,
+.Pa /etc/rc.d/devmatch
+loads them with
+.Dq sysextctl load ,
+which
+.Xr BSDExtension 8
+permits for hardware drivers: modules
+.Pa /boot/kernel/linker.hints
+records with plug-and-play data.
+At boot the request carries the temporary authority of
+.Pa /etc/rc .
+After boot,
+.Xr devd 8
+runs
+.Pa /etc/rc.d/devmatch
+for a device no driver claimed, under its lasting grant, so the driver loads
+and attaches when the device is plugged in.
+Run from any other process, such as a login shell, the load is refused and
+.Pa /etc/rc.d/devmatch
+reports
+.Dq Cannot autoload NAME: only rc at boot and devd(8) may load drivers .
 .Sh SEE ALSO
 .Xr rc.conf 5 ,
+.Xr BSDExtension 8 ,
+.Xr devd 8 ,
 .Xr devinfo 8 ,
+.Xr sysextctl 8 ,
 .Xr MODULE_PNP_INFO 9
 .Sh HISTORY
 .Nm

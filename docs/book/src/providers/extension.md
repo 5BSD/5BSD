@@ -234,14 +234,22 @@ kldload(2) by root fails (kldload(8) reports `Exec format error`), so:
 - `devmatch` submits every hardware driver it matches at boot through the
   broker. The hardware-driver class below permits these drivers without a
   list entry.
-- After boot no module can be loaded for a device attached later. rc reaches
-  the broker through a temporary authority
+- rc reaches the broker through a temporary authority
   (`/Capabilities/Config/switchboard/boot-authority.ucl`) that ends when
-  `/etc/rc` exits, and devd(8) and its `nomatch` handler run with none.
-  devmatch reports `Cannot autoload NAME after boot` for such a device; its
-  driver loads at the next boot with the device attached. The drivers most
-  devices need are compiled into GENERIC (USB audio, video, Ethernet, HID,
-  mass storage, keyboards), so they attach on hotplug without a load.
+  `/etc/rc` exits.
+- After boot, devd(8) loads the driver of a device attached later. devd is
+  an adopted rc.d service (`rc_adopt.conf`); once `/etc/rc` exits,
+  switchboard restarts it (`service devd onerestart`) under a lasting grant
+  from `/Capabilities/Config/switchboard/service-authority.ucl`. Its
+  `nomatch` action runs `service devmatch quietstart`, and devmatch asks the
+  broker through `sysextctl load`. The broker sees the client label `devd`,
+  which `driver_clients` limits to the hardware-driver class below. The
+  drivers most devices need are compiled into GENERIC (USB audio, video,
+  Ethernet, HID, mass storage, keyboards), so they attach without a load.
+- Nothing else can load a module after boot. A root login shell holds no
+  grant, so its `sysextctl load` cannot reach the broker (`EX_UNAVAILABLE`;
+  devmatch reports `Cannot autoload NAME: only rc at boot and devd(8) may
+  load drivers`), and its kldload(8) is refused by the gate.
 - rc.subr(8) `load_kld`, used by rc.d scripts (`mac_ntpd` for ntpd, `if_vlan`,
   NFS, `geom_uzip`, the Bluetooth HID modules) and by `required_modules`,
   tries the direct load first, which works before the broker starts, and
@@ -261,11 +269,42 @@ input driver, see
 [USB mouse troubleshooting](../operations/troubleshooting.md#usb-mouse-is-detected-but-does-not-work-in-the-desktop)
 for the `hms` permission, immediate load, and persistent boot activation steps.
 
+### devd's grant
+
+The grant is a switchboard software authority, not a UNIX privilege, and it
+is narrower than rc's boot authority:
+
+| | rc (boot) | devd (after boot) |
+|---|---|---|
+| Policy file | `boot-authority.ucl` | `service-authority.ucl` |
+| Holder | `/etc/rc` and its descendants | the `devd` unit's start command and the daemon it starts |
+| Lifetime | until `/etc/rc` exits | until the unit is stopped, restarted or removed |
+| Executables | any | only `/bin/sh`, `/usr/bin/env`, `/usr/bin/limits`, `/sbin/devd`, `/usr/sbin/sysextctl`; exec of any other image drops it in that process |
+| Endpoints | `system.SystemExtension` | `system.SystemExtension` |
+| Administrative rights | yes | no |
+| Broker class | allow-list and hardware drivers | hardware drivers only (`driver_clients`) |
+
+Every request is logged by the broker with its client label, for example
+`ENSURE if_urndis (client devd, hardware driver): loaded`, and refusals as
+`ENSURE NAME (client devd) -> DENIED (client may load hardware drivers
+only)`. The broker's gated load is also an ordinary kernel module load for
+audit(4) and the OTel audit exporter when auditing is enabled. The
+`kldload` gate itself is unchanged: only the broker loads modules.
+
+This is not protection against a compromised root. Root can edit
+`/etc/devd.conf` or devd's rc.conf flags, so devd's actions can request any
+module in the class; and root can add a module with plug-and-play data to
+`/boot/kernel`, which the class then admits (the boot path admits it at the
+next boot as well). Signed-module enforcement (veriexec) is what stops the
+second case. `sysextctl deny NAME` removes a driver from the class for devd
+too.
+
 ## Policy
 
-The allow-list is default-deny and global (not per label). A module may
-load when it is permitted by the allow-list and administrator overrides, or
-when it belongs to the hardware-driver class.
+The allow-list is default-deny and global, except that a client named in
+`driver_clients` never uses it. A module may load when it is permitted by the
+allow-list and administrator overrides, or when it belongs to the
+hardware-driver class.
 
 The policy key `device_drivers = true` (shipped) enables the class: a module
 whose file `/boot/kernel/linker.hints` records with plug-and-play match data
@@ -291,6 +330,7 @@ then applied. An excerpt of the shipped file:
 
 ```ucl
 device_drivers = true;
+driver_clients = ["devd"];
 allowed_extensions = [
     "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
@@ -305,9 +345,12 @@ allowed_extensions = [
 ```
 
 Rules the parser enforces: the file is an object with exactly
-`allowed_extensions` and optionally a boolean `device_drivers`; each entry is
-a single safe component; any other key, a non-array `allowed_extensions`, a
-non-boolean `device_drivers` or an invalid entry rejects the file wholesale
+`allowed_extensions`, optionally a boolean `device_drivers`, and optionally a
+`driver_clients` array of up to eight unique switchboard client labels
+(`[A-Za-z0-9._-]`); each `allowed_extensions` entry is a single safe
+component; any other key, a non-array `allowed_extensions`, a non-boolean
+`device_drivers`, a malformed `driver_clients` or an invalid entry rejects
+the file wholesale
 and the previous policy stays; the first array element must directly follow `[`
 because the bundled libucl mis-parses a leading comment inside an array. A
 reload replacement must be a regular file owned by the daemon's effective
@@ -341,11 +384,11 @@ installed under `/usr/tests/usr.sbin/BSDExtension`):
 | Program | Kind | Proves |
 |---|---|---|
 | `allowlist_test` | pure unit | allow and deny decisions, name validation (paths rejected, dotted names accepted, NUL termination), malformed/non-object/missing config falls back to defaults, config replaces defaults, STAT shares the ENSURE gate, reload authorization and last-good retention |
-| `provider_test` | real public capability-channel syscall; no privilege | the real server over a real channel with libextensioncmp: denied module, Stat loaded/unloaded/denied, List full, empty and too small, reload and management require ADMIN, discovery beyond the List limit; hand-built frames (before negotiation, unknown method, missing, truncated or oversized body, trailing bytes, pre-FIDL record, attached descriptor) close the session and an embedded NUL is `EINVAL` |
+| `provider_test` | real public capability-channel syscall; no privilege | the real server over a real channel with libextensioncmp: denied module, a `driver_clients` label refused an allow-listed module, Stat loaded/unloaded/denied, List full, empty and too small, reload and management require ADMIN, discovery beyond the List limit; hand-built frames (before negotiation, unknown method, missing, truncated or oversized body, trailing bytes, pre-FIDL record, attached descriptor) close the session and an embedded NUL is `EINVAL` |
 | `evolution_test` | real channel | the `bsd:1` libextensioncmp client against a `bsd:2` peer, and a `bsd:2` client against the real `bsd:1` worker (the added strict method closes only that session) |
 | `reclaim_test` | pure unit | owner-map round trip, dedup, unsafe names, unload only unshared own modules, busy module retried, unknown bundle no-op, epoch recorded, boot ownership retained |
 | `policy_test` | persistent policy | ADMIN enforcement, attachment, persistence and precedence, failed-write retention, corrupt-state rejection, concurrent updates and lexical discovery, writer-death recovery, real capability-mode persistence |
-| `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, an override deny beating the class, the installed kernel's hints and the packaged policy |
+| `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, the `driver_clients` key, an override deny beating the class, the installed kernel's hints and the packaged policy (devd is a driver client) |
 
 `usr.sbin/sysextctl/tests/sysextctl_test.sh` drives the real CLI and client
 protocol implementation against a fake service (`commands`, `usage`, `protocol`

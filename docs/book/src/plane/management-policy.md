@@ -71,6 +71,10 @@ The temporary authority for `/etc/rc` is configured separately in
 `/Capabilities/Config/switchboard/boot-authority.ucl`. Its endpoint allowlist and
 attributes constrain the boot application, and its authority is revoked when
 that boot phase ends. It is not a general grant for UID zero or login shells.
+Lasting grants for adopted rc.d services (devd) are in
+`/Capabilities/Config/switchboard/service-authority.ucl`: each names its
+endpoints and the executables it may survive exec into, with no attributes or
+administrative rights, and ends with the unit's launch.
 
 For a system image, policy and matching executable changes should be prepared
 and tested together in a boot environment. A boot environment does not itself

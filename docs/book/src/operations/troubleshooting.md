@@ -23,8 +23,8 @@ in `kern.evdev.input`.
 USB detection alone does not mean the mouse input driver is active. Since
 the hardware-driver class (`device_drivers` in the BSDExtension policy),
 `devmatch` loads `hms` and other drivers that `/boot/kernel/linker.hints`
-matches to the device at boot (a device attached later gets its module at
-the next boot; hms itself is compiled into GENERIC now). A broker denial still
+matches to the device, at boot and, through devd(8), when the device is
+attached later (hms itself is compiled into GENERIC now). A broker denial still
 prevents that: on a system built before the class, with the class turned
 off, or after `sysextctl deny hms`. This was observed with a USB optical mouse on 5BSD; it is
 separate from Plasma login or GPU configuration.
@@ -364,9 +364,15 @@ Current builds permit drivers listed with plug-and-play data in
 `/boot/kernel/linker.hints`, list the base rc.d service modules, retry
 a refused `load_kld` through the broker, and compile the common desktop
 drivers (snd_uaudio, uvideo, ure, hms, hmt and others) and mac_ntpd into
-GENERIC. Module loading is available only while `/etc/rc` runs: a device
-attached after boot whose driver is a module reports `Cannot autoload NAME
-after boot` and gets its driver at the next boot.
+GENERIC. After boot only devd(8) may load modules, and only hardware drivers:
+switchboard restarts devd when `/etc/rc` exits under its grant in
+`/Capabilities/Config/switchboard/service-authority.ucl`. If a device
+attached later gets no driver, check that devd is that unit
+(`switchboardctl services` lists it; a devd started from a login shell with
+`service devd restart` has no grant, so use `switchboardctl restart devd`),
+and look for the broker's decision with client `devd` in the log. A
+`Cannot autoload NAME: only rc at boot and devd(8) may load drivers` message
+comes from devmatch run outside devd, for example from a login shell.
 
 **Check.**
 

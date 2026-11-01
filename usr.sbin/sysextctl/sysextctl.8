@@ -54,6 +54,15 @@ Show the same information for one module.
 .It Cm load Ar module
 Ensure a permitted module is loaded for this boot.
 An already loaded module is success.
+Only a caller holding a software grant for the service reaches it:
+.Pa /etc/rc
+and its descendants while
+.Pa /etc/rc
+runs, and, after boot,
+.Xr devd 8
+and its actions
+.Pq hardware drivers only; see Xr BSDExtension 8 .
+A login shell has no such grant, and the service is unavailable to it.
 .It Cm allow Ar module
 Persist an administrator permission to load this module.
 Permission does not install, authenticate, or load module code.
