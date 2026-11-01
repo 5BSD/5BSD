@@ -508,3 +508,7 @@ config_setting(name = "kernel_nfs_root_enabled", flag_values = {":kernel_nfs_roo
 # Maintained MK_HTML input; documentation components opt in explicitly.
 bool_flag(name = "html", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "html_enabled", flag_values = {":html": "true"}, visibility = ["//visibility:public"])
+
+# src.opts.mk makes MAILWRAPPER conditional on the global MAIL selection.
+bool_flag(name = "mailwrapper", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "mailwrapper_enabled", flag_values = {":mailwrapper": "true", ":mail": "true"}, visibility = ["//visibility:public"])

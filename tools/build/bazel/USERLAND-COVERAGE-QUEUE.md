@@ -99,10 +99,14 @@ environment/text-helper experiment was removed from active source.
 
 The separate test-disabled/manpage-split selector also passes: six component
 records and four literal payloads equal independent Make output, component
-tests are absent and the manual belongs to runtime-man. The next inspected
-ordinary source gap is mailwrapper, whose one C unit also requires the genuine
-conditional MTA configuration and symlink/package graph, not just a binary
-target.
+tests are absent and the manual belongs to runtime-man. Mailwrapper now also passes ten configuration comparisons and 84 unique
+installation records, including actual conditional MTA configuration/aliases,
+four program ELF contracts, eight debug CRC checks and four unprivileged
+dispatch/error cases. The corrected compiler action matches Make warnings,
+macros and 50 prerequisite hashes; see MAILWRAPPER-QUALIFICATION.md. The next
+inspected ordinary source gap is dtracedctl: its actual WARNS=3 profile, shared
+dtraced protocol headers and conditional DTRACE_OPTIMIZED/LTO need ownership
+and independent qualification. It has not been converted by this review.
 
 Parent-export review found no directory-specific exports/SUBDIR_ENV in
 usr.sbin/Makefile, usr.sbin/Makefile.inc or base-accounts/test Makefiles. The

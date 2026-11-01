@@ -4970,3 +4970,16 @@ See
 for immutable evidence and retained analysis failures.
 Hardware operation, live probe firing and complete native system builds
 remain open; Make remains production/default.
+
+.Pp
+Native mailwrapper uses existing typed format-5 settings plus MAILWRAPPER
+selection to preserve MAIL, DMAGENT, SENDMAIL and OPENSSL dependencies,
+configuration files, examples, aliases and package ownership.
+All ten selected component configurations match 84 unique Make installation
+records; four private unprivileged dispatch/error cases and corrected compiler
+policy checks pass.
+See
+.Pa tools/build/bazel/MAILWRAPPER-QUALIFICATION.md
+for immutable artifact bindings, debug/ELF checks and unqualified privileged
+fallback, actual mail delivery and full-system gates.
+No production mail configuration is installed or modified by qualification.

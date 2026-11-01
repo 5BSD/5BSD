@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+exports_files(["mailer.conf"], visibility = ["//usr.sbin/mailwrapper:__pkg__"])

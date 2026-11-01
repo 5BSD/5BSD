@@ -74,3 +74,5 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+exports_files(["mailer.conf"], visibility = ["//usr.sbin/mailwrapper:__pkg__"])

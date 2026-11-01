@@ -47326,3 +47326,13 @@ format-5 build-bsd is
 used; no shared ATF environment API or production script changes were needed.
 See [base-accounts evidence](BASE-ACCOUNTS-QUALIFICATION.md) for retained host
 failures, matching bootstrap inputs and system-level qualification limits.
+
+### Native mailwrapper (2026-11-01)
+
+All ten mail/MTA configurations pass native/Make comparison: 84 unique install
+records, literal configuration/manual payloads and eight actual debug CRCs.
+Four private unprivileged dispatch/error cases pass, and the corrected actual
+compile matches Make's warning/macro settings and 50 prerequisite hashes.
+See [mailwrapper evidence](MAILWRAPPER-QUALIFICATION.md) for preserved initial
+policy/hash issues, exact conditional ownership and privileged/MTA/runtime
+limits. This uses the normal format-5 frontend; Make remains production.

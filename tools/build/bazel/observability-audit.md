@@ -9409,3 +9409,20 @@ live probe firing or transitive coverage of etherswitch/toecore errors. Review
 link/queue pressure, DMA failures, switch/TOE attach/detach and error paths with
 network-stack callers. No probes were added solely for a scan. See
 NETWORK-SUPPORT-QUALIFICATION.md and sdt-review.json in its evidence directory.
+
+## 2026-11-01: mailwrapper
+
+The unchanged production C unit retains openlog/syslog/closelog on missing or
+unreadable configuration fallback, and err/errx diagnostics on parse/exec
+failures. It has no direct DTrace/SDT/BSM hooks. Native/Make runtime section
+payloads match in all four program-present selections; only DWARF differs.
+Four unprivileged private-configuration tests cover dispatch, argument order,
+no mapping, malformed mapping and explicit exec failure; they deliberately
+avoid host configuration/default-MTA paths and do not qualify syslog delivery,
+privileged LOCALBASE handling or MTA execution/audit consumers. No probes or
+new runtime APIs were added for this scan. The initial missing -DPIC/warning
+policy was corrected and actual ordered flags/input hashes checked; earlier
+userland macro/warning reconciliation remains a separate completion gate.
+The pre-existing dmagent_enabled selector's extra CRYPT condition is also an
+explicit follow-up, outside this source-correct mailwrapper selection graph.
+See MAILWRAPPER-QUALIFICATION.md and the retained final artifact/compile audits.

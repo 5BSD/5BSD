@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":installation.bzl", "mailwrapper_installation")
+
+# The ordinary maintained Clang C warning vector, in Make order. WERROR is
+# the existing typed base-build setting; original diagnostic exceptions are retained.
+_WARNINGS = [
+    "-Wall", "-Wno-format-y2k", "-W", "-Wno-unused-parameter", "-Wstrict-prototypes",
+    "-Wmissing-prototypes", "-Wpointer-arith", "-Wreturn-type", "-Wcast-qual",
+    "-Wwrite-strings", "-Wswitch", "-Wshadow", "-Wunused-parameter", "-Wcast-align",
+    "-Wchar-subscripts", "-Wnested-externs", "-Wold-style-definition", "-Wno-pointer-sign",
+    "-Wdate-time", "-Wmissing-variable-declarations", "-Wthread-safety", "-Wno-empty-body",
+    "-Wno-string-plus-int", "-Wno-unused-const-variable",
+    "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch",
+]
+cc_binary(
+    name = "mailwrapper",
+    srcs = ["mailwrapper.c", "pathnames.h"],
+    deps = ["//lib/libutil:util"],
+    dynamic_deps = ["//lib/libutil:util_shared"],
+    copts = ["-std=gnu17", "-fPIE", "-DPIC", "-pipe", "-fno-common", "-Qunused-arguments",
+             "-Wno-format-zero-length", "-Wsystem-headers"] + select({
+        "//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": [],
+    }) + _WARNINGS,
+    linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:mailwrapper_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+)
+mailwrapper_installation()
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "runtime_test", src = "runtime_test.py", data = [
+    ":mailwrapper", "//bin/echo:echo", "//lib/libutil:util_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared",
+])
