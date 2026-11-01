@@ -64,7 +64,7 @@ bsd_install_archive(name = "daemon_install_archive",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
 
 
-exports_files(["broker.c", "policy.c", "transport.c"], visibility = ["//usr.sbin/BSDNotify/tests:__pkg__"])
+exports_files(["broker.c", "transport.c"], visibility = ["//usr.sbin/BSDNotify/tests:__pkg__"])
 cc_library(name = "test_headers", hdrs = ["broker.h", "policy.h", "transport.h", "bsdnotify_probes.h"],
     textual_hdrs = ["bsdnotify.c"], strip_include_prefix = ".",
     deps = ["//lib/libnotify:headers", "//lib/libnotify:generated_headers"],
@@ -85,3 +85,9 @@ bsd_install_archive(name = "install_archive",
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
+
+# The command-line policy checker uses the same parser as the daemon.
+exports_files(["policy.c"], visibility = ["//usr.sbin/BSDNotify/tests:__pkg__", "//usr.sbin/notifyctl:__pkg__", "//usr.sbin/notifyctl/tests:__pkg__"])
+cc_library(name = "policy_headers", hdrs = ["policy.h"], strip_include_prefix = ".",
+    deps = ["//lib/libnotify:headers"],
+    visibility = ["//usr.sbin/notifyctl:__pkg__", "//usr.sbin/notifyctl/tests:__pkg__"])
