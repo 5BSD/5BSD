@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+amd64_generic_module(module = "if_bce", objects = ["//sys/dev/bce:ordered_module_objects"], export_all = False)
+cross_generic_module(arch = "arm64", module = "if_bce", objects = ["//sys/dev/bce:arm64_ordered_module_objects"], export_all = False)
+cross_generic_module(arch = "riscv", module = "if_bce", objects = ["//sys/dev/bce:riscv_ordered_module_objects"], export_all = False)

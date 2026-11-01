@@ -5,3 +5,8 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "virtio_driver_headers", hdrs = ["if_vtnet_netmap.h", "netmap_kern.h", "netmap_mbq.h"],
     includes = ["../.."], deps = ["//sys/net:netmap_user_headers", "//sys/vm:kernel_headers"],
     visibility = ["//sys/dev/virtio/network:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_re_netmap.h", "netmap_kern.h", "netmap_mbq.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

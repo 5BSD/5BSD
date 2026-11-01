@@ -13,7 +13,7 @@ cc_library(name = "acpi_register_headers", hdrs = ["pcireg.h"], strip_include_pr
 
 filegroup(name = "pci_if_header_file", srcs = [":pci_if"], output_group = "header")
 cc_library(name = "pci_if_headers", hdrs = [":pci_if_header_file"],
-    strip_include_prefix = "pci_if.generated", visibility = ["//visibility:public"])
+    strip_include_prefix = "pci_if.generated", visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//visibility:public"])
 cc_library(name = "kernel_headers", hdrs = ["pcireg.h", "pcivar.h"],
     strip_include_prefix = "/sys", deps = [":pci_if_headers"],
     visibility = ["//visibility:public"])
@@ -21,3 +21,8 @@ cc_library(name = "kernel_headers", hdrs = ["pcireg.h", "pcivar.h"],
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])

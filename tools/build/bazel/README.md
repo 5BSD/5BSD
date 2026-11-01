@@ -8,7 +8,15 @@ its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
-**Current status (2026-11-01):** the architecture-checked Make inventory counts 729
+**Current module inventory (2026-11-01):** the maintained recursive amd64
+GENERIC audit selects 729 modules, with 219 direct native declarations and
+510 without them. This is source inventory, not a count of qualified builds.
+The newest qualified cohort is documented in
+[PCI Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md). Evidence:
+`/usr/obj/usr/src/bazel-module-coverage-post-pci-ethernet-20261101.json`.
+Complete native world/kernel/pkgbase and system qualification remain open.
+
+**Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.
 See [VirtIO qualification](VIRTIO-QUALIFICATION.md) for the fourteen new modules
 and the limits of that count.
@@ -47291,3 +47299,14 @@ ELF/dependency order and both debug CRCs pass. Eleven original safe ATF cases
 pass; all thirteen are installed, with two guest-path and live hardware gates
 still open. See [bounded evidence](BSDTRACE-QUALIFICATION.md). Make remains the
 production backend; the saved checkpoint patch is historical.
+
+### Native PCI Ethernet drivers (2026-11-01)
+
+Thirteen amd64 and ten ARM64/RISC-V64 selections now pass all six plain/CTF
+profiles: 66 modules, 99 installation records, 104 compiler actions, 540 option
+hashes and 14,934 physical source/header checks. Plain modules equal Make
+bytes; installed CTF sections and actual debug CRCs pass the scoped checks.
+Original USB/MII generated headers match, and object orders are hash-bound.
+See [Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md) for preserved query
+and capture corrections, disk reserve guards and runtime/performance limits.
+No complete world/kernel/package build is claimed.

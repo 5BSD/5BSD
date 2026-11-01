@@ -9368,3 +9368,12 @@ and metadata failures and lost/overflowed buffers with HWT/kernel callers.
 Eleven safe CLI/offline cases do not establish live tracing, root boundaries
 or transitive instrumentation. No probes were added solely for a scan. See
 BSDTRACE-QUALIFICATION.md and bazel-bsdtrace-parity-r2-20261101/observability.json.
+
+## 2026-11-01: PCI Ethernet drivers
+
+All 26 production C units across alc/ale/aq/bce/bge/et/jme/msk/nfe/re/rge/sge/vte
+were scanned for direct DTrace/SDT/audit markers; none were found. This does
+not establish missing transitive network/MII instrumentation. Review firmware,
+reset, link transitions, ring allocation/exhaustion, interrupts and error paths
+with network-stack callers. No probes were added solely to satisfy the scan.
+See PCI-ETHERNET-QUALIFICATION.md and the retained compile/observability audit.

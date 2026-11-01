@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical source prerequisites from independent Ethernet module builds.
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_jmereg.h", "if_jmevar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_generic_module_objects(name = "ethernet_module", srcs = ["if_jme.c"],
+    deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/jme:pci_ethernet_headers", "//sys/dev/mii:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"])
+bsd_component_selected_objects(name = "ordered_module_objects", group = ":ethernet_module_ctf",
+    object_names = ["if_jme.o"], visibility = ["//sys/modules/jme:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "ethernet_module", srcs = ["if_jme.c"],
+    deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/jme:pci_ethernet_headers", "//sys/dev/mii:pci_ethernet_headers", "//sys/dev/ofw:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_platform_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"])
+bsd_component_selected_objects(name = "arm64_ordered_module_objects", group = ":arm64_ethernet_module_ctf",
+    object_names = ["if_jme.o"], visibility = ["//sys/modules/jme:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "ethernet_module", srcs = ["if_jme.c"],
+    deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/jme:pci_ethernet_headers", "//sys/dev/mii:pci_ethernet_headers", "//sys/dev/ofw:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_platform_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"])
+bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_ethernet_module_ctf",
+    object_names = ["if_jme.o"], visibility = ["//sys/modules/jme:__pkg__"])

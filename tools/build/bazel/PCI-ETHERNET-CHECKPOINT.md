@@ -1,6 +1,8 @@
 # PCI Ethernet checkpoint — 2026-11-01
 
 Work stopped at the user's request for a host system upgrade.
+The later resumption is now qualified in [PCI-ETHERNET-QUALIFICATION.md](PCI-ETHERNET-QUALIFICATION.md);
+the saved patch below is historical and is already incorporated in active sources.
 
 ## Qualified Make dependency correction
 

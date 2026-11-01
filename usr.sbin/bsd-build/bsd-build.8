@@ -4923,3 +4923,13 @@ See
 for immutable artifact bindings, source-header checks, retained failed attempts
 and live hardware/runtime/performance limits.
 The normal format-5 bazel-test action is used; Make remains production/default.
+
+.Pp
+Native PCI Ethernet profiles cover thirteen maintained amd64 selections and
+ten each on ARM64 and RISC-V64, with plain and CTF installation comparisons,
+original generated device IDs, option/header inputs and object order.
+See
+.Pa tools/build/bazel/PCI-ETHERNET-QUALIFICATION.md
+for exact evidence and resource guards.
+These are component build gates; hardware operation and full system builds
+remain unqualified. The existing format-5 action is used.
