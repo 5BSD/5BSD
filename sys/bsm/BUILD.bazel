@@ -11,3 +11,7 @@ cc_library(name = "truss_headers", hdrs = ['audit.h'], strip_include_prefix = "/
 
 # Userland PMC source ABI header closure.
 cc_library(name = "pmc_user_headers", hdrs = ['audit.h'], visibility = ["//lib/libpmc:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["audit.h", "audit_kevents.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

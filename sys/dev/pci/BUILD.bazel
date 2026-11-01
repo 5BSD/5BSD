@@ -17,3 +17,7 @@ cc_library(name = "pci_if_headers", hdrs = [":pci_if_header_file"],
 cc_library(name = "kernel_headers", hdrs = ["pcireg.h", "pcivar.h"],
     strip_include_prefix = "/sys", deps = [":pci_if_headers"],
     visibility = ["//visibility:public"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

@@ -84,3 +84,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["icmp6.h", "icmp_var.h", "if_
 # Physical source headers: the kernel compilation context supplies -Isys.
 cc_library(name = "wlan_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "ip.h", "ip6.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["in.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])

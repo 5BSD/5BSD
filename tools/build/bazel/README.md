@@ -47092,3 +47092,15 @@ Two normal frontend builds and four fresh Make references passed eight captured
 archive symbol/order comparisons and audits of 182 actual compilations.
 See [NTP-PRIVATE-LIBRARIES-QUALIFICATION.md](NTP-PRIVATE-LIBRARIES-QUALIFICATION.md).
 Remaining NTP programs, documentation/package aggregation and runtime remain open.
+
+### Native NVMe, NVD and AHCI modules (2026-11-01)
+
+Source-owned native storage module candidates cover amd64, ARM64 and RISC-V64,
+including ARM64's extra generic AHCI source and real ACPI/OFW inputs. Six normal
+build-bsd profiles passed eighteen artifact and 27 installed-file comparisons
+against fresh Make; audits cover 92 C compilations, 520 authentic option-header
+checks and eighteen original link orders. NVMe's maintained Makefile now declares
+its previously implicit generated vnode_if.h dependency. Existing storage probes
+are carried forward. See [STORAGE-MODULES-QUALIFICATION.md](STORAGE-MODULES-QUALIFICATION.md)
+for provenance and open live I/O, failure/recovery and performance gates. No host
+storage state changed. Make remains production/default.

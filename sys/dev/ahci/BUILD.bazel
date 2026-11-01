@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Physical source closure used by the native storage module candidates.
+cc_library(name = "storage_module_headers", hdrs = ["ahci.h"],
+    visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+_MODULE_DEPS = ["//sys/bsm:storage_module_headers", "//sys/cam:storage_module_headers", "//sys/dev/iommu:storage_module_headers", "//sys/dev/led:storage_module_headers", "//sys/dev/mmc:storage_module_headers", "//sys/dev/nvme:storage_module_headers", "//sys/dev/pci:storage_module_headers", "//sys/geom:storage_module_headers", "//sys/net:storage_module_headers", "//sys/netinet:storage_module_headers", "//sys/netinet6:storage_module_headers", "//sys/vm:storage_module_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/contrib/ck:kernel_headers", "//sys/dev/ahci:storage_module_headers"]
+_MODULE_SOURCES = ["ahci.c", "ahci_pci.c", "ahciem.c"]
+amd64_generic_module_objects(srcs = _MODULE_SOURCES,
+    deps = _MODULE_DEPS + ["//sys/amd64/conf:generic_opt_cam_header"])
+[cross_generic_module_objects(arch = arch, srcs = _MODULE_SOURCES + (["ahci_generic.c"] if arch == "arm64" else []),
+    deps = _MODULE_DEPS + ["//sys/" + arch + "/conf:generic_opt_" + option + "_header" for option in ["cam"]] + (["//sys/arm64/conf:generic_opt_acpi_header", "//sys/arm64/conf:generic_opt_platform_header", "//sys/contrib/dev/acpica/include:storage_module_headers", "//sys/dev/acpica:storage_module_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/ofw:storage_module_headers", "//sys/dev/ofw:ofw_bus_if_headers"] if arch == "arm64" else []))
+ for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+# Preserve SRCS link order, including ARM64's appended generic AHCI driver.
+[bsd_component_selected_objects(name = prefix + "ordered_module_objects",
+    group = ":" + prefix + "generic_module_ctf",
+    object_names = [source[:-2] + ".o" for source in _MODULE_SOURCES + (["ahci_generic.c"] if prefix == "arm64_" else [])],
+    visibility = ["//sys/modules/ahci:__pkg__"])
+ for prefix in ["", "arm64_", "riscv_"]]

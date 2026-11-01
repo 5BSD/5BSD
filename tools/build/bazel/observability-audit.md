@@ -9137,3 +9137,30 @@ direct DTrace/SDT or audit-submission markers. This does not qualify transitive
 observability or runtime. All source and option branches remain declared;
 ntpd's separate timediscipline provider/static anchor/coverage requirement stays
 open for its forthcoming migration. See NTP-PRIVATE-LIBRARIES-QUALIFICATION.md.
+
+## 2026-11-01: NVMe, NVD and AHCI storage modules
+
+Sixteen unique C sources retain seventeen direct textual SDT/DTRACE marker lines
+in NVMe controller/queue and AHCI reset paths. Matching installed sections prove
+retention, not live firing or argument coverage. Review submit/completion/error,
+queue/abort/reset timing, namespace/GEOM and controller lifecycle, attachment,
+DMA/IOMMU and hotplug visibility with matching-kernel runtime tests. Audit policy
+requirements need contextual review; ordinary disk I/O is not automatically a
+per-operation audit event. Sources without a direct matched marker:
+
+- `sys/dev/ahci/ahci_generic.c`
+- `sys/dev/ahci/ahci_pci.c`
+- `sys/dev/ahci/ahciem.c`
+- `sys/dev/nvd/nvd.c`
+- `sys/dev/nvme/nvme.c`
+- `sys/dev/nvme/nvme_ahci.c`
+- `sys/dev/nvme/nvme_ctrlr_cmd.c`
+- `sys/dev/nvme/nvme_ns.c`
+- `sys/dev/nvme/nvme_ns_cmd.c`
+- `sys/dev/nvme/nvme_pci.c`
+- `sys/dev/nvme/nvme_sim.c`
+- `sys/dev/nvme/nvme_sysctl.c`
+- `sys/dev/nvme/nvme_test.c`
+
+Exact scan: bazel-storage-review-20261101/observability.json. Scope/open gates:
+STORAGE-MODULES-QUALIFICATION.md.

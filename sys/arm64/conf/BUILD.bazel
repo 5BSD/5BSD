@@ -40,7 +40,7 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/backlight:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/backlight:__pkg__", "//sys/dev/ahci:__pkg__"])
 
 # Source-owned option names; contents, including empty headers, come from config.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
@@ -48,7 +48,7 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/virtio:__subpackages__", "//sys/netgraph:__pkg__", "//sys/net:__pkg__", "//sys/fs:__subpackages__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/kgssapi:__pkg__", "//sys/netinet:__pkg__", "//sys/netpfil:__subpackages__", "//sys/net80211:__pkg__"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
 
 # Filesystem module option contents come from the target config tree.
@@ -155,3 +155,12 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__"])
  for option in ["wlan", "tdma"]]
+
+# Storage option contents come from the actual target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["nvme", "acpi"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+ for option in ["nvme", "acpi"]]
