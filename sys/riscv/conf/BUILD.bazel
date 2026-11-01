@@ -135,7 +135,7 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
  for option in ["bootp", "kgssapi", "nfs", "nfsroot"]]
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
-    strip_include_prefix = "generic_options", visibility = ["//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/nlm:__pkg__", "//sys/nfs:__pkg__"])
  for option in ["bootp", "kgssapi", "nfs", "nfsroot"]]
 
 # Virtual-network options are extracted from the actual target config tree.
@@ -173,3 +173,11 @@ cc_library(name = "generic_opt_bpf_header", hdrs = [":opt_bpf"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/cam:__pkg__"])
  for option in ["kdtrace", "ada", "cd", "da", "pass", "pt", "sa", "ses", "printf"]]
+
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["kstack_pages", "hwpmc_hooks"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+ for option in ["kstack_pages", "hwpmc_hooks"]]

@@ -9251,3 +9251,19 @@ and five ordinary/nine is-enabled sites after stripping, with separate debug
 symbols and the combined native payload hash. This does not qualify live probe
 registration/firing, broader audit coverage or live service behavior. Pure doc
 inventory/manual transformation adds no runtime instrumentation.
+
+
+## 2026-11-01: core DTrace, FBT, kinst and dtraceall
+
+The original core, ISA/decoder/stack-walk, FBT and instruction-tracing sources
+are carried forward unchanged, including embedded textual C fragments. Actual
+compile inputs, target layout constants, assembly guards and object order
+were checked for all three architectures. The bounded compiled-source marker
+scan retained 862 matching lines in observability.json; absence of a direct
+marker does not imply a defect in decoder, assembly, task queue or aggregator
+code. Review lifecycle/failure visibility, permission denials, stack-walk faults,
+FBT/kinst attach/detach and user-visible audit integration with actual callers.
+No probes or audit calls were added just to satisfy a scan. Runtime module
+loading, actual probe firing, concurrency and complete BSM audit coverage remain
+open. See DTRACE-CORE-MODULES-QUALIFICATION.md and
+bazel-dtrace-core-review-r4-20261101/observability.json for the per-source queue.

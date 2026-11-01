@@ -1,4 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-exports_files(["dis_tables.c", "instr_size.c"], visibility = ["//cddl/lib/libdtrace:__pkg__"])
-cc_library(name = "headers", hdrs = ["dis_tables.h", "regset.h"], includes = ["."], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+exports_files(["dis_tables.c", "instr_size.c"], visibility = ["//cddl/lib/libdtrace:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+cc_library(name = "headers", hdrs = ["dis_tables.h", "regset.h"], includes = ["."], visibility = ["//cddl/lib/libdtrace:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["dis_tables.h", "regset.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "core_search_headers", hdrs = ["dis_tables.h", "regset.h"], includes = ["."],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])

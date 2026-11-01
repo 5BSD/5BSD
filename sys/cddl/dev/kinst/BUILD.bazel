@@ -1,3 +1,38 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "headers", hdrs = ["kinst.h"], includes = ["."], visibility = ["//cddl/lib/libdtrace:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["aarch64/kinst_isa.h", "amd64/kinst_isa.h", "kinst.h", "riscv/kinst_isa.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "module_search_headers", hdrs = ["kinst.h"], includes = ["."],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "amd64_module_search_headers", hdrs = ["amd64/kinst_isa.h"], includes = ["amd64"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "arm64_module_search_headers", hdrs = ["aarch64/kinst_isa.h"], includes = ["aarch64"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "riscv_module_search_headers", hdrs = ["riscv/kinst_isa.h"], includes = ["riscv"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_cddl_module_objects(srcs = ["kinst.c", "amd64/kinst_isa.c", "trampoline.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers", ":amd64_module_search_headers", "//sys/cddl/dev/dtrace/x86:core_search_headers"], leading_headers = [])
+bsd_component_selected_objects(name = "ordered_module_objects", group = ":generic_module_ctf",
+    object_names = ["kinst.o", "kinst_isa.o", "trampoline.o"], visibility = ["//sys/modules/dtrace/kinst:__pkg__"])
+
+cross_cddl_module_objects(arch = "arm64", srcs = ["kinst.c", "aarch64/kinst_isa.c", "trampoline.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers", ":arm64_module_search_headers", "//sys/cddl/dev/dtrace:arm64_core_search_headers"], leading_headers = [])
+bsd_component_selected_objects(name = "arm64_ordered_module_objects", group = ":arm64_generic_module_ctf",
+    object_names = ["kinst.o", "kinst_isa.o", "trampoline.o"], visibility = ["//sys/modules/dtrace/kinst:__pkg__"])
+
+cross_cddl_module_objects(arch = "riscv", srcs = ["kinst.c", "riscv/kinst_isa.c", "trampoline.c"], deps = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"],
+    header_overrides = [":module_search_headers", ":riscv_module_search_headers", "//sys/cddl/dev/dtrace:riscv_core_search_headers"], leading_headers = [])
+bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_generic_module_ctf",
+    object_names = ["kinst.o", "kinst_isa.o", "trampoline.o"], visibility = ["//sys/modules/dtrace/kinst:__pkg__"])

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["genassym.c"], visibility = ["//sys/cddl/dev/dtrace:__pkg__"])

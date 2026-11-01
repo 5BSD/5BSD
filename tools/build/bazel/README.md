@@ -47163,3 +47163,16 @@ Use typed format-5 `//tools/build/bazel/config:html`; the C frontend has no
 [NTP-DOCUMENTATION-QUALIFICATION.md](NTP-DOCUMENTATION-QUALIFICATION.md).
 Native package creation/dependency closure, full service/protocol and performance
 remain unqualified; Make stays production/default.
+
+
+### Native core DTrace and instrumentation modules (2026-11-01)
+
+Core DTrace, FBT, kinst and dtraceall now have native GENERIC module/install
+candidates for amd64, ARM64 and RISC-V64. Six plain/CTF profiles passed with
+24 module comparisons, 36 install records, 12 exact generated-constant files,
+84 module compiles and 24 original object orders. Layout constants come from
+real target compilation; assembly remains outside CTF conversion. Installed
+plain modules are byte-identical to Make; installed CTF sections match except
+build-ID/debuglink, whose actual CRCs verify. Runtime loading/firing and full
+kernel integration remain open. See
+[DTRACE-CORE-MODULES-QUALIFICATION.md](DTRACE-CORE-MODULES-QUALIFICATION.md).

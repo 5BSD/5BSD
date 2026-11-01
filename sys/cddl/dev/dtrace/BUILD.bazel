@@ -8,3 +8,147 @@ bsd_source_headers(name = "tracing_module_headers", hdrs = ["dtrace_cddl.h"],
 
 # SDT includes this physical header through ../dtrace, without a search-root override.
 bsd_source_headers(name = "sdt_layout_headers", hdrs = ["dtrace_cddl.h"], visibility = ["//sys/cddl/dev/sdt:__pkg__"])
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["aarch64/regset.h", "amd64/dtrace_vm_subr.c", "dtrace_anon.c", "dtrace_cddl.h", "dtrace_db.c", "dtrace_debug.c", "dtrace_hacks.c", "dtrace_ioctl.c", "dtrace_load.c", "dtrace_modevent.c", "dtrace_sysctl.c", "dtrace_unload.c", "dtrace_vtime.c", "riscv/regset.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "core_search_headers", hdrs = ["aarch64/regset.h", "amd64/dtrace_vm_subr.c", "dtrace_anon.c", "dtrace_cddl.h", "dtrace_db.c", "dtrace_debug.c", "dtrace_hacks.c", "dtrace_ioctl.c", "dtrace_load.c", "dtrace_modevent.c", "dtrace_sysctl.c", "dtrace_unload.c", "dtrace_vtime.c", "riscv/regset.h"], includes = ["."],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "arm64_core_search_headers", hdrs = ["aarch64/regset.h"], includes = ["aarch64"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+bsd_source_headers(name = "riscv_core_search_headers", hdrs = ["riscv/regset.h"], includes = ["riscv"],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object", "bsd_component_selected_objects")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+
+_CORE_SOURCES = {"amd64": ["//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace.c", "//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace_xoroshiro128_plus.c", "amd64/dtrace_asm.S", "amd64/dtrace_isa.c", "amd64/dtrace_subr.c", "//sys/cddl/dev/dtrace/x86:dis_tables.c", "//sys/cddl/dev/dtrace/x86:instr_size.c", "//sys/cddl/compat/opensolaris:kern/opensolaris_taskq.c"], "arm64": ["//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace.c", "//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace_xoroshiro128_plus.c", "aarch64/dtrace_asm.S", "aarch64/dtrace_isa.c", "aarch64/dtrace_subr.c", "aarch64/instr_size.c", "dtrace_immstack.c", "//sys/cddl/compat/opensolaris:kern/opensolaris_taskq.c"], "riscv": ["//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace.c", "//sys/cddl/contrib/opensolaris:uts/common/dtrace/dtrace_xoroshiro128_plus.c", "riscv/dtrace_asm.S", "riscv/dtrace_isa.c", "riscv/dtrace_subr.c", "riscv/instr_size.c", "dtrace_immstack.c", "//sys/cddl/compat/opensolaris:kern/opensolaris_taskq.c"]}
+_CORE_DEPS = ["//sys/bsm:tracing_core_headers", "//sys/cddl/compat/opensolaris:tracing_core_headers", "//sys/cddl/contrib/opensolaris:tracing_core_headers", "//sys/cddl/dev/dtrace:tracing_core_headers", "//sys/cddl/dev/dtrace/x86:tracing_core_headers", "//sys/cddl/dev/fbt:tracing_core_headers", "//sys/cddl/dev/kinst:tracing_core_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_core_headers", "//sys/contrib/ck:tracing_core_headers", "//sys/contrib/openzfs:tracing_core_headers", "//sys/contrib/pcg-c:tracing_core_headers", "//sys/ddb:tracing_core_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/dev/vmm:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/riscv:tracing_core_headers", "//sys/vm:tracing_core_headers", "//sys/dev/psci:tracing_core_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:linker_if_headers"]
+_CORE_TEXTUAL = ["amd64/dtrace_vm_subr.c", "dtrace_anon.c", "dtrace_db.c", "dtrace_debug.c", "dtrace_hacks.c", "dtrace_ioctl.c", "dtrace_load.c", "dtrace_modevent.c", "dtrace_sysctl.c", "dtrace_unload.c", "dtrace_vtime.c"]
+_CORE_COPTS = ["-DDIS_MEM", "-Wno-parentheses", "-Wno-cast-qual", "-Wno-unused"]
+_CORE_ASM_COPTS = ["-D_SYS_ERRNO_H_", "-D_SYS_PARAM_H_", "-DLOCORE"]
+_CORE_EXTRA_OPTIONS = ["kstack_pages", "hwpmc_hooks", "nfs"]
+
+
+amd64_cddl_module_objects(name = "core_module", srcs = [s for s in _CORE_SOURCES["amd64"] if not s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = ["//sys/cddl/dev/dtrace/x86:core_search_headers"],
+    textual_hdrs = _CORE_TEXTUAL, copts = _CORE_COPTS)
+
+amd64_cddl_module_objects(name = "asm_module", srcs = [s for s in _CORE_SOURCES["amd64"] if s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_nfs_header", ":assym_headers"], header_overrides = [":core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = ["//sys/cddl/dev/dtrace/x86:core_search_headers"],
+    copts = _CORE_COPTS + _CORE_ASM_COPTS)
+
+amd64_cddl_module_objects(name = "layout_check", srcs = ["//sys/kern:genoffset.c"],
+    deps = _CORE_DEPS + ["//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = ["//sys/cddl/dev/dtrace/x86:core_search_headers"],
+    copts = _CORE_COPTS + ["-fcommon", "-DOFFSET_TEST"])
+
+amd64_cddl_module_objects(name = "layout_assym", srcs = ["//sys/amd64/amd64:genassym.c"],
+    deps = _CORE_DEPS + ["//sys/amd64/conf:generic_opt_kstack_pages_header", "//sys/amd64/conf:generic_opt_hwpmc_hooks_header", "//sys/amd64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = ["//sys/cddl/dev/dtrace/x86:core_search_headers"],
+    copts = _CORE_COPTS + ["-fcommon"])
+
+bsd_component_object(name = "layout_check_object", group = ":layout_check_objects", out = "amd64_layout/genoffset_test.o")
+bsd_component_object(name = "layout_assym_object", group = ":layout_assym_objects", out = "amd64_layout/genassym.o")
+kernel_constants(name = "assym", object = ":layout_assym_object", kind = "assym",
+    output = "amd64_layout/assym.inc", prerequisites = [":layout_check_object"])
+cc_library(name = "assym_headers", hdrs = [":assym"], strip_include_prefix = "amd64_layout")
+
+bsd_component_selected_objects(name = "source_0", group = ":core_module_ctf", object_names = ["dtrace.o"])
+
+bsd_component_selected_objects(name = "source_1", group = ":core_module_ctf", object_names = ["dtrace_xoroshiro128_plus.o"])
+
+bsd_component_selected_objects(name = "source_2", group = ":asm_module_objects", object_names = ["dtrace_asm.o"])
+
+bsd_component_selected_objects(name = "source_3", group = ":core_module_ctf", object_names = ["dtrace_isa.o"])
+
+bsd_component_selected_objects(name = "source_4", group = ":core_module_ctf", object_names = ["dtrace_subr.o"])
+
+bsd_component_selected_objects(name = "source_5", group = ":core_module_ctf", object_names = ["dis_tables.o"])
+
+bsd_component_selected_objects(name = "source_6", group = ":core_module_ctf", object_names = ["instr_size.o"])
+
+bsd_component_selected_objects(name = "source_7", group = ":core_module_ctf", object_names = ["opensolaris_taskq.o"])
+
+filegroup(name = "ordered_module_objects", srcs = [":source_0", ":source_1", ":source_2", ":source_3", ":source_4", ":source_5", ":source_6", ":source_7"], visibility = ["//sys/modules/dtrace/dtrace:__pkg__"])
+
+cross_cddl_module_objects(arch = "arm64", name = "core_module", srcs = [s for s in _CORE_SOURCES["arm64"] if not s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/arm64/conf:generic_opt_kstack_pages_header", "//sys/arm64/conf:generic_opt_hwpmc_hooks_header", "//sys/arm64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":arm64_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    textual_hdrs = _CORE_TEXTUAL, copts = _CORE_COPTS)
+
+cross_cddl_module_objects(arch = "arm64", name = "asm_module", srcs = [s for s in _CORE_SOURCES["arm64"] if s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/arm64/conf:generic_opt_kstack_pages_header", "//sys/arm64/conf:generic_opt_hwpmc_hooks_header", "//sys/arm64/conf:generic_opt_nfs_header", ":arm64_assym_headers"], header_overrides = [":core_search_headers", ":arm64_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + _CORE_ASM_COPTS)
+
+cross_cddl_module_objects(arch = "arm64", name = "layout_check", srcs = ["//sys/kern:genoffset.c"],
+    deps = _CORE_DEPS + ["//sys/arm64/conf:generic_opt_kstack_pages_header", "//sys/arm64/conf:generic_opt_hwpmc_hooks_header", "//sys/arm64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":arm64_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + ["-fcommon", "-DOFFSET_TEST"])
+
+cross_cddl_module_objects(arch = "arm64", name = "layout_assym", srcs = ["//sys/arm64/arm64:genassym.c"],
+    deps = _CORE_DEPS + ["//sys/arm64/conf:generic_opt_kstack_pages_header", "//sys/arm64/conf:generic_opt_hwpmc_hooks_header", "//sys/arm64/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":arm64_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + ["-fcommon"])
+
+bsd_component_object(name = "arm64_layout_check_object", group = ":arm64_layout_check_objects", out = "arm64_layout/genoffset_test.o")
+bsd_component_object(name = "arm64_layout_assym_object", group = ":arm64_layout_assym_objects", out = "arm64_layout/genassym.o")
+kernel_constants(name = "arm64_assym", object = ":arm64_layout_assym_object", kind = "assym",
+    output = "arm64_layout/assym.inc", prerequisites = [":arm64_layout_check_object"])
+cc_library(name = "arm64_assym_headers", hdrs = [":arm64_assym"], strip_include_prefix = "arm64_layout")
+
+bsd_component_selected_objects(name = "arm64_source_0", group = ":arm64_core_module_ctf", object_names = ["dtrace.o"])
+
+bsd_component_selected_objects(name = "arm64_source_1", group = ":arm64_core_module_ctf", object_names = ["dtrace_xoroshiro128_plus.o"])
+
+bsd_component_selected_objects(name = "arm64_source_2", group = ":arm64_asm_module_objects", object_names = ["dtrace_asm.o"])
+
+bsd_component_selected_objects(name = "arm64_source_3", group = ":arm64_core_module_ctf", object_names = ["dtrace_isa.o"])
+
+bsd_component_selected_objects(name = "arm64_source_4", group = ":arm64_core_module_ctf", object_names = ["dtrace_subr.o"])
+
+bsd_component_selected_objects(name = "arm64_source_5", group = ":arm64_core_module_ctf", object_names = ["instr_size.o"])
+
+bsd_component_selected_objects(name = "arm64_source_6", group = ":arm64_core_module_ctf", object_names = ["dtrace_immstack.o"])
+
+bsd_component_selected_objects(name = "arm64_source_7", group = ":arm64_core_module_ctf", object_names = ["opensolaris_taskq.o"])
+
+filegroup(name = "arm64_ordered_module_objects", srcs = [":arm64_source_0", ":arm64_source_1", ":arm64_source_2", ":arm64_source_3", ":arm64_source_4", ":arm64_source_5", ":arm64_source_6", ":arm64_source_7"], visibility = ["//sys/modules/dtrace/dtrace:__pkg__"])
+
+cross_cddl_module_objects(arch = "riscv", name = "core_module", srcs = [s for s in _CORE_SOURCES["riscv"] if not s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/riscv/conf:generic_opt_kstack_pages_header", "//sys/riscv/conf:generic_opt_hwpmc_hooks_header", "//sys/riscv/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":riscv_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    textual_hdrs = _CORE_TEXTUAL, copts = _CORE_COPTS)
+
+cross_cddl_module_objects(arch = "riscv", name = "asm_module", srcs = [s for s in _CORE_SOURCES["riscv"] if s.endswith(".S")],
+    deps = _CORE_DEPS + ["//sys/riscv/conf:generic_opt_kstack_pages_header", "//sys/riscv/conf:generic_opt_hwpmc_hooks_header", "//sys/riscv/conf:generic_opt_nfs_header", ":riscv_assym_headers"], header_overrides = [":core_search_headers", ":riscv_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + _CORE_ASM_COPTS)
+
+cross_cddl_module_objects(arch = "riscv", name = "layout_check", srcs = ["//sys/kern:genoffset.c"],
+    deps = _CORE_DEPS + ["//sys/riscv/conf:generic_opt_kstack_pages_header", "//sys/riscv/conf:generic_opt_hwpmc_hooks_header", "//sys/riscv/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":riscv_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + ["-fcommon", "-DOFFSET_TEST"])
+
+cross_cddl_module_objects(arch = "riscv", name = "layout_assym", srcs = ["//sys/riscv/riscv:genassym.c"],
+    deps = _CORE_DEPS + ["//sys/riscv/conf:generic_opt_kstack_pages_header", "//sys/riscv/conf:generic_opt_hwpmc_hooks_header", "//sys/riscv/conf:generic_opt_nfs_header"], header_overrides = [":core_search_headers", ":riscv_core_search_headers", "//sys/cddl/contrib/opensolaris:core_source_search_headers"], leading_headers = [],
+    copts = _CORE_COPTS + ["-fcommon"])
+
+bsd_component_object(name = "riscv_layout_check_object", group = ":riscv_layout_check_objects", out = "riscv_layout/genoffset_test.o")
+bsd_component_object(name = "riscv_layout_assym_object", group = ":riscv_layout_assym_objects", out = "riscv_layout/genassym.o")
+kernel_constants(name = "riscv_assym", object = ":riscv_layout_assym_object", kind = "assym",
+    output = "riscv_layout/assym.inc", prerequisites = [":riscv_layout_check_object"])
+cc_library(name = "riscv_assym_headers", hdrs = [":riscv_assym"], strip_include_prefix = "riscv_layout")
+
+bsd_component_selected_objects(name = "riscv_source_0", group = ":riscv_core_module_ctf", object_names = ["dtrace.o"])
+
+bsd_component_selected_objects(name = "riscv_source_1", group = ":riscv_core_module_ctf", object_names = ["dtrace_xoroshiro128_plus.o"])
+
+bsd_component_selected_objects(name = "riscv_source_2", group = ":riscv_asm_module_objects", object_names = ["dtrace_asm.o"])
+
+bsd_component_selected_objects(name = "riscv_source_3", group = ":riscv_core_module_ctf", object_names = ["dtrace_isa.o"])
+
+bsd_component_selected_objects(name = "riscv_source_4", group = ":riscv_core_module_ctf", object_names = ["dtrace_subr.o"])
+
+bsd_component_selected_objects(name = "riscv_source_5", group = ":riscv_core_module_ctf", object_names = ["instr_size.o"])
+
+bsd_component_selected_objects(name = "riscv_source_6", group = ":riscv_core_module_ctf", object_names = ["dtrace_immstack.o"])
+
+bsd_component_selected_objects(name = "riscv_source_7", group = ":riscv_core_module_ctf", object_names = ["opensolaris_taskq.o"])
+
+filegroup(name = "riscv_ordered_module_objects", srcs = [":riscv_source_0", ":riscv_source_1", ":riscv_source_2", ":riscv_source_3", ":riscv_source_4", ":riscv_source_5", ":riscv_source_6", ":riscv_source_7"], visibility = ["//sys/modules/dtrace/dtrace:__pkg__"])

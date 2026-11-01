@@ -16,3 +16,8 @@ cc_library(name = "wlan_headers", hdrs = ["db_sym.h", "ddb.h"],
     visibility = ["//sys/net80211:__pkg__"])
 
 cc_library(name = "cam_module_headers", hdrs = ["ddb.h"], visibility = ["//sys/cam:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "tracing_core_headers", hdrs = ["db_sym.h", "ddb.h"], includes = [],
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
