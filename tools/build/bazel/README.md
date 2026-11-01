@@ -47199,3 +47199,13 @@ twenty module compiles and sixteen original link orders. Seven generated files
 match the independently invoked full generator exactly. Whole-subtree/runtime
 and controlled performance qualification remain open. See
 [DTRACE-REMAINING-MODULES-QUALIFICATION.md](DTRACE-REMAINING-MODULES-QUALIFICATION.md).
+
+### Native CTL target daemon (2026-11-01)
+
+ctld now owns its ten original C++ units plus native yacc/lex C outputs, including
+verbose parser reporting and the original parse.c copy. Program/four private
+archive contracts, six install records, actual debug links, 26 compile records
+and four generated outputs passed against fresh Make references. One safe usage
+test passed. Real configuration parsing reaches kernel initialization and remains
+a disposable-guest gate with CTL sessions/reload and original root tests. See
+[CTLD-QUALIFICATION.md](CTLD-QUALIFICATION.md). Make stays production/default.

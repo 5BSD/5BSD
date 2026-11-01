@@ -4856,3 +4856,10 @@ an explicitly declared execution-platform flua tool.
 Native/Linux syscall tables, fasttrap and dtrace_test component qualifications
 cover original build/install contracts, not live syscall tracing or execution
 of the kernel test module.
+
+.Pp
+Native ctld targets declare the original C++ sources, yacc/lex generation and
+installation metadata through normal format-5 inputs.
+The usage test exits before kernel initialization; configuration-test mode
+invokes the kernel and remains part of disposable-guest qualification.
+Component builds do not establish a working CTL service or storage sessions.

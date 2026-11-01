@@ -5,4 +5,4 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "user_headers", hdrs = ["iscsi_ioctl.h", "iscsi_proto.h"],
-    strip_include_prefix = ".", visibility = ["//lib/libiscsiutil:__pkg__", "//usr.bin/iscsictl:__pkg__", "//usr.sbin/iscsid:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//lib/libiscsiutil:__pkg__", "//usr.bin/iscsictl:__pkg__", "//usr.sbin/iscsid:__pkg__", "//usr.sbin/ctld:__pkg__"])

@@ -9291,3 +9291,12 @@ native/Linux ABI arguments and compatibility calls, fasttrap patch/restore
 faults, permission denials and concurrency in isolated runtime qualification.
 The original kernel test module has only been built, not executed. See
 DTRACE-REMAINING-MODULES-QUALIFICATION.md for the bounded artifact/action gate.
+
+## 2026-11-01: ctld target service
+
+Original C/C++/grammar/lexer sources are unchanged; actual generator/source
+inputs and C/C++/PIE selections were checked. The bounded source scan found no
+direct DTrace/SDT provider or explicit BSM submission. Review configuration and
+privileged port mutations, authentication, session lifecycle and recovery with
+actual service callers. Only the pre-kernel usage path ran; no live-service,
+probe-firing or transitive audit-coverage claim is made. See CTLD-QUALIFICATION.md.
