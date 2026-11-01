@@ -266,6 +266,18 @@ requires
 .Fl E ,
 and since the programs are sent as one, any number of programs may be given
 with it.
+.Pp
+The host consumer connects to the
+.Xr dtraced 8
+control socket under
+.Pa /var/ddtrace ,
+which only root may reach, and identifies itself by its process ID and
+kernel process birth time.
+It is a traditional privileged consumer and works whether or not the 5BSD
+capability plane is enabled; it is not a client of
+.Xr BSDTrace 8
+(see
+.Xr dtraced 8 ) .
 .It Fl f Oo Oo Ar provider : Oc Ar module : Oc Ar function Oo Oo Ar predicate \
     Oc Ar action Oc
 Specify function name to trace or list

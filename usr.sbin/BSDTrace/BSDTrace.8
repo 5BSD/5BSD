@@ -108,6 +108,27 @@ An application born in capability mode must use descriptor delegation and
 or
 .Fn tracecmp_dtrace_open ;
 delegation does not automatically adapt an unchanged pathname-based tool.
+.Pp
+The HyperTrace tools,
+.Xr dtraced 8 ,
+.Xr dtracedctl 8 ,
+.Xr dtrace 1
+with
+.Fl E , Y
+or
+.Fl y ,
+and the
+.Xr bhyve 8
+virtio-dtrace backend, are such privileged tools and are not clients of
+.Nm .
+The delegated ioctl set does not include the HyperTrace consumer ioctls,
+.Nm
+does not broker
+.Pa /dev/dtrace/hypertrace
+or
+.Pa /dev/dttransport ,
+and these programs run as root outside switchboard, so they have no unit
+identity for the allow list to name.
 .Sh SECURITY
 Raw DTrace authority is an administrator-only capability.
 An ioctl allowlist cannot constrain D programs, probes, actions, targets, or

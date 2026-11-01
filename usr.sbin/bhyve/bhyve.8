@@ -452,6 +452,19 @@ The count of vCPUs and memory configuration are read from the snapshot.
 The guest-memory member also saves fixed boot and PCI ROM contents.
 Snapshots whose memory extension predates fixed-ROM support cannot restore
 into a VM with either ROM region because their contents cannot be verified.
+.Pp
+As for a fresh boot, a guest configured without a boot ROM
+.Pq Fl o Cm lpc.bootrom
+must already exist in the kernel; otherwise
+.Nm
+exits with
+.Dq no bootrom was configured .
+For a guest originally started by
+.Xr bhyveload 8 ,
+create the empty virtual machine with
+.Dl bhyvectl --create --vm= Ns Ar vmname
+before restoring.
+The kernel loader is not needed because guest memory comes from the snapshot.
 .It Fl R Ar fd
 Stand up this instance as the destination of an inbound live migration on the
 already-connected stream socket referenced by file descriptor
@@ -464,6 +477,10 @@ authenticate or encrypt the stream.
 The guest is configured normally from the command line, as for a fresh boot,
 but is held fenced and does not begin executing until the migration commits
 and releases its vCPUs.
+A destination without a boot ROM must be created first with
+.Ql bhyvectl --create --vm= Ns Ar vmname ,
+as described for
+.Fl r .
 This option is mutually exclusive with
 .Fl r ;
 supplying both is an error.
