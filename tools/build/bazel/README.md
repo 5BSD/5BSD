@@ -3,6 +3,10 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
+GENERIC final-link inventories and the remaining native built-in graph gaps.
+Configured analysis and declaration counts remain separate from actual builds.
+
 Bazel is experimental. `build-bsd` keeps `bsd-make` as its production backend;
 its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
@@ -13,7 +17,7 @@ GENERIC audit selects 729 modules, with 244 direct native declarations and
 485 without them. This is source inventory, not a count of qualified builds.
 The newest qualified cohort is documented in
 [USB network qualification](USB-NETWORK-QUALIFICATION.md). Evidence:
-`/usr/obj/usr/src/bazel-usb-ethernet-module-inventory-20261101/amd64.json`.
+`/usr/obj/usr/src/bazel-fresh-kernel-module-inventory-20261101/amd64.json`.
 Complete native world/kernel/pkgbase and system qualification remain open.
 The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
 modules. These are selection totals, not completed conversions. See

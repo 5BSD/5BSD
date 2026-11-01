@@ -94,6 +94,12 @@ bsd_python_test(
 )
 
 bsd_python_test(
+    name = "kernel_inventory_test",
+    src = "kernel_inventory-test.py",
+    data = ["kernel_inventory.py", "//usr.bin/bmake:make"],
+)
+
+bsd_python_test(
     name = "atf_runner_cleanup_test",
     src = "atf-runner-cleanup-test.py",
     data = [":atf_runner"],

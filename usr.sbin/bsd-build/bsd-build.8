@@ -5029,3 +5029,15 @@ for seven affected userland build/install regressions and explicit bhyve
 dependency-order, physical-section and runtime reconciliation gates.
 Configured analysis and archive generation do not establish a complete
 native system, runtime qualification or split-package ownership.
+.Pp
+The existing format-5 target/test API runs
+.Va //tools/build/bazel:kernel_inventory_test
+with declared native bmake test data.
+The separate
+.Pa tools/build/bazel/kernel_inventory.py
+audit reads an explicitly configured Make kernel without building it.
+See
+.Pa tools/build/bazel/KERNEL-INVENTORY.md
+for configuration freshness, final-link/post-processing preservation and
+remaining native kernel closure gates.
+Query success is not a kernel build or runtime qualification.

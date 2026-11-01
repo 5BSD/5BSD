@@ -83,3 +83,11 @@ that the active graph is qualified.
   directory package-tag contexts when qualifying pkgbase splitting; final
   staged metadata alone is not full package ownership evidence. See
   ROOT-HEADER-OWNERSHIP-QUALIFICATION.md.
+
+- Generate fresh independent configured-kernel references from the selected
+  current source/configuration before closure audits. The old amd64 configured
+  Makefile omitted 385 current final-link products. The maintained
+  kernel_inventory.py audit retains the actual final link order, architecture
+  link arguments/post-processing, missing generated sources and unresolved
+  custom products. CFILES/SYSTEM_OBJS-only counts are insufficient. See
+  KERNEL-INVENTORY.md for current evidence and analysis/build distinctions.
