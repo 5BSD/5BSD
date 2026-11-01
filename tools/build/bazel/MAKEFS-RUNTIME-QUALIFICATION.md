@@ -12,8 +12,9 @@ all 63 original case identities: CD9660 18, FFS 12, FAT three and ZFS 30.
 A Bazel regression reconciles those identities with the original test source;
 the guest checker independently reconciles installed ATF listings before running
 any body. Root requirements, mount helpers/modules, per-case program requirements,
-timeouts and cleanup declarations remain intact. The original scripts are
-unchanged. Three unconditional CD9660 source skips remain skips, with their
+timeouts and cleanup declarations remain intact. The ZFS permissions case now
+accepts either capitalization of the shell's permission-denied diagnostic, as
+detailed below; its mode and nonzero-exit checks are unchanged. Three unconditional CD9660 source skips remain skips, with their
 original reasons: allow-max-name, isolevel=1 and isolevel=3. They are not passes.
 The checker rejects missing fixture programs before executing test bodies.
 
@@ -39,8 +40,8 @@ claim of Bazel ZFS module qualification.
 The maintained daemon-runtime harness creates a fresh disk-backed UFS/GPT root.
 The guest-only adapter makes its ordinary root writable, mounts devfs and formats
 its independently created private virtio scratch disk. It does not use a memory
-disk for the whole system. Each original ATF body and declared cleanup runs with
-its original timeout; timed-out process groups are killed. Before/after md,
+disk for the whole system. Each maintained ATF body and declared cleanup uses its source timeout with
+the explicit uniform emulation profile applied; timed-out process groups are killed. Before/after md,
 mount and pool inventories must equal the baseline. A leaked resource stops
 later execution rather than allowing contaminated results. Final scratch/devfs
 unmount failures fail the adapter. No host mount, md, zpool, chroot, installation,
@@ -56,8 +57,9 @@ cache or between-sample peaks, and do not establish a performance comparison.
 
 ## Native build and reduced configuration
 
-The final full-helper receipt is
-/usr/obj/usr/src/bazel-makefs-suite-qualification-r11-20261101/receipt.json:
+The refreshed full-helper receipt, including the maintained permissions-test
+portability fix, is
+/usr/obj/usr/src/bazel-makefs-suite-qualification-r12-20261101/receipt.json:
 176 selected targets and 27 passing Bazel test targets. Test results can be
 cached; selected targets are not a count of newly migrated programs. Focused
 regressions cover inventory/source reconciliation, required-program rejection,
@@ -150,3 +152,32 @@ no privileged host setup or accelerated qualification is claimed here.
 
 At this commit the complete runtime gate remains OPEN. A separately labeled
 scaled-emulation result will be recorded only after actual execution terminates.
+
+## Full scale-5 run: one maintained-test portability failure
+
+The fresh r5-scale5 guest attempted all 63 identities: 59 PASS, three original
+CD9660 SKIP, one FAIL (makefs_zfs_tests:perms). Its complete JSON report remains
+in /usr/obj/usr/src/bazel-makefs-suite-vm-r5-scale5-20261101 together with serial,
+result and resource evidence. All per-case md/mount/pool inventory checks and
+cleanup passed; final scratch/devfs cleanup passed, shutdown synced all buffers,
+QEMU exited zero and the harness did not force termination. The complete suite
+remains FAIL; the three source skips are not passes.
+
+The sole failure was the original case-sensitive expected text "Permission
+denied" versus the actual default Zsh message "permission denied" from su -m
+tests. The command correctly returned nonzero and the captured error identified
+the inaccessible file. This is corrected in the maintained test source with
+"[Pp]ermission denied" in both diagnostic assertions. All 512 input modes,
+nonzero-status checks, su/PAM/default account shell, image construction, mtree
+comparison and cleanup remain unchanged. The original execution checks concern
+target input files; imported-image mode parity is checked through mtree. This
+change does not extend their scope or prove execution checks on the imported
+image. A fresh hash-bound complete-suite rerun remains pending.
+
+The r5 profile remained uniformly scale 5 with source deadlines retained.
+Compression, which timed out under the original scale-1 profile, passed here.
+Observed run duration was 4207.763 seconds, sampled QEMU RSS maximum 2381160448
+bytes, QEMU CPU 3421.64 seconds, private scratch allocation maximum 127234560
+bytes and minimum sampled host free space 71175016448 bytes. Host compilation
+overlapped parts of execution; these are resource observations, not a controlled
+performance or source-scale-1 timing result.

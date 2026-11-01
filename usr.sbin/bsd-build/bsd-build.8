@@ -2175,6 +2175,8 @@ The maintained harness supports a separate private sparse scratch disk with
 explicit sampled host allocation/free-space bounds; it stages no world tools
 when used independently of its ZFS bootstrap mode.
 Original ATF requirements, timeouts, cleanup and source skips are preserved.
+The maintained permissions test accepts either capitalization of the configured
+shell's permission-denied diagnostic; mode and nonzero-exit checks remain intact.
 The explicit fixture plan may supply checker_profile.timeout_scale, an integer
 from 1 through 20 with default 1.
 The checker records both original ATF deadlines and uniformly scaled effective

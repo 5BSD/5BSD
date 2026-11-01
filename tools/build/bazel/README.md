@@ -47017,3 +47017,14 @@ outputs match Make exactly; an unchanged repeat retains all 11 output files
 with zero spawned actions. See [NTP-QUALIFICATION.md](NTP-QUALIFICATION.md) for
 input ownership, retained failures, debug differences and the remaining six
 programs, three libraries, package/documentation and clock-control runtime gates.
+
+### Full makefs emulation run and shell diagnostic portability (2026-11-01)
+
+The complete scale-5 run attempted all 63 cases: 59 passed, three retained source
+skips, and one failed on the permission diagnostic's capitalization under the
+configured default Zsh. Per-case and final cleanup passed and the guest shut
+down normally. The maintained test now accepts either capitalization while
+retaining every permission/nonzero-exit assertion; account and PAM policy are
+unchanged. Native refresh r12 passes 176 targets/27 test targets. A new complete
+VM run remains pending; see [MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md)
+for the retained failed run and resource limits.
