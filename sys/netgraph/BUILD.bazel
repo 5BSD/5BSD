@@ -10,8 +10,11 @@ cc_library(name = "bridge_test_headers", hdrs = ["ng_bridge.h"], strip_include_p
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 cc_library(name = "kernel_headers", hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h"],
-    includes = [".."], deps = ["//sys/amd64/conf:generic_opt_kdb_header",
-    "//sys/amd64/conf:generic_opt_netgraph_header", "//sys/sys:kernel_headers"],
+    includes = [".."], deps = select({
+        "@platforms//cpu:x86_64": ["//sys/amd64/conf:generic_opt_kdb_header", "//sys/amd64/conf:generic_opt_netgraph_header"],
+        "@platforms//cpu:aarch64": ["//sys/arm64/conf:generic_opt_kdb_header", "//sys/arm64/conf:generic_opt_netgraph_header"],
+        "@platforms//cpu:riscv64": ["//sys/riscv/conf:generic_opt_kdb_header", "//sys/riscv/conf:generic_opt_netgraph_header"],
+    }, no_match_error = "Netgraph kernel headers require a supported target architecture") + ["//sys/sys:kernel_headers"],
     visibility = ["//visibility:private"])
 cc_library(name = "async_module_headers", hdrs = ["ng_async.h"], includes = [".."],
     deps = [":kernel_headers"], visibility = ["//sys/modules/netgraph/async:__pkg__"])
@@ -89,3 +92,158 @@ amd64_generic_module_objects(name = "ng_checksum_module", srcs = ["ng_checksum.c
 amd64_generic_module_objects(name = "ng_pppoe_module", srcs = ["ng_pppoe.c"], deps = [
     ":pppoe_module_headers", "//sys/net:ethernet_headers", "//sys/net:interface_headers",
     "//sys/net:vlan_headers", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_async_module",
+    srcs = ["ng_async.c"],
+    deps = [
+        ":async_module_headers",
+        "//sys/net:ppp_defs_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_hub_module",
+    srcs = ["ng_hub.c"],
+    deps = [":hub_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_pipe_module",
+    srcs = ["ng_pipe.c"],
+    deps = [":pipe_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_tee_module",
+    srcs = ["ng_tee.c"],
+    deps = [":tee_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_split_module",
+    srcs = ["ng_split.c"],
+    deps = [":split_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_vlan_module",
+    srcs = ["ng_vlan.c"],
+    deps = [":vlan_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_tag_module",
+    srcs = ["ng_tag.c"],
+    deps = [":tag_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_one2many_module",
+    srcs = ["ng_one2many.c"],
+    deps = [":one2many_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_vlan_rotate_module",
+    srcs = ["ng_vlan_rotate.c"],
+    deps = [":vlan_rotate_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_tcpmss_module",
+    srcs = ["ng_tcpmss.c"],
+    deps = [":tcpmss_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_patch_module",
+    srcs = ["ng_patch.c"],
+    deps = [":patch_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_gif_demux_module",
+    srcs = ["ng_gif_demux.c"],
+    deps = [":gif_demux_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_car_module",
+    srcs = ["ng_car.c"],
+    deps = [":car_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_socket_module",
+    srcs = ["ng_socket.c"],
+    deps = [":socket_module_headers", "//sys/vm:kernel_headers"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_ip_input_module",
+    srcs = ["ng_ip_input.c"],
+    deps = [
+        ":ip_input_module_headers",
+        "//sys/net:network_headers",
+        "//sys/net:interface_headers",
+        "//sys/netinet:address_headers",
+        "//sys/netinet:interface_headers",
+        "//sys/netinet:ip_headers",
+        "//sys/netinet6:address_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_checksum_module",
+    srcs = ["ng_checksum.c"],
+    deps = [
+        ":checksum_module_headers",
+        "//sys/" + arch + "/conf:generic_opt_inet_header",
+        "//sys/" + arch + "/conf:generic_opt_inet6_header",
+        "//sys/net:bpf_headers",
+        "//sys/net:ethernet_headers",
+        "//sys/net:interface_headers",
+        "//sys/net:vlan_headers",
+        "//sys/netinet:address_headers",
+        "//sys/netinet:ipv4_wire_headers",
+        "//sys/netinet:ip6_wire_headers",
+        "//sys/netinet:tcp_wire_headers",
+        "//sys/netinet:udp_wire_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module_objects(
+    arch = arch,
+    name = "ng_pppoe_module",
+    srcs = ["ng_pppoe.c"],
+    deps = [
+        ":pppoe_module_headers",
+        "//sys/net:ethernet_headers",
+        "//sys/net:interface_headers",
+        "//sys/net:vlan_headers",
+        "//sys/contrib/ck:kernel_headers",
+        "//sys/vm:kernel_headers",
+    ],
+) for arch in ["arm64", "riscv"]]

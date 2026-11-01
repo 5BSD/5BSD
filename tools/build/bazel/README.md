@@ -9,11 +9,12 @@ imported upstream BUILD files as evidence of BSD build coverage.
 selected amd64 GENERIC kernel modules, with 106 direct Bazel module declarations.
 See [VirtIO qualification](VIRTIO-QUALIFICATION.md) for the fourteen new modules
 and the limits of that count.
-ARM64 and RISC-V64 now each have 43 module candidates with independent Make
+ARM64 and RISC-V64 now each have 60 module candidates with independent Make
 artifact/install comparisons: filemon, four facilities, nineteen VirtIO modules,
-nine filesystem/ACL modules and ten MAC/OES modules. See [cross VirtIO evidence](CROSS-VIRTIO-QUALIFICATION.md),
+nine filesystem/ACL modules, ten MAC/OES modules and seventeen Netgraph modules. See [cross VirtIO evidence](CROSS-VIRTIO-QUALIFICATION.md),
 [filesystem evidence](CROSS-FILESYSTEMS-QUALIFICATION.md), and
-[security-module evidence](CROSS-SECURITY-QUALIFICATION.md). Their selected
+[security-module evidence](CROSS-SECURITY-QUALIFICATION.md), and
+[Netgraph evidence](CROSS-NETGRAPH-QUALIFICATION.md). Their selected
 GENERIC inventories contain 615 and 543 modules respectively; these are not
 completed conversion or runtime counts.
 All 17 converted Netgraph modules currently pass `build-bsd` compilation and

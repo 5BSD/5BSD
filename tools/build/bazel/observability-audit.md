@@ -8862,3 +8862,14 @@ SDT/CTF/code/relocation sections match independent Make artifacts. Live firing,
 argument semantics, ABAC/MAC enforcement, authorization/event/cache behavior,
 audit delivery and overhead remain open. See
 [security-module evidence](CROSS-SECURITY-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 seventeen Netgraph modules (2026-11-01)
+
+No direct SDT provider/schema or audit marker occurs in the bounded seventeen-C-
+source scan. Core/header/socket/network observation remains a separate question.
+No C/probe/audit path changed; installed code/CTF/relocation sections match Make.
+Review graph control/reconfiguration, socket privilege/credential checks, queues
+and error paths against existing tracing/audit coverage; absence in these leaf
+sources alone is not a basis to add or declare adequate instrumentation. Matching-
+kernel forwarding/control/failure/security behavior, event delivery and overhead
+remain open. See [Netgraph evidence](CROSS-NETGRAPH-QUALIFICATION.md).

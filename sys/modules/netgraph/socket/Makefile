@@ -1,6 +1,6 @@
 # $Whistle: Makefile,v 1.2 1999/01/19 19:39:22 archie Exp $
 
 KMOD=	ng_socket
-SRCS= 	ng_socket.c
+SRCS= 	ng_socket.c vnode_if.h
 
 .include <bsd.kmod.mk>
