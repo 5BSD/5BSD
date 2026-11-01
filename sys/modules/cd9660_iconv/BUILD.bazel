@@ -9,3 +9,16 @@ amd64_generic_module(
     module = "cd9660_iconv",
     objects = [":generic_module_object_files"],
 )
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = ["//sys/fs/cd9660:cd9660_iconv.c"],
+) for arch in ["arm64", "riscv"]]
+
+[cross_generic_module(
+    arch = arch,
+    module = "cd9660_iconv",
+    objects = [":" + arch + "_generic_module_object_files"],
+) for arch in ["arm64", "riscv"]]

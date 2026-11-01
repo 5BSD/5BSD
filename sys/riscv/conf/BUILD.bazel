@@ -49,3 +49,12 @@ cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
 [cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/virtio:__subpackages__"])
  for option in ["cam", "evdev", "inet", "inet6", "scsi", "snd"]]
+
+# Filesystem module option contents come from the target config tree.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["ddb", "pseudofs", "tmpfs"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/fs:__subpackages__"])
+ for option in ["ddb", "pseudofs", "tmpfs"]]

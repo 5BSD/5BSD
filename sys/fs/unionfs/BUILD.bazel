@@ -6,3 +6,15 @@ cc_library(name = "headers", hdrs = ["union.h"], strip_include_prefix = ".", inc
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"])
 amd64_generic_module_objects(srcs = ["union_subr.c", "union_vfsops.c", "union_vnops.c"],
     deps = [":headers", "//sys/security/mac:framework_headers"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = [
+        "union_subr.c",
+        "union_vfsops.c",
+        "union_vnops.c",
+    ],
+    deps = [":headers", "//sys/security/mac:framework_headers"],
+) for arch in ["arm64", "riscv"]]

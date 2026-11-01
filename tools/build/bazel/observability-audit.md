@@ -8840,3 +8840,14 @@ from subsystem observation. This proves artifact preservation, not live probe
 firing, argument semantics, audit delivery, HyperTrace operation or overhead.
 Matching-kernel device, failure and resource tests remain open. See
 [cross VirtIO evidence](CROSS-VIRTIO-QUALIFICATION.md).
+
+## ARM64 / RISC-V64 filesystems and ACLs (2026-11-01)
+
+The bounded 26-source scan records nineteen SDT schemas: two in cd9660_vnops,
+four in null_subr, nine in tmpfs_subr, two in tmpfs_vnops and two in union_subr.
+Other scanned sources have no direct SDT/audit markers; subsystem observation
+remains a separate question. No C/probe/audit path changed. Complete no-debug
+module bytes and installed enabled SDT/CTF/code/relocation sections match Make.
+Live firing, argument semantics, ACL/MAC enforcement, audit event delivery,
+filesystem failure behavior and overhead remain unqualified. See
+[filesystem evidence](CROSS-FILESYSTEMS-QUALIFICATION.md).

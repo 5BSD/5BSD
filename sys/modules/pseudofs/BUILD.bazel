@@ -3,3 +3,24 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 
 amd64_generic_module(module = "pseudofs", objects = ["//sys/fs/pseudofs:generic_module_object_files"],
     exports = ["pfs_cmount", "pfs_mount", "pfs_unmount", "pfs_root", "pfs_statfs", "pfs_init", "pfs_uninit", "pfs_create_dir", "pfs_create_file", "pfs_create_link", "pfs_destroy"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "pseudofs",
+    objects = ["//sys/fs/pseudofs:" + arch + "_generic_module_object_files"],
+    exports = [
+        "pfs_cmount",
+        "pfs_mount",
+        "pfs_unmount",
+        "pfs_root",
+        "pfs_statfs",
+        "pfs_init",
+        "pfs_uninit",
+        "pfs_create_dir",
+        "pfs_create_file",
+        "pfs_create_link",
+        "pfs_destroy",
+    ],
+) for arch in ["arm64", "riscv"]]

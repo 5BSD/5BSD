@@ -4561,3 +4561,10 @@ The PMEM module remains amd64-only, matching its NVDIMM dependency.
 Independent comparisons cover CTF/debug disabled and enabled artifacts and file
 installation records; matching-kernel module loading and device operation remain
 unqualified.
+
+.Pp
+Explicit ARM64 and RISC-V64 filesystem candidates include the two ACL modules,
+cd9660 and cd9660_iconv, fdescfs, nullfs, pseudofs, tmpfs and unionfs.
+They use target-generated options and the existing kernel CTF/debug settings.
+Independent Make comparisons cover installed artifacts and file metadata;
+filesystem operations and matching-kernel module loading remain unqualified.

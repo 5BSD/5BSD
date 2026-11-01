@@ -12,3 +12,19 @@ amd64_generic_module_objects(
     deps = [":kernel_headers"])
 
 exports_files(["cd9660_iconv.c"], visibility = ["//sys/modules/cd9660_iconv:__pkg__"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+
+[cross_generic_module_objects(
+    arch = arch,
+    srcs = [
+        "cd9660_bmap.c",
+        "cd9660_lookup.c",
+        "cd9660_node.c",
+        "cd9660_rrip.c",
+        "cd9660_util.c",
+        "cd9660_vfsops.c",
+        "cd9660_vnops.c",
+    ],
+    deps = [":kernel_headers"],
+) for arch in ["arm64", "riscv"]]

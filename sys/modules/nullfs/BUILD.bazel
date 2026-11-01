@@ -4,3 +4,12 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
 amd64_generic_module(module = "nullfs",
     objects = ["//sys/fs/nullfs:generic_module_object_files"],
     exports = ["null_vnodeops", "null_vnodeops_no_unp_bypass"])
+
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+[cross_generic_module(
+    arch = arch,
+    module = "nullfs",
+    objects = ["//sys/fs/nullfs:" + arch + "_generic_module_object_files"],
+    exports = ["null_vnodeops", "null_vnodeops_no_unp_bypass"],
+) for arch in ["arm64", "riscv"]]
