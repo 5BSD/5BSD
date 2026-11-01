@@ -98,6 +98,11 @@ class client_fd {
 	/* HPI1 from the primary ELF receiver, protected by sockfdsmtx. */
 	std::array<uint8_t, 32> consumer_program_digest{};
 	bool consumer_program_valid = false;
+	/* Set once this connection's HPI registration was answered with
+	 * success. Until then the event loop dispatches reads on an ELF
+	 * receiver (the registration frame); afterwards its inbound bytes are
+	 * delivery acknowledgments read by the sending worker. */
+	std::atomic_bool consumer_registration_acked{false};
 	std::array<uint8_t, 24> consumer_handle_lifetime{};
 	int consumer_process_fd = -1; /* verified birth; PD_DAEMON ownership */
 	/* HPI1's activated-import census runs once per admitted connection.

@@ -1277,6 +1277,17 @@ job::read_data(state &s) try
 		return (false);
 		/* HT-C END */
 	}
+	/* A host consumer that subscribed only to ELF delivery is read solely
+	 * for its program registration (state::dispatch_read()). */
+	if (dfd.kind == DTRACED_KIND_CONSUMER &&
+	    dfd.is_subscribed(DTD_SUB_ELFWRITE) &&
+	    !dfd.is_subscribed(DTD_SUB_READDATA) &&
+	    !dfd.is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
+	    !dfd.is_subscribed(DTD_SUB_RELEASE_RECOVERY) &&
+	    header.msg_type != DTRACED_MSG_CONSUMER_PROGRAM) {
+		errno = EPROTO;
+		return (false);
+	}
 	if (header.msg_type == DTRACED_MSG_HANDOFF_IMPORT &&
 	    totalbytes > DTRACED_MSGHDRSIZE +
 	    DTRACED_HANDOFF_IMPORT_BINDING_SIZE +
@@ -1331,6 +1342,12 @@ job::read_data(state &s) try
 		 * precede it. Registration takes no output lock of its own. */
 		std::unique_lock output(dfd.output_mtx);
 		unsigned char status = cr.handle() ? 1 : 0;
+		/* Before the status can reach the client (and before any ELF it
+		 * releases): later inbound bytes are delivery acknowledgments
+		 * for the sending worker, not frames for the event loop. A
+		 * refused registration stays retryable on this connection. */
+		if (status == 1)
+			dfd.consumer_registration_acked.store(true);
 		if (!dfd.send(&status, sizeof(status), deadline)) {
 			ERR("sending response failed on %s with: %m", dfd.ident);
 			return (false);
