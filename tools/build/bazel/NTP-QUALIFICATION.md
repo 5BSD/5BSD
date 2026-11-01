@@ -2,8 +2,9 @@
 
 2026-11-01. Make remains the production backend. This tranche declares the
 105 maintained libntp translation units plus the generated version source,
-ordinary and PIE private libraries, and ntptime. The other six NTP programs,
-three private libraries and shared documentation remain migration work.
+ordinary and PIE private libraries, and ntptime. This initial tranche did not cover the other six programs, three private
+libraries or shared documentation. Subsequent control-client/library coverage
+is recorded in NTP-CLIENTS-QUALIFICATION.md.
 There is no whole-world, full NTP service, clock-control or publication claim.
 
 ## Source and generation ownership
@@ -99,3 +100,13 @@ hooks. The migration preserves the original source and syscall behavior. A
 separate policy review should assess observation/auditing of privileged clock
 adjustment; absence of a component provider is not proof of missing syscall
 coverage. No new instrumentation or tracing-performance claim is introduced.
+
+## Later correction: select captured payloads by qualification
+
+Early comparison paths used mutable bazel-bin aliases. All corresponding hashes
+were verified against the correct captured manifest, with no wrong-configuration
+result found. All archive/program and installation/debug comparisons were rerun
+from receipt-selected captures. The authoritative reports, new selection helper,
+negative tests and retained originals are described in NTP-CLIENTS-QUALIFICATION.md.
+Default/custom version and default payload equality were separately rechecked
+from captured files rather than aliases. Earlier byte/code/runtime limits remain.

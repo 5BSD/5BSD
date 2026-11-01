@@ -11,4 +11,4 @@ load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "version_inputs_test", src = "version-inputs-test.py",
     data = ["ntp_version.py"], visibility = ["//visibility:public"])
 
-exports_files(["scripts/mkver", "ntp_version.py"], visibility = ["//usr.sbin/ntp:__subpackages__"])
+exports_files(["scripts/mkver", "ntp_version.py", "client-help-test.py"], visibility = ["//usr.sbin/ntp:__subpackages__"])

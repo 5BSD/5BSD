@@ -4737,3 +4737,22 @@ and define policies, and maintained final link order.
 Artifact and file metadata comparisons cover plain and CTF/debug modes; they do
 not qualify live packet filtering, queues, synchronization, probe arguments or
 complete kernels. Separate DWARF layout remains outside this artifact gate.
+
+.Pp
+Native ntpdc, ntpq and private AutoOpts candidates preserve ordinary/PIE object
+variants, optional OpenSSL, per-program version actions and their Make paths.
+Help/version and artifact/install comparisons are qualified; NTP protocol and
+daemon runtime remain open.
+Artifact comparison tooling can select captured outputs with
+.Fl -qualification ,
+.Fl -target
+and
+.Fl -output-suffix ;
+it verifies the receipt's manifest, content hashes and containment and rejects
+ambiguous selections.
+Raw
+.Fl -candidate
+files carry no native qualification binding.
+The regression target
+.Li //tools/build/bazel:qualification_artifacts_test
+uses the normal format-5 target/test lists.

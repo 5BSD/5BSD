@@ -47053,3 +47053,19 @@ kgssapi modules also remain byte-identical on all three architectures. See
 [PACKET-FILTER-MODULES-QUALIFICATION.md](PACKET-FILTER-MODULES-QUALIFICATION.md)
 for source ownership, retained attempts/cache provenance, debug limits and open
 runtime/full-system/performance gates.
+
+### NTP control clients and capture selection (2026-11-01)
+
+Native ntpdc, ntpq and private AutoOpts candidates pass default and OpenSSL-off
+builds/tests and independent Make archive/ELF/install comparisons. The family
+now has three program and two private-library candidates; daemon, remaining
+programs/libraries, documentation and package aggregation remain open. See
+[NTP-CLIENTS-QUALIFICATION.md](NTP-CLIENTS-QUALIFICATION.md).
+
+Artifact comparisons now support explicit --qualification, --target and
+--output-suffix selection from the receipt's captured files. Manifest/payload
+hashes, containment and unambiguous selection are checked; raw --candidate files
+are labeled separately. Twelve regressions pass as
+//tools/build/bazel:qualification_artifacts_test. All fourteen earlier/new NTP
+comparisons were rerun with captured selection; old reports are retained. Do not
+use mutable bazel-bin aliases to identify a qualified configuration.

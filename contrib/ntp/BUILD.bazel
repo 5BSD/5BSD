@@ -4,6 +4,7 @@ load(":sources.bzl", "LIBNTP_SOURCES")
 _VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
 exports_files(LIBNTP_SOURCES + ["util/ntptime.c", "sources.bzl"], visibility = _VISIBILITY)
 cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
+    textual_hdrs = ["include/ssl_applink.c"],
     strip_include_prefix = "include", visibility = _VISIBILITY)
 cc_library(name = "isc_headers", hdrs = glob(["libntp/lib/isc/include/**/*.h"]),
     strip_include_prefix = "libntp/lib/isc/include", visibility = _VISIBILITY)
@@ -22,3 +23,15 @@ filegroup(name = "isc_unix_fragments",
 cc_library(name = "private_headers",
     hdrs = ["libntp/lib/isc/task_p.h", "libntp/lib/isc/unix/errno2result.h"],
     visibility = _VISIBILITY)
+
+# Checked-in AutoOpts amalgamation and client option tables used by Make.
+exports_files(["sntp/libopts/libopts.c"] + [directory + "/" + source
+    for directory, sources in {
+        "ntpdc": ["ntpdc.c", "ntpdc_ops.c", "ntpdc-opts.c"],
+        "ntpq": ["ntpq.c", "ntpq-opts.c", "ntpq-subs.c"],
+    }.items() for source in sources], visibility = _VISIBILITY)
+filegroup(name = "opts_fragments",
+    srcs = glob(["sntp/libopts/**/*.c"], exclude = ["sntp/libopts/libopts.c"]),
+    visibility = _VISIBILITY)
+cc_library(name = "ntpdc_headers", hdrs = glob(["ntpdc/*.h"]), visibility = _VISIBILITY)
+cc_library(name = "ntpq_headers", hdrs = glob(["ntpq/*.h"]), visibility = _VISIBILITY)

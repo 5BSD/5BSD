@@ -9062,3 +9062,13 @@ jail boundaries as their runtime tests are implemented.
 
 Evidence and exact scans: bazel-packet-filter-review-20261101. Scope and remaining
 gates: PACKET-FILTER-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: NTP control clients and AutoOpts
+
+ntpdc, ntpq and the private AutoOpts amalgamation preserve their maintained
+sources and conditional OpenSSL behavior. No component provider/BSM hook occurs
+in these selected sources. Tests cover help/version after ordinary readiness
+initialization; remote-control authentication, rejection and network behavior
+remain runtime review gates. The remaining ntpd Make graph explicitly declares
+timediscipline_provider.d, DTRACE_STATIC_ANCHOR and WITH_COVERAGE_DTRACE, which
+must survive its future native migration. See NTP-CLIENTS-QUALIFICATION.md.

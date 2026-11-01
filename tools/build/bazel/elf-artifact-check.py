@@ -14,6 +14,8 @@ from pathlib import Path
 import re
 import subprocess
 
+import qualification_artifacts
+
 ENV = {'PATH': '/bin:/usr/bin', 'LC_ALL': 'C'}
 
 
@@ -203,9 +205,22 @@ def compare_archive(nm, ar, candidate, reference):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--kind', choices=('program', 'archive'), required=True)
-    for name in ('readelf', 'objcopy', 'nm', 'ar', 'candidate', 'make-artifact', 'output'):
+    for name in ('readelf', 'objcopy', 'nm', 'ar', 'make-artifact', 'output'):
         p.add_argument('--' + name, type=Path)
+    selection = p.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--candidate', type=Path, help='explicit raw file; no qualification binding')
+    selection.add_argument('--qualification', type=Path, help='completed native qualification directory')
+    p.add_argument('--target', help='explicit captured target label')
+    p.add_argument('--output-suffix', help='unique literal suffix of its captured output name')
     a = p.parse_args()
+    if a.qualification is not None:
+        if not a.target or not a.output_suffix:
+            p.error('--qualification requires --target and --output-suffix')
+        a.candidate, binding = qualification_artifacts.resolve(a.qualification, a.target, a.output_suffix)
+    else:
+        if a.target is not None or a.output_suffix is not None:
+            p.error('captured target/output selection requires --qualification')
+        binding = {'source': 'explicit-unbound-file'}
     if a.kind == 'program':
         scratch = a.output.with_suffix('.scratch')
         scratch.mkdir()
@@ -213,6 +228,10 @@ def main():
         scratch.rmdir()
     else:
         result = compare_archive(a.nm, a.ar, a.candidate, a.make_artifact)
+    if binding['source'] == 'qualification-capture':
+        if result['candidate']['sha256'] != binding['sha256'] or sha(a.candidate) != binding['sha256']:
+            raise ValueError('captured artifact changed during comparison')
+    result['candidate_binding'] = binding
     with a.output.open('x') as stream:
         stream.write(json.dumps(result, indent=2) + '\n')
 

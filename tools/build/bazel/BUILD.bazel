@@ -139,3 +139,10 @@ bsd_python_test(
 )
 
 exports_files(["bsd_usbdevs.bzl"], visibility = ["//visibility:public"])
+
+bsd_python_test(
+    name = "qualification_artifacts_test",
+    src = "qualification-artifacts-test.py",
+    data = ["qualification_artifacts.py"],
+    visibility = ["//visibility:public"],
+)
