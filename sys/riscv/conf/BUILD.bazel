@@ -24,3 +24,12 @@ filegroup(name = "generic_identity", srcs = [":generic_config"], output_group = 
     visibility = ["//visibility:public"])
 filegroup(name = "generic_debug_identity", srcs = [":generic_debug_config"], output_group = "identity",
     visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_tree_file.bzl", "bsd_tree_file")
+bsd_tree_file(name = "opt_global", tree = ":generic_config", member = "opt_global.h",
+    output = "generic_options/opt_global.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_global_headers", hdrs = [":opt_global"],
+    strip_include_prefix = "generic_options", visibility = ["//visibility:public"])

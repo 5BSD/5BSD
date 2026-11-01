@@ -2143,7 +2143,8 @@ This does not qualify the complete loader, kernel and installed-system chain.
 
 .Ss Bazel build qualification
 .Cm bazel-test
-runs the maintained native amd64 compile and artifact-comparison pilot.
+runs maintained native amd64 qualification and explicitly selected
+cross-target kernel artifact qualification.
 Bazel 9 or later is the only supported Bazel, with Bzlmod and rules_cc;
 Bazel 5 and the WORKSPACE mode are no longer supported.
 .Fl bazel Ar path
@@ -4521,3 +4522,20 @@ It excludes the pending generated manual-page and sysctl inventories and is
 not a complete installed test package.
 The parent installer target continues to reject tests=true until those
 inventories are also represented natively.
+
+.Ss Cross-target Bazel kernel artifacts
+Format-5 source graph inputs may select
+.Dq target-kind
+set to
+.Dq kernel
+and use
+.Fl arch Ar arm64
+or
+.Fl arch Ar riscv64 .
+The native amd64 SDK supplies execution tools; registered target C++ toolchains
+select the target triple, freestanding ABI and declared source headers.
+The host platform remains native, so config and layout-extraction programs
+are built for the host. Target objects are never executed on that host.
+This profile builds artifacts only and rejects runnable test selections.
+The default target kind is userland and currently requires amd64.
+Cross userland, complete kernels and module sets remain unqualified.

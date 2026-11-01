@@ -35,6 +35,19 @@ and required-Casper configuration-policy gates.
 Its eleven ATF cases pass; see [component evidence](NOTIFYCTL-QUALIFICATION.md)
 for exact checks and the inherited static DTrace archive qualification limit.
 
+**Cross-target kernel foundation** now compiles the real GENERIC layout object
+and extracts its offsets for ARM64 and RISC-V through `build-bsd --arch` and
+registered artifact-backed target toolchains. Both complete object/header pairs
+match independent Make bytes; repeat runs have identical manifests with zero
+external spawns. This does not establish full kernel/module cross-builds or
+runtime support. See [architecture evidence](CROSS-ARCHITECTURE-QUALIFICATION.md).
+
+**PMC userland tools** now have native builds and installation metadata for
+pmc, pmccontrol, pmcstat, pmcannotate and pmcstudy. All ten selected targets,
+24 install records and ELF contracts pass; three retain documented source-path
+and layout differences. See [PMC evidence](PMC-QUALIFICATION.md) for the bounded
+checks and open hardware/runtime/performance work.
+
 ## Current coverage audit and next work order (2026-10-27, refreshed)
 
 The current configured metadata survey covers **2,103 directories with no query

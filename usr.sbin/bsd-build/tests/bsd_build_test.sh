@@ -1479,14 +1479,27 @@ assert rows[0]['verification_scope'] == 'native-configured-qualification'
 assert rows[0]['make_install_reference'] == 'not-performed'
 assert rows[0]['build_backend'] == 'bsd-make'
 assert rows[1]['argv'][1] == '/usr/src/tools/build/bazel/native-qualify.py'
-assert rows[1]['argv'][-2:] == ['--inputs', sys.argv[1]]
+assert rows[1]['argv'][-4:] == ['--inputs', sys.argv[1], '--target-arch', 'amd64']
 PYTEST
+    for selection in arm64 riscv64; do
+        atf_check -s exit:0 -o save:cross-plan.jsonl -e empty "$tool" plan bazel-test --arch "$selection" --bazel /usr/bin/true --bazel-inputs "$PWD/native-inputs.json" --output "$output" --format json
+        atf_check -s exit:0 -o empty -e empty python3.12 - "$selection" <<'PYTEST'
+import json, sys
+rows = [json.loads(line) for line in open('cross-plan.jsonl')]
+arch = {'arm64': 'aarch64', 'riscv64': 'riscv64'}[sys.argv[1]]
+assert rows[0]['target_arch'] == arch
+assert rows[0]['verification_scope'] == 'cross-configured-qualification'
+assert rows[1]['argv'][-2:] == ['--target-arch', arch]
+# Object root is the execution SDK, not a pretend cross-userland SDK.
+assert rows[1]['argv'][rows[1]['argv'].index('--objtop') + 1] == '/usr/obj/usr/src/amd64.amd64'
+PYTEST
+    done
     [ ! -e "$output" ] || atf_fail 'native plan created output'
     atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel-inputs "$PWD/native-inputs.json"
     atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel-modules "$PWD/modules.json"
     atf_check -s not-exit:0 -o empty -e match:'requires --bazel-modules' "$tool" plan bazel-test --bazel /usr/bin/true
     atf_check -s not-exit:0 -o empty -e match:'native --bazel-inputs names its own' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-inputs "$PWD/native-inputs.json" --bazel-modules "$PWD/modules.json"
-    atf_check -s not-exit:0 -o empty -e match:'native amd64' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --arch arm64
+    atf_check -s not-exit:0 -o empty -e match:'cross-target bazel-test requires explicit' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --arch arm64
     atf_check -s not-exit:0 -o empty -e match:'only to bazel-test' "$tool" plan world --bazel /usr/bin/true
     atf_check -s not-exit:0 -o empty -e match:'fresh qualification' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --incremental
     atf_check -s not-exit:0 -o empty -e match:'fixed comparison configuration' "$tool" plan bazel-test --bazel /usr/bin/true --bazel-modules "$PWD/modules.json" --src-conf /dev/null

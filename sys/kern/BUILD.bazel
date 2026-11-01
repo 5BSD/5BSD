@@ -454,3 +454,29 @@ exports_files(["subr_vmem.c"], visibility = ["//lib/libuvmem:__pkg__"])
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 amd64_generic_module_objects(name = "generic_firmware_module", srcs = ["subr_firmware.c"],
     deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":bus_if_headers", ":device_if_headers"])
+
+# Real cross-target layout objects: the compiler produces target ELF; native
+# nm/grep/sed/sort extract constants without executing that target code.
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_WARNING_FLAGS", "KERNEL_DEBUG_FLAGS")
+_CROSS_LAYOUT_FLAGS = ["-fno-strict-aliasing", "-fcommon", "-include", "opt_global.h",
+    "-fno-omit-frame-pointer", "-fwrapv", "-fstack-protector-strong", "-std=gnu17"] + KERNEL_WARNING_FLAGS + KERNEL_DEBUG_FLAGS
+[cc_library(name = arch + "_generic_genoffset", srcs = ["genoffset.c"],
+    deps = ["//sys/" + arch + "/conf:generic_global_headers", "//sys/" + arch + "/include:kernel_headers",
+        "//sys/sys:kernel_headers", "//sys/bsm:kernel_headers", "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers"] + extra_headers,
+    copts = _CROSS_LAYOUT_FLAGS + arch_flags,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu,
+        "//tools/build/bazel/kernel_toolchain:kernel"])
+ for arch, cpu, arch_flags, extra_headers in [
+    ("arm64", "aarch64", ["-mgeneral-regs-only", "-ffixed-x18", "-mbranch-protection=standard", "-mno-outline-atomics",
+            "-mno-omit-leaf-frame-pointer", "-mstack-protector-guard=sysreg",
+            "-mstack-protector-guard-reg=sp_el0", "-mstack-protector-guard-offset=0"],
+        ["//sys/arm/include:kernel_headers"]),
+    ("riscv", "riscv64", ["-march=rv64imafdch_zifencei_svinval", "-mabi=lp64", "-mcmodel=medium",
+            "-mno-relax", "-fPIE", "-fno-optimize-sibling-calls"], []),
+]]
+[bsd_component_object(name = arch + "_generic_genoffset_object", group = ":" + arch + "_generic_genoffset",
+    out = arch + "_generic_layout/genoffset.o") for arch in ["arm64", "riscv"]]
+[kernel_constants(name = arch + "_generic_offset", object = ":" + arch + "_generic_genoffset_object",
+    kind = "offset", output = arch + "_generic_layout/offset.inc") for arch in ["arm64", "riscv"]]

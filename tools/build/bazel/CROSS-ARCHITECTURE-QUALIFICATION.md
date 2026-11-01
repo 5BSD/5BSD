@@ -2,8 +2,8 @@
 
 2026-11-01. Required system targets are amd64, ARM64 (`arm64` / `aarch64`) and
 RISC-V (`riscv` / `riscv64`). This record qualifies configuration generation and
-inventory tooling. It does not establish cross-compiled world, kernel or module
-products. Make remains the production backend.
+inventory tooling, and the first real cross-compiled kernel layout objects. It
+does not establish complete world, kernel or module products. Make remains the production backend.
 
 ## Real ARM64 and RISC-V configuration generation
 
@@ -117,21 +117,96 @@ The retained cache-review.json limits this result to unchanged-input reuse;
 source mutation, independent clean bootstrap, remote cache and cross-workspace
 portability remain separate gates.
 
-## Frontend review and remaining work
+## Registered cross-target kernel compiler foundation
 
-Existing `build-bsd bazel-test` format-5 target selection handles these native
-host-executed configuration actions. No new CLI, signing, installation,
-publication or manual contract is introduced. The inventory's `--jobs` controls
-a read-only diagnostic, not a second build backend.
+Format-5 source input now accepts optional `"target-kind": "kernel"`. The
+maintained `build-bsd bazel-test --arch arm64|riscv64 --bazel-inputs FILE`
+passes the normalized target architecture to the existing backend. Its execution
+SDK/object root remains amd64. Legacy qualification formats and ordinary
+userland inputs remain amd64-only; foreign userland and all runnable selections
+in the kernel profile are rejected before SDK preparation/output creation.
+The current build host must be amd64. This is not a cross-userland SDK.
 
-The current prepared SDK still registers an amd64 toolchain/platform. Completing
-cross builds requires registered execution and target toolchains with correct
-constraints and target sysroots, target-specific kernel compiler/linker policy,
-layout generators, architecture/board source selection and complete native
-module dependencies. Existing amd64-only module declarations cannot establish
-ARM64 or RISC-V support merely because a shared driver source is portable.
+`tools/build/bazel/kernel_toolchain` declares source-owned platforms and standard
+`rules_cc` C++ toolchains with separate execution and target constraints and a
+kernel ABI constraint. Compiler actions use declared `File` tools through the
+supported `tool(tool=...)` API. They do not wrap Make, synthesize relative paths
+that escape a package, embed a builder's absolute compiler location, or rewrite
+compiler outputs. The OS/release part of the target triple comes from the
+verified SDK identity; architecture selection is ordinary platform metadata.
+Host config/grep/sed/sort/nm tools remain in the execution configuration.
 
-Cross-target compilation/link/install/pkgbase parity, bootstrap independence,
-mutation/cache behavior, VM/board boot and device behavior, and controlled CPU,
-memory, disk I/O and disk-usage comparisons remain open. No kernel was installed,
-module loaded or VM started by this qualification. BIP remains out of scope.
+Kernel compiler inputs contain the selected compiler and its runtime closure,
+without the host SDK's userland headers/sysroot. `-nostdinc -ffreestanding`
+and target-owned source header declarations prevent host include lookup. The
+captured cross compile actions contain no SDK `sysroot/usr/include` inputs.
+Future sources requiring compiler intrinsic headers need explicit declarations.
+Kernel link inputs also omit userland startup objects and libraries; complete
+kernel links, archive/link/strip actions and every assembly dialect still need
+their own actual product qualification.
+
+The first consumers compile the original `sys/kern/genoffset.c` against actual
+GENERIC `opt_global.h` extracted from native config output. ARM64 declares its
+shared ARM header dependency; this does not restore an ARM32 system port. The
+ARM64 GENERIC policy preserves fixed x18, general registers, branch protection,
+per-thread stack guard and frame pointers. RISC-V preserves the kernel soft-float
+`lp64` ABI, maintained ISA/code model, current LLD no-relax policy, PIE and frame
+policy. These are explicit GENERIC targets, not arbitrary board/config coverage.
+Common warning and debug/CTF setting expressions are shared with existing amd64
+rules; no native amd64 flag value was changed by that extraction.
+
+### Independent actual object and layout parity
+
+| Target | `genoffset.o` bytes | `offset.inc` bytes | Exact Make bytes |
+| --- | ---: | ---: | --- |
+| ARM64 GENERIC, no debug | 1,400 | 695 | both outputs |
+| RISC-V GENERIC, no debug | 1,360 | 695 | both outputs |
+
+Maintained frontend receipts:
+
+- `/usr/obj/usr/src/bazel-cross-layout-arm64-r3-20261101/receipt.json`;
+- `/usr/obj/usr/src/bazel-cross-layout-riscv-r1-20261101/receipt.json`.
+
+Fresh independent Make config/object builds, commands, dependency records and
+resource counters are retained under
+`/usr/obj/usr/src/bazel-cross-layout-make-reference-20261101/`. All 135 recorded
+compiler/config/header inputs recheck unchanged. Complete file byte comparison,
+ELF machine identity (AArch64 183, RISC-V 243), compiler argv, bounded source
+snapshots and input rechecks are recorded in
+`/usr/obj/usr/src/bazel-cross-layout-review-20261101/review.json`. Each first
+cross build executed three external actions: option extraction, target
+compilation and host layout extraction. This object defines layout symbols;
+it does not exercise executable kernel routines or a device driver.
+
+Both repeat frontend runs, `bazel-cross-layout-arm64-cache-20261101` and
+`bazel-cross-layout-riscv-cache-20261101`, reuse the exact artifact manifests
+with zero external spawns. Switching platforms discards Bazel's analysis cache;
+this is unchanged-input action reuse, not a claim of free analysis, remote
+cache portability, mutation coverage or overall build performance. Captured
+`time -l` counters are not total JVM/compiler memory measurements.
+
+The existing amd64 regression at
+`/usr/obj/usr/src/bazel-cross-layout-amd64-regression-r1-20261101/receipt.json`
+reuses its compiled layout object (no CppCompile spawn) and produces an
+`offset.inc` exactly matching fresh Make. Its raw object differs from the
+no-debug Make reference because the existing native SDK emits DWARF. That
+mismatch is retained; no amd64 raw object parity claim is made. Two native
+Bazel test targets execute all eight typed-setting/profile tests and seven
+module-inventory tests. The maintained frontend ATF `bazel_plan` also passes,
+including both cross-architecture argv/scope checks.
+
+Initial failures remain retained: r1 used a `compiler` label attribute that
+collided with a `rules_cc` compiler-string convention; r2 exposed rejection of
+cross-repository package-relative `tool_path`. The final rule binds actual
+compiler artifacts, with no path-normalization exception or SDK receipt edit.
+
+## Remaining system qualification
+
+Existing amd64-specific module declarations still do not establish ARM64 or
+RISC-V module support. Next work must extend real kernel/body and module rules
+with proper target selection, generated interfaces, architecture linker scripts,
+CTF, debug/install metadata and independent Make comparisons. Complete kernel,
+world/sysroot/pkgbase construction, bootstrap independence, source-mutation
+behavior, VM/board boot/device tests and controlled CPU/memory/disk-I/O/disk-usage
+comparisons remain open. No kernel was installed, module loaded or VM started
+by this qualification. Make remains production/default; BIP stays out of scope.

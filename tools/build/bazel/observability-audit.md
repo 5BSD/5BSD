@@ -8793,3 +8793,14 @@ filesystem sharing, graphics/input, IOMMU behavior, crypto operations, HyperTrac
 delivery, live probe firing and security-audit coverage still require matching-
 kernel tests. Absent direct probes do not prove absent system-level observation.
 Source scans and build parity do not close those runtime or performance gates.
+
+## ARM64 / RISC-V kernel layout foundation (2026-11-01)
+
+The new cross-target consumers compile the maintained `sys/kern/genoffset.c`
+and run native layout extraction. No production kernel routine, provider,
+probe site or audit path was changed; the object defines layout symbols.
+This establishes target ABI/layout compiler evidence only. No claim is made
+about architecture-specific SDT relocations, CTF conversion, live probes,
+audit event delivery, module loading or their costs. These remain required
+when kernel/module bodies are migrated. See
+[CROSS-ARCHITECTURE-QUALIFICATION.md](CROSS-ARCHITECTURE-QUALIFICATION.md).

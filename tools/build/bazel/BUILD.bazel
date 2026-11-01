@@ -104,3 +104,10 @@ bsd_python_test(
     src = "install-reference-options-test.py",
     data = ["install_reference_options.py"],
 )
+
+# Includes rejection of foreign userland and unqualified target execution.
+bsd_python_test(
+    name = "source_settings_test",
+    src = "source-settings-test.py",
+    data = ["source_graph.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py"],
+)
