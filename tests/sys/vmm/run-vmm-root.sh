@@ -1,7 +1,8 @@
 #!/bin/sh
 # Run the complete VMM Kyua suite against one explicitly selected module.
-# On AMD, set hw.vmm.svm.kernel_startup_experimental=1 and
-# hw.vmm.svm.nested=1 in the kernel environment before this script loads vmm.
+# On AMD, set hw.vmm.svm.kernel_startup_experimental=1 in the kernel
+# environment before this script loads vmm, and do not set
+# hw.vmm.svm.nested=0 (it defaults to 1).
 # The zero-skip gate then checks both experimental paths.
 
 set -eu

@@ -74,7 +74,7 @@ The `port` argument is an index into the caller's label-scoped window (`VMD_PORT
 
 Intel nested VMX is default-off and triple-gated. The loader tunable `hw.vmm.vmx.nested=1` must be set before `vmm` loads; `x86.nested_vmx=true` must be set per VM in bhyve_config(5); and the guest must request the `VM_CAP_NESTED_VMX` capability. Nested VPID has a separate gate (`hw.vmm.vmx.nested_vpid`). VMX semantics live in the kernel (`sys/amd64/vmm/intel/vmx_nested_*.c`) behind a frozen-vCPU handoff transaction, with VMCS shadowing, nested EPT and L2 freeze/thaw for snapshots.
 
-AMD nested SVM is also default-off. The loader tunable `hw.vmm.svm.nested=1` must be set before `vmm` loads, and `x86.nested_svm=true` must be set for the L1 guest on an AMD host with DecodeAssists. The kernel implements VMRUN, VMLOAD, VMSAVE, nested page translation, L2 exit routing, and nested checkpoint state. Kernel-owned AMD INIT/SIPI remains separately gated by the module-load tunable `hw.vmm.svm.kernel_startup_experimental=1`. AMD nested SVM and startup still require live hardware qualification before production use.
+AMD nested SVM is permitted by the host by default: the loader tunable `hw.vmm.svm.nested` is 1 unless set to 0 before `vmm` loads. A guest sees SVM only when `x86.nested_svm=true` is set for that L1 guest, on an AMD host with DecodeAssists; guests without it keep the ordinary CPU model with SVM hidden. The kernel implements VMRUN, VMLOAD, VMSAVE, nested page translation, L2 exit routing, and nested checkpoint state. Kernel-owned AMD INIT/SIPI remains separately gated by the module-load tunable `hw.vmm.svm.kernel_startup_experimental=1`. AMD nested SVM and startup still require live hardware qualification before production use.
 
 ## MAC hooks
 

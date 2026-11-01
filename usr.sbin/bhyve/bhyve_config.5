@@ -324,13 +324,15 @@ it changes the nested guest CPU model and requires
 .Va hw.vmm.vmx.nested=1 .
 .It Va x86.nested_svm Ta bool Ta false Ta
 Expose AMD SVM instructions and CPUID features to the guest on an AMD host.
-This also requires the boot-time
-.Va hw.vmm.svm.nested
-tunable to be set to
+This also requires the boot-time host policy
+.Va hw.vmm.svm.nested ,
+which is
 .Ql 1
+by default; setting it to
+.Ql 0
 before
 .Nm vmm
-is loaded.
+is loaded refuses nested SVM for every guest on the host.
 This opt-in path supports VMRUN, VMLOAD, VMSAVE, nested page translation,
 L2 string I/O, selected L2 exits, and nested checkpoint records.
 Some L0-owned exits remain unsupported; active-L2 save and restore still

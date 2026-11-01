@@ -1,10 +1,11 @@
 # AMD nested-SVM guest qualification
 
-Run `run-svm-nested-atf.sh` on separate default-off and enabled policy boots
+Run `run-svm-nested-atf.sh` on separate policy-off (`hw.vmm.svm.nested=0`)
+and enabled (default) policy boots
 as described in `docs/bhyve-virtio-state-nested-architecture.md`. On the enabled AMD boot, run
 `run-svm-nested-live.sh` with a reviewed root-owned L1 driver and immutable
 Linux/KVM L1, Linux L2, and 5BSD L2 images. The host needs AMD SVM with
-DecodeAssists and `hw.vmm.svm.nested=1` before loading `vmm`.
+DecodeAssists and `hw.vmm.svm.nested=1` (the default) when `vmm` loads.
 
 Set `WORKDIR` to a fresh, private, root-owned directory of mode 0700. Set
 `NESTED_L1_RUNNER`, `NESTED_L1_IMAGE`, `NESTED_LINUX_L2_IMAGE`, and

@@ -258,9 +258,11 @@ groups and refuses to infer a pass from a generic boot.
 
 AMD SVM now has a private VMCB02 and NPT02 run path, a frozen L2 exit
 handoff, VMCB12 exit reflection, and a versioned active-L2 checkpoint format.
-Exposure requires the boot-time `hw.vmm.svm.nested=1` policy and the per-guest
+Exposure requires the boot-time `hw.vmm.svm.nested=1` host policy (the default;
+set it to 0 to refuse nested SVM host-wide) and the per-guest
 `x86.nested_svm=true` setting.  Each vCPU's exposure policy freezes on its
-first run and at the architecture checkpoint boundary.  It remains default-off pending hardware
+first run and at the architecture checkpoint boundary.  Per-guest exposure
+remains opt-in pending hardware
 qualification of L0-only exits,
 virtual interrupts, NPT12 translation, and active-L2 restore.  VMCB02
 composition rejects any L0 control intercept without a known L2 exit handler
@@ -281,7 +283,7 @@ guests until the corresponding hardware evidence passes.
 
 | Area | Required live evidence |
 | --- | --- |
-| AMD nested SVM | On AMD hardware with DecodeAssists, run installed `run-svm-nested-atf.sh` with `POLICY_ONLY=1` on a default-off policy boot and with `hw.vmm.svm.nested=1` before loading `vmm` on the enabled boot.  Retain its Kyua database and host hashes.  It runs `vmm_run_live_test` cases for L2 I/O, L0/L1 exit ownership, NPT12 faults and device access, IRQ/NMI delivery, CR8, MSRs, virtual GIF, and active-L2 checkpoint.  Its `svm_l2_npt12_readonly_alias` case proves L2 can read and execute an L0 read-only boot-ROM alias while a write permitted by L1 fails as an L0 paging error without changing ROM bytes.  It then unmaps that L0 page and remaps another object at the same GPA; L2 must execute the replacement bytes instead of a stale NPT02 alias.  On the enabled boot, run `run-svm-nested-live.sh` with a reviewed Linux/KVM L1 driver and pinned Linux and 5BSD L2 images.  Its `svm-nested-live-qualification.tsv` ledger requires 12 feature groups and 36 run-bound guest or host artifacts; missing or malformed evidence cannot publish a result.  Keep the sealed result, host hashes, guest logs, and ATF database together. |
+| AMD nested SVM | On AMD hardware with DecodeAssists, run installed `run-svm-nested-atf.sh` with `POLICY_ONLY=1` on a boot with `hw.vmm.svm.nested=0` set before loading `vmm`, and without that setting (the default, 1) on the enabled boot.  Retain its Kyua database and host hashes.  It runs `vmm_run_live_test` cases for L2 I/O, L0/L1 exit ownership, NPT12 faults and device access, IRQ/NMI delivery, CR8, MSRs, virtual GIF, and active-L2 checkpoint.  Its `svm_l2_npt12_readonly_alias` case proves L2 can read and execute an L0 read-only boot-ROM alias while a write permitted by L1 fails as an L0 paging error without changing ROM bytes.  It then unmaps that L0 page and remaps another object at the same GPA; L2 must execute the replacement bytes instead of a stale NPT02 alias.  On the enabled boot, run `run-svm-nested-live.sh` with a reviewed Linux/KVM L1 driver and pinned Linux and 5BSD L2 images.  Its `svm-nested-live-qualification.tsv` ledger requires 12 feature groups and 36 run-bound guest or host artifacts; missing or malformed evidence cannot publish a result.  Keep the sealed result, host hashes, guest logs, and ATF database together. |
 | Intel nested VMX | Run `tests/sys/vmm/run-vmx-nested-live.sh` with a reviewed `NESTED_L1_RUNNER`, pinned L1 and both L2 images, and a private `WORKDIR`.  Retain its complete evidence directory, including VM entry failures, EPT/VPID invalidation, interrupts, active-L2 restore, and soak results. |
 | Versioned checkpoint | Restore a checkpoint produced by the pinned v0.1.0 release binary into a fresh destination with `checkpoint.restore_abi_v2` enabled; verify the default rejection without opt-in.  Run `tests/sys/kern/vsock_device_harness/cross_release/run-v010-interop.sh` first for the rootless release-source session gate, then capture an actual release-produced VM fixture and verify guest state after resume. |
 | Active 9P | Under the destination's configured export policy, checkpoint and restore open regular files and directory reads while guest requests are in flight.  Exercise changed inode, changed export, stale fid, partial reply, failed restore, and a successful continuation without duplicate or lost responses. |
@@ -1136,7 +1138,7 @@ while an NPT02 miss can populate a 4 KiB alias and retry L2.  Known L0-owned
 L2 exits are handled or reported without reflecting them to L1; an unhandled
 L0-only exit fails closed.  Live AMD qualification remains pending.
 `VM_CAP_NESTED_SVM` is opt-in, requires the boot-time
-`hw.vmm.svm.nested=1` host policy, and requires host DecodeAssists for L2 CR8
+`hw.vmm.svm.nested=1` host policy (on by default), and requires host DecodeAssists for L2 CR8
 instruction emulation.  The root-gated
 VMRUN, intercept reflection, virtual-GIF, and active-L2 checkpoint tests
 still need execution on a host running the new module.  CPUID gates
