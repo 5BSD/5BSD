@@ -1101,15 +1101,33 @@ checkpoint_restore_cpu_contract(struct restore_state *rstate,
     struct vcpu *bsp)
 {
 	struct checkpoint_cpu_contract destination, source;
+	char detail[192];
 	int error;
 
 	if (rstate == NULL || bsp == NULL)
 		return (EINVAL);
 	error = lookup_cpu_contract(rstate, &source);
-	if (error == 0)
-		error = checkpoint_cpu_contract_capture(bsp, &destination);
-	if (error == 0)
-		error = checkpoint_cpu_contract_match(&source, &destination);
+	if (error != 0) {
+		EPRINTLN("Checkpoint CPU contract is missing or malformed: %s",
+		    strerror(error));
+		return (error);
+	}
+	error = checkpoint_cpu_contract_capture(bsp, &destination);
+	if (error != 0) {
+		EPRINTLN("Cannot capture the destination CPU contract: %s",
+		    strerror(error));
+		return (error);
+	}
+	error = checkpoint_cpu_contract_match(&source, &destination);
+	if (error == EXDEV) {
+		/* Name the field so a refused restore is diagnosable. */
+		if (checkpoint_cpu_contract_describe_mismatch(&source,
+		    &destination, detail, sizeof(detail)) != EXDEV)
+			strlcpy(detail, "unidentified field", sizeof(detail));
+		EPRINTLN("Checkpoint CPU contract differs at %s", detail);
+	} else if (error != 0)
+		EPRINTLN("Checkpoint CPU contract is invalid: %s",
+		    strerror(error));
 	return (error);
 }
 

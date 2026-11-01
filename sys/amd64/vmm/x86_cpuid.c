@@ -29,6 +29,30 @@ x86_cpuid_guest_stdext2(uint32_t host_stdext2)
 	    CPUID_STDEXT2_AVX512BITALG | CPUID_STDEXT2_AVX512VPOPCNTDQ));
 }
 
+/*
+ * Leaves whose host values describe the logical processor executing CPUID
+ * rather than the package: Intel 1AH (hybrid core type and native model) and
+ * AMD 8000_0026H (extended topology, EDX = extended APIC ID).  bhyve does not
+ * virtualize either, so passing them through reports whichever host thread
+ * the vCPU or the querying thread happened to run on.  That is wrong for the
+ * guest (it changes when the vCPU moves between host CPUs and contradicts the
+ * virtual APIC IDs) and makes the checkpoint CPU contract differ between two
+ * queries on the same host.  Report the leaves as absent instead; guests then
+ * use the virtualized 0BH/1FH and 8000_001EH topology.
+ */
+bool
+x86_cpuid_leaf_host_cpu_local(uint32_t leaf)
+{
+
+	switch (leaf) {
+	case 0x0000001aU:
+	case 0x80000026U:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 uint8_t
 x86_cpuid_linear_address_width(uint32_t guest_stdext2)
 {

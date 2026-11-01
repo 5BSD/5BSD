@@ -796,8 +796,10 @@ def delivery_lifecycle(root, proc):
     kind, length, delivery = struct.unpack_from('<QQQ', hdr, 0)
     program, source = hdr[24:40], hdr[40:56]
     body = recv_exact(writer, length)
-    d['frame'] = (kind == MSG_ELF and length == 32 + len(elf) and delivery != 0 and
-                  body[:32] == hashlib.sha256(elf).digest() and body[32:] == elf and
+    # bhyve's device takes a bare ELF (pci_vtdtr_elf_target()); a SHA-256
+    # prefixed body is failed without an ACK, so the delivery never lands.
+    d['frame'] = (kind == MSG_ELF and length == len(elf) and delivery != 0 and
+                  body == elf and
                   source == b'\x5a'.ljust(16, b'\0') and program != bytes(16))
     pending_name = delivery_name(b'\x42', delivery, 'p')
     out_dir = Path(root) / 'state' / 'outbound'
@@ -1007,16 +1009,15 @@ def base_program_routing(root, proc):
     d['nosource_ack'] = recv_exact(wx, 1).hex()
     frame(wx, elf_header(len(base), source, b'base'), base)
     d['base_ack'] = recv_exact(wx, 1).hex()
-    # guests receive exactly the unlinked base (sha256 prefix + bytes), with
-    # its source lineage and a fresh program ID
+    # guests receive exactly the unlinked base (a bare ELF, as bhyve's device
+    # requires), with its source lineage and a fresh program ID
     hdr = recv_exact(writer, HEADER)
     kind, length, delivery = struct.unpack_from('<QQQ', hdr, 0)
     body = recv_exact(writer, length)
     d['base_to_guest'] = (kind == MSG_ELF and delivery != 0 and
                           hdr[40:56] == source.ljust(16, b'\0') and
                           hdr[24:40] != bytes(16) and
-                          body[:32] == hashlib.sha256(base).digest() and
-                          body[32:] == base)
+                          length == len(base) and body == base)
     writer.sendall(struct.pack('<Q', delivery))
     # both bases launch the host link
     log = Path(root) / 'exec.log'
@@ -1375,7 +1376,9 @@ def minion(name, identity, cleanup=None, after=None, cleanup_after=None,
                 proc.send_signal(signal.SIGTERM)
         stop_started = time.monotonic()
         try:
-            stdout, stderr = proc.communicate(timeout=30)
+            # A non-live start may legitimately wait out the daemon's 30 s
+            # identity deadline before failing.
+            stdout, stderr = proc.communicate(timeout=30 if live_run else 60)
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
@@ -1419,6 +1422,15 @@ minion('minion-prompt-shutdown', '0,42,99,0,0', answer=True,
 minion('minion-identity-busy', '0,42,99,0,0', busy=3, expect_records=[])
 minion('minion-identity-not-ready', '0,42,99,0,0', busy=2, busy_errno='ENXIO',
        expect_records=[])
+# Regression (nested hosttest, gsv-record.md): a guest whose virtio-dtrace
+# device never receives NODE_ID logged only "failed to open daemon
+# directories: Operation timed out".  It must name the missing identity.
+minion('minion-identity-never-assigned', '0,42,99,0,0', busy=1000000,
+       busy_errno='ENXIO', expect_status=1, live_run=False,
+       expect_err='no VM identity from /dev/dttransport within 30 s')
+minion('minion-identity-never-assigned-step', '0,42,99,0,0', busy=1000000,
+       expect_status=1, live_run=False,
+       expect_err='failed to open daemon directories: guest startup identity: ')
 minion('minion-invalid-identity', '0,0,99,0,0', expect_status=1,
        live_run=False, expect_err='failed to open daemon directories')
 minion('minion-identity-unavailable', 'bogus', expect_status=1, live_run=False,

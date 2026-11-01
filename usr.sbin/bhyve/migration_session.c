@@ -19,6 +19,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
@@ -915,6 +916,86 @@ migration_topology_validate(const struct migration_topology *local,
 			migration_set_reason(reason, MIGRATION_REASON_DEVICE);
 			return (EINVAL);
 		}
+	}
+	return (0);
+}
+
+/*
+ * Name the first shape or device field on which migration_topology_validate()
+ * refused, for the destination's log.  Returns 0 when nothing differs.
+ */
+int
+migration_topology_describe_mismatch(const struct migration_topology *local,
+    const struct migration_topology *remote, char *buf, size_t len)
+{
+	const struct migration_device_record *r, *l;
+	uint32_t count;
+
+	if (buf == NULL || len == 0)
+		return (EINVAL);
+	buf[0] = '\0';
+	if (local == NULL || remote == NULL)
+		return (EINVAL);
+	if (remote->mem_size != local->mem_size ||
+	    remote->lowmem != local->lowmem) {
+		snprintf(buf, len, "memory: source %ju/%ju, destination %ju/%ju "
+		    "(total/low)", (uintmax_t)remote->mem_size,
+		    (uintmax_t)remote->lowmem, (uintmax_t)local->mem_size,
+		    (uintmax_t)local->lowmem);
+		return (EXDEV);
+	}
+	if (remote->ncpus != local->ncpus ||
+	    remote->sockets != local->sockets ||
+	    remote->cores != local->cores ||
+	    remote->threads != local->threads) {
+		snprintf(buf, len, "vCPUs (n/sockets/cores/threads): source "
+		    "%u/%u/%u/%u, destination %u/%u/%u/%u", remote->ncpus,
+		    remote->sockets, remote->cores, remote->threads,
+		    local->ncpus, local->sockets, local->cores, local->threads);
+		return (EXDEV);
+	}
+	count = remote->device_count < local->device_count ?
+	    remote->device_count : local->device_count;
+	if (count > MIGRATION_MAX_DEVICES)
+		count = MIGRATION_MAX_DEVICES;
+	for (uint32_t i = 0; i < count; i++) {
+		r = &remote->devices[i];
+		l = &local->devices[i];
+		if (!migration_device_flags_eligible(r->migration_flags)) {
+			snprintf(buf, len, "device %u (%.*s) has no migration "
+			    "contract: source migration_flags %#x", i,
+			    (int)sizeof(r->name), r->name, r->migration_flags);
+			return (EXDEV);
+		}
+		if (strncmp(r->name, l->name, sizeof(r->name)) != 0) {
+			snprintf(buf, len, "device %u name: source \"%.*s\", "
+			    "destination \"%.*s\"", i, (int)sizeof(r->name),
+			    r->name, (int)sizeof(l->name), l->name);
+			return (EXDEV);
+		}
+#define	DESCRIBE_DEVICE_FIELD(field)					\
+		if (r->field != l->field) {					\
+			snprintf(buf, len, "device %u (%.*s) " #field		\
+			    ": source %#jx, destination %#jx", i,		\
+			    (int)sizeof(r->name), r->name,			\
+			    (uintmax_t)r->field, (uintmax_t)l->field);		\
+			return (EXDEV);						\
+		}
+		DESCRIBE_DEVICE_FIELD(migration_flags)
+		DESCRIBE_DEVICE_FIELD(compat_schema)
+		DESCRIBE_DEVICE_FIELD(compat_crc32)
+		DESCRIBE_DEVICE_FIELD(bar_hash)
+#undef DESCRIBE_DEVICE_FIELD
+	}
+	if (remote->device_count != local->device_count &&
+	    count < MIGRATION_MAX_DEVICES) {
+		snprintf(buf, len, "device count: source %u, destination %u; "
+		    "first unmatched: %s \"%.*s\"", remote->device_count,
+		    local->device_count,
+		    remote->device_count > count ? "source" : "destination",
+		    (int)sizeof(r->name), remote->device_count > count ?
+		    remote->devices[count].name : local->devices[count].name);
+		return (EXDEV);
 	}
 	return (0);
 }
@@ -2197,6 +2278,16 @@ migration_dest_run(const struct migration_transport *xp,
 	error = migration_topology_validate(local_topo, remote_topo, &reason);
 	if (error != 0) {
 		out.reason = reason;
+		{
+			char detail[192];
+
+			if (migration_topology_describe_mismatch(local_topo,
+			    remote_topo, detail, sizeof(detail)) != EXDEV)
+				strlcpy(detail, "unidentified field",
+				    sizeof(detail));
+			fprintf(stderr, "Inbound migration topology refused "
+			    "(reason %u): %s\n", reason, detail);
+		}
 		(void)migration_send_reason(&sess, MIGRATION_MSG_TOPO_REJECT,
 		    reason, 0);
 		goto fail;

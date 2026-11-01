@@ -36,7 +36,7 @@ subprocess.run(flags + objects + ['-lcrypto', '-lutil', '-o', str(out / 'dtraced
 components = [item['object'] for item in builds if item['source'] != 'dtraced.cc']
 components.append(str(compat))
 results = []
-for name in ('fresh-session-startup', 'fresh-session-fence', 'fresh-session-consumers', 'fresh-session-stop-step', 'fresh-session-directory', 'protocol', 'daemon-config', 'release-attestation', 'release-keys', 'id-generation', 'job-lifetime', 'transport', 'socket-large-deadline', 'connect-deadline', 'events', 'event-model', 'spool-file', 'host-ingress', 'outbound-admission', 'outbound-replay', 'cleanup-routing', 'child-ownership', 'child-ledger', 'request-oom', 'dispatch-oom', 'directory-oom', 'send-info-oom', 'kill-oom', 'kill-ack', 'guest-kill-rekey', 'guest-delivery-rekey', 'kill-capacity', 'handoff-ledger', 'source-gate', 'source-journal-wire', 'handoff-control', 'thread-startup', 'spool-publish', 'process-launch', 'recovery-query', 'runtime-query', 'forwarder-rearm', 'installed-receipt', 'attestation-reject', 'admission-concurrency', 'admission-replay', 'consumer-registration'):
+for name in ('fresh-session-startup', 'fresh-session-fence', 'fresh-session-consumers', 'fresh-session-stop-step', 'fresh-session-directory', 'protocol', 'daemon-config', 'release-attestation', 'release-keys', 'id-generation', 'job-lifetime', 'transport', 'socket-large-deadline', 'connect-deadline', 'events', 'event-model', 'spool-file', 'host-ingress', 'outbound-admission', 'outbound-replay', 'cleanup-routing', 'child-ownership', 'child-ledger', 'request-oom', 'dispatch-oom', 'directory-oom', 'send-info-oom', 'kill-oom', 'kill-ack', 'guest-kill-rekey', 'guest-delivery-rekey', 'kill-capacity', 'handoff-ledger', 'source-gate', 'source-journal-wire', 'handoff-control', 'thread-startup', 'spool-publish', 'process-launch', 'recovery-query', 'runtime-query', 'forwarder-rearm', 'installed-receipt', 'attestation-reject', 'admission-concurrency', 'admission-replay', 'consumer-registration', 'guest-program-delivery'):
     linked = [obj for obj in components if name != 'source-journal-wire'
               or Path(obj).name != 'dtraced_directory.o']
     command = flags + ['-Wl,--gc-sections', str(tests / (name + '.cc'))] + linked
@@ -60,7 +60,7 @@ for name in ('fresh-session-startup', 'fresh-session-fence', 'fresh-session-cons
     if name == 'child-ledger': command += ['-Wl,--wrap=ioctl,--wrap=pdopenpid']
     if name == 'host-ingress':
         command += ['-Wl,--wrap=open']
-    if name in ('installed-receipt', 'spool-file', 'host-ingress', 'admission-replay'):
+    if name in ('installed-receipt', 'spool-file', 'host-ingress', 'admission-replay', 'guest-program-delivery'):
         command += ['-Wl,--wrap=ioctl']
     if name in ('handoff-control', 'source-journal-wire'):
         command += ['-Wl,--wrap=open,--wrap=ioctl']

@@ -763,9 +763,13 @@ default_leaf:
 			/*
 			 * An unhandled leaf inside the hypervisor CPUID range
 			 * (e.g. a gap between the KVM and bhyve blocks) reports
-			 * zeros rather than leaking host CPUID data.
+			 * zeros rather than leaking host CPUID data.  So does a
+			 * leaf describing the executing host logical CPU
+			 * (x86_cpuid_leaf_host_cpu_local()): its value would
+			 * follow host scheduling, not the VM configuration.
 			 */
-			if (func >= CPUID_VM_SIGNATURE && func <= vm_high) {
+			if ((func >= CPUID_VM_SIGNATURE && func <= vm_high) ||
+			    x86_cpuid_leaf_host_cpu_local(func)) {
 				regs[0] = 0;
 				regs[1] = 0;
 				regs[2] = 0;

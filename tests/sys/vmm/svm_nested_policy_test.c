@@ -1273,8 +1273,34 @@ ATF_TC_BODY(npt12_translation_and_faults, tc)
 	ATF_CHECK_EQ(svm_nested_npt_walk(&walk, &ops, &result), EINVAL);
 }
 
+/*
+ * Regression (nested hosttest, 2026-11-01): vmcb_init() began intercepting
+ * VMMCALL on every VMCB01 for HyperTrace hypercalls, but the VMCB02
+ * composition allow-list did not grow, so every nested VMRUN failed with
+ * EOPNOTSUPP and bhyve exited ("vm_run error -1, errno 45").  Every
+ * intercept L0 sets unconditionally must be composable.
+ */
+ATF_TC_WITHOUT_HEAD(l0_base_intercepts_composable);
+ATF_TC_BODY(l0_base_intercepts_composable, tc)
+{
+	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
+	    VMCB_INTCPT_VMMCALL));
+	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL1_INTCPT,
+	    SVM_L0_CTRL1_BASE_INTERCEPTS));
+	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
+	    SVM_L0_CTRL2_BASE_INTERCEPTS));
+	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
+	    SVM_L0_CTRL2_BASE_INTERCEPTS | VMCB_INTCPT_WBINVD));
+	/* L0 keeps owning VMMCALL while L2 runs (L2 gets #UD unless L1
+	 * intercepts it). */
+	ATF_CHECK_EQ(svm_nested_l0_intercepts_for_l2(VMCB_CTRL2_INTCPT,
+	    SVM_L0_CTRL2_BASE_INTERCEPTS) & VMCB_INTCPT_VMMCALL,
+	    VMCB_INTCPT_VMMCALL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, l0_base_intercepts_composable);
 	ATF_TP_ADD_TC(tp, l2_cr8_unmasked_policy);
 	ATF_TP_ADD_TC(tp, l0_interrupt_window_not_inherited_by_l2);
 	ATF_TP_ADD_TC(tp, l0_debug_exit_ownership);

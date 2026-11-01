@@ -3977,6 +3977,22 @@ test_events_reader(void)
 		OK(ack_epoch_calls == acks + 1 && !RESET_SET());
 	}
 	CLEAR_RESET();
+	/* dtraced's consumer framing (SHA-256 digest, then the ELF) is not a
+	 * device frame: no control, no ACK, NEEDS_RESET. The overlord sent its
+	 * live outbound spools to the forwarder this way, so dtraced timed out
+	 * waiting for the ACK ("failed to handle job kind 1") and the program
+	 * never reached the guest; send_elf() now sends forwarders a bare ELF. */
+	{
+		static uint8_t sha_framed[SHA256_DIGEST_LENGTH + sizeof(elf)];
+		SHA256(elf, sizeof(elf), sha_framed);
+		memcpy(sha_framed + SHA256_DIGEST_LENGTH, elf, sizeof(elf));
+		f[0] = (struct rframe){ elf_hdr(sizeof(sha_framed), 6), sha_framed,
+		    sizeof(sha_framed), 0, 5 };
+		acks = ack_epoch_calls;
+		reader_feed(d, f, 1);
+		OK(d->queue.count == 0 && ack_epoch_calls == acks && RESET_SET());
+	}
+	CLEAR_RESET();
 	/* A large ELF is split at the wire maximum; the pieces concatenate. */
 	f[0] = (struct rframe){ elf_hdr(sizeof(big), 8), big, sizeof(big), 0, 5 };
 	reader_feed(d, f, 1);
