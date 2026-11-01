@@ -365,6 +365,75 @@ ATF_TC_BODY(root_query_packaged_policy, tc)
 	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.Status");
 }
 
+/*
+ * root-load.ucl uses the same admission over its own list: the load endpoint
+ * reaches only an unauthorized, stamped, unjailed UID 0 sender, and a
+ * read-only list never admits it.
+ */
+ATF_TC_WITHOUT_HEAD(root_load_admits);
+ATF_TC_BODY(root_load_admits, tc)
+{
+	struct svc_authority_scope load, query;
+	const char *rootload = "system.SystemExtension.RootLoad";
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.RootLoad\"];",
+	    &load) == 0);
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\"];",
+	    &query) == 0);
+	ATF_CHECK(svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    rootload));
+	/* Non-root users, jailed root, unstamped, a caller with a grant. */
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 1001, 0,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 7,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, false, 0, 0,
+	    rootload));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, true, true, 0, 0,
+	    rootload));
+	/* Neither the full broker endpoint nor the status view. */
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    "system.SystemExtension"));
+	ATF_CHECK(!svc_authority_root_query_admits(&load, false, true, 0, 0,
+	    "system.SystemExtension.Status"));
+	/* The read-only list never admits the load endpoint. */
+	ATF_CHECK(!svc_authority_root_query_admits(&query, false, true, 0, 0,
+	    rootload));
+}
+
+/* The packaged policies keep the load endpoint out of the read-only list. */
+ATF_TC(root_load_packaged_policy);
+ATF_TC_HEAD(root_load_packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The installed root-load.ucl lists only system.SystemExtension.RootLoad"
+	    " and root-query.ucl does not list it");
+}
+ATF_TC_BODY(root_load_packaged_policy, tc)
+{
+	struct svc_authority_scope scope;
+	const char *path = "/Capabilities/Config/switchboard/root-load.ucl";
+	unsigned i;
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		atf_tc_skip("no packaged policy at %s", path);
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.RootLoad");
+	fd = open("/Capabilities/Config/switchboard/root-query.ucl", O_RDONLY);
+	if (fd < 0)
+		return;
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	for (i = 0; i < scope.count; i++)
+		ATF_CHECK(strcmp(scope.endpoints[i],
+		    "system.SystemExtension.RootLoad") != 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, descriptor_bounds);
@@ -378,5 +447,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, root_query_reject_malformed);
 	ATF_TP_ADD_TC(tp, root_query_admits);
 	ATF_TP_ADD_TC(tp, root_query_packaged_policy);
+	ATF_TP_ADD_TC(tp, root_load_admits);
+	ATF_TP_ADD_TC(tp, root_load_packaged_policy);
 	return (atf_no_error());
 }

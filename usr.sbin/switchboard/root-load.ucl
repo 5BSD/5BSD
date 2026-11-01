@@ -1,0 +1,21 @@
+# Load endpoints a UID 0 session without software authority may reach.
+#
+# A root login shell (or a cron job, or anything else started outside rc and
+# outside a switchboard grant) holds no software authority, so the SYSTEM-only
+# endpoints are invisible to it.  switchboard resolves the endpoints listed here
+# for such a caller when the kernel-stamped sender of the lookup has effective
+# UID 0 and runs outside any jail.  Other users, jailed root, and callers that
+# hold a software grant (they use their own scope) get nothing from this file.
+# The session carries no administrative rights.
+#
+# This file is separate from root-query.ucl because these endpoints act: list
+# only endpoints whose provider decides each request itself.  Remove a line
+# (or the file) to withdraw it; an absent or invalid file grants nothing.
+#
+# system.SystemExtension.RootLoad: BSDExtension's root load endpoint
+# (bsd.extension.v1 SystemExtensionRootLoad: Load and Unload only).  The broker
+# loads /boot/kernel/NAME.ko only when the package database records that file
+# in a 5BSD base package (bsdextension.ucl root_load_repository) and the file
+# matches the recorded checksum; administrator denies still win; it unloads
+# only what a root load loaded.  sysextctl load and unload.
+endpoints = ["system.SystemExtension.RootLoad"];

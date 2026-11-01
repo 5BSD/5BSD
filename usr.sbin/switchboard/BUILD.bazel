@@ -49,7 +49,7 @@ bsd_compress(name = "manual5", src = "switchboard.5", output = "switchboard.5.gz
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 _FILES = [(":manual5", "/usr/share/man/man5/switchboard.5.gz", True)] + [
-    (name, "/Capabilities/Config/switchboard/" + name, False) for name in ["rc_adopt.conf", "boot-authority.ucl", "service-authority.ucl", "root-query.ucl"]] + [
+    (name, "/Capabilities/Config/switchboard/" + name, False) for name in ["rc_adopt.conf", "boot-authority.ucl", "service-authority.ucl", "root-query.ucl", "root-load.ucl"]] + [
     ("examples/" + name, "/usr/share/examples/switchboard/" + name, False)
     for name in ["timer-activation.ucl", "path-activation.ucl", "socket-activation.ucl"]]
 [bsd_install_file(name = "install_file_" + destination.replace("/", "_"), src = source,

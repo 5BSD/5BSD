@@ -19,6 +19,7 @@
 #define BOOT_AUTHORITY_POLICY "/Capabilities/Config/switchboard/boot-authority.ucl"
 #define SERVICE_AUTHORITY_POLICY "/Capabilities/Config/switchboard/service-authority.ucl"
 #define ROOT_QUERY_POLICY "/Capabilities/Config/switchboard/root-query.ucl"
+#define ROOT_LOAD_POLICY "/Capabilities/Config/switchboard/root-load.ucl"
 
 static bool loaded;
 static struct svc_authority_scope boot_scope;
@@ -27,9 +28,11 @@ static bool boot_valid;
 static struct svc_service_authority services[SVC_SERVICE_AUTHORITY_MAX];
 static unsigned nservices;
 static struct svc_authority_scope root_query_scope;
+static struct svc_authority_scope root_load_scope;
 static void load_boot_policy(void);
 static void load_service_policy(void);
 static void load_root_query_policy(void);
+static void load_root_load_policy(void);
 
 static int
 open_trusted(const char *path)
@@ -61,6 +64,7 @@ svc_authority_policy_init(void)
 	load_boot_policy();
 	load_service_policy();
 	load_root_query_policy();
+	load_root_load_policy();
 }
 
 /* Image policy for the short-lived rc principal, never a UID-based grant. */
@@ -140,6 +144,38 @@ load_root_query_policy(void)
 	for (i = 0; i < root_query_scope.count; i++)
 		syslog(LOG_INFO, "root query: UID 0 sessions may reach %s",
 		    root_query_scope.endpoints[i]);
+}
+
+/*
+ * Endpoints that act (BSDExtension's RootLoad) for UID 0 sessions without
+ * software authority.  Same format and admission as root-query.ucl, separate
+ * file so they can be withdrawn without losing the read-only view.  An absent
+ * or invalid file grants nothing.
+ */
+static void
+load_root_load_policy(void)
+{
+	unsigned i;
+	int fd;
+
+	fd = open_trusted(ROOT_LOAD_POLICY);
+	if (fd < 0) {
+		if (errno != ENOENT)
+			syslog(LOG_ERR, "root load policy unavailable: %m; "
+			    "root sessions reach no load endpoints");
+		return;
+	}
+	if (svc_authority_parse_root_query(fd, &root_load_scope) == -1) {
+		syslog(LOG_ERR, "invalid root load policy: root sessions "
+		    "reach no load endpoints");
+		memset(&root_load_scope, 0, sizeof(root_load_scope));
+	}
+	close(fd);
+	if (root_load_scope.count != 0)
+		svc_authority_set_root_load(&root_load_scope);
+	for (i = 0; i < root_load_scope.count; i++)
+		syslog(LOG_INFO, "root load: UID 0 sessions may reach %s",
+		    root_load_scope.endpoints[i]);
 }
 
 int

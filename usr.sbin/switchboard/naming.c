@@ -411,14 +411,18 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 	int provider_end, client_end;
 	uid_t sender_uid = svc_authority_personal_uid(domain, sender);
 	/*
+	 * root-load.ucl names the endpoints that act (BSDExtension RootLoad) for
+	 * the same senders; they are admitted the same way.
 	 * root-query.ucl: a read-only endpoint resolves for a UID 0 sender that
 	 * holds no software authority and is not a switchboard unit (a root
 	 * login shell, a cron job).  This adds only visibility of the listed
 	 * names; the session gets no administrative rights (below) and the
 	 * provider serves the name read-only.
 	 */
-	bool root_query = requester == NULL &&
-	    svc_authority_root_query(domain, sender, name);
+	bool root_load = requester == NULL &&
+	    svc_authority_root_load(domain, sender, name);
+	bool root_query = root_load || (requester == NULL &&
+	    svc_authority_root_query(domain, sender, name));
 
 	if (sendablep != NULL)
 		*sendablep = false;
@@ -635,7 +639,8 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 	if (root_query) {
 		notify.rights &= ~SERVICE_RIGHTS_ADMIN;
 		syslog(LOG_INFO, "naming: '%s' resolved for a UID 0 session "
-		    "(root-query.ucl, read-only)", name);
+		    "(%s)", name, root_load ? "root-load.ucl" :
+		    "root-query.ucl, read-only");
 	}
 
 	if (svc_channel_send_event(provider,

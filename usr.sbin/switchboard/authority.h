@@ -66,6 +66,14 @@ int svc_authority_parse_root_query(int, struct svc_authority_scope *);
 void svc_authority_set_root_query(const struct svc_authority_scope *);
 bool svc_authority_root_query(const struct svc_domain *,
     const struct channel_sender *, const char *);
+/*
+ * root-load.ucl: endpoints that act for the same callers (UID 0, not jailed,
+ * no software authority), kept apart from the read-only list.  Parsed with
+ * svc_authority_parse_root_query() (same format); NULL grants nothing.
+ */
+void svc_authority_set_root_load(const struct svc_authority_scope *);
+bool svc_authority_root_load(const struct svc_domain *,
+    const struct channel_sender *, const char *);
 
 /*
  * Whether a lookup may resolve name through root-query.ucl: the caller holds no
