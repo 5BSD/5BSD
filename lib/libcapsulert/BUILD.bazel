@@ -74,7 +74,7 @@ cc_library(name = "vm_protocol_headers", hdrs = ["bsdvm_proto.h"], strip_include
     visibility = ["//lib/libvmcmp:__pkg__", "//usr.sbin/BSDVM:__pkg__", "//usr.sbin/BSDVM/tests:__pkg__"])
 
 cc_library(name = "extension_protocol_headers", hdrs = ["sysext_proto.h"], strip_include_prefix = ".",
-    visibility = ["//usr.sbin/sysextctl/tests:__pkg__", "//lib/libextensioncmp:__pkg__", "//usr.sbin/BSDExtension:__pkg__", "//usr.sbin/BSDExtension/tests:__pkg__"])
+    visibility = ["//usr.sbin/sysextctl:__pkg__", "//usr.sbin/sysextctl/tests:__pkg__", "//lib/libextensioncmp:__pkg__", "//usr.sbin/BSDExtension:__pkg__", "//usr.sbin/BSDExtension/tests:__pkg__"])
 
 cc_library(name = "namespace_protocol_headers", hdrs = ["bsdnamespace_proto.h"], strip_include_prefix = ".",
     visibility = ["//lib/libnamespacecmp:__pkg__", "//usr.sbin/BSDNamespace:__pkg__", "//usr.sbin/BSDNamespace/tests:__pkg__"])
