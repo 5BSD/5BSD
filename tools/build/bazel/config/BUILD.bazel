@@ -504,3 +504,7 @@ string_flag(name = "installer_osname", build_setting_default = "5BSD", visibilit
 # nfs_diskless.c source selection tied to this same typed feature setting.
 bool_flag(name = "kernel_nfs_root", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "kernel_nfs_root_enabled", flag_values = {":kernel_nfs_root": "true"}, visibility = ["//visibility:public"])
+
+# Maintained MK_HTML input; documentation components opt in explicitly.
+bool_flag(name = "html", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "html_enabled", flag_values = {":html": "true"}, visibility = ["//visibility:public"])

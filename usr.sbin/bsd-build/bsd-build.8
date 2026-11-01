@@ -4812,3 +4812,22 @@ Default, OpenSSL-disabled and DTrace-disabled format-5 profiles cover emitted
 probe/site and build/install contracts plus early help/version exits.
 These checks do not qualify a running time service, live probe firing, clock
 changes or complete NTP package aggregation.
+.Pp
+Native NTP documentation and family installation archives use the maintained
+format-5 target lists.
+The typed
+.Li //tools/build/bazel/config:html
+boolean defaults true; false omits HTML/data files and their directories while
+retaining all nine manuals.
+The existing
+.Li //tools/build/bazel/config:split_manpages
+setting selects separate manual package tags.
+These are entries in the native JSON
+.Li build-settings
+object; this frontend does not offer
+.Fl -with-option
+or
+.Fl -without-option
+CLI switches.
+Independent Make references use those switches on the reference helper.
+The combined installation archive is not a completed native package repository.

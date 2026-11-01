@@ -9241,3 +9241,13 @@ is still unqualified. The bounded daemon-source scan found no direct BSM audit
 submission; authentication/control/configuration auditing beyond existing
 logging, and broader packet/refclock instrumentation, remain review gaps rather
 than automatically added probes. See NTPD-QUALIFICATION.md.
+
+## 2026-11-01: NTP family installation aggregation
+
+The combined archive retains byte-identical program/debug/config payloads from
+prior immutable component qualifications. Additional checks on actual installed
+native/Make ntpd binaries validate all four maintained time-discipline schemas
+and five ordinary/nine is-enabled sites after stripping, with separate debug
+symbols and the combined native payload hash. This does not qualify live probe
+registration/firing, broader audit coverage or live service behavior. Pure doc
+inventory/manual transformation adds no runtime instrumentation.

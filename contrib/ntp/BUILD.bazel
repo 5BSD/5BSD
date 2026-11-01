@@ -53,3 +53,6 @@ cc_library(name = "ntpd_headers", hdrs = glob(["ntpd/*.h"]),
 
 # GPSD clock parses JSON by textually including this maintained implementation.
 filegroup(name = "jsmn_fragment", srcs = ["libjsmn/jsmn.c", "libjsmn/jsmn.h"], visibility = _VISIBILITY)
+
+load(":documentation.bzl", "DOC_SOURCES", "MANUAL_TEMPLATES")
+exports_files(DOC_SOURCES + MANUAL_TEMPLATES.values(), visibility = _VISIBILITY)

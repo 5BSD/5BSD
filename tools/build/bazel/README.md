@@ -47150,3 +47150,16 @@ records, six debug CRCs, 195 source/flag audits and real probe/site checks pass.
 See [NTPD-QUALIFICATION.md](NTPD-QUALIFICATION.md). All seven NTP programs and four
 private libraries have candidates; documentation/package aggregation and live
 service/protocol, cross-architecture and performance gates remain open.
+
+### NTP documentation and complete installation aggregation (2026-11-01)
+
+Native NTP now owns all seven programs, four private libraries, 235 HTML/data
+files and nine manuals. The combined install target composes the actual component
+manifests. Default and HTML-disabled/split-manpage profiles pass exact Make doc
+payload/metadata comparison and family inventories of 273/30 records. Every
+program/debug/config payload matches its prior immutable native qualification.
+Use typed format-5 `//tools/build/bazel/config:html`; the C frontend has no
+`--with-option`/`--without-option` CLI. See
+[NTP-DOCUMENTATION-QUALIFICATION.md](NTP-DOCUMENTATION-QUALIFICATION.md).
+Native package creation/dependency closure, full service/protocol and performance
+remain unqualified; Make stays production/default.

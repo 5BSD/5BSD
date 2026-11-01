@@ -1,5 +1,8 @@
 # Native ntpd with maintained time-discipline probes
 
+Subsequent documentation and family install evidence is recorded in
+[NTP-DOCUMENTATION-QUALIFICATION.md](NTP-DOCUMENTATION-QUALIFICATION.md).
+
 2026-11-01. Make remains the production/default backend. All seven NTP programs
 and all four private libraries now have native build/install candidates. NTP
 documentation, complete package aggregation and full service/protocol/runtime
