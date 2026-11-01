@@ -37,3 +37,12 @@ cc_library(name = "ntpdc_headers", hdrs = glob(["ntpdc/*.h"]), visibility = _VIS
 cc_library(name = "ntpq_headers", hdrs = glob(["ntpq/*.h"]), visibility = _VISIBILITY)
 
 exports_files(LIBPARSE_SOURCES, visibility = _VISIBILITY)
+
+# Remaining maintained client sources and their quoted private headers.
+exports_files(["ntpdate/ntpdate.c", "util/ntp-keygen.c", "util/ntp-keygen-opts.c"] +
+    ["sntp/" + n + ".c" for n in ["crypto", "kod_management", "log", "main", "networking", "sntp-opts", "sntp", "utilities"]],
+    visibility = _VISIBILITY)
+cc_library(name = "ntpdate_headers", hdrs = glob(["ntpdate/*.h"]), visibility = _VISIBILITY)
+cc_library(name = "keygen_headers", hdrs = ["util/ntp-keygen-opts.h"], visibility = _VISIBILITY)
+cc_library(name = "sntp_headers", hdrs = glob(["sntp/*.h"]),
+    strip_include_prefix = "sntp", visibility = _VISIBILITY)

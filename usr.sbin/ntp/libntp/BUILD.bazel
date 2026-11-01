@@ -4,7 +4,7 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 load("//contrib/ntp:sources.bzl", "LIBNTP_SOURCES")
 load("//usr.sbin/ntp:common.bzl", "PLATFORM", "OPENSSL", "common_defines", "common_headers")
 load("//usr.sbin/ntp:ntp_version.bzl", "ntp_version")
-ntp_version(name = "version", program = "ntpd")
+ntp_version(name = "version", program = "ntpd", visibility = ["//usr.sbin/ntp:__subpackages__"])
 # Make owns both ordinary and PIE objects for this private library.
 [cc_library(name = "ntp" + suffix,
     srcs = ["//contrib/ntp:" + p for p in LIBNTP_SOURCES] + [":version"],

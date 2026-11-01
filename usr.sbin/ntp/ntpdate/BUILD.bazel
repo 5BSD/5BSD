@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//usr.sbin/ntp:common.bzl", "PLATFORM", "OPENSSL", "common_defines", "common_headers")
+load("//usr.sbin/ntp:ntp_version.bzl", "ntp_version")
+ntp_version(name = "version", program = "ntpdate")
+cc_binary(name = 'ntpdate',
+    srcs = ['//contrib/ntp:ntpdate/ntpdate.c'] + [":version"],
+    deps = common_headers() + ['//contrib/ntp:ntpdate_headers', '//usr.sbin/ntp/libntp:ntp_pie', '//lib/msun:m', '//lib/libmd:md_link'] +
+        select({OPENSSL: ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}) + ["//lib/libthr:thr"],
+    dynamic_deps = ['//lib/msun:m_shared', '//lib/libmd:md_shared'] + select({OPENSSL: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) + ["//lib/libthr:thr_shared"],
+    local_defines = common_defines(), copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = PLATFORM, visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "ntpdate", manual = None, package = "ntp", bindir = "/usr/sbin")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ntp","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
+
+
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "options_test", src = "//usr.sbin/ntp:remaining-client-options-test.py",
+    data = [":ntpdate", ":version"],
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "//lib/msun:m_shared",
+        "//lib/libmd:md_shared", "//lib/libthr:thr_shared"] +
+        select({OPENSSL: ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])

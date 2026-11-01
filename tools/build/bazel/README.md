@@ -47104,3 +47104,14 @@ its previously implicit generated vnode_if.h dependency. Existing storage probes
 are carried forward. See [STORAGE-MODULES-QUALIFICATION.md](STORAGE-MODULES-QUALIFICATION.md)
 for provenance and open live I/O, failure/recovery and performance gates. No host
 storage state changed. Make remains production/default.
+
+### Native remaining NTP clients (2026-11-01)
+
+ntpdate, ntp-keygen and sntp now have native source, option-test and pkgbase
+installation candidates. Final default/OpenSSL-off profiles each pass nine
+targets and three tests; six captured ELF contracts, 24 install records and
+12 debuglink CRC checks match fresh Make. Original inherited Version ownership
+and corrected sntp math/digest ordering are preserved. See
+[NTP-REMAINING-CLIENTS-QUALIFICATION.md](NTP-REMAINING-CLIENTS-QUALIFICATION.md).
+Six of seven programs and all four private libraries have candidates; ntpd,
+documentation, package aggregation, protocol/runtime and performance remain open.

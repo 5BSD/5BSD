@@ -9164,3 +9164,14 @@ per-operation audit event. Sources without a direct matched marker:
 
 Exact scan: bazel-storage-review-20261101/observability.json. Scope/open gates:
 STORAGE-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: ntpdate, ntp-keygen and sntp
+
+Reviewed the selected ntpdate source, two keygen sources and eight sntp sources.
+Their maintained Make components declare no DTrace provider, and the bounded
+source scan found no direct SDT/DTrace or explicit BSM submission. Native
+migration preserves all twelve compilation units including ntpdate version.c,
+plus actual private-library dependencies and option branches. This does not
+prove transitive instrumentation or protocol/clock/key-generation runtime.
+ntpd's maintained timediscipline provider/static anchor/coverage selection is
+still open. See NTP-REMAINING-CLIENTS-QUALIFICATION.md for bounded evidence.
