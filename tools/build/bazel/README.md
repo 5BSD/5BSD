@@ -47069,3 +47069,16 @@ are labeled separately. Twelve regressions pass as
 //tools/build/bazel:qualification_artifacts_test. All fourteen earlier/new NTP
 comparisons were rerun with captured selection; old reports are retained. Do not
 use mutable bazel-bin aliases to identify a qualified configuration.
+
+### Native WLAN modules on three architectures (2026-11-01)
+
+Nine GENERIC-tied WLAN modules now have source-owned native Bazel candidates
+on amd64, ARM64 and RISC-V64. The core preserves all 33 C sources, original link
+order and five per-file warning overrides; CCMP/GCMP share declared AES objects.
+Six maintained build-bsd profiles passed 54 artifact comparisons and 81 file
+metadata comparisons against fresh Make. Actual actions establish 264 unique
+compilations, 2,616 authentic option-header checks and 54 original link orders.
+The moved source-header owner also passed a wlanstat/install regression.
+See [WLAN-MODULES-QUALIFICATION.md](WLAN-MODULES-QUALIFICATION.md) for evidence
+and exact limitations. Radios, firmware/drivers, live Wi-Fi, non-GENERIC options,
+full kernels/world/pkgbase and controlled performance remain open.

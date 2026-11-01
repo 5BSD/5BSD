@@ -4756,3 +4756,12 @@ files carry no native qualification binding.
 The regression target
 .Li //tools/build/bazel:qualification_artifacts_test
 uses the normal format-5 target/test lists.
+
+.Pp
+Native wlan, wlan_acl, wlan_amrr, wlan_ccmp, wlan_gcmp, wlan_rssadapt,
+wlan_tkip, wlan_wep and wlan_xauth module/install candidates cover amd64,
+ARM64 and RISC-V64 GENERIC in plain and CTF/debug modes.
+Source ownership, per-file warnings, shared AES objects, generated option headers,
+link order and file metadata have independent Make comparisons.
+Radio/firmware, live wireless behavior, complete kernels and controlled performance
+remain outside this artifact qualification.

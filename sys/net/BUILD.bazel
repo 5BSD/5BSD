@@ -206,3 +206,7 @@ amd64_generic_module_objects(name = "if_vlan_module", srcs = ["if_vlan.c"],
 
 cc_library(name = "packet_filter_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netpfil:__subpackages__"])
+
+# Physical source headers: the kernel compilation context supplies -Isys.
+cc_library(name = "wlan_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])

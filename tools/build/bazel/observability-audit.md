@@ -9072,3 +9072,58 @@ initialization; remote-control authentication, rejection and network behavior
 remain runtime review gates. The remaining ntpd Make graph explicitly declares
 timediscipline_provider.d, DTRACE_STATIC_ANCHOR and WITH_COVERAGE_DTRACE, which
 must survive its future native migration. See NTP-CLIENTS-QUALIFICATION.md.
+
+## 2026-11-01: WLAN core, policy, rate and software crypto modules
+
+The 44 unique maintained C inputs retain 14 direct textual probe/audit/CTR
+marker lines. Exact compile/object and installed CTF sections match Make;
+this inventory does not prove live probe coverage. Review association,
+authentication/key lifecycle, scan/roaming, crypto failures, ACL/rate decisions,
+mesh/TDMA and packet-drop observability alongside the matching-kernel runtime
+suite. The following sources have no direct marker matched by this scan;
+shared headers and callers may provide observability and require review:
+
+- `sys/crypto/rijndael/rijndael-alg-fst.c`
+- `sys/crypto/rijndael/rijndael-api.c`
+- `sys/net80211/ieee80211.c`
+- `sys/net80211/ieee80211_acl.c`
+- `sys/net80211/ieee80211_action.c`
+- `sys/net80211/ieee80211_adhoc.c`
+- `sys/net80211/ieee80211_ageq.c`
+- `sys/net80211/ieee80211_amrr.c`
+- `sys/net80211/ieee80211_crypto.c`
+- `sys/net80211/ieee80211_crypto_ccmp.c`
+- `sys/net80211/ieee80211_crypto_gcm.c`
+- `sys/net80211/ieee80211_crypto_gcmp.c`
+- `sys/net80211/ieee80211_crypto_none.c`
+- `sys/net80211/ieee80211_crypto_tkip.c`
+- `sys/net80211/ieee80211_crypto_wep.c`
+- `sys/net80211/ieee80211_ddb.c`
+- `sys/net80211/ieee80211_dfs.c`
+- `sys/net80211/ieee80211_freebsd.c`
+- `sys/net80211/ieee80211_hostap.c`
+- `sys/net80211/ieee80211_ht.c`
+- `sys/net80211/ieee80211_hwmp.c`
+- `sys/net80211/ieee80211_input.c`
+- `sys/net80211/ieee80211_ioctl.c`
+- `sys/net80211/ieee80211_mesh.c`
+- `sys/net80211/ieee80211_monitor.c`
+- `sys/net80211/ieee80211_node.c`
+- `sys/net80211/ieee80211_output.c`
+- `sys/net80211/ieee80211_phy.c`
+- `sys/net80211/ieee80211_power.c`
+- `sys/net80211/ieee80211_radiotap.c`
+- `sys/net80211/ieee80211_ratectl.c`
+- `sys/net80211/ieee80211_ratectl_none.c`
+- `sys/net80211/ieee80211_regdomain.c`
+- `sys/net80211/ieee80211_rssadapt.c`
+- `sys/net80211/ieee80211_scan_sta.c`
+- `sys/net80211/ieee80211_scan_sw.c`
+- `sys/net80211/ieee80211_superg.c`
+- `sys/net80211/ieee80211_tdma.c`
+- `sys/net80211/ieee80211_vht.c`
+- `sys/net80211/ieee80211_wds.c`
+- `sys/net80211/ieee80211_xauth.c`
+
+Evidence: bazel-wlan-review-20261101/observability.json. Scope and open gates:
+WLAN-MODULES-QUALIFICATION.md.

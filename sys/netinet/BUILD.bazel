@@ -80,3 +80,7 @@ amd64_generic_module_objects(name = "carp_module", srcs = ["ip_carp.c", "//sys/c
 
 cc_library(name = "packet_filter_headers", hdrs = ["icmp6.h", "icmp_var.h", "if_ether.h", "igmp.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_dn_flow.h", "ip_dummynet.h", "ip_icmp.h", "ip_var.h", "sctp.h", "sctp_constants.h", "sctp_crc32.h", "sctp_header.h", "sctp_uio.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "udp.h", "udp_var.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netpfil:__subpackages__"])
+
+# Physical source headers: the kernel compilation context supplies -Isys.
+cc_library(name = "wlan_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "ip.h", "ip6.h"],
+    visibility = ["//sys/net80211:__pkg__"])

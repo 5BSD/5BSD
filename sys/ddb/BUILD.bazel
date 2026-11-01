@@ -10,3 +10,7 @@ cc_library(name = "lexer_headers", hdrs = ["db_lex.h"], includes = [".."], visib
 
 cc_library(name = "ctf_headers", hdrs = ["db_ctf.h"], includes = [".."],
     deps = [":kernel_headers", ":symbol_headers"], visibility = ["//sys/kern:__pkg__"])
+
+# Physical source headers: the kernel compilation context supplies -Isys.
+cc_library(name = "wlan_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/net80211:__pkg__"])
