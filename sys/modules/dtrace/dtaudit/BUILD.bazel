@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+amd64_generic_module(module = "dtaudit", objects = ["//sys/security/audit:dtaudit_module_object_files"], exports = [])
+[cross_generic_module(arch = arch, module = "dtaudit", objects = ["//sys/security/audit:" + arch + "_dtaudit_module_object_files"], exports = [])
+ for arch in ["arm64", "riscv"]]

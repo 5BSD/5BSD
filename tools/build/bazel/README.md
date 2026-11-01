@@ -47126,3 +47126,16 @@ original link orders. The module's previously implicit opt_kdtrace.h dependency
 is now explicit in both Make and Bazel; genuine config contents preserve tracing.
 See [CAM-MODULE-QUALIFICATION.md](CAM-MODULE-QUALIFICATION.md) for evidence and
 open transport/peripheral, recovery, runtime and performance gates.
+
+### Native tracing provider and transport modules (2026-11-01)
+
+Eight module candidates now cover dttransport, HyperTrace, audit/malloc/NFS
+providers, profile, prototype and SDT on amd64, ARM64 and RISC-V64. The native
+CDDL wrapper preserves real compatibility inputs and ccompile/global/debug
+forced-header order. Six build-bsd profiles passed 48 artifact comparisons and
+72 installed-file comparisons against fresh Make. Audits verify 54 C actions,
+108 authentic option-header hashes and 48 link orders. An unchanged if_epair
+regression passed on all three architectures after the optional helper input.
+See [DTRACE-PROVIDER-MODULES-QUALIFICATION.md](DTRACE-PROVIDER-MODULES-QUALIFICATION.md)
+for receipt-bound evidence and remaining tracing/runtime/performance gates.
+Core DTrace and the remaining tracing modules still need conversion/qualification.

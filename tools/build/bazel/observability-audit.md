@@ -9213,3 +9213,19 @@ Sources without a directly matched marker are contextual review candidates:
 
 Exact scan: bazel-cam-review-20261101/observability.json. Scope and remaining
 gates: CAM-MODULE-QUALIFICATION.md.
+
+## 2026-11-01: DTrace provider and HyperTrace transport modules
+
+Nine original C inputs retain 72 direct textual SDT/DTRACE/audit/CTR marker
+lines, including provider/control definitions. Matching artifacts establish
+retention, not active probes, successful trace sessions or correct live arguments.
+The source without a direct matched marker is:
+
+- `sys/dev/dttransport/dttransport.c`
+
+Review queue/session lifecycle, enqueue/backpressure, registration/teardown,
+authentication/denial and failure visibility with callers and live HyperTrace
+protocol tests. Qualify provider attach/detach, actual audit/NFS/allocation/
+profile/SDT firing, permissions, VM forwarding and concurrency separately.
+Evidence: bazel-dtrace-providers-review-20261101/observability.json.
+Scope/open gates: DTRACE-PROVIDER-MODULES-QUALIFICATION.md.

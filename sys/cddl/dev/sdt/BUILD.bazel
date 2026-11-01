@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+amd64_cddl_module_objects(name = "sdt_module", srcs = ["sdt.c"],
+    deps = ["//sys/cddl/dev/dtrace:sdt_layout_headers", "//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+[cross_cddl_module_objects(arch = arch, name = "sdt_module", srcs = ["sdt.c"],
+    deps = ["//sys/cddl/dev/dtrace:sdt_layout_headers", "//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+ for arch in ["arm64", "riscv"]]

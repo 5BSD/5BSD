@@ -21,3 +21,15 @@ amd64_generic_module_objects(name = "nfs_diskless_module", srcs = ["//sys/nfs:nf
 [cross_generic_module_objects(arch = arch, name = "nfs_diskless_module", srcs = ["//sys/nfs:nfs_diskless.c"],
     deps = _DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_bootp", "opt_inet", "opt_inet6", "opt_kern_tls", "opt_kgssapi", "opt_nfs", "opt_nfsroot", "opt_ufs"]])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "tracing_module_headers", hdrs = ["nfs_kdtrace.h"],
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+
+load("//tools/build/bazel:cddl_generic_module.bzl", "amd64_cddl_module_objects", "cross_cddl_module_objects")
+
+amd64_cddl_module_objects(name = "dtnfscl_module", srcs = ["nfs_clkdtrace.c"],
+    deps = ["//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+[cross_cddl_module_objects(arch = arch, name = "dtnfscl_module", srcs = ["nfs_clkdtrace.c"],
+    deps = ["//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
+ for arch in ["arm64", "riscv"]]

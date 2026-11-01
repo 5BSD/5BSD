@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+amd64_generic_module(module = "dttransport", objects = ["//sys/dev/dttransport:dttransport_module_object_files"], exports = ["dtt_queue_enqueue", "dtt_queue_enqueue_front", "dtt_queue_session_stop", "dtt_register_transport", "dtt_unregister_transport"])
+[cross_generic_module(arch = arch, module = "dttransport", objects = ["//sys/dev/dttransport:" + arch + "_dttransport_module_object_files"], exports = ["dtt_queue_enqueue", "dtt_queue_enqueue_front", "dtt_queue_session_stop", "dtt_register_transport", "dtt_unregister_transport"])
+ for arch in ["arm64", "riscv"]]
