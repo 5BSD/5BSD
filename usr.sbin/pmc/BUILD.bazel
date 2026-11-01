@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+# Make's ncurses linker script also supplies terminfo to direct terminal calls.
+# The Make PIE executable links the internal libpmcstat_pie archive.
+cc_binary(
+    name = "pmc",
+    srcs = [
+        "pmc.c",
+        "pmc_util.c",
+        "cmd_pmc_stat.c",
+        "cmd_pmc_list.c",
+        "cmd_pmc_filter.cc",
+        "cmd_pmc_summary.cc",
+        "cmd_pmc_frontend.cc",
+        "cmd_pmc_record.cc",
+        "cmd_pmc_info.cc",
+        "display.cc",
+        "util.cc",
+        "view.cc",
+        "cmd_pmc.h",
+        "display.hh",
+        "headers.hh",
+        "util.hh",
+        "view.hh",
+    ],
+    deps = [
+        "//lib/libpmc:public_headers",
+        "//lib/libpmcstat:headers",
+        "//lib/libpmc:pmc",
+        "//lib/msun:m",
+        "//lib/libutil:util",
+        "//lib/ncurses/ncurses:ncurses",
+        "//lib/ncurses/tinfo:tinfo",
+        "//lib/libpmcstat:pmcstat_pie",
+        "//lib/libelf:elf",
+        "//lib/libdwarf:dwarf",
+        "//lib/libc++:cxx",
+        "//lib/libcxxrt:cxxrt",
+    ],
+    dynamic_deps = [
+        "//lib/libpmc:pmc_shared",
+        "//lib/msun:m_shared",
+        "//lib/libutil:util_shared",
+        "//lib/ncurses/ncurses:ncurses_shared",
+        "//lib/ncurses/tinfo:tinfo_shared",
+        "//lib/libelf:elf_shared",
+        "//lib/libdwarf:dwarf_shared",
+        "//lib/libc++:cxx_shared",
+        "//lib/libcxxrt:cxxrt_shared",
+    ],
+    copts = ["-fPIE"],
+    # Mixed C and C++ sources retain language-specific flags.
+    cxxopts = ["-std=gnu++17", "-nostdinc++"],
+    linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd"],
+    visibility = ["//visibility:public"],
+)
+utility_installation(name = "install_manifest", program = "pmc", manual = None,
+    package = "pmc", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(
+    name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=pmc","dbg"]}'
+        for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"],
+)

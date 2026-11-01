@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
-cc_library(name = "headers", hdrs = ["libpmcstat.h"], includes = ["."], visibility = ["//lib/libpmc:__pkg__"])
+cc_library(name = "headers", hdrs = ["libpmcstat.h"], includes = ["."], visibility = ["//lib/libpmc:__pkg__", "//usr.sbin/pmc:__pkg__", "//usr.sbin/pmcstat:__pkg__"])
 
 _SOURCES = ["libpmcstat_event.c", "libpmcstat_image.c", "libpmcstat_logging.c", "libpmcstat_process.c", "libpmcstat_string.c", "libpmcstat_symbol.c"]
 # Internal consumers select ordinary or PIE objects; neither archive is installed.
