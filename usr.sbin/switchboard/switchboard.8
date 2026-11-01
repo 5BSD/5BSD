@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 25, 2026
+.Dd November 1, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -1020,6 +1020,58 @@ Capsule channel closed unexpectedly.
 System capability bundles.
 .It Pa /Capabilities/
 User-installed capability bundles.
+.It Pa /Capabilities/Config/switchboard/rc_adopt.conf
+rc.d services supervised as RC units, one name per line.
+.It Pa /Capabilities/Config/switchboard/boot-authority.ucl
+Temporary authority of
+.Pa /etc/rc
+and its descendants: an endpoint list, attributes and administrative rights,
+revoked when
+.Pa /etc/rc
+exits.
+.It Pa /Capabilities/Config/switchboard/service-authority.ucl
+Lasting grants of adopted rc.d services.
+Each object is named by an adopted service and lists
+.Va endpoints
+and the executable
+.Va images
+the grant may survive exec into; it has no attributes or administrative rights.
+Such a unit is started with
+.Dq service NAME onerestart ,
+replacing an instance
+.Pa /etc/rc
+started, and the grant ends with that launch.
+Exec of an unlisted image drops it in that process.
+The packaged file gives
+.Xr devd 8
+.Dq system.SystemExtension
+so that drivers of devices attached after boot load through
+.Xr devmatch 8 ;
+see
+.Xr BSDExtension 8 .
+An absent file grants nothing; an invalid file grants nothing and is logged.
+.It Pa /Capabilities/Config/switchboard/root-query.ucl
+Read-only endpoints for UID 0 sessions without software authority.
+The file has one key,
+.Va endpoints ,
+a non-empty list of service names.
+A listed SYSTEM endpoint resolves for a lookup whose kernel-stamped sender has
+effective UID 0, is not jailed, holds no software authority and is not a
+switchboard unit: a root login shell, a cron job, or a process started after
+.Pa /etc/rc
+exits.
+Callers with a grant keep their own endpoint scope, other users and jailed
+root are refused, and control names never resolve this way.
+The session carries no administrative rights.
+List only endpoints whose provider serves them read-only; the packaged file
+lists
+.Dq system.SystemExtension.Status ,
+the read-only view of
+.Xr BSDExtension 8
+that
+.Dq Nm sysextctl Cm status
+uses.
+An absent file grants nothing; an invalid file grants nothing and is logged.
 .El
 .Pp
 Both bundle directories and all loaded bundle contents must be root-owned and

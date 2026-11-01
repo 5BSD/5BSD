@@ -283,7 +283,7 @@ command -v timeout >/dev/null 2>&1 ||
 [ "$(sysctl -n hw.machine_arch)" = amd64 ] ||
     fail "hardware qualification requires an amd64 host"
 [ "$(sysctl -n hw.vmm.svm.nested 2>/dev/null || echo 0)" = 1 ] ||
-    fail "set hw.vmm.svm.nested=1 before loading vmm"
+    fail "hw.vmm.svm.nested must be 1 (the default); remove a 0 setting and reload vmm"
 features=$(sysctl -n hw.vmm.svm.features) ||
     fail "cannot read AMD SVM features"
 case "$features" in

@@ -1798,6 +1798,38 @@ sys_mac_priv_grant(struct ucred *cred, int priv)
 	return (sys_holds_gate(cred, SYS_GATE_KLDLOAD, "firmware-load"));
 }
 
+/*
+ * Clock discipline delegation.  mac_ntpd(4) lets one unprivileged user (ntpd)
+ * discipline the clock.  While a provider holds the SYS_GATE_SETTIME claim
+ * (BSDTime), the hook below refuses every ambient caller, so ntpd could neither
+ * step nor slew.  mac_ntpd publishes its uid here (or -1 when it is disabled or
+ * unloaded); that uid alone passes the claim, for the three privileges
+ * mac_ntpd grants, outside capability mode.  The value is copied, never a
+ * pointer into the other policy, so unloading mac_ntpd leaves no stale
+ * reference.  Root, PRIV_SETTIMEOFDAY and every other uid stay isolated, and
+ * the gated SYS_OP_SETTIME/SYS_OP_ADJTIME operations still need the claim.
+ */
+static volatile u_int sys_clock_delegate_uid = (u_int)-1;
+
+void
+mac_capability_clock_delegate(int uid)
+{
+
+	atomic_store_rel_int(&sys_clock_delegate_uid,
+	    uid > 0 ? (u_int)uid : (u_int)-1);
+}
+
+static bool
+sys_clock_delegated(struct ucred *cred)
+{
+	u_int uid;
+
+	uid = atomic_load_acq_int(&sys_clock_delegate_uid);
+	return (uid != (u_int)-1 && uid != 0 &&
+	    cred->cr_uid == (uid_t)uid && cred->cr_ruid == (uid_t)uid &&
+	    (cred->cr_flags & CRED_FLAG_CAPMODE) == 0);
+}
+
 /* Raw clock syscalls retain normal privilege checks and explicit claim isolation.
  * Gated perform operations independently require a held System token. */
 static int
@@ -1808,6 +1840,13 @@ sys_mac_priv_check(struct ucred *cred, int priv)
 	case PRIV_ADJTIME:
 	case PRIV_NTP_ADJTIME:
 	case PRIV_CLOCK_SETTIME:
+		if (sys_clock_delegated(cred)) {
+			SDT_PROBE3(mac_capability_system, , , allow,
+			    "clock-delegate", (uint64_t)0,
+			    mac_capability_proc_nonce(cred));
+			return (0);
+		}
+		/* FALLTHROUGH */
 	case PRIV_SETTIMEOFDAY:
 		return (sys_check_gate(cred, SYS_GATE_SETTIME, "clock"));
 	default:

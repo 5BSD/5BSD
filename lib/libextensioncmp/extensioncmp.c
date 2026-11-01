@@ -45,6 +45,7 @@ struct extensioncmp_session {
 	pid_t			 creator; /* explicit session: immutable */
 	bool			 negotiated;
 	bool			 reopen;	/* process-wide: replace on failure */
+	bool			 status;	/* SystemExtensionStatus (read-only) */
 	int			 failed;	/* explicit session: terminal */
 };
 
@@ -53,10 +54,12 @@ struct completion {
 	int error;
 	const char *name;		/* Info/Next: the request's name */
 	bool next;
+	uint64_t after;			/* NextDecision: the request's cursor */
 	int loaded;
 	char (*names)[SERVICE_EXTENSION_NAME_MAX];
 	size_t max, count;
 	struct service_extension_info *info;
+	struct service_extension_decision *decision;
 };
 
 static bool
@@ -280,6 +283,86 @@ next_entry_reply(void *context, int error,
 		module_info(result, &v->value.response);
 }
 
+/* The read-only view's replies (bsd.extension.v1 SystemExtensionStatus). */
+#define	STATUS_INFO_REPLY(fn, method)					\
+static void								\
+fn(void *context, int error,						\
+    struct bsd_extension_v1_SystemExtensionStatus_##method##_Result *v)	\
+{									\
+	struct completion *result = context;				\
+									\
+	result->done = true;						\
+	result->error = error;						\
+	if (error)							\
+		return;							\
+	if (v == NULL)							\
+		malformed(result);					\
+	else if (v->tag ==						\
+	    bsd_extension_v1_SystemExtensionStatus_##method##_Result_err_tag) \
+		domain_error(result, v->value.err);			\
+	else if (v->tag !=						\
+	    bsd_extension_v1_SystemExtensionStatus_##method##_Result_response_tag) \
+		malformed(result);					\
+	else								\
+		module_info(result, &v->value.response);		\
+}
+STATUS_INFO_REPLY(status_info_reply, Info)
+STATUS_INFO_REPLY(status_next_reply, Next)
+
+static void
+status_protocol_reply(void *context, int error,
+    struct bsd_extension_v1_ProtocolInfo *v)
+{
+	info_reply(context, error, v);
+}
+
+static void
+decision_reply(void *context, int error,
+    struct bsd_extension_v1_SystemExtensionStatus_NextDecision_Result *v)
+{
+	struct completion *result = context;
+	const struct bsd_extension_v1_LoadDecision *d;
+	struct service_extension_decision *out = result->decision;
+
+	result->done = true;
+	result->error = error;
+	if (error)
+		return;
+	if (v == NULL) {
+		malformed(result);
+		return;
+	}
+	if (v->tag ==
+	    bsd_extension_v1_SystemExtensionStatus_NextDecision_Result_err_tag) {
+		domain_error(result, v->value.err);
+		return;
+	}
+	if (v->tag !=
+	    bsd_extension_v1_SystemExtensionStatus_NextDecision_Result_response_tag) {
+		malformed(result);
+		return;
+	}
+	d = &v->value.response;
+	if (d->sequence <= result->after ||
+	    !valid_name(d->module, d->module_size) ||
+	    d->client_size >= sizeof(out->client) ||
+	    (d->client_size != 0 &&
+	    memchr(d->client, '\0', d->client_size) != NULL) ||
+	    d->result < SYSEXT_DECISION_LOADED ||
+	    d->result > SYSEXT_DECISION_FAILED || d->error > ELAST) {
+		malformed(result);
+		return;
+	}
+	memset(out, 0, sizeof(*out));
+	out->sequence = d->sequence;
+	out->time = (time_t)d->time;
+	memcpy(out->name, d->module, d->module_size);
+	memcpy(out->client, d->client, d->client_size);
+	out->operation = (int)d->operation;
+	out->result = (int)d->result;
+	out->error = (int)d->error;
+}
+
 /* ---------------------------------------------------------------- sessions */
 
 static int
@@ -375,7 +458,10 @@ begin_locked(struct extensioncmp_session *session, struct timespec *deadline)
 		return (errno = error, -1);
 	if (session->negotiated)
 		return (0);
-	error = bsd_extension_v1_SystemExtension_GetProtocolInfo(
+	error = session->status ?
+	    bsd_extension_v1_SystemExtensionStatus_GetProtocolInfo(
+	    session->connection, &empty, status_protocol_reply, &result, &txid) :
+	    bsd_extension_v1_SystemExtension_GetProtocolInfo(
 	    session->connection, &empty, info_reply, &result, &txid);
 	if (finish_locked(session, error, &result, deadline) == -1)
 		return (-1);
@@ -424,6 +510,48 @@ extensioncmp_session_open(struct extensioncmp_session **sessionp)
 		return (errno = error, -1);
 	}
 	return (0);
+}
+
+/*
+ * The read-only view.  switchboard resolves system.SystemExtension.Status for
+ * UID 0 sessions without software authority (root-query.ucl); the session
+ * speaks SystemExtensionStatus, so only extensioncmp_info() and
+ * extensioncmp_decision() work on it and every other operation is EPERM here.
+ */
+int
+extensioncmp_session_open_status(struct extensioncmp_session **sessionp)
+{
+	int error, fd;
+
+	if (sessionp == NULL)
+		return (errno = EINVAL, -1);
+	if (service_open(SYSEXT_STATUS_SERVICE_NAME, &fd) == -1)
+		return (-1);
+	if (extensioncmp_session_create(fd, sessionp) == -1) {
+		error = errno;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	(*sessionp)->status = true;
+	return (0);
+}
+
+int
+extensioncmp_session_create_status(int fd,
+    struct extensioncmp_session **sessionp)
+{
+
+	if (extensioncmp_session_create(fd, sessionp) == -1)
+		return (-1);
+	(*sessionp)->status = true;
+	return (0);
+}
+
+int
+extensioncmp_session_read_only(const struct extensioncmp_session *session)
+{
+
+	return (session != NULL && session->status ? 1 : 0);
 }
 
 void
@@ -476,6 +604,8 @@ extensioncmp_load(struct extensioncmp_session *session, const char *name)
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
+	if (session->status)
+		return (errno = EPERM, -1);
 	if ((error = check_name(name, false)) != 0)
 		return (errno = error, -1);
 	module.name = name;
@@ -493,6 +623,8 @@ extensioncmp_reload(struct extensioncmp_session *session)
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
+	if (session->status)
+		return (errno = EPERM, -1);
 	return (CALL(session, &result,
 	    bsd_extension_v1_SystemExtension_Reload(CONN(session), &empty,
 	    reload_reply, &result, &txid_)));
@@ -509,6 +641,8 @@ extensioncmp_stat(struct extensioncmp_session *session, const char *name,
 	if (session == NULL || loaded == NULL)
 		return (errno = EINVAL, -1);
 	*loaded = 0;
+	if (session->status)
+		return (errno = EPERM, -1);
 	if ((error = check_name(name, false)) != 0)
 		return (errno = error, -1);
 	module.name = name;
@@ -531,6 +665,8 @@ extensioncmp_list(struct extensioncmp_session *session,
 	if (session == NULL || names == NULL || count == NULL || max == 0)
 		return (errno = EINVAL, -1);
 	*count = 0;
+	if (session->status)
+		return (errno = EPERM, -1);
 	result.names = names;
 	result.max = max;
 	if (CALL(session, &result,
@@ -554,6 +690,8 @@ extensioncmp_manage(struct extensioncmp_session *session,
 
 	if (session == NULL)
 		return (errno = EINVAL, -1);
+	if (session->status)
+		return (errno = EPERM, -1);
 	if (action == SERVICE_EXTENSION_RESTORE)
 		return (CALL(session, &result,
 		    bsd_extension_v1_SystemExtension_Restore(CONN(session),
@@ -605,24 +743,56 @@ extensioncmp_info(struct extensioncmp_session *session, const char *name,
 	result.name = name;
 	result.next = next != 0;
 	result.info = info;
-	if (next) {
-		cursor.name = name;
-		cursor.name_size = strlen(name);
+	cursor.name = module.name = name;
+	cursor.name_size = module.name_size = strlen(name);
+	if (next && session->status)
+		error = CALL(session, &result,
+		    bsd_extension_v1_SystemExtensionStatus_Next(CONN(session),
+		    &cursor, status_next_reply, &result, &txid_));
+	else if (next)
 		error = CALL(session, &result,
 		    bsd_extension_v1_SystemExtension_Next(CONN(session), &cursor,
 		    next_entry_reply, &result, &txid_));
-	} else {
-		module.name = name;
-		module.name_size = strlen(name);
+	else if (session->status)
+		error = CALL(session, &result,
+		    bsd_extension_v1_SystemExtensionStatus_Info(CONN(session),
+		    &module, status_info_reply, &result, &txid_));
+	else
 		error = CALL(session, &result,
 		    bsd_extension_v1_SystemExtension_Info(CONN(session), &module,
 		    info_entry_reply, &result, &txid_));
-	}
 	if (error == -1) {
 		error = errno;
 		memset(info, 0, sizeof(*info));
 		errno = error;
 		return (-1);
+	}
+	return (0);
+}
+
+int
+extensioncmp_decision(struct extensioncmp_session *session, uint64_t after,
+    struct service_extension_decision *decision)
+{
+	struct completion result = { 0 };
+	struct bsd_extension_v1_DecisionCursor cursor;
+
+	if (session == NULL || decision == NULL)
+		return (errno = EINVAL, -1);
+	memset(decision, 0, sizeof(*decision));
+	/* Decisions are part of the read-only view only. */
+	if (!session->status)
+		return (errno = EOPNOTSUPP, -1);
+	cursor.after = after;
+	result.after = after;
+	result.decision = decision;
+	if (CALL(session, &result,
+	    bsd_extension_v1_SystemExtensionStatus_NextDecision(CONN(session),
+	    &cursor, decision_reply, &result, &txid_)) == -1) {
+		int error = errno;
+
+		memset(decision, 0, sizeof(*decision));
+		return (errno = error, -1);
 	}
 	return (0);
 }

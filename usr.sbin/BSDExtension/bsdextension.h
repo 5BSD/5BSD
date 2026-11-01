@@ -27,6 +27,8 @@
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
 
 #define	SYSEXT_MAX_ALLOW	256	/* allow-list capacity */
+#define	SYSEXT_MAX_DRIVER_CLIENTS 8	/* driver_clients capacity */
+#define	SYSEXT_CLIENT_MAX	64	/* switchboard label bound */
 #define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
 /*
  * Bundle-relative config filename, opened via the switchboard-delivered Config
@@ -49,6 +51,15 @@ struct sysext_config {
 	 * driver devmatch(8) selects), unless an administrator denied it.
 	 */
 	bool	device_drivers;
+	/*
+	 * driver_clients: switchboard client labels (service_identity
+	 * client_label) admitted for the hardware-driver class only.  Such a
+	 * client never loads an allowed_extensions entry; with device_drivers
+	 * false it loads nothing.  devd's lasting grant (switchboard
+	 * service-authority.ucl) is the intended member.
+	 */
+	char	driver_clients[SYSEXT_MAX_DRIVER_CLIENTS][SYSEXT_CLIENT_MAX];
+	size_t	ndriver_clients;
 };
 
 struct sysext_policy;
@@ -89,6 +100,26 @@ bool sysext_hints_pnp_module(const void *, size_t, const char *);
 bool sysext_driver_module(int, const char *);
 
 /*
+ * Recent load decisions (Ensure and Restore), kept in memory for the read-only
+ * status view (system.SystemExtension.Status): a ring of SYSEXT_DECISIONS_MAX
+ * entries, the oldest dropped first, lost when the broker restarts.  Each
+ * entry carries the requester's switchboard label, never payload data.
+ */
+struct sysext_decision {
+	uint64_t sequence;		/* 1, 2, ... per broker start */
+	int64_t	time;			/* CLOCK_REALTIME seconds */
+	char	module[SYSEXT_NAME_MAX];
+	char	client[SYSEXT_CLIENT_MAX];
+	uint32_t operation;		/* SYSEXT_OP_ENSURE or SYSEXT_OP_RESTORE */
+	uint32_t result;		/* SYSEXT_DECISION_* */
+	uint32_t error;			/* errno of a failed load, else 0 */
+};
+void	sysext_decision_record(const char *module, const char *client,
+	    uint32_t operation, uint32_t result, int error);
+/* The oldest retained decision with a sequence above after: 0, or ENOENT. */
+int	sysext_decision_next(uint64_t after, struct sysext_decision *);
+
+/*
  * The held SYS_GATE_KLDLOAD/KLDUNLOAD "system" token (defined in
  * bsdextension.c), or -1.  bsdextension.c loads and reclaim.c unloads THROUGH
  * it when born in capability mode.
@@ -104,6 +135,7 @@ void sysext_test_policy_commit_abandon(struct sysext_policy *);
 bool	valid_module_name(const char *name);
 void	sysext_config_defaults(struct sysext_config *cfg);
 bool	extension_allowed(const struct sysext_config *cfg, const char *name);
+bool	sysext_driver_client(const struct sysext_config *cfg, const char *client);
 int	sysext_config_load(struct sysext_config *cfg, const char *path);
 int	sysext_config_load_fd(struct sysext_config *cfg, int fd);
 
@@ -115,6 +147,14 @@ int	sysext_config_load_fd(struct sysext_config *cfg, int fd);
  */
 int	sysext_test_serve(int fd, const char *client,
 	    const struct sysext_config *cfg);
+/*
+ * The same over the read-only status view: the worker binds the
+ * SystemExtensionStatus handlers a system.SystemExtension.Status session gets.
+ */
+int	sysext_test_serve_status(int fd, const char *client,
+	    const struct sysext_config *cfg);
+/* Drop every recorded decision and restart the sequence at 1. */
+void	sysext_test_decisions_reset(void);
 #else
 #define	SYSEXT_STATIC	static
 #endif /* BSDEXTENSION_TESTING */

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Run the AMD nested-SVM ATF gate against installed, root-owned inputs.
-# Run POLICY_ONLY=1 on a separate boot with hw.vmm.svm.nested=0.
+# Run POLICY_ONLY=1 on a separate boot with hw.vmm.svm.nested=0 set in the
+# kernel environment (the default is 1).
 
 set -eu
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
@@ -107,7 +108,7 @@ case "$features" in
 ''|*[!0-9]*) fail "invalid AMD SVM feature mask: $features" ;;
 esac
 if [ "$POLICY_ONLY" -eq 1 ]; then
-	[ "$nested" = 0 ] || fail "default-off policy boot requires nested=0"
+	[ "$nested" = 0 ] || fail "policy-only boot requires hw.vmm.svm.nested=0"
 else
 	[ "$nested" = 1 ] || fail "enabled boot requires nested=1"
 	[ $((features & 128)) -ne 0 ] ||

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 cc_binary(name = "sysextctl", srcs = ["sysextctl.c"],
-    deps = ["//lib/libcapsulert:headers", '//lib/libextensioncmp:extensioncmp', '//lib/libservice:service'], dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared'],
+    deps = ["//lib/libcapsulert:headers", "//lib/libcapsulert:extension_protocol_headers", '//lib/libextensioncmp:extensioncmp', '//lib/libservice:service'], dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared'],
     copts = ["-fPIE"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
     visibility = ["//visibility:public"])

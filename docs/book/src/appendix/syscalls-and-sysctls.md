@@ -152,6 +152,7 @@ the end rather than listed one by one.
 |---|---|---|---|---|
 | `hw.vmm.vmx.nested` | int RDTUN | 0 | Permit explicitly configured guests to use nested VMX (with `x86.nested_vmx` per VM) | `sys/amd64/vmm/intel/vmx.c` |
 | `hw.vmm.vmx.nested_vpid` | int RDTUN | 0 | Expose nested VPID and INVVPID for live qualification; requires `nested` | same |
+| `hw.vmm.svm.nested` | int RDTUN | 1 | Host policy permitting nested SVM for guests that opt in with `x86.nested_svm` (0 refuses it host-wide) | `sys/amd64/vmm/amd/svm.c` |
 | `hw.vmm.pvclock.enabled` | int RDTUN | 0 | Advertise and service the KVM paravirtual clock | `sys/amd64/vmm/io/vpvclock.c` |
 | `hw.virtio_iommu.enable` | int RDTUN | 0 | Attach to virtio-iommu devices; the driver does not provide busdma translation | `sys/dev/virtio/iommu/virtio_iommu.c` |
 | `hw.virtio_mem.allow_plug` | int RDTUN | 0 | Issue PLUG requests toward the requested size; plugged memory is not onlined | `sys/dev/virtio/mem/virtio_mem.c` |

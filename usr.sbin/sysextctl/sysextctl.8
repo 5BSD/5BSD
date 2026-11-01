@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 2, 2026
+.Dd November 1, 2026
 .Dt SYSEXTCTL 8
 .Os
 .Sh NAME
@@ -7,7 +7,7 @@
 .Nd manage kernel extension policy and boot activation
 .Sh SYNOPSIS
 .Nm
-.Cm list | config | reload | restore
+.Cm status | list | config | reload | restore
 .Nm
 .Cm status | load | allow | deny | reset | enable | disable
 .Ar module
@@ -20,8 +20,50 @@ All changes to policy are validated and persisted by the service.
 The client does not edit configuration files or invoke
 .Xr kldload 2 .
 .Pp
+The inspection commands
+.Pq Cm status , list , config
+use the full service when the caller reaches it, and otherwise its
+read-only view,
+.Dq system.SystemExtension.Status .
+.Xr switchboard 8
+resolves the read-only view for a process with effective UID 0, outside any
+jail, that holds no software grant: a root login shell, a cron job, or a
+command started from
+.Pa /etc/rc.local
+after
+.Pa /etc/rc
+exits
+.Pq Pa /Capabilities/Config/switchboard/root-query.ucl .
+The view has no operation that loads a module or changes policy.
+Other users reach neither endpoint and get nothing.
+The load and policy commands never use the read-only view.
+.Pp
 The commands are:
 .Bl -tag -width disable
+.It Cm status
+Print what the kernel and the broker report, read-only:
+the modules compiled into the kernel, the module files loaded since boot
+(from
+.Xr kldstat 2
+and
+.Xr modstat 2 ) ,
+and the broker's recent load decisions, oldest first.
+Each decision names the module, the requesting switchboard client label,
+and the outcome: loaded, already loaded, or the reason it was refused
+.Po
+not on the allow-list and not a hardware driver of this kernel;
+client may load hardware drivers only; denied by an administrator override;
+or the load failed with an error
+.Pc .
+The broker keeps the 64 most recent decisions in memory since it started.
+Requests that never reach the broker, such as a direct
+.Xr kldload 8
+refused by the module-loading gate or a
+.Nm Cm load
+from a shell without a grant, are not decisions and are not listed.
+This command needs the read-only view and fails with
+.Dv EX_UNAVAILABLE
+for any other caller.
 .It Cm list
 Print permitted module names and their current state,
 .Dq loaded
@@ -51,9 +93,23 @@ This is a policy listing, not a catalogue of installed packages.
 Loaded state is not disclosed for denied modules.
 .It Cm status Ar module
 Show the same information for one module.
+Over the read-only view, the broker's recent load decisions for that module
+follow.
 .It Cm load Ar module
 Ensure a permitted module is loaded for this boot.
 An already loaded module is success.
+Only a caller holding a software grant for the service reaches it:
+.Pa /etc/rc
+and its descendants while
+.Pa /etc/rc
+runs, and, after boot,
+.Xr devd 8
+and its actions
+.Pq hardware drivers only; see Xr BSDExtension 8 .
+A login shell has no such grant, and the service is unavailable to it
+.Pq Dv EX_UNAVAILABLE ;
+as root it can inspect with
+.Cm status .
 .It Cm allow Ar module
 Persist an administrator permission to load this module.
 Permission does not install, authenticate, or load module code.
@@ -116,6 +172,8 @@ Shipped defaults; the allowed_extensions array replaces built-in defaults.
 .It Pa /etc/bsdextension/overrides.ucl
 Versioned administrator state.
 Manage it through this command rather than editing storage internals.
+.It Pa /Capabilities/Config/switchboard/root-query.ucl
+Read-only endpoints switchboard resolves for UID 0 sessions without a grant.
 .El
 .Sh EXIT STATUS
 Zero indicates success.
@@ -127,6 +185,15 @@ if administrator configuration has not been attached.
 Other errors use
 .Xr sysexits 3
 codes.
+.Sh EXAMPLES
+Why did a driver not load, from a root login shell:
+.Bd -literal -offset indent
+# sysextctl status if_axge
+if_axge: allowed, boot=disabled, loaded=yes, installed=yes, policy=default
+  2026-11-01 05:12:09 load if_axge (client devd): loaded
+# sysextctl status
+.Ed
 .Sh SEE ALSO
 .Xr BSDExtension 8 ,
-.Xr kldload 8
+.Xr kldload 8 ,
+.Xr switchboard 8

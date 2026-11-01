@@ -35,6 +35,22 @@
 #include <stdint.h>
 
 #define	SYSEXT_SERVICE_NAME	"system.SystemExtension"
+/*
+ * The read-only view (bsd.extension.v1 SystemExtensionStatus): policy entries
+ * and recent load decisions, no method that loads or changes anything.
+ * switchboard resolves it for UID 0 sessions without software authority
+ * (/Capabilities/Config/switchboard/root-query.ucl).
+ */
+#define	SYSEXT_STATUS_SERVICE_NAME	"system.SystemExtension.Status"
+
+/* Load decisions the broker keeps for the status view (a ring, oldest dropped). */
+#define	SYSEXT_DECISIONS_MAX		64
+#define	SYSEXT_DECISION_LOADED		1	/* loaded by this request */
+#define	SYSEXT_DECISION_PRESENT		2	/* already loaded or built in */
+#define	SYSEXT_DECISION_NOT_PERMITTED	3	/* not allowed, not a class driver */
+#define	SYSEXT_DECISION_DRIVERS_ONLY	4	/* driver_clients asked for a non-driver */
+#define	SYSEXT_DECISION_OVERRIDE	5	/* administrator deny override */
+#define	SYSEXT_DECISION_FAILED		6	/* permitted; the load failed */
 
 /* bsd.extension.v1 GetProtocolInfo wire_version. */
 #define	SYSEXT_WIRE_VERSION	1
@@ -55,6 +71,8 @@
 #define SYSEXT_OP_RESTORE 10
 #define SYSEXT_OP_INFO 11
 #define SYSEXT_OP_NEXT 12
+/* Status view only: NextDecision (the request probe's code; not a record op). */
+#define SYSEXT_OP_DECISION 13
 
 #define SYSEXT_STATE_ALLOWED 0x01
 #define SYSEXT_STATE_ENABLED 0x02

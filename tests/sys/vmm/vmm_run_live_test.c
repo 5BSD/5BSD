@@ -154,7 +154,7 @@ create_nested_live_vm(const atf_tc_t *tc)
 		atf_tc_skip("requires AMD SVM hardware and a matching vmm module");
 	ATF_REQUIRE_EQ(len, sizeof(enabled));
 	if (enabled != 1)
-		atf_tc_skip("load vmm with hw.vmm.svm.nested=1");
+		atf_tc_skip("hw.vmm.svm.nested is 0; load vmm with the default (1)");
 	len = sizeof(features);
 	ATF_REQUIRE_EQ(sysctlbyname("hw.vmm.svm.features", &features,
 	    &len, NULL, 0), 0);

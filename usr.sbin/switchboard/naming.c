@@ -410,6 +410,15 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 	unsigned nrequires;
 	int provider_end, client_end;
 	uid_t sender_uid = svc_authority_personal_uid(domain, sender);
+	/*
+	 * root-query.ucl: a read-only endpoint resolves for a UID 0 sender that
+	 * holds no software authority and is not a switchboard unit (a root
+	 * login shell, a cron job).  This adds only visibility of the listed
+	 * names; the session gets no administrative rights (below) and the
+	 * provider serves the name read-only.
+	 */
+	bool root_query = requester == NULL &&
+	    svc_authority_root_query(domain, sender, name);
 
 	if (sendablep != NULL)
 		*sendablep = false;
@@ -462,7 +471,8 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 			else if (ctrl_name)
 				*errp = ENOENT;		/* control<->control */
 			else
-				*errp = svc_domain_resolves_scoped(domain, name, sender_uid) ?
+				*errp = root_query ||
+				    svc_domain_resolves_scoped(domain, name, sender_uid) ?
 				    ENOENT : EACCES;	/* service plane */
 		}
 		return (-1);
@@ -477,7 +487,9 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 	 * caller maps it to ENOENT on the wire and does NOT on-demand it): the
 	 * name exists but this channel may never reach it.
 	 */
-	if (!(e->owner->owner_uid == (uid_t)-1 ?
+	if (!(root_query && e->owner->owner_uid == (uid_t)-1 &&
+	    e->domain != SVC_DOMAIN_CONTROL) &&
+	    !(e->owner->owner_uid == (uid_t)-1 ?
 	    svc_domain_permits(domain, e->domain, name) :
 	    svc_domain_permits_scoped(domain, e->domain, name, sender_uid))) {
 		*errp = EACCES;
@@ -620,6 +632,11 @@ naming_lookup_impl(const char *name, struct svc_runtime *requester,
 	/* Preserve the ordinary administrative endpoint grant. */
 	if (domain != NULL && domain->anoint.admin_rights)
 		notify.rights |= SERVICE_RIGHTS_ADMIN;
+	if (root_query) {
+		notify.rights &= ~SERVICE_RIGHTS_ADMIN;
+		syslog(LOG_INFO, "naming: '%s' resolved for a UID 0 session "
+		    "(root-query.ucl, read-only)", name);
+	}
 
 	if (svc_channel_send_event(provider,
 	    &notify, sizeof(notify),

@@ -23,8 +23,8 @@ in `kern.evdev.input`.
 USB detection alone does not mean the mouse input driver is active. Since
 the hardware-driver class (`device_drivers` in the BSDExtension policy),
 `devmatch` loads `hms` and other drivers that `/boot/kernel/linker.hints`
-matches to the device at boot (a device attached later gets its module at
-the next boot; hms itself is compiled into GENERIC now). A broker denial still
+matches to the device, at boot and, through devd(8), when the device is
+attached later (hms itself is compiled into GENERIC now). A broker denial still
 prevents that: on a system built before the class, with the class turned
 off, or after `sysextctl deny hms`. This was observed with a USB optical mouse on 5BSD; it is
 separate from Plasma login or GPU configuration.
@@ -38,10 +38,16 @@ sysextctl status hms
 ls -l /boot/kernel/hms.ko
 ```
 
+These work from a root login shell (the read-only view); `sysextctl status
+hms` also lists the broker's recent load decisions for `hms` with the reason
+for a refusal, and `sysextctl status` shows every recent decision.
 A denied module's loaded state is intentionally undisclosed by `sysextctl`.
 Confirm driver attachment with the kernel messages and evdev device names.
 
-**Fix.** From a session with ADMIN rights on the extension service:
+**Fix.** These commands need ADMIN rights on the full extension service. A
+login shell, even as root, has none: they fail with `EX_UNAVAILABLE`. The
+shipped holder of those rights is `/etc/rc` while it runs
+(`/Capabilities/Config/switchboard/boot-authority.ucl`).
 
 ```sh
 sysextctl allow hms
@@ -305,11 +311,18 @@ BSDExtension performs authorized loads through that gate and checks its
 own module allow-list. A permission error alone does not distinguish these
 checks from ordinary privilege or securelevel checks.
 
-From a session with SYSTEM-domain discovery access, inspect effective
-policy and request the load:
+Inspect effective policy and the broker's recent decisions; this works from a
+root login shell:
 
 ```sh
 sysextctl config
+sysextctl status linprocfs
+```
+
+Requesting the load needs SYSTEM-domain discovery access to the full
+service, which a login shell does not have:
+
+```sh
 sysextctl load linprocfs
 ```
 
@@ -325,8 +338,10 @@ sysextctl load linprocfs
 activation. `enable` records boot activation separately. If `allow` itself
 returns `Operation not permitted`, check the session's ADMIN authority.
 UID 0 alone is insufficient. An unreachable broker (`No such file or
-directory`) can mean missing discovery authority or a USER-domain session;
-it does not by itself mean the daemon is stopped. See
+directory`) for `load` or a policy command means the session has no grant (a
+login shell); for `sysextctl status` as root it means the read-only view is
+unavailable (an older base, or BSDExtension is not running). It does not by
+itself mean the daemon is stopped. See
 [SystemExtension](../providers/extension.md) and
 [The Management Model](../plane/management-model.md).
 
@@ -364,17 +379,29 @@ Current builds permit drivers listed with plug-and-play data in
 `/boot/kernel/linker.hints`, list the base rc.d service modules, retry
 a refused `load_kld` through the broker, and compile the common desktop
 drivers (snd_uaudio, uvideo, ure, hms, hmt and others) and mac_ntpd into
-GENERIC. Module loading is available only while `/etc/rc` runs: a device
-attached after boot whose driver is a module reports `Cannot autoload NAME
-after boot` and gets its driver at the next boot.
+GENERIC. After boot only devd(8) may load modules, and only hardware drivers:
+switchboard restarts devd when `/etc/rc` exits under its grant in
+`/Capabilities/Config/switchboard/service-authority.ucl`. If a device
+attached later gets no driver, check that devd is that unit
+(`switchboardctl services` lists it; a devd started from a login shell with
+`service devd restart` has no grant, so use `switchboardctl restart devd`),
+and look for the broker's decision with client `devd` in the log. A
+`Cannot autoload NAME: only rc at boot and devd(8) may load drivers` message
+comes from devmatch run outside devd, for example from a login shell.
 
-**Check.**
+**Check.** As root, from a login shell:
 
 ```sh
+sysextctl status                 # recent broker decisions, with reasons
 sysextctl status snd_uaudio
 sysextctl config | grep -v ': denied'
 grep -E 'Cannot autoload|Unable to (load|claim) kernel module' /var/log/messages
 ```
+
+A refusal reads, for example, `load accf_http (client devd): refused: client
+may load hardware drivers only`. A load that never reached the broker (a
+login shell or cron job) is not listed; devmatch logs it in
+`/var/log/messages`.
 
 **Fix.** Upgrade base and reboot. If you added `NAME_load="YES"` lines to a
 `/boot/loader.conf.d` file to work around this, remove the lines for

@@ -84,6 +84,41 @@ to use a table to locate and load via
 .Xr kldload 8
 the proper driver for an unrecognized device that is added to the system.
 .Pp
+With the 5BSD capability plane, a direct
+.Xr kldload 2
+is refused once the module broker
+.Xr BSDExtension 8
+has started.
+.Nm
+is then an adopted
+.Xr switchboard 8
+unit: when
+.Pa /etc/rc
+exits, switchboard restarts it with
+.Dq service devd onerestart
+under the lasting grant in
+.Pa /Capabilities/Config/switchboard/service-authority.ucl .
+That grant lets
+.Nm
+and its actions run through
+.Xr sh 1 ,
+.Xr env 1 ,
+.Xr limits 1
+and
+.Xr sysextctl 8
+reach the broker, which admits the
+.Dq devd
+client for hardware drivers only, so
+.Pa /etc/devd/devmatch.conf
+loads the driver of a device attached after boot.
+Any other executable an action runs holds no grant.
+A
+.Nm
+started by hand, for example with
+.Dq service devd restart
+from a login shell, holds no grant; use
+.Dq switchboardctl restart devd .
+.Pp
 The
 .Nm
 utility

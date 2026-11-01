@@ -89,6 +89,17 @@ can_run_nonroot()
 		logger -s -t "rc.d/ntpd" -p daemon.notice \
 		    "${_ntp_old_driftfile} moved to ${_ntp_default_driftfile}"
 	fi
+
+	# A pidfile written by an earlier ntpd running as root cannot be
+	# rewritten by user ntpd ("pid file ...: Permission denied"), and
+	# "service ntpd status" would then read the stale pid.  ntpd is not
+	# running here (rc.subr checked), so remove it.
+	if [ -f "${pidfile}" ] &&
+	    [ "$(stat -f %u "${pidfile}")" != "$(id -u ntpd)" ]; then
+		rm -f "${pidfile}" || return 1
+		logger -s -t "rc.d/ntpd" -p daemon.notice \
+		    "removed ${pidfile} left by an ntpd running as root"
+	fi
 }
 
 ntpd_precmd()
