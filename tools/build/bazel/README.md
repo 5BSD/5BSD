@@ -15,6 +15,10 @@ The newest qualified cohort is documented in
 [PCI Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md). Evidence:
 `/usr/obj/usr/src/bazel-module-coverage-post-pci-ethernet-20261101.json`.
 Complete native world/kernel/pkgbase and system qualification remain open.
+The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
+modules. These are selection totals, not completed conversions. See
+[module inventory context](MODULE-INVENTORY-CONTEXT.md) for the fix, regression
+checks and review of earlier native module selections.
 
 **Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.
