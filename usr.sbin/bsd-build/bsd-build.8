@@ -4863,3 +4863,12 @@ installation metadata through normal format-5 inputs.
 The usage test exits before kernel initialization; configuration-test mode
 invokes the kernel and remains part of disposable-guest qualification.
 Component builds do not establish a working CTL service or storage sessions.
+
+.Pp
+The native DTrace directory exposes per-architecture module, debug and install
+manifest groups matching maintained directory membership and order.
+Six plain/CTF component profiles cover fifteen amd64 modules and thirteen each
+on ARM64 and RISC-V64; the parent system graph remains responsible for selecting
+the directory under its CDDL/DTrace configuration.
+Successful family builds and unchanged warm reuse do not establish whole-system
+kernel packaging or runtime tracing.

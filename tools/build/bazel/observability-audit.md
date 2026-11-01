@@ -9300,3 +9300,14 @@ direct DTrace/SDT provider or explicit BSM submission. Review configuration and
 privileged port mutations, authentication, session lifecycle and recovery with
 actual service callers. Only the pre-kernel usage path ran; no live-service,
 probe-firing or transitive audit-coverage claim is made. See CTLD-QUALIFICATION.md.
+
+
+## 2026-11-01: complete DTrace directory composition
+
+All maintained directory modules are now included in native per-architecture
+module/debug/install groups. Exact artifacts match their earlier component
+captures across all six plain/CTF profiles; aggregation does not modify sources
+or instrumentation. Earlier source-specific observability review queues remain
+open. No provider registration, probe firing, module lifecycle or kernel-test
+runtime result is inferred from aggregate build success. See
+DTRACE-FAMILY-QUALIFICATION.md.

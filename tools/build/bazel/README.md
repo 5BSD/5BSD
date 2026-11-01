@@ -47209,3 +47209,16 @@ and four generated outputs passed against fresh Make references. One safe usage
 test passed. Real configuration parsing reaches kernel initialization and remains
 a disposable-guest gate with CTL sessions/reload and original root tests. See
 [CTLD-QUALIFICATION.md](CTLD-QUALIFICATION.md). Make stays production/default.
+
+
+### Complete native DTrace directory composition (2026-11-01)
+
+The DTrace directory now exposes native module/debug/install groups with exact
+maintained Make membership and order: fifteen amd64 modules and thirteen each
+on ARM64 and RISC-V64. Six plain/CTF profiles passed; all eighty-two module
+configurations and 123 installed payloads/records equal previously qualified
+immutable component captures. An unchanged RISC-V64 CTF repeat retained all
+thirty-nine unique payloads with zero execution records. This is component-family
+composition and warm reuse, not full kernel, runtime, source-invalidation or
+performance completion. See
+[DTRACE-FAMILY-QUALIFICATION.md](DTRACE-FAMILY-QUALIFICATION.md).
