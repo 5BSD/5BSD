@@ -52,3 +52,7 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['in.h', 'tcp.h'], strip_includ
 
 # Sources consumed by the separately installed accept-filter kernel modules.
 exports_files(["accf_data.c", "accf_dns.c", "accf_http.c", "accf_tls.c", "in_gif.c", "ip_gre.c"], visibility = ["//sys/net:__pkg__", "//sys/modules:__subpackages__"])
+
+cc_library(name = "virtio_driver_headers", hdrs = ["tcp_lro.h"], includes = [".."],
+    deps = [":address_headers", ":ipv4_wire_headers", ":ip6_wire_headers", ":tcp_wire_headers", ":udp_wire_headers"],
+    visibility = ["//sys/dev/virtio/network:__pkg__"])

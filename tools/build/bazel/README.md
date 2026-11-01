@@ -6,7 +6,10 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current status (2026-11-01):** the recursive Make inventory counts 729
-selected amd64 GENERIC kernel modules; 92 have direct Bazel module declarations.
+selected amd64 GENERIC kernel modules; the latest declaration refresh finds 106
+with direct Bazel module declarations against that recorded selection.
+See [VirtIO qualification](VIRTIO-QUALIFICATION.md) for the fourteen new modules
+and the limits of that count.
 All 17 converted Netgraph modules currently pass `build-bsd` compilation and
 byte/installation-metadata parity against tied GENERIC Make output. The Bazel
 9.3.1 port bootstrap with output-query error-propagation fixes passed, but a
@@ -21,6 +24,10 @@ have also been corrected and their full and installed policy payloads verified.
 Other CAPIMAGE_MANIFEST consumers still need this integration as their production
 binary targets are migrated. BSDNotify daemon installation now also passes. These checks
 verify unsigned inputs; signing and runtime trust qualification remain separate.
+
+**notifyctl** now has native program, maintained test and installation targets.
+Its eleven ATF cases pass; see [component evidence](NOTIFYCTL-QUALIFICATION.md)
+for exact checks and the inherited static DTrace archive qualification limit.
 
 ## Current coverage audit and next work order (2026-10-27, refreshed)
 
@@ -102,6 +109,33 @@ below are mechanism evidence, not substitutes for these completion gates. The
 final base build must work after base Makefiles and the Make metadata exporters
 are removed. Make remains supported for ports and third-party projects. Until the
 full qualification gates pass, Make remains the production base backend.
+
+### Required target architectures (2026-11-01)
+
+Completion includes amd64, ARM64 (`arm64` / `aarch64`) and RISC-V
+(`riscv64`): userland, libraries, kernels, drivers and kernel modules. The
+current module declaration count describes only the selected amd64
+GENERIC inventory. It provides no ARM64 or RISC-V completion evidence. The
+current source tree has `sys/arm64/conf` and `sys/riscv/conf`; it has no
+`sys/arm/conf`, so this requirement does not reintroduce a removed ARM32 port.
+PowerPC remains excluded from supported 5BSD system products.
+
+For each supported architecture, derive the selected module inventory from
+its kernel configuration and source build options, reconcile it with native
+Bazel declarations, and retain separate build/install/pkgbase evidence.
+Shared drivers should share source declarations with explicit architecture
+constraints and toolchain-selected target flags. Existing amd64-only module
+rules must be generalized or complemented by proper target rules before being
+used to claim cross-architecture support. Building a target requires execution
+of generators on the build host, not execution of target binaries there.
+
+Qualification must cover cross-builds, architecture-specific code generation,
+module linkage and installation, and boot/runtime tests on a compatible VM
+or supported board. QEMU can provide ARM64 and RISC-V virtual-board evidence;
+it cannot prove operation of every physical device. Record hardware-dependent
+runtime gaps explicitly. Keep architecture results separate until all required
+products pass. This scope clarification changes no frontend input or backend
+semantics; `build-bsd` remains on its existing experimental Bazel path.
 
 ### Ownership and public interface
 

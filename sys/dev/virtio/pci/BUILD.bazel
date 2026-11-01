@@ -10,3 +10,18 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['virtio_pci_legacy_var.h', 'vi
 
 cc_library(name = "shmem_headers", hdrs = ["virtio_pci_shmem.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/dev/virtio/pmem:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+filegroup(name = "virtio_pci_if_header_file", srcs = [":virtio_pci_if"], output_group = "header")
+filegroup(name = "virtio_pci_if_source", srcs = [":virtio_pci_if"], output_group = "source")
+cc_library(name = "interface_headers", hdrs = [":virtio_pci_if_header_file"], strip_include_prefix = "virtio_pci_if.generated")
+cc_library(name = "kernel_headers", hdrs = ["virtio_pci.h", "virtio_pci_var.h", "virtio_pci_legacy_var.h", "virtio_pci_modern_var.h"], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(name = "generic_driver", srcs = ["virtio_pci.c", "virtio_pci_legacy.c", "virtio_pci_modern.c"],
+    deps = [":kernel_headers", ":shmem_headers", ":interface_headers",
+        "//sys/dev/virtio:driver_headers", "//sys/dev/pci:kernel_headers"])
+amd64_generic_module_objects(name = "generic_interface", srcs = [":virtio_pci_if_source"],
+    deps = [":kernel_headers", ":interface_headers", "//sys/dev/virtio:driver_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c",
+        "-fdebug-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c"])

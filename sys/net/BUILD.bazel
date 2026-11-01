@@ -64,3 +64,9 @@ amd64_generic_module_objects(name = "if_gre_module", srcs = ["if_gre.c", "//sys/
 cc_library(name = "bridgestp_headers", hdrs = ["bridgestp.h", "ethernet.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h"],
     includes = [".."], deps = [":interface_headers", "//sys/netinet:bridgestp_headers"], visibility = ["//sys/modules/bridgestp:__pkg__"])
 amd64_generic_module_objects(name = "bridgestp_module", srcs = ["bridgestp.c"], deps = [":bridgestp_headers", "//sys/vm:kernel_headers"])
+
+# Network-driver closure used by vtnet; protocol-specific headers stay separate.
+cc_library(name = "virtio_driver_headers",
+    hdrs = ["debugnet.h", "pfil.h", "rss_config.h", "if_arp.h", "if_dl.h", "if_media.h"],
+    includes = [".."], deps = [":interface_headers", ":bpf_headers", ":ethernet_headers", ":vlan_headers", ":netmap_user_headers", "//sys/netinet:address_headers"],
+    visibility = ["//sys/dev/virtio/network:__pkg__"])

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "kernel_headers", hdrs = ['virtio_balloon.h', 'virtio_balloon_var.h'], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(srcs = ["virtio_balloon.c"],
+    deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
+        "//sys/vm:kernel_headers",
+        "//sys/contrib/ck:kernel_headers"])
+
+exports_files(["virtio_balloon.h"], visibility = ["//sys/dev/virtio:__pkg__"])

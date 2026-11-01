@@ -53,3 +53,14 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/backlight:__pkg__"])
+
+# Option contents come from config(8), including deliberately empty headers.
+[bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
+    output = "generic_options/opt_" + option + ".h",
+    python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+ for option in ["splash", "syscons", "teken", "evdev", "kbd", "scsi", "cam"]]
+[cc_library(name = "generic_opt_" + option + "_header", hdrs = [":opt_" + option],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev:__subpackages__"])
+ for option in ["splash", "syscons", "teken", "evdev", "kbd", "scsi", "cam"]]

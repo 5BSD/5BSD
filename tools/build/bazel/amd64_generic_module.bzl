@@ -87,6 +87,9 @@ def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts
         additional_compiler_inputs = textual_hdrs,
         deps = AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
         copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + AMD64_KERNEL_WARNING_FLAGS + AMD64_KERNEL_DEBUG_FLAGS +
+            # Inline code in declared transitive headers also embeds __FILE__.
+            # Use the same canonical source paths as the individual sources.
+            ["-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
             [mapping for source in srcs + textual_hdrs for mapping in _module_source_path_map(source)] + copts,
         local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])

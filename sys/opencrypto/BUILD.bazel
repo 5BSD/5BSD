@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "cryptodev_headers", hdrs = ["cryptodev.h", "_cryptodev.h"],
-    strip_include_prefix = "/sys", visibility = ["//sys/kern:__pkg__", "//sys/geom/eli:__pkg__", "//sys/netipsec:__pkg__", "//sys/opencrypto:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])
+    strip_include_prefix = "/sys", visibility = ["//sys/kern:__pkg__", "//sys/geom/eli:__pkg__", "//sys/netipsec:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/virtio/crypto:__pkg__", "//usr.sbin/BSDCrypto:__pkg__", "//usr.sbin/BSDCrypto/tests:__pkg__"])
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
@@ -19,3 +19,7 @@ amd64_generic_module_objects(name = "generic_cryptodev_module", srcs = ["cryptod
         "//sys/crypto:curve25519_headers", "//sys/crypto/sha2:kernel_headers", "//sys/net:network_headers",
         "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers",
         "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+filegroup(name = "cryptodev_if_header_file", srcs = [":cryptodev_if"], output_group = "header")
+cc_library(name = "cryptodev_if_headers", hdrs = [":cryptodev_if_header_file"],
+    strip_include_prefix = "cryptodev_if.generated", visibility = ["//sys/dev/virtio/crypto:__pkg__"])

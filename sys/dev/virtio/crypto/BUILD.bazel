@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = "kernel_headers", hdrs = ['virtio_crypto.h'], strip_include_prefix = "/sys")
+
+amd64_generic_module_objects(srcs = ["virtio_crypto.c"],
+    deps = [":kernel_headers", "//sys/dev/virtio:driver_headers",
+        "//sys/opencrypto:cryptodev_headers",
+        "//sys/opencrypto:cryptodev_if_headers"])

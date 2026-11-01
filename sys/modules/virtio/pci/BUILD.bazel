@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "virtio_pci",
+    objects = ['//sys/dev/virtio/pci:generic_driver_object_files', '//sys/dev/virtio/pci:generic_interface_object_files'],
+    exports = ["virtio_pci_get_shmem_region"])

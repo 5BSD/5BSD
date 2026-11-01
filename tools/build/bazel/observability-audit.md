@@ -8768,3 +8768,28 @@ markers in the other three module sources. Existing generic syscall audit
 behavior is not established by that source scan. The module conversion changes
 build declarations only. Module load/device/crypto behavior, live probe firing,
 audit event coverage and performance remain runtime qualification work.
+
+
+### VirtIO family completion candidate (2026-11-01)
+
+Fourteen new amd64 module declarations complete native descriptions of the
+recorded twenty-module VirtIO family. New core artifacts preserve six SDT probe
+pointers (four virtio lifecycle probes and two virtqueue probes); block preserves
+two request probes; networking preserves six receive/transmit/reinitialization
+probes. In the CTF/debug profile, their complete SDT sections and relocation
+records match independent Make output. The other new driver sources have no
+direct SDT/provider or audit markers in the bounded source scan. The DTrace
+transport implements existing HyperTrace protocol behavior; its name is not
+evidence of a separate generated provider or actual delivery.
+
+All fourteen no-debug module files match Make byte for byte. CTF/debug data,
+symbols, relocations and install records match; console has an additional
+non-file-backed BSS offset difference beyond build-ID/debuglink identity. The
+strict failure and bounded section review remain retained. See
+[VirtIO evidence](VIRTIO-QUALIFICATION.md) for commands, exact limits and paths.
+
+No module was loaded. Device attach/detach, queue reset/failure handling,
+filesystem sharing, graphics/input, IOMMU behavior, crypto operations, HyperTrace
+delivery, live probe firing and security-audit coverage still require matching-
+kernel tests. Absent direct probes do not prove absent system-level observation.
+Source scans and build parity do not close those runtime or performance gates.

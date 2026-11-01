@@ -13,7 +13,7 @@ cc_library(name = "interface_state_headers", hdrs = ["in6_var.h"], includes = ["
 cc_library(name = "bridgestp_headers", hdrs = ["in6_var.h"], includes = [".."],
     deps = [":address_headers"], visibility = ["//sys/netinet:__pkg__"])
 
-cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps = ["//sys/netinet:ip6_wire_headers", "//sys/netinet:ip_headers"], visibility = ["//sys/security/mac:__pkg__", "//sys/net:__pkg__", "//sys/modules/if_enc:__pkg__", "//sys/modules/if_gif:__pkg__", "//sys/modules/if_gre:__pkg__"])
+cc_library(name = "ip6_headers", hdrs = ["ip6_var.h"], includes = [".."], deps = ["//sys/netinet:ip6_wire_headers", "//sys/netinet:ip_headers"], visibility = ["//sys/security/mac:__pkg__", "//sys/net:__pkg__", "//sys/modules/if_enc:__pkg__", "//sys/modules/if_gif:__pkg__", "//sys/modules/if_gre:__pkg__", "//sys/dev/virtio/network:__pkg__"])
 
 cc_library(name = "ipv6_interface_tunnel_headers", hdrs = ["in6_fib.h", "in6_rss.h", "in6_var.h", "ip6_ecn.h", "scope6_var.h"], includes = [".."],
     deps = [":address_headers", ":ip6_headers"], visibility = ["//sys/net:__pkg__"])

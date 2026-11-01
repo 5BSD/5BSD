@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = 'framebuffer_headers', hdrs = ['vt.h', 'hw/fb/vt_fb.h', 'colors/vt_termcolors.h'],
+    strip_include_prefix = "/sys",
+    deps = ['//sys/teken:kernel_headers', '//sys/amd64/conf:generic_opt_splash_header', '//sys/amd64/conf:generic_opt_syscons_header', '//sys/amd64/conf:generic_opt_teken_header'],
+    visibility = ['//sys/dev/virtio/gpu:__pkg__'])

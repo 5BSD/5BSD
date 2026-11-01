@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(name = 'transport_headers', hdrs = ['p9_client.h', 'p9_debug.h', 'p9_protocol.h', 'p9_transport.h'],
+    strip_include_prefix = "/sys",
+    deps = [],
+    visibility = ['//sys/dev/virtio/p9fs:__pkg__'])

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_vtnet", objects = ["//sys/dev/virtio/network:generic_module_object_files"])
