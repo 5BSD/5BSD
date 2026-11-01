@@ -47284,3 +47284,10 @@ reference, verified post-upgrade SDK snapshot and canceled native attempt.
 No native test/parity pass is claimed. See
 [resume evidence and gates](BSDTRACE-CHECKPOINT.md) before reusing host-bound
 inputs after the next upgrade.
+
+**bsdtrace resumed component qualification (2026-11-01):** fourteen native
+GNU C17/PIE sources, 763 Make source/header checks, all nine installation records,
+ELF/dependency order and both debug CRCs pass. Eleven original safe ATF cases
+pass; all thirteen are installed, with two guest-path and live hardware gates
+still open. See [bounded evidence](BSDTRACE-QUALIFICATION.md). Make remains the
+production backend; the saved checkpoint patch is historical.

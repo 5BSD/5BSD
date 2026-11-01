@@ -27,3 +27,6 @@ bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["_vm_phys.h", "_v
 bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
 
 bsd_source_headers(name = "acpi_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+# Source-tree user ABI closure selected by the maintained bsdtrace build.
+cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', 'vm_map.h', 'vm_param.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bsdtrace:__pkg__"])

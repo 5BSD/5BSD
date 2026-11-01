@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+_SOURCES = ["bsdtrace.c", "cmd_decode.c", "cmd_exec.c", "cmd_list.c", "cmd_trace.c", "decode.c", "dwarf.c", "elf.c", "format.c", "hwt.c", "meta.c", "resolve.c", "symbols.c", "trace.c"]
+cc_library(name = "headers", hdrs = ["bsdtrace.h"], strip_include_prefix = ".",
+    deps = ["//sys/sys:bsdtrace_headers", "//sys/vm:bsdtrace_headers", "//sys/bsm:kernel_headers", "//contrib/processor-trace:bsdtrace_headers"])
+cc_binary(name = "bsdtrace", srcs = _SOURCES, deps = [":headers", "//lib/libipt:ipt", "//lib/libelf:elf", "//lib/libdwarf:dwarf", "//lib/libz:z", "//lib/msun:m"],
+    dynamic_deps = ["//lib/libipt:ipt_shared", "//lib/libelf:elf_shared", "//lib/libdwarf:dwarf_shared", "//lib/libz:z_shared", "//lib/msun:m_shared"],
+    copts = ["-std=gnu17", "-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+cc_library(name = "ptwrite_header", hdrs = ["bsdtrace_ptwrite.h"], strip_include_prefix = ".", visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+bsd_install_file(name = "install_ptwrite", src = "bsdtrace_ptwrite.h", destination = "/usr/include/bsdtrace_ptwrite.h", owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bsdtrace", "dev"])
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+utility_installation(name = "install_manifest", program = "bsdtrace", manual = "bsdtrace.8", man_section = "8", package = "bsdtrace", bindir = "/usr/sbin", extra_entries = [":install_ptwrite"])
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({"//tools/build/bazel/config:tests_enabled": ["//usr.sbin/bsdtrace/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdtrace","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]} |
+        select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/usr.sbin/bsdtrace": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=bsdtrace-tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

@@ -9358,3 +9358,13 @@ actual hardware and core ACPI callers. Do not add probes solely to satisfy a
 marker scan. No runtime device/fault-injection result is inferred from module
 build success. See ACPI-SUPPORT-MODULES-QUALIFICATION.md and
 bazel-acpi-support-review-r3-20261101/observability.json.
+
+## 2026-11-01: bsdtrace userland
+
+All fourteen production sources and 763 Make source/header prerequisites are
+checked. A bounded direct SDT/DTrace/BSM marker scan found no matches; review
+trace authorization/ioctl errors, target credentials, attach/exec/exit, capture
+and metadata failures and lost/overflowed buffers with HWT/kernel callers.
+Eleven safe CLI/offline cases do not establish live tracing, root boundaries
+or transitive instrumentation. No probes were added solely for a scan. See
+BSDTRACE-QUALIFICATION.md and bazel-bsdtrace-parity-r2-20261101/observability.json.

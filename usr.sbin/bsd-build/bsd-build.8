@@ -4902,12 +4902,24 @@ qualify component build/install behavior, not hardware operation or fault
 injection.
 
 .Pp
-The deferred bsdtrace native candidate is preserved in
+The historical deferred bsdtrace native candidate is preserved in
 .Pa tools/build/bazel/checkpoints/bsdtrace-20261101.patch
 with resume evidence in
 .Pa tools/build/bazel/BSDTRACE-CHECKPOINT.md .
-It is not an active native conversion or a passed qualification.
+The saved patch itself is not evidence of a passed qualification.
 Its first attempt rejected a changed SDK tool after host upgrade; a fresh
 snapshot passed hash verification, but the subsequent native build was
 canceled for another requested upgrade checkpoint.
 Revalidate all host-bound SDK and Make-reference inputs before resuming.
+
+.Pp
+The resumed native bsdtrace component now qualifies fourteen explicit GNU C17
+translation units, nine installation records, ELF dependency/hardening metadata,
+both installed debug CRCs and eleven original safe ATF cases.
+All thirteen original cases are installed; the public-header compiler and
+kernel-image default-path cases remain disposable-guest gates.
+See
+.Pa tools/build/bazel/BSDTRACE-QUALIFICATION.md
+for immutable artifact bindings, source-header checks, retained failed attempts
+and live hardware/runtime/performance limits.
+The normal format-5 bazel-test action is used; Make remains production/default.

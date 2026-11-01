@@ -1,5 +1,10 @@
 # bsdtrace deferred native migration checkpoint
 
+Historical checkpoint: the candidate was subsequently resumed and qualified
+for the bounded amd64 component checks in
+[BSDTRACE-QUALIFICATION.md](BSDTRACE-QUALIFICATION.md). The evidence and canceled
+run below remain historical; the active candidate additionally declares GNU C17.
+
 2026-11-01. The user requested a clean committed stopping point for another
 host upgrade. Make remains the production/default backend. No qualified
 bsdtrace native conversion is claimed. The pending declarations are preserved
