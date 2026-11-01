@@ -47026,5 +47026,17 @@ configured default Zsh. Per-case and final cleanup passed and the guest shut
 down normally. The maintained test now accepts either capitalization while
 retaining every permission/nonzero-exit assertion; account and PAM policy are
 unchanged. Native refresh r12 passes 176 targets/27 test targets. A new complete
-VM run remains pending; see [MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md)
+VM outcome is recorded below; see [MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md)
 for the retained failed run and resource limits.
+
+### Complete makefs suite: 60 passes and three source skips (2026-11-01)
+
+Fresh r6 completed all 63 maintained cases using the native r12 artifacts and
+explicit uniform scale-5 profile: 60 PASS, three intentional CD9660 source SKIP,
+all per-case/final cleanup checks passed and a normal guest shutdown. The
+permissions diagnostic fix retains every mode/exit assertion and normal account,
+PAM and Zsh inputs. Resource observations stayed within the declared disk-backed
+2GiB/4CPU profile and sampled host caps. See
+[MAKEFS-RUNTIME-QUALIFICATION.md](MAKEFS-RUNTIME-QUALIFICATION.md) for exact reports,
+input bindings, retained failures and remaining original-timeout, full-system,
+cross-architecture and controlled performance limits.

@@ -5,6 +5,11 @@ maintained makefs tests with native Bazel userland artifacts in a disposable
 amd64 guest. It does not qualify a complete native world/kernel, normal Capsule
 startup, SSH, publication, cross-architecture userland or controlled performance.
 
+Current bounded outcome: all 63 cases were attempted in fresh VM r6 with the
+explicit uniform scale-5 profile: 60 PASS and three intentional source SKIP.
+All per-case and final cleanup checks passed. This is not source-scale-1 or
+complete-system qualification; earlier failures remain recorded below.
+
 ## Complete inventory and prerequisites
 
 The source-owned runtime inventory in usr.sbin/makefs/tests/BUILD.bazel records
@@ -172,7 +177,7 @@ nonzero-status checks, su/PAM/default account shell, image construction, mtree
 comparison and cleanup remain unchanged. The original execution checks concern
 target input files; imported-image mode parity is checked through mtree. This
 change does not extend their scope or prove execution checks on the imported
-image. A fresh hash-bound complete-suite rerun remains pending.
+image. The subsequent fresh hash-bound complete-suite outcome is recorded below.
 
 The r5 profile remained uniformly scale 5 with source deadlines retained.
 Compression, which timed out under the original scale-1 profile, passed here.
@@ -181,3 +186,40 @@ bytes, QEMU CPU 3421.64 seconds, private scratch allocation maximum 127234560
 bytes and minimum sampled host free space 71175016448 bytes. Host compilation
 overlapped parts of execution; these are resource observations, not a controlled
 performance or source-scale-1 timing result.
+
+## Verified full-suite outcome under the explicit emulation profile
+
+Fresh fixture r8 derives from the passing r12 native receipt and unchanged
+explicit scale-5 plan. Its separate disk-backed r6 guest completed every case:
+60 PASS and the three declared CD9660 source SKIPs, checker status
+COMPLETE_WITH_SOURCE_SKIPS. The complete report and compact verification summary
+are retained in /usr/obj/usr/src/bazel-makefs-suite-vm-r6-scale5-20261101/.
+The permissions case now passes with the maintained capitalization-only fix.
+
+All non-skipped body and declared-cleanup statuses are zero, every per-case
+md/mount/pool inventory is restored, the outer adapter cleanup passes, and the
+harness reports PASS. The guest synced all buffers and powered off normally;
+QEMU exited zero and was not forcibly terminated. Native su with the actual
+account/PAM/default Zsh inputs returned the tests-account UID 977. All original
+case identities and requirements, all 512 permissions input modes, source/effective
+timeouts and source skips remain explicit in the report. No missing programs or
+unexpected skips are accepted as passes.
+
+The selected runtime inputs are fixed by the native receipt, fixture artifact
+bindings, implementation/input hashes and selected kernel/module identity.
+The fixture payload is 410020901 bytes from 15 native installation archives and
+124 explicit files; it is stored on disk, not loaded as a whole-image memdisk.
+The original 2GiB RAM/4CPU, 768MiB root and independent 64GiB logical sparse-disk
+profile and host resource caps remain in effect. Observations: 478.906 seconds,
+QEMU CPU 863.67 seconds, sampled QEMU RSS maximum 2394578944 bytes, scratch
+allocation maximum 134054400 bytes and sampled host free-space minimum
+56256126976 bytes. These samples exclude host page cache and between-sample
+peaks; concurrent host builds and large timing differences across attempts
+preclude a controlled performance claim.
+
+No additional VM is needed for this bounded gate. Original-scale qualification
+remains unproven for the corrected complete fixture; the retained r4 run failed.
+The executed root is still the disposable fixture PID1, with explicit Make-built
+execution-kernel/bootstrap artifacts. Normal Capsule startup, SSH, a complete
+native/published pkgbase system, reduced-option guest runtime, cross-userland and
+controlled storage/memory/CPU comparisons remain separate gates.
