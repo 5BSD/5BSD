@@ -29,7 +29,8 @@ def _impl(ctx):
         "export PYTHONHOME=" + home_path,
         "export PYTHONNOUSERSITE=1",
         "export PYTHONDONTWRITEBYTECODE=1",
-        "export LD_LIBRARY_PATH=" + library_path + "${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}",
+        "export PYTHONPATH=",
+        "export LD_LIBRARY_PATH=" + library_path,
         "exec " + python_path + " -B " + source_path + ' "$@"',
     ]
     runner = ctx.actions.declare_file(ctx.label.name + ".sh")

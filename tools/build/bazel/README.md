@@ -46727,3 +46727,38 @@ The report is
 `/usr/obj/usr/src/bazel-module-coverage-generic-postcommit-20261101.json`
 (SHA-256 `fb965bb54aa8f21afdcf2cd3a871189b907c3bef89d2d45561a7cc9174430154`).
 Declaration counts do not establish full kernel, module runtime or world coverage.
+
+### Test harness dependency review and uncached checks (2026-11-01)
+
+Review of the committed test adapters found that `bsd_python_test` retained
+ambient `PYTHONPATH` and appended ambient `LD_LIBRARY_PATH`. Its launcher now
+clears `PYTHONPATH` and uses only the declared runtime directories for
+`LD_LIBRARY_PATH`. The ATF cleanup regression test also formerly compiled a host
+helper when the declared Bazel runfile was missing. It now rejects a missing
+runfile whenever the Bazel test environment is present. Direct standalone
+execution still explicitly compiles its helper as before.
+
+The supplementary uncached four-test run passed at
+`/usr/obj/usr/src/bazel-module-and-tool-tests-uncached-r2-20261101/`. Its first
+attempt did not reproduce the frontend's `JAVA_HOME` and failed Java toolchain
+analysis; the corrected command uses the same declared JDK environment.
+The maintained `build-bsd` requalification of the corrected harnesses is at
+`/usr/obj/usr/src/bazel-harness-review-r2-20261101/receipt.json`.
+
+A negative check supplied an ambient `json.py` that raises an error. A direct
+Python import confirmed that the fixture takes effect, and a separate run with
+missing ATF runfiles failed with the declared-helper diagnostic, before any
+host compilation. The first injected-path four-test run caught a second
+ambient import in the Kyua JUnit reporting helper, despite the actual book
+test case passing. Private Python invocations in `bsd_kyua` now also clear
+`PYTHONPATH`; this leaves the tested program's explicit environment policy
+unchanged. Initial negative evidence remains at
+`/usr/obj/usr/src/bazel-harness-review-negative-20261101/`.
+
+The final injected-path run passed all four targets, executing all four test
+bodies with test-result caching disabled. Commands, BEP and per-target summaries
+are retained at `/usr/obj/usr/src/bazel-harness-review-negative-r2-20261101/`.
+These corrections do not establish complete filesystem sandboxing or remove
+the documented host execution-runtime limits of the Kyua adapter. The normal
+build-bsd action uses these maintained rules directly; no new frontend option
+or alternate build backend was introduced.

@@ -15,10 +15,13 @@ class CleanupLifecycle(unittest.TestCase):
     def setUpClass(cls):
         cls.storage = tempfile.TemporaryDirectory(prefix='atf-runner-cleanup-')
         cls.root = Path(cls.storage.name)
-        runfiles = Path(os.environ.get('TEST_SRCDIR', '')) / os.environ.get('TEST_WORKSPACE', '')
-        runfile_runner = runfiles / 'tools/build/bazel/atf_runner'
-        if runfile_runner.is_file():
-            cls.runner = runfile_runner
+        if 'TEST_SRCDIR' in os.environ or 'TEST_WORKSPACE' in os.environ:
+            if not os.environ.get('TEST_SRCDIR') or not os.environ.get('TEST_WORKSPACE'):
+                raise RuntimeError('incomplete Bazel test runfiles environment')
+            runfiles = Path(os.environ['TEST_SRCDIR']) / os.environ['TEST_WORKSPACE']
+            cls.runner = runfiles / 'tools/build/bazel/atf_runner'
+            if not cls.runner.is_file():
+                raise FileNotFoundError('declared Bazel ATF runner is missing: ' + str(cls.runner))
         else:
             cls.runner = cls.root / 'runner'
             subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', str(SOURCE), '-o', str(cls.runner)], check=True)

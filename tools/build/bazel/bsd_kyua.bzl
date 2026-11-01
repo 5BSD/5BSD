@@ -89,7 +89,7 @@ def _impl(ctx):
     if ctx.attr.runtime_libraries:
         if not ctx.executable.python or not ctx.file.python_home or not ctx.file.runtime_checker:
             fail("native runtime checks require an explicit Python tool and checker")
-        check = ('PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) + ' "$root/"' + _quote(ctx.executable.python.short_path) + ' -B "$root/"' +
+        check = ('PYTHONPATH= PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) + ' "$root/"' + _quote(ctx.executable.python.short_path) + ' -B "$root/"' +
                  _quote(ctx.file.runtime_checker.short_path) + ' --binary "$root/"' +
                  _quote(program.short_path) + ' --output "$TEST_UNDECLARED_OUTPUTS_DIR/runtime"' +
                  (' --argument=-l' if ctx.attr.interface == "atf" else ' --trace-only'))
@@ -112,7 +112,7 @@ def _impl(ctx):
     for module, libraries in ctx.attr.module_dependencies.items():
         if module not in suite_paths or not libraries or not ctx.attr.runtime_libraries:
             fail("module loader check requires a staged module and declared libraries")
-        check = ('PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) + ' "$root/"' + _quote(ctx.executable.python.short_path) + ' -B "$root/"' +
+        check = ('PYTHONPATH= PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) + ' "$root/"' + _quote(ctx.executable.python.short_path) + ' -B "$root/"' +
                  _quote(ctx.file.runtime_checker.short_path) + ' --trace-only --binary "$root/"' +
                  _quote(suite_paths[module].short_path) + ' --output "$TEST_UNDECLARED_OUTPUTS_DIR/"' + _quote('module-runtime-' + module))
         for soname in libraries:
@@ -161,7 +161,7 @@ def _impl(ctx):
             fail("suite materialization requires declared Python")
         # Bazel runfiles can be symlinks. Preserve tests of O_NOFOLLOW loaders
         # by copying only the declared suite into the private test directory.
-        commands.append('PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) +
+        commands.append('PYTHONPATH= PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file.python_home.short_path[:-len(ctx.file.python_home.basename)]) +
                         ' "$root/"' + _quote(ctx.executable.python.short_path) + ' -B -c ' +
                         _quote('import shutil,sys; shutil.copytree(sys.argv[1],sys.argv[2],symlinks=False)') +
                         ' "$root/"' + _quote(kyuafile.short_path.rsplit("/", 1)[0]) + ' "$TEST_TMPDIR/materialized-suite"')
@@ -178,7 +178,7 @@ def _impl(ctx):
     commands.append(kyua_command + ' --logfile="$TEST_UNDECLARED_OUTPUTS_DIR/kyua-report.log" report-junit' +
                     ' --results-file="$TEST_UNDECLARED_OUTPUTS_DIR/results.db" --output="$XML_OUTPUT_FILE"')
     files += [ctx.executable._report_python, ctx.file._report_python_home, ctx.file._reporter] + ctx.files._report_runtime
-    commands.append('PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file._report_python_home.short_path[:-len(ctx.file._report_python_home.basename)]) +
+    commands.append('PYTHONPATH= PYTHONNOUSERSITE=1 PYTHONHOME="$root/"' + _quote(ctx.file._report_python_home.short_path[:-len(ctx.file._report_python_home.basename)]) +
                     ' "$root/"' + _quote(ctx.executable._report_python.short_path) + ' -B "$root/"' + _quote(ctx.file._reporter.short_path) +
                     ' --kyua="$root/"' + _quote(ctx.executable.kyua.short_path) + ' --database="$TEST_UNDECLARED_OUTPUTS_DIR/results.db" --report="$XML_OUTPUT_FILE" --program=' + _quote(program_path))
     commands.append('exit "$status"')
