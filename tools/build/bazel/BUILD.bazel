@@ -124,3 +124,5 @@ bsd_python_test(
     src = "//tools/test/daemon-runtime:extra_root_test.py",
     data = ["//tools/test/daemon-runtime:extra_root.py"],
 )
+
+exports_files(["bsd_usbdevs.bzl"], visibility = ["//visibility:public"])

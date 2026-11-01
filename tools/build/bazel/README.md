@@ -46935,3 +46935,15 @@ header inputs. The original KLD fallback enables compression/encryption with
 GENERIC's actual option header, which defines neither MPPC feature. Custom option/source-variable combinations,
 runtime traffic/loading and performance remain unqualified. See
 [MPPC qualification](NETGRAPH-MPPC-QUALIFICATION.md) for evidence and limitations.
+
+### Seven Bluetooth kernel modules on three architectures (2026-11-01)
+
+Native declarations cover ng_bluetooth, ng_hci, ng_l2cap, ng_btsocket, ng_ubt,
+ubtbcmfw and ng_hci_virt on amd64, ARM64 and RISC-V64. All 42 independent
+Make/native artifact comparisons and 63 install records pass. The original USB
+ID generator uses declared native tools/data; its output matches all 12 Make
+copies. A RISC-V repeat preserves 21 artifact hashes with zero spawned actions.
+All 43 selected Netgraph leaves now have native declarations; this is not
+complete module/configuration/runtime coverage. See
+[Bluetooth module qualification](BLUETOOTH-MODULES-QUALIFICATION.md) for exact
+compiler, tracing, inventory, bootstrap and performance limits.

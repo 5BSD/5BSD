@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objects")
+load(":nodes.bzl", "BLUETOOTH_MODULES")
+
+cc_library(name = "kernel_headers", hdrs = ["drivers/ubt/ng_ubt_var.h", "hci/ng_hci_cmds.h", "hci/ng_hci_evnt.h", "hci/ng_hci_misc.h", "hci/ng_hci_prse.h", "hci/ng_hci_ulpi.h", "hci/ng_hci_var.h", "l2cap/ng_l2cap_cmds.h", "l2cap/ng_l2cap_evnt.h", "l2cap/ng_l2cap_llpi.h", "l2cap/ng_l2cap_misc.h", "l2cap/ng_l2cap_prse.h", "l2cap/ng_l2cap_ulpi.h", "l2cap/ng_l2cap_var.h"], strip_include_prefix = "/sys",
+    deps = ["//sys/netgraph:kernel_headers", "//sys/netgraph/bluetooth/include:kernel_headers",
+        "//sys/net:network_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers"])
+
+[amd64_generic_module_objects(name = node.name + "_module", srcs = node.srcs,
+    deps = [":kernel_headers"] + (["//sys/dev/usb:bluetooth_headers",
+        "//sys/amd64/conf:generic_opt_bus_header", "//sys/amd64/conf:generic_opt_usb_header"] if node.usb else []))
+ for node in BLUETOOTH_MODULES]
+[cross_generic_module_objects(arch = arch, name = node.name + "_module", srcs = node.srcs,
+    deps = [":kernel_headers"] + (["//sys/dev/usb:bluetooth_headers",
+        "//sys/" + arch + "/conf:generic_opt_bus_header", "//sys/" + arch + "/conf:generic_opt_usb_header"] if node.usb else []))
+ for arch in ["arm64", "riscv"] for node in BLUETOOTH_MODULES]

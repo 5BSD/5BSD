@@ -1,3 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["makeobjops.awk"], visibility = ["//visibility:public"])
 exports_files(["vnode_if.awk"], visibility = ["//visibility:public"])
+
+exports_files(["usbdevs2h.awk"], visibility = ["//sys/dev/usb:__pkg__"])

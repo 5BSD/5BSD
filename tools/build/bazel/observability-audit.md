@@ -8928,3 +8928,14 @@ unchanged. Compile/artifact/install checks do not establish compression or
 encryption behavior, privileged graph/control audit coverage, framework probe
 firing or cryptographic suitability. Review those using matching-kernel runtime
 traffic and error cases; custom MPPC option combinations remain open.
+
+## Seven Bluetooth kernel modules on three architectures (2026-11-01)
+
+The bounded 24-source scan retains 138 direct marker lines in 14 files, including
+47 SDT schema macro lines and 74 probe-call macro lines. Original C is unchanged;
+SDT provider/probe/argument sections and relocations match independent Make
+artifacts where present across amd64, ARM64 and RISC-V64. These are textual and
+artifact checks. Live probe firing/arguments, virtual and USB controller traffic,
+firmware paths, privileged sockets/control audit coverage, errors and hardware
+runtime remain unqualified. See BLUETOOTH-MODULES-QUALIFICATION.md and retained
+`bazel-bluetooth-review-20261101/observability.json` for scope and evidence.
