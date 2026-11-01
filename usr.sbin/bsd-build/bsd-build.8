@@ -4900,3 +4900,14 @@ sixteen modules on amd64 and two on ARM64; RISC-V64 does not select this family.
 Artifact, compiler-policy, interface/option and physical-header comparisons
 qualify component build/install behavior, not hardware operation or fault
 injection.
+
+.Pp
+The deferred bsdtrace native candidate is preserved in
+.Pa tools/build/bazel/checkpoints/bsdtrace-20261101.patch
+with resume evidence in
+.Pa tools/build/bazel/BSDTRACE-CHECKPOINT.md .
+It is not an active native conversion or a passed qualification.
+Its first attempt rejected a changed SDK tool after host upgrade; a fresh
+snapshot passed hash verification, but the subsequent native build was
+canceled for another requested upgrade checkpoint.
+Revalidate all host-bound SDK and Make-reference inputs before resuming.

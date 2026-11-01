@@ -47274,3 +47274,10 @@ Make source/header hash checks. A mistaken warning omission was rejected and
 removed before the final qualification. Runtime hardware/fault-injection and
 full-system/performance gates remain open. See
 [ACPI-SUPPORT-MODULES-QUALIFICATION.md](ACPI-SUPPORT-MODULES-QUALIFICATION.md).
+
+**bsdtrace upgrade checkpoint (2026-11-01):** the unqualified fourteen-source
+native candidate is saved as an inert tracked patch, with a fresh Make
+reference, verified post-upgrade SDK snapshot and canceled native attempt.
+No native test/parity pass is claimed. See
+[resume evidence and gates](BSDTRACE-CHECKPOINT.md) before reusing host-bound
+inputs after the next upgrade.
