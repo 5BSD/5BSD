@@ -12,7 +12,10 @@ SYSTEM-domain-only service means a compromised user service can never pull
 code into the kernel. Operators inspect the effective permissions and persistent
 boot activations with `sysextctl config`, and see what is built in, loaded
 and recently refused with `sysextctl status`, which works from a root login
-shell through the read-only view `system.SystemExtension.Status`.
+shell through the read-only view `system.SystemExtension.Status`. Root can
+also load a module that a 5BSD base package installed with `sysextctl load`,
+through `system.SystemExtension.RootLoad`, which checks the file against the
+package database (see [Root loads](#root-loads-from-a-login-shell)).
 
 A consumer that needs a driver or a filesystem module (BSDCrypto for
 `cryptodev`, BSDBluetooth for `vhid`, BSDFilesystem for `zfs`, the Linux
@@ -237,10 +240,94 @@ sender of the lookup has effective UID 0 and is not jailed
 administrative rights. `list`, `config` and `status MODULE` use the full
 endpoint when the caller reaches it (rc, devd) and the read-only view
 otherwise. `load` and the policy commands never use the read-only view: from a
-login shell they still fail with `EX_UNAVAILABLE`, and kldload(8) is still
-refused by the gate. Other users reach neither endpoint and get nothing.
+login shell the policy commands still fail with `EX_UNAVAILABLE`, `load` goes
+to the root-load endpoint below, and kldload(8) is still refused by the gate.
+Other users reach none of these endpoints and get nothing.
 Only decisions the broker made are listed: a direct kldload(8) refused by the
 gate, or a `sysextctl load` that could not reach the broker, leaves no entry.
+
+### Root loads from a login shell
+
+A root login shell may load a kernel module that the base system installed,
+and nothing else:
+
+```sh
+sysextctl load ext2fs          # /boot/kernel/ext2fs.ko from a 5BSD base package
+sysextctl status               # the decision: root load ext2fs (client root (uid 0)): loaded
+sysextctl unload ext2fs        # only what a root load loaded
+```
+
+Switchboard resolves `system.SystemExtension.RootLoad` for the same callers as
+the read-only view (effective UID 0 in the kernel stamp, not jailed, no
+software grant, not a unit), listed in its own file,
+`/Capabilities/Config/switchboard/root-load.ucl`, so the read-only list stays
+read-only and the load endpoint can be withdrawn alone. Its protocol,
+`SystemExtensionRootLoad`, has `Load` and `Unload` and nothing else: no
+Ensure, Stat, List, policy, Reload or Restore method, and the session carries
+no ADMIN right. kldload(8) from the shell stays refused by the gate.
+
+BSDExtension loads `/boot/kernel/NAME.ko`, by that absolute path (so
+`kern.module_path` cannot redirect it), only when all of these hold:
+
+- the policy sets `root_load_repository` (shipped: `5BSD-base`) and no
+  administrator `sysextctl deny` names the module; the allow-list is not
+  consulted;
+- the file, opened beneath the delivered `/boot/kernel` directory without
+  following symbolic links, is a regular file; `/boot/modules` and other
+  directories are never used;
+- the local package database (`/var/db/pkg/local.sqlite`) records that path
+  in a package whose origin starts with `base/` and whose `repository`
+  annotation (written by pkg at install time) is the configured repository;
+- the file's current checksum equals the one pkg recorded. pkg 2 records
+  `2$` and its own base32 of a BLAKE2b-512 digest, not SHA-256, so the
+  broker computes exactly that (sys/contrib/libb2);
+- the file is unchanged from the check to after the load, and any file the
+  kernel linker loaded with it for a `MODULE_DEPEND` dependency lies
+  directly in `/boot/kernel` and passes the same checks; otherwise the load
+  is undone.
+
+libpkg is not part of base and the broker never runs pkg(8). The database is
+read with base's private sqlite (`libprivatesqlite3`) in a pdfork(2)ed child
+that holds neither the kldload token (close-on-fork) nor any descriptor but
+the delivered `/var/db/pkg` directory and its reply pipe; it maps
+`local.sqlite` privately, opens it read-only with `sqlite3_deserialize`
+(views, triggers and untrusted schema functions off) and returns one
+fixed-size record. A malformed database therefore reaches a process that can
+load nothing.
+
+`sysextctl unload NAME` removes only a module that a root load loaded since
+the broker started, while its file id still names that file, and only if no
+other client has asked for it since; it never unloads `mac_*` policies,
+DTrace/HyperTrace/kinst providers, ZFS, pf/ipfw or vmm, and the kernel still
+refuses a busy module or one another module depends on.
+
+Every request is in the decision list with the client `root (uid 0)` and
+logged by the broker (`ROOT LOAD x (uid 0 session, client ..., program nonce
+...) -> DENIED (...); reason`). The kernel stamp carries no login session, so
+sysextctl also logs each request to the `auth` facility with the login name,
+terminal, and the audit user and session ids when the kernel has audit.
+Refusals print their reason and exit `EX_NOPERM`:
+
+| Message | Meaning |
+|---|---|
+| `not a file of an installed 5BSD base package` | no package records the file, or it belongs to a ports package or to another repository |
+| `the file does not match the checksum its package recorded` | modified or replaced after installation; reinstall the package |
+| `no regular module file of that name in /boot/kernel` | absent, a symbolic link, or only in another directory |
+| `denied by an administrator override` | `sysextctl reset NAME` removes the deny |
+| `root loads are not configured` | `root_load_repository` is absent from `bsdextension.ucl` |
+| `the package database could not be read` | `/var/db/pkg/local.sqlite` missing or unreadable |
+| `the module file changed during the load` | the load was undone |
+
+What this protects against: a root login shell (or a script run as root)
+loading an arbitrary file, a module copied into `/boot/kernel` by hand, a
+module modified after installation or a third-party module, by mistake; and
+every attempt is recorded. What it does not protect against: a compromised
+root. The package database and `/boot/kernel` are root-writable, so root can
+edit the database, swap the file between the check and the load, mount over
+`/boot/kernel`, install a package, or add the module to loader.conf(5) and
+reboot. mac_veriexec(4) is the defence against a compromised root.
+
+### Loading with a grant
 
 For interactive module loading on 5BSD, use `sysextctl load MODULE`, not
 `kldload MODULE`. Once the capability plane claims the loading gate, direct
@@ -309,11 +396,13 @@ kldload(2) by root fails (kldload(8) reports `Exec format error`), so:
   which `driver_clients` limits to the hardware-driver class below. The
   drivers most devices need are compiled into GENERIC (USB audio, video,
   Ethernet, HID, mass storage, keyboards), so they attach without a load.
-- Nothing else can load a module after boot. A root login shell holds no
-  grant; it can inspect with `sysextctl status`, but its `sysextctl load`
-  cannot reach the loading endpoint (`EX_UNAVAILABLE`;
-  devmatch reports `Cannot autoload NAME: only rc at boot and devd(8) may
-  load drivers`), and its kldload(8) is refused by the gate.
+- Nothing else can load an allow-listed module or a driver after boot. A
+  root login shell holds no grant; it can inspect with `sysextctl status`
+  and load a verified base-package module through the root-load endpoint
+  above (devmatch run from such a shell takes the same path), and its
+  kldload(8) is refused by the gate. Other users and jailed root get
+  nothing; devmatch run by them reports `Cannot autoload NAME: only rc at
+  boot and devd(8) may load drivers`.
 - rc.subr(8) `load_kld`, used by rc.d scripts (`mac_ntpd` for ntpd, `if_vlan`,
   NFS, `geom_uzip`, the Bluetooth HID modules) and by `required_modules`,
   tries the direct load first, which works before the broker starts, and
@@ -453,6 +542,7 @@ installed under `/usr/tests/usr.sbin/BSDExtension`):
 | `reclaim_test` | pure unit | owner-map round trip, dedup, unsafe names, unload only unshared own modules, busy module retried, unknown bundle no-op, epoch recorded, boot ownership retained |
 | `policy_test` | persistent policy | ADMIN enforcement, attachment, persistence and precedence, failed-write retention, corrupt-state rejection, concurrent updates and lexical discovery, writer-death recovery, real capability-mode persistence |
 | `drivers_test` | pure unit | `device_drivers` class: linker.hints PNP classification over synthetic and truncated images, the policy key, the `driver_clients` key, an override deny beating the class, the installed kernel's hints and the packaged policy (devd is a driver client) |
+| `rootload_test` | real channel and sqlite fixtures; kernel linker stubbed; no privilege | root loads: pkg's BLAKE2b checksum against a value pkg recorded, the database lookup in a child, a package module loads by absolute path and unloads once, refusals for a file no package records, a ports or other-repository package, a modified file, a file outside the kernel directory or a symlink, an unverified dependency (load undone), a missing database, an administrator deny and an unset `root_load_repository`; the RootLoad endpoint closes Ensure, Stat, List, Reload, Allow, Restore and status frames, the library refuses them, and the status view reports every root decision |
 
 `provider_test` also proves the read-only view: Info and Next work over it,
 Ensure, Reload, Allow, Restore, Stat and List frames close the session even with
@@ -462,10 +552,12 @@ decision ring keeps the most recent 64 in order.
 
 `usr.sbin/sysextctl/tests/sysextctl_test.sh` drives the real CLI and client
 protocol implementation against a fake service (`commands`, `usage`, `protocol`,
-`root_status`, `root_mutation_refused` and `nonroot_refused` cases; the fake
-aborts if a load or policy call reaches the read-only view). Its `live` case runs
-the installed sysextctl as root on a running capability plane: `status` and
-`config` work, `load` and `allow` are refused, and `nobody` is refused. Build the current broker, library, CLI and tests before running Kyua;
+`root_status`, `root_mutation_refused`, `nonroot_refused` and `root_load` cases;
+the fake aborts if a load or policy call reaches the read-only view, or a policy
+call the root-load endpoint). Its `live` case runs the installed sysextctl as
+root on a running capability plane: `status` and `config` work, a name with no
+file in `/boot/kernel` is refused through the root-load endpoint and shows in
+`status`, `allow` is refused, and `nobody` is refused. Build the current broker, library, CLI and tests before running Kyua;
 installed binaries can lag source changes. Run each suite's generated Kyuafile.
 Provider cases skip if the capability-channel syscall is unavailable; a skip is
 not a pass. These tests do not establish successful gated module loading or
@@ -487,8 +579,9 @@ are unchanged by the migration, and the provider, libextensioncmp and
 sysextctl ship together (mixed peers fail at negotiation). `latency_bench`
 (installed with the tests) times Stat round trips for
 `tools/build/fuchsia/vm-daemons.sh`.
-Policy remains global rather than per label, and there is no wire UNLOAD by
-design. Permission does not install or authenticate module code: it must already
+Policy remains global rather than per label, and the full protocol has
+no UNLOAD by design (the root-load endpoint's `Unload` is limited to what a
+root load loaded). Permission does not install or authenticate module code: it must already
 be available through the kernel's module path. Hardware-package compatibility
 and release qualification are covered in
 [Release hardware packages](../develop/packaging.md#release-hardware-packages).

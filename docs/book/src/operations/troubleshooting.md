@@ -319,12 +319,27 @@ sysextctl config
 sysextctl status linprocfs
 ```
 
-Requesting the load needs SYSTEM-domain discovery access to the full
-service, which a login shell does not have:
+From a root login shell, `sysextctl load` uses the root-load endpoint,
+which loads a module only when it is a file in `/boot/kernel` that an
+installed 5BSD base package recorded, with an unchanged checksum:
 
 ```sh
 sysextctl load linprocfs
 ```
+
+Each refusal names its reason (exit 77, `EX_NOPERM`): `not a file of an
+installed 5BSD base package` (copied in by hand, or from a ports package),
+`the file does not match the checksum its package recorded` (reinstall the
+package that owns it: `pkg which /boot/kernel/NAME.ko`, then `pkg install -f`),
+`no regular module file of that name in /boot/kernel` (modules under
+`/boot/modules` are not root-loadable; they need an allow-list entry and a
+grant), `denied by an administrator override` (`sysextctl reset NAME` from a
+session with ADMIN rights), or `root loads are not configured`
+(`root_load_repository` in BSDExtension's `bsdextension.ucl`). The same
+decision, with the broker's detail, is in `sysextctl status NAME` and
+`/var/log/messages`; sysextctl also logs who asked to `/var/log/auth.log`.
+Allow-listed modules outside the base packages still need SYSTEM-domain
+discovery access to the full service, which a login shell does not have.
 
 If policy denies a module you intend to permit, a session with ADMIN rights
 on the SystemExtension channel can persist permission, then load it:
@@ -338,8 +353,9 @@ sysextctl load linprocfs
 activation. `enable` records boot activation separately. If `allow` itself
 returns `Operation not permitted`, check the session's ADMIN authority.
 UID 0 alone is insufficient. An unreachable broker (`No such file or
-directory`) for `load` or a policy command means the session has no grant (a
-login shell); for `sysextctl status` as root it means the read-only view is
+directory`) for a policy command means the session has no grant (a login
+shell); for `load` or `unload` as root it means the root-load endpoint is
+unavailable (an older base, `root-load.ucl` removed, or a jail); for `sysextctl status` as root it means the read-only view is
 unavailable (an older base, or BSDExtension is not running). It does not by
 itself mean the daemon is stopped. See
 [SystemExtension](../providers/extension.md) and
@@ -387,7 +403,9 @@ attached later gets no driver, check that devd is that unit
 `service devd restart` has no grant, so use `switchboardctl restart devd`),
 and look for the broker's decision with client `devd` in the log. A
 `Cannot autoload NAME: only rc at boot and devd(8) may load drivers` message
-comes from devmatch run outside devd, for example from a login shell.
+comes from devmatch run outside devd without root, or in a jail; run by root
+from a login shell, devmatch loads drivers that are verified base-package
+files through the root-load endpoint.
 
 **Check.** As root, from a login shell:
 
@@ -399,9 +417,10 @@ grep -E 'Cannot autoload|Unable to (load|claim) kernel module' /var/log/messages
 ```
 
 A refusal reads, for example, `load accf_http (client devd): refused: client
-may load hardware drivers only`. A load that never reached the broker (a
-login shell or cron job) is not listed; devmatch logs it in
-`/var/log/messages`.
+may load hardware drivers only`. A load that never reached the broker (devmatch
+from a login shell or cron job) is not listed; devmatch logs it in
+`/var/log/messages`. A root `sysextctl load` of a base module is listed as
+`root load NAME (client root (uid 0))`, with its reason when refused.
 
 **Fix.** Upgrade base and reboot. If you added `NAME_load="YES"` lines to a
 `/boot/loader.conf.d` file to work around this, remove the lines for

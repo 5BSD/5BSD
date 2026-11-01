@@ -80,6 +80,14 @@ administrative rights, and ends with the unit's launch.
 grant whose kernel-stamped effective UID is 0 outside any jail, such as a root
 login shell. It carries no attributes or administrative rights, and other UIDs
 get nothing from it.
+`/Capabilities/Config/switchboard/root-load.ucl` has the same format and
+admission for endpoints that act (shipped: `system.SystemExtension.RootLoad`,
+through which `sysextctl load` from a root login shell loads a module only
+when it is a file of an installed 5BSD base package with an unchanged
+checksum). It is a separate file so the read-only list stays read-only and
+the load endpoint can be withdrawn without losing `sysextctl status`. Neither
+file contains a compromised root: root can still install packages or edit
+loader.conf(5); mac_veriexec(4) is that control.
 
 For a system image, policy and matching executable changes should be prepared
 and tested together in a boot environment. A boot environment does not itself
