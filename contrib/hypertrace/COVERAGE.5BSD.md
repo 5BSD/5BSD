@@ -2331,9 +2331,11 @@ SHA-256. 62 checks in six process-isolated scenarios:
 
 Two audited boundaries apply. `connect()` is interposed only for
 `DTRACED_SOCKPATH`, redirecting it to a socket in the test directory. A
-preloaded shim answers `pdself()` and `PDIOC_GET_BIRTH_IDENTITY`, because the
-host's capability policy refuses `pdself()` to the test ("Capabilities
-insufficient"). The harness ignores SIGPIPE, as `dtrace(1)` does.
+preloaded shim answers `pdself()`, `pdopenpid(getpid())` and
+`PDIOC_GET_BIRTH_IDENTITY` for the scripted and malformed identities. The
+"Capabilities insufficient" that first motivated it was a product bug:
+pdself(2) is capability-mode only, so every ambient `dtrace -E` failed;
+libdtrace now uses pdopenpid(2) when ambient (`session-real-birth`). The harness ignores SIGPIPE, as `dtrace(1)` does.
 
 **Interoperability defect found and fixed (daemon component).**
 `dtraced_wire_decode_header()` required a canonical NUL-terminated string in

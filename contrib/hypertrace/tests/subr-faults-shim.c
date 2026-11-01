@@ -8,9 +8,9 @@
  * errno.  "Repeat" mode fails every call from that point on.  Every other
  * call goes to the real implementation.
  *
- * pdself() and PDIOC_GET_BIRTH_IDENTITY are also answered here when
- * shim_birth() enables it: the host's capability policy refuses pdself() to
- * tests, and dtraced's consumer hello needs the kernel birth identity.
+ * pdself()/pdopenpid(self) and PDIOC_GET_BIRTH_IDENTITY are answered here when
+ * shim_birth() enables it, so the identity and its failures are scripted;
+ * dtraced's consumer hello needs the kernel birth identity.
  */
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -272,6 +272,19 @@ pdself(int *fdp, int flags)
 		return (real_pdself(fdp, flags));
 	*fdp = birth_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	return (*fdp < 0 ? -1 : 0);
+}
+
+/* An ambient caller (every test process) names itself with pdopenpid(2);
+ * pdself(2) is capability-mode only.  Model both the same way. */
+int
+pdopenpid(pid_t pid, int flags)
+{
+	REAL(int, pdopenpid, (pid_t, int));
+	if (pid == getpid() && should_fail("pdopenpid"))
+		return (-1);
+	if (birth_mode == 0 || pid != getpid())
+		return (real_pdopenpid(pid, flags));
+	return (birth_fd = open("/dev/null", O_RDONLY | O_CLOEXEC));
 }
 
 int

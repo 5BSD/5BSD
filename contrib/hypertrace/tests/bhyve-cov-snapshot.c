@@ -236,9 +236,23 @@ void __wrap_exit(int status) __attribute__((noreturn));
 /* A stop_vm checkpoint that published but could not stop the source exits
  * with BHYVE_EXIT_ERROR (cbm-v2h); the harness reports it as this value. */
 #define CHECKPOINT_EXITED_ERROR 1000
+/* ipc.c is not linked: model the IPC acknowledgement.  A suspend that exits
+ * BHYVE_EXIT_SUSPEND must have acknowledged bhyvectl first (it used to exit
+ * with the request unanswered); a failed stop must not claim success. */
+static int ipc_success_replies;
+void
+ipc_reply_success_before_exit(void)
+{
+	ipc_success_replies++;
+}
 void
 __wrap_exit(int status)
 {
+	if (status == BHYVE_EXIT_SUSPEND && ipc_success_replies != 1)
+		abort();
+	if (status == BHYVE_EXIT_ERROR && ipc_success_replies != 0)
+		abort();
+	ipc_success_replies = 0;
 	if (suspend_catch && (status == BHYVE_EXIT_SUSPEND || status == BHYVE_EXIT_ERROR)) {
 		suspend_catch = false;
 		longjmp(suspend_jmp, status == BHYVE_EXIT_SUSPEND ? 1 : 2);

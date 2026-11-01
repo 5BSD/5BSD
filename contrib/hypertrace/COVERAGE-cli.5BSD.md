@@ -61,9 +61,10 @@ offline (or live) input can reach. A scope decision is needed (see
   `connect()` to `/var/ddtrace/sub.sock` → private scripted daemon or
   refused. `/dev/dtrace*`, `/dev/ksyms`, `/boot`, `kldload()` refused and
   logged; `kldnext()` reports no modules. `/dev/dtrace/hypertrace` gate
-  queries are modeled. `pdself()`/`PDIOC_GET_BIRTH_IDENTITY` are modeled
-  because the running host kernel (built 2026-10-07) returns ENOTCAPABLE
-  for them. `posix_spawnp("nextboot")` runs `/usr/bin/true|false` after
+  queries are modeled. `pdself()`, `pdopenpid(getpid())` and `PDIOC_GET_BIRTH_IDENTITY` are
+  modeled for a fixed identity. (The earlier note that the host kernel
+  "returns ENOTCAPABLE" was the product bug itself: pdself(2) is
+  capability-mode only, so ambient dtrace(1) now uses pdopenpid(2); htcap.) `posix_spawnp("nextboot")` runs `/usr/bin/true|false` after
   recording argv. `syslog()` is captured. Children start without the shim.
 - Faults: libc faults fire only for calls made from the executable after
   `main()` starts; a few libdtrace entry points have API faults used only

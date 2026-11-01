@@ -19,9 +19,9 @@
  *  - Every /dev/dtrace* path, /dev/ksyms, /boot and kldload(2) is refused.
  *    /dev/dtrace/hypertrace alone is modeled (an fd for /dev/null whose
  *    HYPERTRACE_IOC_EPOCH_GATE_QUERY answer comes from CLI_GATE).
- *  - pdself(PD_DAEMON|PD_CLOEXEC) and PDIOC_GET_BIRTH_IDENTITY are modeled
- *    (the running host kernel predates the source tree's process-descriptor
- *    birth identity), answering this process's pid and a fixed start time.
+ *  - pdself(PD_DAEMON|PD_CLOEXEC), pdopenpid(getpid()) (the ambient path;
+ *    pdself is capability-mode only) and PDIOC_GET_BIRTH_IDENTITY are
+ *    modeled, answering this process's pid and a fixed start time.
  *  - posix_spawnp("nextboot") runs /usr/bin/true or /usr/bin/false instead,
  *    after recording the requested argv.
  *  - CLI_FAULTS ("func:nth:errno,...") fails the nth call of a libc
@@ -743,6 +743,21 @@ pdself(int *fdp, int flags)
 	birth_fd = *fdp;
 	pthread_mutex_unlock(&shim_mtx);
 	return (*fdp < 0 ? -1 : 0);
+}
+
+/* An ambient dtrace(1) names itself with pdopenpid(2) (pdself(2) is
+ * capability-mode only); model the self lookup like pdself(). */
+int
+pdopenpid(pid_t pid, int flags)
+{
+	REAL(int, pdopenpid, (pid_t, int));
+	int fd;
+
+	if (pid != getpid())
+		return (real_pdopenpid(pid, flags));
+	if (pdself(&fd, flags) != 0)
+		return (-1);
+	return (fd);
 }
 
 /* The modeled kernel has no loaded modules: kernel CTF is never read. */

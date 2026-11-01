@@ -55,6 +55,11 @@ void ipc_wedge_vm(void);
  * only the reversible quarantine is active. */
 int ipc_unwedge_vm(void);
 
+/* IPC-handler only: acknowledge the current command with an empty (success)
+ * reply before a handler ends the process, e.g. a completed checkpoint with
+ * suspend.  No-op off the IPC thread or when already acknowledged. */
+void ipc_reply_success_before_exit(void);
+
 /* Main releases command admission after its final startup VM operation. */
 void ipc_startup_complete(void);
 

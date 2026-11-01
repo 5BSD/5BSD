@@ -150,10 +150,55 @@ Changing
 .Fl D
 does not change the control socket path,
 .Pa /var/ddtrace/sub.sock .
+.Sh SECURITY
+.Nm
+and its consumers are traditional privileged DTrace tools.
+Access to the control socket is limited by the permissions of
+.Pa /var/ddtrace
+(mode 0700, owned by root).
+A
+.Xr dtrace 1
+consumer that submits programs identifies itself by its process ID and its
+kernel process birth time, which
+.Nm
+checks against the socket peer credentials.
+libdtrace obtains that birth identity with
+.Xr pdopenpid 2
+when the consumer runs with ambient authority, as
+.Xr dtrace 1
+does from a shell, and with
+.Xr pdself 2 ,
+which is permitted only in capability mode, otherwise.
+.Pp
+With the 5BSD capability plane enabled,
+.Nm ,
+.Xr dtrace 1
+in its HyperTrace modes,
+.Xr dtracedctl 8
+and the
+.Xr bhyve 8
+virtio-dtrace backend are not clients of
+.Xr BSDTrace 8 .
+They do not use its consumer descriptor: the overlord uses
+.Pa /dev/dtrace/hypertrace
+and VM attestation descriptors, a minion uses
+.Pa /dev/dttransport ,
+and HyperTrace consumers need DTrace ioctls outside the set that
+.Xr BSDTrace 8
+delegates.
+.Xr BSDTrace 8
+does not reserve
+.Pa /dev/dtrace/dtrace ,
+so it does not block these tools.
+Their authority is root's, granted by device and directory permissions.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr pdopenpid 2 ,
+.Xr pdself 2 ,
 .Xr rc.conf 5 ,
-.Xr bhyve 8
+.Xr bhyve 8 ,
+.Xr BSDTrace 8 ,
+.Xr dtracedctl 8
 .Rs
 .%T Solaris Dynamic Tracing Guide
 .Re

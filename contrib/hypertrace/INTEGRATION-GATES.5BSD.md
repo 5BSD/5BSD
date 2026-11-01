@@ -1658,7 +1658,8 @@ Current fresh-session implementation checklist:
   explicit coverage before FSA1 crash publication can use these queries.
 
 - Collector incarnation strings now encode kernel monotonic process birth from
-  pdself/PDIOC_GET_BIRTH_IDENTITY, queried afresh for each connection so forked
+  pdself (capability mode) or pdopenpid(getpid()) (ambient) and
+  PDIOC_GET_BIRTH_IDENTITY, queried afresh for each connection so forked
   children cannot inherit their parent's identity. Query/close errors and malformed
   results leave output unchanged and fail explicitly. HPI2 registration now pins
   the authenticated socket peer PID with PD_DAEMON|PD_CLOEXEC and requires its

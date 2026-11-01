@@ -115,6 +115,11 @@ Save a snapshot of a virtual machine similar to
 .Fl -checkpoint .
 The virtual machine will terminate after the snapshot has been
 saved.
+.Nm
+exits with status 0 once the snapshot is published and the virtual machine
+destroyed;
+.Xr bhyve 8
+acknowledges the request before it exits.
 If stopping the source fails after the snapshot has been published, the
 .Xr bhyve 8
 process exits with an error instead of resuming the guest; the saved snapshot
