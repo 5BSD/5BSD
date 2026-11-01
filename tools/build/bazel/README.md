@@ -47139,3 +47139,14 @@ regression passed on all three architectures after the optional helper input.
 See [DTRACE-PROVIDER-MODULES-QUALIFICATION.md](DTRACE-PROVIDER-MODULES-QUALIFICATION.md)
 for receipt-bound evidence and remaining tracing/runtime/performance gates.
 Core DTrace and the remaining tracing modules still need conversion/qualification.
+
+### Native ntpd and original time-discipline probes (2026-11-01)
+
+ntpd now retains all 64 maintained C sources plus version.c, the actual GPSD
+textual parser, original four-probe provider/static anchor and package config
+ownership. Default/OpenSSL-off/DTrace-off profiles each pass three targets and
+one early option test. Three captured ELF/install comparisons, 24 unique install
+records, six debug CRCs, 195 source/flag audits and real probe/site checks pass.
+See [NTPD-QUALIFICATION.md](NTPD-QUALIFICATION.md). All seven NTP programs and four
+private libraries have candidates; documentation/package aggregation and live
+service/protocol, cross-architecture and performance gates remain open.

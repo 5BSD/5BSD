@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load(":sources.bzl", "LIBNTP_SOURCES", "LIBPARSE_SOURCES")
+load(":sources.bzl", "LIBNTP_SOURCES", "LIBPARSE_SOURCES", "NTPD_SOURCES")
 _VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
 exports_files(LIBNTP_SOURCES + ["util/ntptime.c", "sources.bzl"], visibility = _VISIBILITY)
 cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
@@ -46,3 +46,10 @@ cc_library(name = "ntpdate_headers", hdrs = glob(["ntpdate/*.h"]), visibility = 
 cc_library(name = "keygen_headers", hdrs = ["util/ntp-keygen-opts.h"], visibility = _VISIBILITY)
 cc_library(name = "sntp_headers", hdrs = glob(["sntp/*.h"]),
     strip_include_prefix = "sntp", visibility = _VISIBILITY)
+
+exports_files(NTPD_SOURCES, visibility = _VISIBILITY)
+cc_library(name = "ntpd_headers", hdrs = glob(["ntpd/*.h"]),
+    strip_include_prefix = "ntpd", visibility = _VISIBILITY)
+
+# GPSD clock parses JSON by textually including this maintained implementation.
+filegroup(name = "jsmn_fragment", srcs = ["libjsmn/jsmn.c", "libjsmn/jsmn.h"], visibility = _VISIBILITY)

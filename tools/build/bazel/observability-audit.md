@@ -9229,3 +9229,15 @@ protocol tests. Qualify provider attach/detach, actual audit/NFS/allocation/
 profile/SDT firing, permissions, VM forwarding and concurrency separately.
 Evidence: bazel-dtrace-providers-review-20261101/observability.json.
 Scope/open gates: DTRACE-PROVIDER-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: ntpd time discipline
+
+Preserved the maintained timediscipline select-start/select-done and
+adjust-start/adjust-done provider, WITH_COVERAGE_DTRACE and static DOF anchor.
+Default/OpenSSL-off native and Make outputs match all four schemas, five
+ordinary/nine is-enabled sites and actual AMD64 patched instruction checks.
+DTrace-off removes the provider/anchor as Make does. Live registration/firing
+is still unqualified. The bounded daemon-source scan found no direct BSM audit
+submission; authentication/control/configuration auditing beyond existing
+logging, and broader packet/refclock instrumentation, remain review gaps rather
+than automatically added probes. See NTPD-QUALIFICATION.md.
