@@ -768,3 +768,28 @@ fail:
 	svc_authority_revoke_unit(svc);
 	return (errno = saved, -1);
 }
+
+/*
+ * root-query.ucl, installed by authority_policy.c.  The lookup-time check uses
+ * the request's resolved authority (none) and the kernel-stamped sender, never
+ * the discovery channel's own metadata.
+ */
+static const struct svc_authority_scope *root_query_scope;
+
+void
+svc_authority_set_root_query(const struct svc_authority_scope *scope)
+{
+
+	root_query_scope = scope;
+}
+
+bool
+svc_authority_root_query(const struct svc_domain *domain,
+    const struct channel_sender *sender, const char *name)
+{
+
+	return (svc_authority_root_query_admits(root_query_scope,
+	    domain != NULL && domain->authority_identity != 0, sender != NULL,
+	    sender != NULL ? sender->uid : UINT32_MAX,
+	    sender != NULL ? sender->prison_id : -1, name));
+}

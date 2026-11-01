@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Bounded, data-only parsers for the two software-authority policies:
- * the temporary rc authority (boot-authority.ucl) and the lasting grants of
- * adopted rc.d services (service-authority.ucl).
+ * Bounded, data-only parsers for the software-authority policies:
+ * the temporary rc authority (boot-authority.ucl), the lasting grants of
+ * adopted rc.d services (service-authority.ucl), and the read-only endpoints
+ * of UID 0 sessions without authority (root-query.ucl).
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -340,6 +341,49 @@ svc_authority_parse_services(int fd, struct svc_service_authority *out,
 	error = 0;
 out:
 	free(candidate);
+	ucl_object_unref(root);
+	ucl_parser_free(parser);
+	return (error == 0 ? 0 : (errno = error, -1));
+}
+
+/*
+ * root-query.ucl: exactly one key, "endpoints", a non-empty list of unique
+ * service names.  The format has no key for attributes, rights or users.
+ */
+int
+svc_authority_parse_root_query(int fd, struct svc_authority_scope *scope)
+{
+	struct svc_authority_scope candidate = { 0 };
+	struct ucl_parser *parser;
+	ucl_object_t *root;
+	const ucl_object_t *entry, *value;
+	ucl_object_iter_t it = NULL, items;
+	int error;
+	bool seen = false;
+
+	memset(scope, 0, sizeof(*scope));
+	error = policy_root(fd, &parser, &root);
+	if (error != 0)
+		return (errno = error, -1);
+	error = EINVAL;
+	while ((entry = ucl_object_iterate(root, &it, true)) != NULL) {
+		const char *key;
+
+		if (!valid_key(entry, &key) || strcmp(key, "endpoints") != 0 ||
+		    seen || entry->next != NULL ||
+		    ucl_object_type(entry) != UCL_ARRAY)
+			goto out;
+		seen = true;
+		items = NULL;
+		while ((value = ucl_object_iterate(entry, &items, true)) != NULL)
+			if (!add_endpoint(&candidate, value))
+				goto out;
+	}
+	if (candidate.count == 0)
+		goto out;
+	*scope = candidate;
+	error = 0;
+out:
 	ucl_object_unref(root);
 	ucl_parser_free(parser);
 	return (error == 0 ? 0 : (errno = error, -1));

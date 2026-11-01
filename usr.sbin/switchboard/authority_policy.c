@@ -18,6 +18,7 @@
 
 #define BOOT_AUTHORITY_POLICY "/Capabilities/Config/switchboard/boot-authority.ucl"
 #define SERVICE_AUTHORITY_POLICY "/Capabilities/Config/switchboard/service-authority.ucl"
+#define ROOT_QUERY_POLICY "/Capabilities/Config/switchboard/root-query.ucl"
 
 static bool loaded;
 static struct svc_authority_scope boot_scope;
@@ -25,8 +26,10 @@ static struct svc_domain boot_domain;
 static bool boot_valid;
 static struct svc_service_authority services[SVC_SERVICE_AUTHORITY_MAX];
 static unsigned nservices;
+static struct svc_authority_scope root_query_scope;
 static void load_boot_policy(void);
 static void load_service_policy(void);
+static void load_root_query_policy(void);
 
 static int
 open_trusted(const char *path)
@@ -57,6 +60,7 @@ svc_authority_policy_init(void)
 	loaded = true;
 	load_boot_policy();
 	load_service_policy();
+	load_root_query_policy();
 }
 
 /* Image policy for the short-lived rc principal, never a UID-based grant. */
@@ -106,6 +110,36 @@ load_service_policy(void)
 		    services[i].label, services[i].scope.count,
 		    rc_adopt_is_allowed(services[i].label) ? "" :
 		    " (not adopted; inactive)");
+}
+
+/*
+ * Read-only endpoints for UID 0 sessions without software authority.  An absent
+ * file grants nothing; an invalid file grants nothing and is logged.
+ */
+static void
+load_root_query_policy(void)
+{
+	unsigned i;
+	int fd;
+
+	fd = open_trusted(ROOT_QUERY_POLICY);
+	if (fd < 0) {
+		if (errno != ENOENT)
+			syslog(LOG_ERR, "root query policy unavailable: %m; "
+			    "root sessions reach no read-only endpoints");
+		return;
+	}
+	if (svc_authority_parse_root_query(fd, &root_query_scope) == -1) {
+		syslog(LOG_ERR, "invalid root query policy: root sessions "
+		    "reach no read-only endpoints");
+		memset(&root_query_scope, 0, sizeof(root_query_scope));
+	}
+	close(fd);
+	if (root_query_scope.count != 0)
+		svc_authority_set_root_query(&root_query_scope);
+	for (i = 0; i < root_query_scope.count; i++)
+		syslog(LOG_INFO, "root query: UID 0 sessions may reach %s",
+		    root_query_scope.endpoints[i]);
 }
 
 int

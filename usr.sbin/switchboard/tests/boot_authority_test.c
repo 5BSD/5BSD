@@ -247,6 +247,124 @@ ATF_TC_BODY(service_packaged_policy, tc)
 	ATF_CHECK_STREQ(s[i].scope.endpoints[0], "system.SystemExtension");
 }
 
+static int
+parse_root_query(const char *text, struct svc_authority_scope *scope)
+{
+	char path[] = "root-query.XXXXXX";
+	int fd = mkstemp(path), result, saved;
+
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(unlink(path) == 0);
+	ATF_REQUIRE(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+	result = svc_authority_parse_root_query(fd, scope);
+	saved = errno;
+	close(fd);
+	errno = saved;
+	return (result);
+}
+
+ATF_TC_WITHOUT_HEAD(root_query_valid);
+ATF_TC_BODY(root_query_valid, tc)
+{
+	struct svc_authority_scope scope;
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\"];",
+	    &scope) == 0);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.Status");
+	ATF_REQUIRE(parse_root_query("endpoints=[\"a.b\",\"c.d\"];", &scope) == 0);
+	ATF_CHECK_EQ(scope.count, 2);
+}
+
+ATF_TC_WITHOUT_HEAD(root_query_reject_malformed);
+ATF_TC_BODY(root_query_reject_malformed, tc)
+{
+	struct svc_authority_scope scope;
+	const char *bad[] = {
+	    "",
+	    "endpoints=[];",
+	    "endpoints=\"a.b\";",
+	    "endpoints=[\"a.b\",\"a.b\"];",
+	    "endpoints=[\"*\"];",
+	    "endpoints=[42];",
+	    "endpoints=[\"a.b\"];admin_rights=true;",
+	    "endpoints=[\"a.b\"];attributes=[\"x.y\"];",
+	    "endpoints=[\"a.b\"];uid=0;",
+	    "endpoints=[\"a.b\"];endpoints=[\"c.d\"];",
+	    "endpoints=[\"a\\u0000b\"];",
+	    ".include \"elsewhere.ucl\"\n",
+	};
+
+	(void)tc;
+	for (unsigned i = 0; i < sizeof(bad)/sizeof(bad[0]); i++) {
+		memset(&scope, 0xff, sizeof(scope));
+		ATF_CHECK_MSG(parse_root_query(bad[i], &scope) == -1,
+		    "accepted malformed root query policy: %s", bad[i]);
+		ATF_CHECK_EQ(scope.count, 0);
+	}
+}
+
+/*
+ * Only an unauthorized, kernel-stamped, unjailed UID 0 sender reaches a listed
+ * name; every other caller, a name not listed, and control names are refused.
+ */
+ATF_TC_WITHOUT_HEAD(root_query_admits);
+ATF_TC_BODY(root_query_admits, tc)
+{
+	struct svc_authority_scope scope;
+	const char *status = "system.SystemExtension.Status";
+
+	(void)tc;
+	ATF_REQUIRE(parse_root_query("endpoints=[\"system.SystemExtension.Status\","
+	    "\"x.Control\"];", &scope) == 0);
+	ATF_CHECK(svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    status));
+	/* Non-root users get nothing. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 1001, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 65534, 0,
+	    status));
+	/* Jailed root, an unstamped request, a caller with its own grant. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 3,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, false, 0, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, true, true, 0, 0,
+	    status));
+	/* The full broker endpoint is not read-only and is not listed. */
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    "system.SystemExtension"));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    "x.Control"));
+	ATF_CHECK(!svc_authority_root_query_admits(NULL, false, true, 0, 0,
+	    status));
+	ATF_CHECK(!svc_authority_root_query_admits(&scope, false, true, 0, 0,
+	    NULL));
+}
+
+/* The packaged policy lists exactly the SystemExtension read-only view. */
+ATF_TC(root_query_packaged_policy);
+ATF_TC_HEAD(root_query_packaged_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "The installed root-query.ucl lists only system.SystemExtension.Status");
+}
+ATF_TC_BODY(root_query_packaged_policy, tc)
+{
+	struct svc_authority_scope scope;
+	const char *path = "/Capabilities/Config/switchboard/root-query.ucl";
+	int fd;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		atf_tc_skip("no packaged policy at %s", path);
+	ATF_REQUIRE(svc_authority_parse_root_query(fd, &scope) == 0);
+	close(fd);
+	ATF_CHECK_EQ(scope.count, 1);
+	ATF_CHECK_STREQ(scope.endpoints[0], "system.SystemExtension.Status");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, descriptor_bounds);
@@ -256,5 +374,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, service_valid);
 	ATF_TP_ADD_TC(tp, service_reject_malformed);
 	ATF_TP_ADD_TC(tp, service_packaged_policy);
+	ATF_TP_ADD_TC(tp, root_query_valid);
+	ATF_TP_ADD_TC(tp, root_query_reject_malformed);
+	ATF_TP_ADD_TC(tp, root_query_admits);
+	ATF_TP_ADD_TC(tp, root_query_packaged_policy);
 	return (atf_no_error());
 }

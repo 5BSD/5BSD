@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 25, 2026
+.Dd November 1, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -1049,6 +1049,28 @@ so that drivers of devices attached after boot load through
 .Xr devmatch 8 ;
 see
 .Xr BSDExtension 8 .
+An absent file grants nothing; an invalid file grants nothing and is logged.
+.It Pa /Capabilities/Config/switchboard/root-query.ucl
+Read-only endpoints for UID 0 sessions without software authority.
+The file has one key,
+.Va endpoints ,
+a non-empty list of service names.
+A listed SYSTEM endpoint resolves for a lookup whose kernel-stamped sender has
+effective UID 0, is not jailed, holds no software authority and is not a
+switchboard unit: a root login shell, a cron job, or a process started after
+.Pa /etc/rc
+exits.
+Callers with a grant keep their own endpoint scope, other users and jailed
+root are refused, and control names never resolve this way.
+The session carries no administrative rights.
+List only endpoints whose provider serves them read-only; the packaged file
+lists
+.Dq system.SystemExtension.Status ,
+the read-only view of
+.Xr BSDExtension 8
+that
+.Dq Nm sysextctl Cm status
+uses.
 An absent file grants nothing; an invalid file grants nothing and is logged.
 .El
 .Pp

@@ -1,0 +1,18 @@
+# Read-only endpoints a UID 0 session without software authority may reach.
+#
+# A root login shell (or a cron job, or anything else started outside rc and
+# outside a switchboard grant) holds no software authority, so the SYSTEM-only
+# endpoints are invisible to it.  switchboard resolves the endpoints listed here
+# for such a caller when the kernel-stamped sender of the lookup has effective
+# UID 0 and runs outside any jail.  Other users, jailed root, and callers that
+# hold a software grant (they use their own scope) get nothing from this file.
+# The session carries no administrative rights.
+#
+# List only endpoints whose protocol cannot change anything: the provider
+# serves these names with a read-only protocol.  An absent or invalid file
+# grants nothing.
+#
+# system.SystemExtension.Status: BSDExtension's read-only view
+# (bsd.extension.v1 SystemExtensionStatus: policy entries and recent load
+# decisions; no method loads a module or edits policy).  sysextctl status.
+endpoints = ["system.SystemExtension.Status"];

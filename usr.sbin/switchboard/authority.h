@@ -3,6 +3,9 @@
 #define SWITCHBOARD_AUTHORITY_H
 
 #include <sys/cap_authority.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
 #define SVC_AUTHORITY_SCOPE_MAX 16
 struct svc_authority_scope {
@@ -53,4 +56,40 @@ int svc_authority_parse_services(int, struct svc_service_authority *, unsigned,
 const struct svc_service_authority *svc_authority_service_policy(const char *);
 int svc_authority_issue_service(struct svc_runtime *, int *);
 bool svc_authority_permits(const struct svc_domain *, const char *);
+/*
+ * root-query.ucl: read-only endpoints a UID 0 session without software
+ * authority may resolve (the kernel-stamped sender's effective UID is 0 and it
+ * is not jailed).  It grants no attributes and no administrative rights.
+ */
+int svc_authority_parse_root_query(int, struct svc_authority_scope *);
+/* Install the loaded policy (authority_policy.c); NULL grants nothing. */
+void svc_authority_set_root_query(const struct svc_authority_scope *);
+bool svc_authority_root_query(const struct svc_domain *,
+    const struct channel_sender *, const char *);
+
+/*
+ * Whether a lookup may resolve name through root-query.ucl: the caller holds no
+ * software authority (a grant has its own scope and never widens through
+ * here), the kernel-stamped sender has effective UID 0 outside any jail, the
+ * name is listed, and it is not a control-plane name.
+ */
+static inline bool
+svc_authority_root_query_admits(const struct svc_authority_scope *scope,
+    bool authorized, bool stamped, uint32_t uid, int32_t prison_id,
+    const char *name)
+{
+	const char *dot;
+	unsigned i;
+
+	if (scope == NULL || name == NULL || authorized || !stamped ||
+	    uid != 0 || prison_id != 0)
+		return (false);
+	dot = strrchr(name, '.');
+	if (dot != NULL && strcmp(dot + 1, "Control") == 0)
+		return (false);
+	for (i = 0; i < scope->count; i++)
+		if (strcmp(scope->endpoints[i], name) == 0)
+			return (true);
+	return (false);
+}
 #endif
