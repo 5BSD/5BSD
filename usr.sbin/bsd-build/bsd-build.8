@@ -4959,3 +4959,14 @@ See
 for exact comparisons and retained reference failures.
 The existing format-5 action is used; hardware operation and complete native
 world/kernel/pkgbase builds remain open.
+
+.Pp
+Native iflib, etherswitch and toecore profiles qualify plain/CTF products on
+amd64, ARM64 and RISC-V64, including generated interfaces, installation
+metadata, source/header inputs and original object order.
+All six iflib configurations retain Make's SDT section/symbol contracts.
+See
+.Pa tools/build/bazel/NETWORK-SUPPORT-QUALIFICATION.md
+for immutable evidence and retained analysis failures.
+Hardware operation, live probe firing and complete native system builds
+remain open; Make remains production/default.

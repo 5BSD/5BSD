@@ -9398,3 +9398,14 @@ MDIO transactions and proxy attach/detach/error paths with network-stack
 callers. This scan does not establish missing transitive instrumentation or
 hardware behavior. No probes were added solely for a scan. See
 MII-FAMILY-QUALIFICATION.md and its retained input/observability audits.
+
+## 2026-11-01: iflib, etherswitch and toecore
+
+All four physical production C files are scanned. Thirteen marker lines in
+iflib.c retain SDT/DTrace definitions and calls. Across six iflib configurations,
+eight SDT data/relocation sections and all SDT/DTrace symbol records match Make;
+all four suspend/resume descriptors are explicitly checked. This does not prove
+live probe firing or transitive coverage of etherswitch/toecore errors. Review
+link/queue pressure, DMA failures, switch/TOE attach/detach and error paths with
+network-stack callers. No probes were added solely for a scan. See
+NETWORK-SUPPORT-QUALIFICATION.md and sdt-review.json in its evidence directory.

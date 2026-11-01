@@ -9,11 +9,11 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-01):** the maintained recursive amd64
-GENERIC audit selects 729 modules, with 222 direct native declarations and
-507 without them. This is source inventory, not a count of qualified builds.
+GENERIC audit selects 729 modules, with 225 direct native declarations and
+504 without them. This is source inventory, not a count of qualified builds.
 The newest qualified cohort is documented in
-[MII-family qualification](MII-FAMILY-QUALIFICATION.md). Evidence:
-`/usr/obj/usr/src/bazel-mii-family-module-inventory-20261101/amd64.json`.
+[network-support qualification](NETWORK-SUPPORT-QUALIFICATION.md). Evidence:
+`/usr/obj/usr/src/bazel-network-support-module-inventory-20261101/amd64.json`.
 Complete native world/kernel/pkgbase and system qualification remain open.
 The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
 modules. These are selection totals, not completed conversions. See

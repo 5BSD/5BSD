@@ -58,3 +58,8 @@ cc_library(name = "nfs_headers", hdrs = ["cc.h"], strip_include_prefix = "/sys",
 
 cc_library(name = "packet_filter_headers", hdrs = ["cc.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netpfil:__subpackages__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["cc.h"], visibility = ["//sys/netinet:__pkg__"])

@@ -46,3 +46,19 @@ install or reboot the host as part of build qualification. Commit reviewed
 chunks and update qualification documents with checks actually performed.
 The saved patches remain historical checkpoints; applying them is not proof
 that the active graph is qualified.
+
+## Explicit reconciliation gates found during component work
+
+- Close host execution dependencies and sandbox isolation before claiming a
+  hermetic toolchain. In particular, the existing makeobjops AWK generator
+  invokes host /bin/sh through system(); output parity does not establish
+  complete execution-platform input closure.
+- Reconcile Make compile policy as well as runtime output. Mailwrapper review
+  found a missing -DPIC and warning vector in its initial native declaration.
+  Its correction is component-scoped; earlier userland declarations still
+  require an explicit warning/macro-policy audit. Kernel cohorts retain their
+  actual per-source warning-vector checks.
+- Parent-export-aware module selection is a discovery audit. Before accepting
+  aggregate configurations, reconcile source-owned recursive command-line and
+  SUBDIR_ENV overrides too; export propagation alone does not model arbitrary
+  recursive Make semantics. Native products must retain explicit Bazel inputs.

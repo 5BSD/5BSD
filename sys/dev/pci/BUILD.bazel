@@ -29,3 +29,10 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/mii:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["pci_iov.h", "pci_private.h", "pcireg.h", "pcivar.h"], visibility = ["//sys/net:__pkg__"])
+
+filegroup(name = "pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
+cc_library(name = "pci_iov_if_headers", hdrs = [":pci_iov_if_header_file"],
+    strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/net:__pkg__"])

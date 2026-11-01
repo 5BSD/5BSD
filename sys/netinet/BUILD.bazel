@@ -96,3 +96,26 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["in.h"], includes = []
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "ip.h", "ip6.h", "tcp.h", "udp.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_lro.h", "tcp_offload.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "toecore.h", "udp.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+amd64_generic_module_objects(name = "network_support_module", srcs = ["toecore.c"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_kern_tls_header", "//sys/amd64/conf:generic_opt_ofed_header"],
+    copts = [])
+bsd_component_selected_objects(name = "network_ordered_module_objects", group = ":network_support_module_ctf",
+    object_names = ["toecore.o"], visibility = ["//sys/modules/toecore:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "network_support_module", srcs = ["toecore.c"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_inet_header", "//sys/arm64/conf:generic_opt_inet6_header", "//sys/arm64/conf:generic_opt_kern_tls_header", "//sys/arm64/conf:generic_opt_ofed_header"],
+    copts = [])
+bsd_component_selected_objects(name = "arm64_network_ordered_module_objects", group = ":arm64_network_support_module_ctf",
+    object_names = ["toecore.o"], visibility = ["//sys/modules/toecore:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "network_support_module", srcs = ["toecore.c"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet/cc:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_inet_header", "//sys/riscv/conf:generic_opt_inet6_header", "//sys/riscv/conf:generic_opt_kern_tls_header", "//sys/riscv/conf:generic_opt_ofed_header"],
+    copts = [])
+bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
+    object_names = ["toecore.o"], visibility = ["//sys/modules/toecore:__pkg__"])

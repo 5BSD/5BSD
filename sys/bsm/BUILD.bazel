@@ -34,3 +34,6 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["audit.h"], visibility
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["audit.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["audit.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

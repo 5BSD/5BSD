@@ -57,3 +57,6 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["in6.h"], includes = [
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["in6.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])

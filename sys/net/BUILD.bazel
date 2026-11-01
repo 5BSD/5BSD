@@ -228,3 +228,28 @@ cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_incl
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_llatbl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "iflib.h", "ifq.h", "mp_ring.h", "netmap.h", "netmap_legacy.h", "pfil.h", "route.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+filegroup(name = "ifdi_if_source", srcs = [":ifdi_if"], output_group = "source")
+
+amd64_generic_module_objects(name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "network_ordered_module_objects", group = ":network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_acpi_header", "//sys/arm64/conf:generic_opt_inet_header", "//sys/arm64/conf:generic_opt_inet6_header", "//sys/arm64/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "arm64_network_ordered_module_objects", group = ":arm64_network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_acpi_header", "//sys/riscv/conf:generic_opt_inet_header", "//sys/riscv/conf:generic_opt_inet6_header", "//sys/riscv/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])

@@ -32,3 +32,30 @@ cross_generic_module_objects(arch = "riscv", name = "mii_module", srcs = ["miipr
     copts = [])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_mii_module_ctf",
     object_names = ["miiproxy.o"], visibility = ["//sys/modules/miiproxy:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["etherswitch.h"], visibility = ["//sys/dev/etherswitch:__pkg__"])
+
+filegroup(name = "etherswitch_if_header_file", srcs = [":etherswitch_if"], output_group = "header")
+cc_library(name = "etherswitch_if_headers", hdrs = [":etherswitch_if_header_file"],
+    strip_include_prefix = "etherswitch_if.generated", visibility = ["//sys/dev/etherswitch:__pkg__"])
+
+filegroup(name = "etherswitch_if_source", srcs = [":etherswitch_if"], output_group = "source")
+
+amd64_generic_module_objects(name = "network_support_module", srcs = ["etherswitch.c", ":etherswitch_if_source"],
+    deps = ["//sys/dev/etherswitch:network_support_headers", "//sys/net:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/etherswitch:etherswitch_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c", "-fdebug-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c"])
+bsd_component_selected_objects(name = "network_ordered_module_objects", group = ":network_support_module_ctf",
+    object_names = ["etherswitch.o", "etherswitch_if.o"], visibility = ["//sys/modules/etherswitch:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "network_support_module", srcs = ["etherswitch.c", ":etherswitch_if_source"],
+    deps = ["//sys/dev/etherswitch:network_support_headers", "//sys/net:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/etherswitch:etherswitch_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c", "-fdebug-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c"])
+bsd_component_selected_objects(name = "arm64_network_ordered_module_objects", group = ":arm64_network_support_module_ctf",
+    object_names = ["etherswitch.o", "etherswitch_if.o"], visibility = ["//sys/modules/etherswitch:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "network_support_module", srcs = ["etherswitch.c", ":etherswitch_if_source"],
+    deps = ["//sys/dev/etherswitch:network_support_headers", "//sys/net:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/etherswitch:etherswitch_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c", "-fdebug-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c"])
+bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
+    object_names = ["etherswitch.o", "etherswitch_if.o"], visibility = ["//sys/modules/etherswitch:__pkg__"])
