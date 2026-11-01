@@ -9324,3 +9324,13 @@ and permission/failure visibility with the dependent providers. Do not add probe
 solely to satisfy a marker scan. Actual module lifecycle and live DTrace
 integration remain open. See OPENSOLARIS-MODULE-QUALIFICATION.md and
 bazel-opensolaris-review-r2-20261101/observability.json.
+
+## 2026-11-01: OpenBSD tcpdump and 5BSD glue
+
+All 87 maintained translation units and physical Make source/header closure
+were checked in both INET6_SUPPORT configurations. The bounded compiled-source
+scan found no direct DTrace/SDT provider or explicit BSM submission. Review live
+capture authorization, BPF/drop failures, interface control and privileged
+operation visibility with actual callers. Existing direct 5BSD privsep glue is
+preserved; offline packet tests do not qualify a new isolation design, live
+capture, runtime probes or complete audit coverage. See TCPDUMP-QUALIFICATION.md.

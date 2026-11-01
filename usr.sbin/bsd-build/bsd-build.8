@@ -4879,3 +4879,10 @@ export-all behavior and the original complete OpenZFS header search order on
 amd64, ARM64 and RISC-V64.
 Artifact/install and physical-header comparisons qualify this component;
 actual module loading and DTrace dependency resolution remain runtime gates.
+
+.Pp
+Native tcpdump uses the maintained OpenBSD sources and 5BSD compatibility glue.
+The existing typed inet6_support setting and normal format-5 inputs select
+program/install/offline-test targets.
+Offline tests consume private PCAP files; they do not qualify live capture,
+interface controls or privilege separation.

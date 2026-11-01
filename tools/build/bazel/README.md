@@ -47242,3 +47242,13 @@ The post-opensolaris amd64 GENERIC source inventory selects 729 leaf KMODs:
 macro declarations, and 539 lack those direct declarations. These are source
 presence counts only. The query completed without errors; evidence is
 `/usr/obj/usr/src/bazel-module-coverage-post-opensolaris-20261101.json`.
+
+### Native OpenBSD tcpdump (2026-11-01)
+
+The actual OpenBSD implementation plus 5BSD glue now has an 87-source native
+program/install candidate. Default and INET6_SUPPORT-disabled profiles passed
+ELF contracts/NEEDED order, ten install records, four debug CRCs, 174 source
+compiles and 2,754 original Make source/header hash checks. Five offline packet
+methods pass per profile; the initial SDK/source-wrapper mismatch and correction
+are retained. Live capture/security controls and performance remain open. See
+[TCPDUMP-QUALIFICATION.md](TCPDUMP-QUALIFICATION.md). Make remains the default.

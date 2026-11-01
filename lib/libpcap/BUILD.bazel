@@ -86,3 +86,5 @@ cc_import(name = "archive_link", static_library = ":static_archive")
  for variant in ["static", "shared"]]
 
 cc_library(name = "config_header", hdrs = ["config.h"], strip_include_prefix = ".", visibility = ["//sbin/pflogd:__pkg__"])
+
+exports_files(["config.h"], visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])

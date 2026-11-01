@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+# Physical referents of the maintained tcpdump compatibility wrappers.
+cc_library(name = "tcpdump_support_headers", hdrs = ["sys/dev/usb/usbpcap.h", "sys/net80211/ieee80211.h", "sys/net80211/ieee80211_radiotap.h", "sys/netmpls/mpls.h", "usr.sbin/hostapd/iapp.h"],
+    visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: BSD-2-Clause
+alias(name = "install_archive", actual = "//usr.sbin/tcpdump/tcpdump:install_archive", visibility = ["//visibility:public"])
