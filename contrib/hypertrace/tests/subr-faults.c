@@ -886,11 +886,23 @@ case_session(void)
 	if (fd >= 0)
 		close(fd);
 
-	cur = "session-no-pdself";
-	/* The host refuses pdself() to tests: no identity, no session. */
+	cur = "session-real-birth";
+	/* Regression (htcap): an ambient process must get its real kernel birth
+	 * identity.  pdself(2) is capability-mode only (ENOTCAPABLE here), so
+	 * libdtrace names itself with pdopenpid(2); this used to fail. */
 	shim_birth(0);
 	fd = open_dtraced_session(DTD_SUB_READDATA, session);
-	OK(fd == -1, "fd %d errno %d", fd, errno);
+	OK(fd >= 0, "fd %d errno %d", fd, errno);
+	if (fd >= 0)
+		close(fd);
+
+	cur = "session-no-procdesc";
+	/* No process descriptor for ourselves: no identity, no session. */
+	shim_birth(0);
+	fault_arm("pdopenpid", 0, EPERM, 1, 0);
+	fd = open_dtraced_session(DTD_SUB_READDATA, session);
+	OK(fault_disarm() && fd == -1 && errno == EPERM, "fd %d errno %d",
+	    fd, errno);
 	if (fd >= 0)
 		close(fd);
 

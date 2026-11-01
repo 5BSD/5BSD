@@ -30,6 +30,7 @@
 #endif
 #include <sys/isa_defs.h>
 #include <sys/socket.h>
+#include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -1174,6 +1175,23 @@ dtrace_uaddr2str(dtrace_hdl_t *dtp, pid_t pid,
 	return (dt_string2str(c, str, nbytes));
 }
 
+/* A process descriptor naming the caller.  pdself(2) is capability-mode
+ * only and fails with ENOTCAPABLE for an ambient process such as dtrace(1)
+ * started from a shell, so an ambient caller names itself with pdopenpid(2),
+ * as libservice does.  Neither call changes the caller's mode. */
+static int
+dtraced_self_procdesc(int *fdp)
+{
+	u_int mode = 0;
+
+	if (cap_getmode(&mode) != 0 && errno != ENOSYS)
+		return (-1);
+	if (mode != 0)
+		return (pdself(fdp, PD_DAEMON | PD_CLOEXEC));
+	*fdp = pdopenpid(getpid(), PD_DAEMON | PD_CLOEXEC);
+	return (*fdp < 0 ? -1 : 0);
+}
+
 /* The incarnation is the kernel monotonic process birth, queried afresh so
  * a forked child cannot inherit its parent's identity. No PID-only fallback. */
 static int
@@ -1185,7 +1203,7 @@ dtraced_birth_ident(char ident[DTRACED_FDIDENTLEN])
 	int error, prefix, fd;
 	struct pd_birth_identity birth = {0};
 
-	if (pdself(&fd, PD_DAEMON | PD_CLOEXEC) != 0)
+	if (dtraced_self_procdesc(&fd) != 0)
 		return (-1);
 	error = ioctl(fd, PDIOC_GET_BIRTH_IDENTITY, &birth) != 0 ? errno : 0;
 	if (close(fd) != 0 && error == 0)

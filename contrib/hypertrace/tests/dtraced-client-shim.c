@@ -1,9 +1,9 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Preloaded by dtraced-client.py for the session scenario: answers the
- * process-descriptor birth-identity query that the host's capability policy
- * refuses to the test.  Only pdself() and PDIOC_GET_BIRTH_IDENTITY on the
+ * Preloaded by dtraced-client.py for the session scenario: scripts the
+ * process-descriptor birth identity so its malformed cases can be tested.
+ * Only pdself(), pdopenpid(getpid()) and PDIOC_GET_BIRTH_IDENTITY on the
  * placeholder descriptor are affected, and only after dtc_birth_set(1, ...).
  */
 #include <sys/types.h>
@@ -41,6 +41,22 @@ pdself(int *fdp, int flags)
 	}
 	*fdp = birth_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	return (*fdp < 0 ? -1 : 0);
+}
+
+/* The ambient test process names itself with pdopenpid(2) (pdself(2) is
+ * capability-mode only): scripted the same way once interposed. */
+int
+pdopenpid(pid_t pid, int flags)
+{
+	static int (*real)(pid_t, int);
+
+	if (!interposed || pid != getpid()) {
+		if (real == NULL)
+			real = (int (*)(pid_t, int))dlsym(RTLD_NEXT,
+			    "pdopenpid");
+		return (real(pid, flags));
+	}
+	return (birth_fd = open("/dev/null", O_RDONLY | O_CLOEXEC));
 }
 
 int
