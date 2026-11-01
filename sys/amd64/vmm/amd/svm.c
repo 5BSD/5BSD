@@ -590,44 +590,23 @@ vmcb_init(struct svm_softc *sc, struct svm_vcpu *vcpu, uint64_t iopm_base_pa,
 		svm_enable_intercept(vcpu, VMCB_EXC_INTCPT, BIT(IDT_MC));
 	}
 
-	/* Intercept various events (for e.g. I/O, MSR and CPUID accesses) */
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_IO);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_MSR);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_CPUID);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_INTR);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_INIT);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_NMI);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_SMI);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_SHUTDOWN);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_FERR_FREEZE);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_INVD);
-	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT, VMCB_INTCPT_INVLPGA);
-
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_MONITOR);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_MWAIT);
-
-	/* Enable VMMCALL */
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_VMMCALL);
 	/*
-	 * Intercept SVM instructions since AMD enables them in guests otherwise.
-	 * Non-intercepted VMMCALL causes #UD, skip it.
+	 * Intercept various events (for e.g. I/O, MSR and CPUID accesses),
+	 * MONITOR/MWAIT, VMMCALL (L0 hypercalls), and the SVM instructions,
+	 * which AMD otherwise enables in guests.  From section
+	 * "Canonicalization and Consistency Checks" in APMv2 the VMRUN
+	 * intercept bit must be set to pass the consistency check.  The sets
+	 * live in nested_svm_compose.h because nested VMCB02 composition must
+	 * handle every one of them.
 	 */
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_VMLOAD);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_VMSAVE);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_STGI);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_CLGI);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_SKINIT);
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_ICEBP);
+	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT,
+	    SVM_L0_CTRL1_BASE_INTERCEPTS);
+	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT,
+	    SVM_L0_CTRL2_BASE_INTERCEPTS);
 	if (vcpu_trap_wbinvd(vcpu->vcpu)) {
 		svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT,
 		    VMCB_INTCPT_WBINVD);
 	}
-
-	/*
-	 * From section "Canonicalization and Consistency Checks" in APMv2
-	 * the VMRUN intercept bit must be set to pass the consistency check.
-	 */
-	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT, VMCB_INTCPT_VMRUN);
 
 	/*
 	 * The ASID will be set to a non-zero value just before VMRUN.

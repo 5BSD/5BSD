@@ -112,6 +112,12 @@ Print a help message and terminate.
 Run
 .Nm
 in minion mode, overriding automatic detection of being a hypervisor guest.
+A minion waits up to 30 seconds for the VM identity (node ID) that the
+host's virtio-dtrace device assigns through
+.Pa /dev/dttransport ;
+without one it logs
+.Dq no VM identity from /dev/dttransport
+and exits.
 .It Fl q
 Enable quiet mode, suppressing print of status updates and errors on the
 terminal.

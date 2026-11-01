@@ -38,6 +38,42 @@ cleanup() {
 	return 0
 }
 
+metalog_normalize() {
+	# Print METALOG $1 sorted for makefs(8).  makefs produces directories
+	# with 000 permissions if their contents are seen before the directories
+	# themselves, and that includes the image root: a pkg(8) INSTALL_AS_USER
+	# METALOG never describes ".", so the root would be mode 000 and every
+	# unprivileged process would fail its first lookup from "/" (the
+	# capability services, which run as "capability", die in the image
+	# activator with SIGABRT loading /libexec/ld-elf.so.1).  Supply a
+	# root:wheel 0755 root unless the METALOG describes one.
+	# Package staging and the etcupdate snapshot can both describe the same
+	# directory with different tags (or modes).  Keep the first, most
+	# restrictive sorted directory record, but reject duplicate
+	# non-directories rather than letting makefs silently choose one.
+	{
+		grep -q -E '^\.(/)? ' "$1" ||
+		    echo ". type=dir uname=root gname=wheel mode=0755"
+		sed -E 's,^\./ ,. ,' "$1"
+	} | env -i LC_COLLATE=C sort -u |
+	    awk '
+	    !seen[$1]++ {
+		path[++n] = $1
+		record[$1] = $0
+		kind[$1] = $2
+		next
+	    }
+	    kind[$1] != "type=dir" || $2 != "type=dir" {
+		print "duplicate non-directory METALOG entry: " $1 > "/dev/stderr"
+		bad = 1
+	    }
+	    END {
+		for (i = 1; i <= n; i++)
+			print record[path[i]]
+		exit bad
+	    }'
+}
+
 metalog_add_data() {
 	local file mode type
 
@@ -343,29 +379,8 @@ buildfs() {
 		done
 	fi
 
-	# Sort METALOG file; makefs produces directories with 000 permissions
-	# if their contents are seen before the directories themselves.  Package
-	# staging and the etcupdate snapshot can both describe the same directory
-	# with different tags (or modes).  Keep the first, most restrictive sorted
-	# directory record, but reject duplicate non-directories rather than letting
-	# makefs silently choose one.
-	env -i LC_COLLATE=C sort -u ${DESTDIR}/METALOG |
-	    awk '
-	    !seen[$1]++ {
-		path[++n] = $1
-		record[$1] = $0
-		kind[$1] = $2
-		next
-	    }
-	    kind[$1] != "type=dir" || $2 != "type=dir" {
-		print "duplicate non-directory METALOG entry: " $1 > "/dev/stderr"
-		bad = 1
-	    }
-	    END {
-		for (i = 1; i <= n; i++)
-			print record[path[i]]
-		exit bad
-	    }' > ${DESTDIR}/METALOG.sorted || return 1
+	metalog_normalize ${DESTDIR}/METALOG > ${DESTDIR}/METALOG.sorted ||
+	    return 1
 	mv ${DESTDIR}/METALOG.sorted ${DESTDIR}/METALOG
 
 	case "${VMFS}" in
