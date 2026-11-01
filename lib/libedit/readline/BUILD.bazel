@@ -4,4 +4,4 @@ exports_files(["history.h", "tilde.h"], visibility = ["//lib/libedit:__pkg__"])
 cc_library(name = "headers", hdrs = ["history.h", "tilde.h"], strip_include_prefix = ".", include_prefix = "edit/readline", deps = ["//contrib/libedit:readline_headers"], visibility = ["//visibility:public"])
 
 cc_library(name = "history_compat_headers", hdrs = ["history.h"],
-    strip_include_prefix = ".", include_prefix = "readline", visibility = ["//libexec/flua:__pkg__", "//krb5/util/ss:__pkg__"])
+    strip_include_prefix = ".", include_prefix = "readline", visibility = ["//libexec/flua:__pkg__", "//krb5/util/ss:__pkg__", "//usr.sbin/ntp:__subpackages__"])

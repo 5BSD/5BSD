@@ -9008,3 +9008,14 @@ Compiled installed sections compare with Make, but provider registration, live
 arguments, traffic/failure paths and privilege/MAC/audit denials remain untested.
 Evidence: bazel-virtual-interface-review-20261101; scope and limits are in
 VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md.
+
+## 2026-11-01: libntp and ntptime
+
+Reviewed the 105 maintained libntp C sources, generated version source and
+ntptime. Neither selected Make graph declares a component DTrace provider or
+BSM source/hook; original sources and clock syscalls are retained unchanged.
+Native qualification covers ordinary/PIE compilation, conditional OpenSSL,
+installation and the help path that exits before clock calls. Isolated
+privileged clock-adjustment behavior and its syscall/security-audit coverage
+remain a separate review/runtime gate. No new instrumentation or tracing
+performance claim is made. See NTP-QUALIFICATION.md for artifact evidence.

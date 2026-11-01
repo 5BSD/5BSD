@@ -8,4 +8,4 @@ exports_files(["histedit.h", "filecomplete.h", "readline/readline.h", "editline.
 cc_library(name = "readline_headers", hdrs = ["readline/readline.h"], strip_include_prefix = "readline", include_prefix = "edit/readline", visibility = ["//visibility:public"])
 
 cc_library(name = "readline_compat_headers", hdrs = ["readline/readline.h"],
-    strip_include_prefix = ".", visibility = ["//libexec/flua:__pkg__", "//krb5/util/ss:__pkg__"])
+    strip_include_prefix = ".", visibility = ["//libexec/flua:__pkg__", "//krb5/util/ss:__pkg__", "//usr.sbin/ntp:__subpackages__"])

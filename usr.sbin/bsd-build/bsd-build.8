@@ -4708,3 +4708,17 @@ Declared option headers are extracted from the actual target GENERIC config;
 artifact and file install-metadata comparisons cover plain and CTF/debug modes.
 These checks do not qualify live networking, failover, alternate kernel options
 or complete kernels; separate DWARF layout remains outside the artifact gate.
+
+.Pp
+Native libntp and ntptime candidates use the existing format-5 target list.
+The source-owned build settings
+.Li //usr.sbin/ntp:version_serial
+and
+.Li //usr.sbin/ntp:version_cset
+select an explicit positive version counter and revision token;
+defaults reproduce a fresh Make object tree.
+A private action runs the maintained version script with declared tools.
+Ordinary and PIE internal archives remain separate.
+Default and OpenSSL-disabled artifact/install comparisons and help-only tests
+are qualified; clock-control runtime, remaining NTP programs and complete
+package aggregation remain open.

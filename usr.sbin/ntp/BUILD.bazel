@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
+# A fresh Make object tree emits serial 1. Rebuild identity is explicit in Bazel.
+int_flag(name = "version_serial", build_setting_default = 1, visibility = ["//visibility:public"])
+string_flag(name = "version_cset", build_setting_default = "", visibility = ["//visibility:public"])
+cc_library(name = "config_headers", hdrs = ["config.h"], strip_include_prefix = ".",
+    visibility = ["//usr.sbin/ntp:__subpackages__"])
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "version_inputs_test", src = "version-inputs-test.py",
+    data = ["ntp_version.py"], visibility = ["//visibility:public"])
+
+exports_files(["scripts/mkver", "ntp_version.py"], visibility = ["//usr.sbin/ntp:__subpackages__"])

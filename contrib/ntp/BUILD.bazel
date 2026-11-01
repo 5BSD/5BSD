@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":sources.bzl", "LIBNTP_SOURCES")
+_VISIBILITY = ["//usr.sbin/ntp:__subpackages__"]
+exports_files(LIBNTP_SOURCES + ["util/ntptime.c", "sources.bzl"], visibility = _VISIBILITY)
+cc_library(name = "headers", hdrs = glob(["include/**/*.h"]),
+    strip_include_prefix = "include", visibility = _VISIBILITY)
+cc_library(name = "isc_headers", hdrs = glob(["libntp/lib/isc/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/include", visibility = _VISIBILITY)
+cc_library(name = "isc_unix_headers", hdrs = glob(["libntp/lib/isc/unix/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/unix/include", visibility = _VISIBILITY)
+cc_library(name = "isc_pthread_headers", hdrs = glob(["libntp/lib/isc/pthreads/include/**/*.h"]),
+    strip_include_prefix = "libntp/lib/isc/pthreads/include", visibility = _VISIBILITY)
+cc_library(name = "opts_headers", hdrs = glob(["sntp/libopts/**/*.h"]),
+    strip_include_prefix = "sntp/libopts", visibility = _VISIBILITY)
+
+filegroup(name = "isc_unix_fragments",
+    srcs = ["libntp/lib/isc/unix/" + n for n in ["ifiter_getifaddrs.c", "ifiter_sysctl.c", "ifiter_ioctl.c"]],
+    visibility = _VISIBILITY)
+
+# Private quoted includes live beside maintained translation units.
+cc_library(name = "private_headers",
+    hdrs = ["libntp/lib/isc/task_p.h", "libntp/lib/isc/unix/errno2result.h"],
+    visibility = _VISIBILITY)

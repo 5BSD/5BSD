@@ -47006,3 +47006,14 @@ sections match except build-ID/debuglink, and both actual debuglinks validate.
 All 42 target compile actions and their actual GENERIC option-header hashes are
 audited. See [VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md](VIRTUAL-INTERFACE-MODULES-QUALIFICATION.md)
 for source ownership, evidence, debug limits and open runtime/system gates.
+
+### Native NTP library and ntptime (2026-11-01)
+
+The native NTP candidate now owns all 106 private-library translation units,
+separate ordinary/PIE variants, the original version generator and ntptime's
+four pkgbase install records. Default and OpenSSL-disabled builds/tests and
+independent Make artifact/install comparisons pass. Explicit serial/revision
+outputs match Make exactly; an unchanged repeat retains all 11 output files
+with zero spawned actions. See [NTP-QUALIFICATION.md](NTP-QUALIFICATION.md) for
+input ownership, retained failures, debug differences and the remaining six
+programs, three libraries, package/documentation and clock-control runtime gates.

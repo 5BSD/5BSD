@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//contrib/ntp:sources.bzl", "LIBNTP_SOURCES")
+load("//usr.sbin/ntp:common.bzl", "PLATFORM", "OPENSSL", "common_defines", "common_headers")
+load("//usr.sbin/ntp:ntp_version.bzl", "ntp_version")
+ntp_version(name = "version", program = "ntpd")
+# Make owns both ordinary and PIE objects for this private library.
+[cc_library(name = "ntp" + suffix,
+    srcs = ["//contrib/ntp:" + p for p in LIBNTP_SOURCES] + [":version"],
+    textual_hdrs = ["//contrib/ntp:isc_unix_fragments"],
+    local_defines = common_defines() + ["HAVE_BSD_NICE", "HAVE_STDINT_H", "HAVE_CLOSEFROM"],
+    deps = common_headers() + ["//lib/libedit:edit", "//contrib/libedit:readline_compat_headers",
+        "//lib/libedit/readline:history_compat_headers", "//lib/libedit/readline:headers",
+        "//lib/msun:m", "//lib/libthr:thr"] + select({OPENSSL: ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}),
+    implementation_deps = ["//contrib/ntp:private_headers"],
+    copts = ["-fpie", "-DPIC"] if suffix else [],
+    linkstatic = True, target_compatible_with = PLATFORM,
+    visibility = ["//usr.sbin/ntp:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":ntp"],
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/ntp:__subpackages__"])
+
+bsd_component_archive(name = "pie_archive", groups = [":ntp_pie"],
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/ntp:__subpackages__"])
