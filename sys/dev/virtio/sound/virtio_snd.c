@@ -49,6 +49,7 @@
 #include <mixer_if.h>
 
 #include "virtio_snd.h"
+#include "virtio_if.h"
 
 /*
  * Feature bits this driver is willing to accept.  VIRTIO_F_VERSION_1 is added
@@ -132,6 +133,7 @@ struct vtsnd_softc {
  * control queue is then declared broken.
  */
 #define	VTSND_CTRL_TIMEOUT	(5 * SBT_1S)
+#define	VTSND_POLL_DELAY_US	10
 
 #define	VTSND_LOCK(sc)		mtx_lock(&(sc)->vtsnd_mtx)
 #define	VTSND_UNLOCK(sc)	mtx_unlock(&(sc)->vtsnd_mtx)
@@ -139,6 +141,8 @@ struct vtsnd_softc {
 
 static int	vtsnd_probe(device_t);
 static int	vtsnd_attach(device_t);
+static int	vtsnd_attach_completed(device_t);
+static void	vtsnd_attach_fail(struct vtsnd_softc *);
 static int	vtsnd_detach(device_t);
 static int	vtsnd_suspend(device_t);
 static int	vtsnd_resume(device_t);
@@ -265,6 +269,7 @@ vtsnd_ctrl_cmd(struct vtsnd_softc *sc, const void *req, size_t reqlen,
 	struct sglist *sg;
 	sbintime_t deadline, remaining;
 	void *cookie;
+	uint64_t polled_us;
 	uint32_t len;
 	int error;
 
@@ -309,10 +314,27 @@ vtsnd_ctrl_cmd(struct vtsnd_softc *sc, const void *req, size_t reqlen,
 	 * the control path (and the shared staging buffers) indefinitely.
 	 */
 	deadline = sbinuptime() + VTSND_CTRL_TIMEOUT;
+	polled_us = 0;
 	for (;;) {
 		cookie = virtqueue_dequeue(vq, &len);
 		if (cookie != NULL)
 			break;
+		if (cold) {
+			/*
+			 * A preloaded driver queries the device from
+			 * attach_completed() during autoconfiguration, before
+			 * timers work, and a timed sleep would panic.  Poll
+			 * the used ring for the same bound until the system
+			 * is up.
+			 */
+			if (polled_us < VTSND_CTRL_TIMEOUT / SBT_1US) {
+				DELAY(VTSND_POLL_DELAY_US);
+				polled_us += VTSND_POLL_DELAY_US;
+				continue;
+			}
+			error = ETIMEDOUT;
+			break;
+		}
 		if (virtqueue_enable_intr(vq) != 0)
 			continue;
 		remaining = deadline - sbinuptime();
@@ -1133,8 +1155,7 @@ static int
 vtsnd_attach(device_t dev)
 {
 	struct vtsnd_softc *sc;
-	char status[SND_STATUSLEN];
-	int error, i;
+	int error;
 
 	sc = device_get_softc(dev);
 	sc->vtsnd_dev = dev;
@@ -1207,9 +1228,33 @@ vtsnd_attach(device_t dev)
 		goto fail;
 	}
 
+	/*
+	 * The PCM_INFO query and the pcm(4) registration that depends on it run
+	 * in vtsnd_attach_completed(): the transport sets DRIVER_OK only after
+	 * attach returns, and the device must not consume buffers before
+	 * DRIVER_OK.  bhyve defers the control queue until then, so a query
+	 * issued here could not complete and, with the driver preloaded
+	 * (cold), its timed wait panicked ("timed sleep before timers are
+	 * working").
+	 */
+	return (0);
+
+fail:
+	vtsnd_attach_fail(sc);
+	return (error);
+}
+
+static int
+vtsnd_attach_completed(device_t dev)
+{
+	struct vtsnd_softc *sc;
+	char status[SND_STATUSLEN];
+	int error;
+
+	sc = device_get_softc(dev);
 	error = vtsnd_pcm_info_query(sc);
 	if (error != 0)
-		goto fail;
+		return (error);
 
 	/* Capabilities: S16_LE, stereo, 44.1-48 kHz. */
 	sc->vtsnd_cap_fmts[0] = SND_FORMAT(AFMT_S16_LE, 2, 0);
@@ -1232,39 +1277,43 @@ vtsnd_attach(device_t dev)
 	    device_get_nameunit(device_get_parent(dev)));
 	if (pcm_register(dev, status)) {
 		device_printf(dev, "pcm_register failed\n");
-		error = ENXIO;
-		goto fail;
+		/* The transport detaches the device on this error. */
+		return (ENXIO);
 	}
 	mixer_init(dev, &vtsnd_mixer_class, sc);
 
 	return (0);
+}
 
-fail:
-	if (error != 0) {
-		/* Undo whatever attach reached; mirror detach ordering. */
-		sc->vtsnd_detaching = true;
-		/*
-		 * Reset the device before freeing any DMA memory.  attach posts
-		 * event-queue receive buffers (vtsnd_event_populate) and may leave a
-		 * control descriptor outstanding against the shared staging buffers
-		 * (vtsnd_ctrl_cmd relies on "the device is reset ... before they are
-		 * freed").  Without this reset those descriptors would still be owned
-		 * by the device when vtsnd_free_dma() releases their backing memory --
-		 * a DMA-after-free.  virtio_stop() is safe even if no virtqueue was
-		 * ever allocated.
-		 */
-		virtio_stop(dev);
-		virtio_teardown_intr(dev);
-		for (i = 0; i < VTSND_VQ_MAX; i++)
-			sc->vtsnd_vqs[i] = NULL;
-		vtsnd_free_dma(sc);
-		if (sc->vtsnd_sg != NULL) {
-			sglist_free(sc->vtsnd_sg);
-			sc->vtsnd_sg = NULL;
-		}
-		mtx_destroy(&sc->vtsnd_mtx);
+static void
+vtsnd_attach_fail(struct vtsnd_softc *sc)
+{
+	device_t dev;
+	int i;
+
+	dev = sc->vtsnd_dev;
+	/* Undo whatever attach reached; mirror detach ordering. */
+	sc->vtsnd_detaching = true;
+	/*
+	 * Reset the device before freeing any DMA memory.  attach posts
+	 * event-queue receive buffers (vtsnd_event_populate) and may leave a
+	 * control descriptor outstanding against the shared staging buffers
+	 * (vtsnd_ctrl_cmd relies on "the device is reset ... before they are
+	 * freed").  Without this reset those descriptors would still be owned
+	 * by the device when vtsnd_free_dma() releases their backing memory --
+	 * a DMA-after-free.  virtio_stop() is safe even if no virtqueue was
+	 * ever allocated.
+	 */
+	virtio_stop(dev);
+	virtio_teardown_intr(dev);
+	for (i = 0; i < VTSND_VQ_MAX; i++)
+		sc->vtsnd_vqs[i] = NULL;
+	vtsnd_free_dma(sc);
+	if (sc->vtsnd_sg != NULL) {
+		sglist_free(sc->vtsnd_sg);
+		sc->vtsnd_sg = NULL;
 	}
-	return (error);
+	mtx_destroy(&sc->vtsnd_mtx);
 }
 
 static int
@@ -1361,6 +1410,7 @@ vtsnd_resume(device_t dev)
 static device_method_t vtsnd_methods[] = {
 	DEVMETHOD(device_probe,		vtsnd_probe),
 	DEVMETHOD(device_attach,	vtsnd_attach),
+	DEVMETHOD(virtio_attach_completed, vtsnd_attach_completed),
 	DEVMETHOD(device_detach,	vtsnd_detach),
 	DEVMETHOD(device_suspend,	vtsnd_suspend),
 	DEVMETHOD(device_resume,	vtsnd_resume),

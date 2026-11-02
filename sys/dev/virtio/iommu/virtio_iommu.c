@@ -115,6 +115,7 @@
  * the request queue is then declared broken.
  */
 #define	VTIOMMU_REQUEST_TIMEOUT	(5 * SBT_1S)
+#define	VTIOMMU_POLL_DELAY_US	10
 
 MALLOC_DEFINE(M_VTIOMMU, "vtiommu", "VirtIO IOMMU");
 
@@ -711,6 +712,7 @@ vtiommu_send_request(struct vtiommu_softc *sc, const void *req, size_t req_len,
 	struct virtio_iommu_req_tail *tail;
 	sbintime_t deadline, remaining;
 	void *cookie;
+	uint64_t polled_us;
 	uint32_t len;
 	int readable, writable, error;
 
@@ -776,6 +778,7 @@ vtiommu_send_request(struct vtiommu_softc *sc, const void *req, size_t req_len,
 	 * the caller (and the shared scratch buffers) indefinitely.
 	 */
 	deadline = sbinuptime() + VTIOMMU_REQUEST_TIMEOUT;
+	polled_us = 0;
 	for (;;) {
 		cookie = virtqueue_dequeue(sc->vtiommu_req_vq, &len);
 		if (cookie != NULL)
@@ -784,6 +787,21 @@ vtiommu_send_request(struct vtiommu_softc *sc, const void *req, size_t req_len,
 		    (VTIOMMU_FLAG_DETACH | VTIOMMU_FLAG_BROKEN)) != 0) {
 			error = (sc->vtiommu_flags & VTIOMMU_FLAG_DETACH) != 0 ?
 			    ENXIO : EIO;
+			break;
+		}
+		if (cold) {
+			/*
+			 * Endpoints attaching during autoconfiguration (before
+			 * timers work) are attached to domains through here;
+			 * a timed sleep would panic.  Poll the used ring for
+			 * the same bound until the system is up.
+			 */
+			if (polled_us < VTIOMMU_REQUEST_TIMEOUT / SBT_1US) {
+				DELAY(VTIOMMU_POLL_DELAY_US);
+				polled_us += VTIOMMU_POLL_DELAY_US;
+				continue;
+			}
+			error = ETIMEDOUT;
 			break;
 		}
 		if (virtqueue_enable_intr(sc->vtiommu_req_vq) != 0)
