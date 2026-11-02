@@ -21,6 +21,11 @@ qualification, followed by VM/runtime and performance gates. Full world and
 bootstrap/publication remain open; Make stays production/default.
 Earlier component checkpoints below are retained historical evidence.
 
+Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local
+BUILD files (244 direct audited macros and one separate ZFS description). This
+is discovery, not build qualification; see
+[MODULE-SELECTION-QUALIFICATION.md](MODULE-SELECTION-QUALIFICATION.md).
+
 ## Current resumption (2026-11-02)
 
 The user resumed after the committed kernel-upgrade checkpoint a28f294501e.
