@@ -375,28 +375,58 @@ sysext_hints_pnp_module(const void *image, size_t len, const char *name)
 	return (false);
 }
 
-/* Read the delivered kernel directory's linker.hints and classify name. */
-bool
-sysext_driver_module(int dirfd, const char *name)
+/*
+ * The kernel directory's linker.hints, read once and kept while the file is
+ * the same (device, inode, size, modification and change times): every
+ * request outside the allow-list consults it, and it can be 16 MB.
+ */
+static struct {
+	pthread_mutex_t lock;
+	dev_t	dev;
+	ino_t	ino;
+	off_t	size;
+	struct timespec mtim, ctim;
+	unsigned char *image;
+} hints_cache = { .lock = PTHREAD_MUTEX_INITIALIZER };
+
+static bool
+same_hints(const struct stat *st)
 {
-	struct stat st;
+
+	return (hints_cache.image != NULL && hints_cache.dev == st->st_dev &&
+	    hints_cache.ino == st->st_ino && hints_cache.size == st->st_size &&
+	    timespeccmp(&hints_cache.mtim, &st->st_mtim, ==) &&
+	    timespeccmp(&hints_cache.ctim, &st->st_ctim, ==));
+}
+
+/* With the cache lock held: make it current for dirfd; false without hints. */
+static bool
+hints_refresh_locked(int dirfd)
+{
+	struct stat st, again;
 	unsigned char *image;
 	size_t done = 0;
 	ssize_t n;
-	bool found = false;
 	int fd;
 
 	if (dirfd < 0)
-		return (false);
+		goto none;
+	/* A non-regular file is refused before an open that could block. */
+	if (fstatat(dirfd, "linker.hints", &st, AT_SYMLINK_NOFOLLOW) == -1 ||
+	    !S_ISREG(st.st_mode) || st.st_size <= 0 ||
+	    st.st_size > SYSEXT_HINTS_MAX)
+		goto none;
+	if (same_hints(&st))
+		return (true);
 	fd = openat(dirfd, "linker.hints", O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
 	    O_NONBLOCK);
 	if (fd == -1)
-		return (false);
+		goto none;
 	if (fstat(fd, &st) == -1 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
 	    st.st_size > SYSEXT_HINTS_MAX ||
 	    (image = malloc((size_t)st.st_size)) == NULL) {
 		(void)close(fd);
-		return (false);
+		goto none;
 	}
 	while (done < (size_t)st.st_size) {
 		n = pread(fd, image + done, (size_t)st.st_size - done,
@@ -407,22 +437,171 @@ sysext_driver_module(int dirfd, const char *name)
 			break;
 		done += (size_t)n;
 	}
-	if (done == (size_t)st.st_size)
-		found = sysext_hints_pnp_module(image, done, name);
-	free(image);
+	/* Rewritten while it was read: do not keep a mixed image. */
+	if (done != (size_t)st.st_size || fstat(fd, &again) == -1 ||
+	    again.st_size != st.st_size ||
+	    !timespeccmp(&again.st_mtim, &st.st_mtim, ==) ||
+	    !timespeccmp(&again.st_ctim, &st.st_ctim, ==)) {
+		free(image);
+		(void)close(fd);
+		goto none;
+	}
 	(void)close(fd);
+	free(hints_cache.image);
+	hints_cache.image = image;
+	hints_cache.dev = st.st_dev;
+	hints_cache.ino = st.st_ino;
+	hints_cache.size = st.st_size;
+	hints_cache.mtim = st.st_mtim;
+	hints_cache.ctim = st.st_ctim;
+	return (true);
+none:
+	free(hints_cache.image);
+	hints_cache.image = NULL;
+	return (false);
+}
+
+/* Read the delivered kernel directory's linker.hints and classify name. */
+bool
+sysext_driver_module(int dirfd, const char *name)
+{
+	bool found = false;
+
+	pthread_mutex_lock(&hints_cache.lock);
+	if (hints_refresh_locked(dirfd))
+		found = sysext_hints_pnp_module(hints_cache.image,
+		    (size_t)hints_cache.size, name);
+	pthread_mutex_unlock(&hints_cache.lock);
 	return (found);
+}
+
+/*
+ * linker_hints_lookup(): the first MDT_VERSION record of modname with the
+ * preferred version, else the highest version within [minimum, maximum]
+ * (above 0, as the kernel compares against an initial best of 0).  True with
+ * its file name; false when no record qualifies.
+ */
+bool
+sysext_hints_version_file(const void *image, size_t len, const char *modname,
+    int minimum, int preferred, int maximum, char *file, size_t filelen)
+{
+	const unsigned char *buf = image;
+	char name[256], kld[256], best[256];
+	size_t pos, data, end;
+	int version, reclen, type, ival, bestver = 0;
+
+	best[0] = '\0';
+	if (buf == NULL || len < sizeof(int))
+		return (false);
+	memcpy(&version, buf, sizeof(int));
+	if (version != LINKER_HINTS_VERSION)
+		return (false);
+	pos = sizeof(int);
+	for (;;) {
+		pos = roundup2(pos, sizeof(int));
+		if (pos > len || len - pos < 2 * sizeof(int))
+			break;
+		memcpy(&reclen, buf + pos, sizeof(int));
+		data = pos + sizeof(int);
+		if (reclen < (int)sizeof(int) || (size_t)reclen > len - data)
+			break;
+		end = data + (size_t)reclen;
+		memcpy(&type, buf + data, sizeof(int));
+		data += sizeof(int);
+		pos = end;
+		if (type != MDT_VERSION ||
+		    !hints_str(buf, end, &data, name, sizeof(name)) ||
+		    strcmp(name, modname) != 0)
+			continue;
+		data = roundup2(data, sizeof(int));
+		if (data > end || end - data < sizeof(int))
+			continue;
+		memcpy(&ival, buf + data, sizeof(int));
+		data += sizeof(int);
+		if (!hints_str(buf, end, &data, kld, sizeof(kld)))
+			continue;
+		if (ival == preferred)
+			return (strlcpy(file, kld, filelen) < filelen);
+		if (ival >= minimum && ival <= maximum && ival > bestver) {
+			bestver = ival;
+			(void)strlcpy(best, kld, sizeof(best));
+		}
+	}
+	if (best[0] == '\0')
+		return (false);
+	return (strlcpy(file, best, filelen) < filelen);
+}
+
+/*
+ * The file the kernel linker would load from the kernel directory for a
+ * dependency: the linker.hints choice, else modname itself, the first of
+ * NAME and NAME.ko that is a regular file (linker_lookup_file()).  An empty
+ * file name when the directory has none.
+ */
+void
+sysext_kernel_dir_dependency(const char *modname, int minimum, int preferred,
+    int maximum, char *file, size_t filelen)
+{
+	static const char *const ext[] = { "", ".ko" };
+	struct stat st;
+	char candidate[MAXPATHLEN];
+	bool hinted = false;
+	size_t i;
+
+	file[0] = '\0';
+	pthread_mutex_lock(&hints_cache.lock);
+	if (hints_refresh_locked(sysext_driver_dirfd))
+		hinted = sysext_hints_version_file(hints_cache.image,
+		    (size_t)hints_cache.size, modname, minimum, preferred,
+		    maximum, candidate, sizeof(candidate));
+	pthread_mutex_unlock(&hints_cache.lock);
+	if (!hinted)
+		(void)strlcpy(candidate, modname, sizeof(candidate));
+	for (i = 0; i < nitems(ext); i++) {
+		char name[MAXPATHLEN];
+
+		if ((size_t)snprintf(name, sizeof(name), "%s%s", candidate,
+		    ext[i]) >= sizeof(name) || strchr(name, '/') != NULL)
+			continue;
+		/* The kernel follows links here; the checks then refuse one. */
+		if (fstatat(sysext_driver_dirfd, name, &st, 0) == 0 &&
+		    S_ISREG(st.st_mode)) {
+			(void)strlcpy(file, name, filelen);
+			return;
+		}
+	}
+}
+
+/* True when an administrator override denies name (with or without .ko). */
+bool
+sysext_admin_denied(const char *name)
+{
+	char modname[SYSEXT_NAME_MAX];
+	size_t len;
+
+	/* Without a policy no override exists (and root_decide() loads nothing). */
+	if (active_policy == NULL)
+		return (false);
+	(void)strlcpy(modname, name, sizeof(modname));
+	len = strlen(modname);
+	if (len > 3 && strcmp(modname + len - 3, ".ko") == 0)
+		modname[len - 3] = '\0';
+	return (sysext_policy_denied(active_policy, modname) ||
+	    sysext_policy_denied(active_policy, name));
 }
 
 /*
  * The complete load decision: the resolved allow-list, then the hardware
  * driver class when the policy enables it and no administrator override
- * denies the name.  *driver reports a class grant (for logging).
+ * denies the name, and only while the kernel directory still holds the
+ * running kernel (sysext_kernel_dir_check()): devmatch(8) and the kernel load
+ * drivers by name from it.  *driver reports a class grant (for logging).
  */
 static bool
 request_allowed(const struct sysext_config *cfg, const char *client,
     const char *name, bool *driver)
 {
+	char why[384];
 
 	*driver = false;
 	/* A driver-only client (driver_clients) never uses the allow-list. */
@@ -430,6 +609,8 @@ request_allowed(const struct sysext_config *cfg, const char *client,
 		return (true);
 	if (!cfg->device_drivers || active_policy == NULL ||
 	    sysext_policy_denied(active_policy, name))
+		return (false);
+	if (sysext_kernel_dir_check(why, sizeof(why)) != 0)
 		return (false);
 	*driver = sysext_driver_module(sysext_driver_dirfd, name);
 	return (*driver);
@@ -610,6 +791,15 @@ ensure_extension_locked(const char *name, bool *loaded_now)
 	 * held (a unit test).  Both resolve `name` the same way and treat an
 	 * already-loaded module (EEXIST) as success.
 	 */
+#ifdef BSDEXTENSION_TESTING
+	if (sysext_test_kld_load != NULL) {
+		int error;
+
+		error = sysext_test_kld_load(name, &fileid);
+		*loaded_now = error == 0;
+		return (error == EEXIST ? 0 : error);
+	}
+#endif
 	if (g_kld_token >= 0) {
 		if (service_system_kldload(g_kld_token, name, &fileid) == 0) {
 			*loaded_now = true;
@@ -1322,7 +1512,9 @@ st_next_decision(void *argument, struct fidl_bsd_connection *connection,
  * outside a jail that hold no software authority (root-load.ucl).  The
  * protocol has Load and Unload only; neither consults the allow-list or the
  * session's rights.  Load requires the policy's root_load_repository and no
- * administrator deny, then rootload.c's package and checksum checks.  Every
+ * administrator deny, then rootload.c's checks of the module and every
+ * dependency it would bring in (package, checksum, administrator deny,
+ * protected modules), all before anything is loaded.  Every
  * request is recorded in the decision ring and logged with the switchboard
  * label and the requester's program nonce.
  */
@@ -1344,8 +1536,8 @@ decision_word(uint32_t result)
 	case SYSEXT_DECISION_CHECKSUM:
 		return ("DENIED (checksum differs from the package record)");
 	case SYSEXT_DECISION_NOT_KERNEL_DIR:
-		return ("DENIED (no regular module file in " SYSEXT_KERNEL_DIR
-		    ")");
+		return ("DENIED (no regular module file in the running kernel's "
+		    "directory)");
 	case SYSEXT_DECISION_UNLOADED:
 		return ("unloaded");
 	case SYSEXT_DECISION_NOT_ROOT_LOADED:
@@ -1356,6 +1548,8 @@ decision_word(uint32_t result)
 		return ("DENIED (package database unavailable)");
 	case SYSEXT_DECISION_CHANGED:
 		return ("DENIED (file changed during the load)");
+	case SYSEXT_DECISION_PROTECTED:
+		return ("DENIED (protected module)");
 	default:
 		return ("?");
 	}
@@ -1604,11 +1798,12 @@ sysext_test_serve_status(int fd, const char *client,
  */
 int
 sysext_test_serve_rootload(int fd, const char *client,
-    const struct sysext_config *cfg, int kerneldir, int pkgdir,
+    const struct sysext_config *cfg, int bootdir, int pkgdir,
     const char *deny)
 {
-	int result, saved_kernel = sysext_driver_dirfd,
-	    saved_pkg = sysext_pkgdb_dirfd, statedir;
+	int result, saved_boot = sysext_boot_dirfd,
+	    saved_kernel = sysext_driver_dirfd, saved_pkg = sysext_pkgdb_dirfd,
+	    statedir;
 
 	active_policy = sysext_policy_create(cfg);
 	if (active_policy == NULL)
@@ -1623,10 +1818,15 @@ sysext_test_serve_rootload(int fd, const char *client,
 		    SERVICE_RIGHTS_ADMIN) == -1)
 			return (1);
 	}
-	sysext_driver_dirfd = kerneldir;
+	sysext_boot_dirfd = bootdir;
 	sysext_pkgdb_dirfd = pkgdir;
+	if (sysext_kernel_dir_open() != 0)
+		sysext_driver_dirfd = -1;
 	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_ALL,
 	    SYSEXT_ENDPOINT_ROOTLOAD, 0x5b5d);
+	if (sysext_driver_dirfd != -1)
+		(void)close(sysext_driver_dirfd);
+	sysext_boot_dirfd = saved_boot;
 	sysext_driver_dirfd = saved_kernel;
 	sysext_pkgdb_dirfd = saved_pkg;
 	sysext_policy_destroy(active_policy);
@@ -1878,7 +2078,7 @@ main(int argc, char **argv)
 	struct sysext_config sysext_conf;
 	const char *conf = SYSEXT_DEFAULT_CONF;
 	bool conf_from_arg = false;
-	int ch;
+	int ch, kerror = 0;
 
 	while ((ch = getopt(argc, argv, "c:")) != -1) {
 		switch (ch) {
@@ -1943,18 +2143,24 @@ main(int argc, char **argv)
 			err(1, "initialize administrator extension policy");
 	}
 	/*
-	 * The hardware-driver class reads the kernel's linker.hints through the
-	 * delivered kernel directory, and root loads open module files beneath
-	 * it.  Soft: without it the class grants nothing and root loads are
-	 * refused; only the allow-list applies.  Opened whatever the policy
-	 * says, so a policy reload can enable either.
+	 * The hardware-driver class reads the running kernel's linker.hints and
+	 * root loads open module files beneath its directory, found beneath the
+	 * delivered /boot (kerneldir.c).  Soft: without it the class grants
+	 * nothing and root loads are refused; only the allow-list applies.
+	 * Opened whatever the policy says, so a policy reload can enable either.
 	 */
 	if (!conf_from_arg &&
-	    service_resource_dir(SYSEXT_KERNEL_DIR, &sysext_driver_dirfd) == -1) {
+	    (service_resource_dir(SYSEXT_BOOT_DIR, &sysext_boot_dirfd) == -1 ||
+	    (kerror = sysext_kernel_dir_open()) != 0)) {
+		if (sysext_boot_dirfd == -1)
+			kerror = errno;
 		sysext_driver_dirfd = -1;
-		syslog(LOG_WARNING, "cannot open %s (%m); hardware drivers and "
-		    "root loads are refused", SYSEXT_KERNEL_DIR);
-	}
+		syslog(LOG_WARNING, "cannot open the running kernel's module "
+		    "directory beneath %s (%s); hardware drivers and root loads "
+		    "are refused", SYSEXT_BOOT_DIR, strerror(kerror));
+	} else if (!conf_from_arg)
+		syslog(LOG_INFO, "kernel module directory %s",
+		    sysext_kernel_dir);
 	/* Root loads read the package database beneath this directory. */
 	if (!conf_from_arg &&
 	    service_resource_dir(SYSEXT_PKGDB_DIR, &sysext_pkgdb_dirfd) == -1) {
