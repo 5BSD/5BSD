@@ -29,7 +29,7 @@ exports_files(["sha1.c"], visibility = ["//sys/netgraph:__pkg__", "//sys/netinet
 # IPv4 built-in prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha1.h"],
-    visibility = ["//sys/netinet:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netipsec:__pkg__", "//sys/netinet6:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+    visibility = ["//sys/netinet:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netipsec:__pkg__", "//sys/netinet6:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/dev/safexcel:__pkg__"])
 
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["sha1.h"],

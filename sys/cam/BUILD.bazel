@@ -58,7 +58,7 @@ bsd_source_headers(name = "isci_kernel_isci_io_request_headers", hdrs = ["ata/at
 bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
     visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptmv:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/tws:__pkg__"])
 bsd_source_headers(name = "storage_hba_kernel_smartpqi_cam_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
-    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/ufshci:__pkg__"])
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/dev/iscsi:__pkg__"])
 
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/smp_all.h"],
@@ -248,3 +248,114 @@ bsd_source_headers(name = "chelsio_module_context_1", hdrs = ["ata/ata_all.h", "
 
 bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["ctl/ctl_io.h", "scsi/scsi_all.h"], includes = [],
     visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_frontend_iscsi.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["cam.h", "ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_nvme_all.h", "ctl/ctl_private.h", "ctl/ctl_scsi_all.h", "ctl/ctl_ser_table.c", "ctl/ctl_util.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_3", hdrs = ["cam.h", "ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_error.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "ctl/ctl_scsi_all.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_4", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "ctl/ctl_util.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_5", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_6", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "ctl/ctl.h", "ctl/ctl_debug.h", "ctl/ctl_frontend.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_7", hdrs = ["cam.h", "ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "ctl/ctl_util.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_8", hdrs = ["cam.h", "ctl/ctl_io.h", "ctl/ctl_nvme_all.h", "nvme/nvme_all.h", "scsi/scsi_all.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_9", hdrs = ["ctl/ctl.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_10", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "ctl/ctl_io.h", "ctl/ctl_scsi_all.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_11", hdrs = ["cam.h", "ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "ctl/ctl_scsi_all.h", "ctl/ctl_tpc.h", "ctl/ctl_util.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_12", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_13", hdrs = ["ctl/ctl_io.h", "ctl/ctl_nvme_all.h", "ctl/ctl_scsi_all.h", "ctl/ctl_util.h", "scsi/scsi_all.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_14", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "ctl/ctl.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_util.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "cfiscsi_ctl_frontend_iscsi_module", srcs = ["ctl/ctl_frontend_iscsi.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/cam:compat_services_module_context_0", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/dev/iscsi:compat_services_module_context_0", "//sys/dev/iscsi:icl_conn_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_module", srcs = ["ctl/ctl.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/cam:compat_services_module_context_1", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_backend_module", srcs = ["ctl/ctl_backend.c", "ctl/ctl_frontend.c"],
+    deps = ["//sys/cam:compat_services_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_backend_block_module", srcs = ["ctl/ctl_backend_block.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/geom:vm_kernel_swap_pager_headers", "//sys/cam:compat_services_module_context_3", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_backend_ramdisk_module", srcs = ["ctl/ctl_backend_ramdisk.c"],
+    deps = ["//sys/cam:compat_services_module_context_4", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_cmd_table_module", srcs = ["ctl/ctl_cmd_table.c"],
+    deps = ["//sys/cam:compat_services_module_context_5", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_frontend_cam_sim_module", srcs = ["ctl/ctl_frontend_cam_sim.c"],
+    deps = ["//sys/cam:compat_services_module_context_6", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_frontend_ioctl_module", srcs = ["ctl/ctl_frontend_ioctl.c"],
+    deps = ["//sys/cam:compat_services_module_context_7", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_ha_module", srcs = ["ctl/ctl_ha.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:compat_services_module_context_7", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_nvme_all_module", srcs = ["ctl/ctl_nvme_all.c"],
+    deps = ["//sys/cam:compat_services_module_context_8", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_nvme_cmd_table_module", srcs = ["ctl/ctl_nvme_cmd_table.c"],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:compat_services_module_context_9", "//sys/dev/nvmf:usb_remaining_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_scsi_all_module", srcs = ["ctl/ctl_scsi_all.c"],
+    deps = ["//sys/cam:compat_services_module_context_10", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_tpc_module", srcs = ["ctl/ctl_tpc.c", "ctl/ctl_tpc_local.c"],
+    deps = ["//sys/cam:compat_services_module_context_11", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_error_module", srcs = ["ctl/ctl_error.c"],
+    deps = ["//sys/cam:compat_services_module_context_12", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_ctl_util_module", srcs = ["ctl/ctl_util.c"],
+    deps = ["//sys/cam:compat_services_module_context_13", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ctl_scsi_ctl_module", srcs = ["ctl/scsi_ctl.c"],
+    deps = ["//sys/cam:compat_services_module_context_14", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

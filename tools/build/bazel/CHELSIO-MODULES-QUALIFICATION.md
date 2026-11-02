@@ -83,3 +83,13 @@ source declaration presence, not a full-system qualification percentage.
 Remaining gates include all selected modules/configurations/architectures,
 current full kernel refresh, world/rescue/libraries, installation/pkgbase,
 bootstrap/hardware/publication, VM/runtime and performance qualification.
+
+### Separate-debug evidence scope correction
+
+The CTF/debug payload comparisons above concern stripped installed module ELF
+sections, including CTF. Separate debug files were independently CRC-checked;
+that did not prove DWARF parity between Make and Bazel. Direct separate-file
+comparisons now record five differing sections and leave semantic/source lookup
+qualification open. See [module debug qualification](MODULE-DEBUG-QUALIFICATION.md)
+for exact observed scope and required follow-up. Runtime ELF/CTF, compiler-input,
+installation and instrumentation results remain unchanged.

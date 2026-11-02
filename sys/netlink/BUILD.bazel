@@ -161,3 +161,9 @@ amd64_generic_module_objects(name = "netlink_nexthop_module", srcs = ["route/nex
 amd64_generic_module_objects(name = "netlink_rt_module", srcs = ["route/rt.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:network_policy_kernel_rt_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:ipv6_kernel_in6_cksum_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:usb_net_usie_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["NETLINK_MODULE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_debug.h", "netlink_linux.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "netlink_var.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["netlink.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

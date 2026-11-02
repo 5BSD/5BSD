@@ -26,7 +26,23 @@ cc_library(name = "linux_syscall_tables_headers", hdrs = [":linux_syscall_tables
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_proto.h", "linux_syscall.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/ntsync:__pkg__"])
 
 filegroup(name = "module_header_sources", srcs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
     visibility = ["//sys/amd64/include:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_emul_md.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux.h", "linux_emul_md.h", "linux_proto.h", "linux_syscall.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "linux_common_linux_pkru_module", srcs = ["linux_pkru.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/compat/linux:compat_services_module_context_15", "//sys/amd64/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+filegroup(name = "compat_services_architecture_header_sources", srcs = ["linux.h", "linux_emul_md.h", "linux_proto.h"], visibility = ["//sys/amd64/include:__pkg__"])

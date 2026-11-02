@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "lindebugfs", objects = ["//sys/compat/lindebugfs:lindebugfs_lindebugfs_module_object_files", "//sys/compat/linuxkpi/common/src:lindebugfs_lkpi_iic_if_module_object_files"], object_order = ["lindebugfs.o", "lkpi_iic_if.o"], exports = ["debugfs_create_atomic_t", "debugfs_create_blob", "debugfs_create_bool", "debugfs_create_dir", "debugfs_create_file", "debugfs_create_file_size", "debugfs_create_file_unsafe", "debugfs_create_mode_unsafe", "debugfs_create_str", "debugfs_create_symlink", "debugfs_create_u8", "debugfs_create_u16", "debugfs_create_u32", "debugfs_create_u64", "debugfs_create_ulong", "debugfs_create_x8", "debugfs_create_x16", "debugfs_create_x32", "debugfs_create_x64", "debugfs_lookup", "debugfs_remove", "debugfs_remove_recursive"], export_all = False, package = "kernel", aliases = [])

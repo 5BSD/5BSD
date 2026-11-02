@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "linuxkpi_wlan", objects = ["//sys/compat/linuxkpi/common/src:linuxkpi_wlan_linux_80211_fullmac_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_wlan_linux_80211_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_wlan_linux_80211_macops_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_wlan_linuxkpi_80211_pm_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_wlan_linux_mhi_module_object_files", "//sys/compat/linuxkpi/common/src:linuxkpi_wlan_lkpi_iic_if_module_object_files"], object_order = ["linux_80211_fullmac.o", "linux_80211.o", "linux_80211_macops.o", "linuxkpi_80211_pm.o", "linux_mhi.o", "lkpi_iic_if.o"], exports = [], export_all = True, package = "kernel", aliases = [])

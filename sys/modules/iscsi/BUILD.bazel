@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "iscsi", objects = ["//sys/dev/iscsi:iscsi_iscsi_module_object_files", "//sys/dev/iscsi:iscsi_icl_module_object_files", "//sys/dev/iscsi:iscsi_icl_soft_module_object_files", "//sys/dev/iscsi:iscsi_icl_soft_proxy_module_object_files"], object_order = ["iscsi.o", "icl.o", "icl_soft.o", "icl_soft_proxy.o", "icl_conn_if.o"], exports = [], export_all = True, package = "kernel", aliases = [])

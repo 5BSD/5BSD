@@ -1,5 +1,10 @@
 # Bazel qualification
 
+> Module debug qualification correction: historical module “CTF/debug” parity
+> statements concern stripped module/CTF payloads and valid debuglink CRCs unless
+> explicitly comparing separate debug files. Full DWARF/source lookup parity
+> remains open. See [the direct audit and required gates](MODULE-DEBUG-QUALIFICATION.md).
+
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
@@ -177,12 +182,12 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 690 selected directories contain local BUILD
-files, leaving 39 without. This is declaration presence, not qualified-build
+GENERIC audit selects 729 modules; 708 selected directories contain local BUILD
+files, leaving 21 without. This is declaration presence, not qualified-build
 coverage. The newest qualified module cohort is documented in
-[Chelsio qualification](CHELSIO-MODULES-QUALIFICATION.md).
-Earlier selection snapshot (628 local BUILD files; the three later module cohorts
-add 62 selected leaves):
+[compatibility/storage/tracing qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md).
+Earlier selection snapshot (628 local BUILD files; the four later module cohorts
+add 80 selected leaves):
 `/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
 Complete native world/kernel/pkgbase and system qualification remain open.
 The corrected query context selects 627 ARM64 and 553 RISC-V64 modules, with 504
@@ -48188,3 +48193,18 @@ sections match. Complete provider encoding/site differences are accounted for
 with verified path keys. Eight contract methods pass; default DSO/rescue and
 explicit experimental archive/DSO remain byte-identical to accepted captures.
 Default CcInfo static-consumer extraction and full DSO/install parity remain open.
+
+## Compatibility/storage/tracing module checkpoint (2026-11-02)
+
+[Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen leaves,
+130 compiler contexts/26,206 exact original/native consumed occurrences per
+profile, eighteen captured ordered links, all eighteen plain ELFs byte-identical
+to untouched Make and 54 matching installation records across both profiles.
+Seven compiled SDT/DTrace module payloads are preserved. Existing architecture
+view rules preserve the actual machine/../linux header namespace for eight
+consumers without source edits; failed initial attempts remain retained.
+
+Local BUILD presence is 708/729 selected amd64 leaves (21 remain). Full separate
+DWARF/source-resolution qualification is explicitly open, alongside other
+architectures/options, full kernel/world/rescue/pkgbase/bootstrap/publication,
+VM/runtime and performance gates. Make stays production/default; BIP excluded.

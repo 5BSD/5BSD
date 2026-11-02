@@ -12,7 +12,7 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['nvmf.h', 'nvmf_proto.h'], str
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["nvmf.h", "nvmf_proto.h"], includes = [],
-    visibility = ["//sys/dev/usb:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+    visibility = ["//sys/dev/usb:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/cam:__pkg__"])
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["host/nvmf_var.h", "nvmf.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
     visibility = ["//sys/dev/nvmf:__pkg__"])

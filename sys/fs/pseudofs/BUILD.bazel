@@ -22,4 +22,4 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["pseudofs.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/compat/lindebugfs:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linsysfs:__pkg__"])

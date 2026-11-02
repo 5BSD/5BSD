@@ -1,5 +1,15 @@
 # Native Bazel completion plan
 
+## Open module debug qualification gate
+
+Read [MODULE-DEBUG-QUALIFICATION.md](MODULE-DEBUG-QUALIFICATION.md) before interpreting
+historical “CTF/debug” claims. Installed stripped module/CTF parity and separate
+CRC validity do not establish cross-build DWARF parity. Direct audits of 117
+pairs find five differing sections; semantic DIE/line mapping and actual debugger
+source lookup against a canonical source/debug package layout remain required.
+Carry any input/toolchain/package/frontend change through maintained tooling.
+
+
 Resumed by user instruction on 2026-11-01 after the committed upgrade
 checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
@@ -1190,3 +1200,15 @@ Default DSO/rescue and explicit experimental archive/DSO regression bytes match.
 Keep default CcInfo anchored-provider static-consumer semantics as the next
 independent gate; full DSO/installed tests, untraced modes, full rescue/packages
 and runtime/performance remain open. Existing format-5 workflow only; Make default.
+
+### Compatibility/storage/tracing modules (November 2, 2026)
+
+[Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen more amd64
+leaves, 130 actual compiler contexts and 26,206 exact consumed occurrences per
+profile; actual ordered links, whole-file untouched-Make plain parity and 54
+installation records pass. Seven compiled SDT/DTrace modules retain exact
+sections/relocations. Explicit existing architecture views fix eight original
+Linux-header consumers; attempts and fresh SDK provenance are retained.
+BUILD presence is 708/729, leaving 21, not full qualification. Complete debug,
+architecture/world/kernel/packages/bootstrap/runtime/performance gates remain
+open; existing build-bsd format-5 workflow applies and Make stays default.

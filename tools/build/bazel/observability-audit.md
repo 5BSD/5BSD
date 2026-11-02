@@ -10468,3 +10468,12 @@ string/alignment extents. No probes were removed or added; synthetic static
 anchor removal applies to this component archive only. Existing default CcInfo
 provider semantics, activation/registration, event delivery and audit coverage
 remain separate gates. Raw hash bindings and inventories are retained.
+
+## Compatibility/storage/tracing modules (November 2, 2026)
+
+[Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): bounded 125 physical
+C/schema input scan records 149 SDT/DTrace/KTR/audit candidate lines, including
+comments/macros. Seven modules contain compiled SDT/DTrace sections; all payloads
+and relocations match original Make. No probes were added and live firing,
+hardware/service runtime and audit completeness remain unqualified. Raw binding:
+bazel-compat-services-modules-review-r1-20261102/observability-review.json.

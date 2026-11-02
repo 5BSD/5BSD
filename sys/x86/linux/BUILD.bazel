@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_x86.h"], includes = [],
+    visibility = ["//sys/x86/linux:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "linux_common_linux_x86_module", srcs = ["linux_x86.c", "linux_vdso_selector_x86.c"],
+    deps = ["//sys/x86/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

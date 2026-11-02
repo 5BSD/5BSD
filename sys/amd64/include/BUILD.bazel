@@ -26,3 +26,8 @@ bsd_architecture_headers(name = "linux_module_headers", headers = {
     ":architecture_view_machine_sources": "machine",
     "//sys/amd64/linux:module_header_sources": "linux",
 }, visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
+
+bsd_architecture_headers(name = "compat_services_linux_headers", headers = {
+    ":architecture_view_machine_sources": "machine",
+    "//sys/amd64/linux:compat_services_architecture_header_sources": "linux",
+}, visibility = ["//sys/amd64/linux:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/ntsync:__pkg__"])

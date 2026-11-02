@@ -9,7 +9,7 @@ cc_library(name = "pmc_user_headers", hdrs = ['hwpmc_amd.h', 'hwpmc_core.h', 'hw
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__"])
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_intr_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
@@ -81,3 +81,31 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_tsc", srcs
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_x86", srcs = ["hwpmc_x86.c"],
     deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:monitoring_devices_kernel_OsdMemory_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_mod_module", srcs = ["hwpmc_mod.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_mod_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_logging_module", srcs = ["hwpmc_logging.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hwpmc:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_soft_module", srcs = ["hwpmc_soft.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_amd_module", srcs = ["hwpmc_amd.c", "hwpmc_ibs.c", "hwpmc_intel.c", "hwpmc_perf.c", "hwpmc_tsc.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_core_module", srcs = ["hwpmc_core.c", "hwpmc_rapl.c", "hwpmc_uncore.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hwpmc_hwpmc_x86_module", srcs = ["hwpmc_x86.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

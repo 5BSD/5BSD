@@ -10,13 +10,44 @@ cc_library(name = "user_headers", hdrs = ["iscsi_ioctl.h", "iscsi_proto.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "rdma_module_context_0", hdrs = ["icl.h", "iscsi_proto.h"], includes = [],
-    visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+    visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/dev/iscsi:__pkg__"])
 
 filegroup(name = "icl_conn_if_module_header", srcs = [":icl_conn_if"], output_group = "header")
-cc_library(name = "icl_conn_if_headers", hdrs = [":icl_conn_if_module_header"], strip_include_prefix = "icl_conn_if.generated", visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+cc_library(name = "icl_conn_if_headers", hdrs = [":icl_conn_if_module_header"], strip_include_prefix = "icl_conn_if.generated", visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/cam:__pkg__", "//sys/dev/iscsi:__pkg__"])
 
 bsd_source_headers(name = "chelsio_module_context_0", hdrs = ["icl.h", "iscsi.h", "iscsi_ioctl.h", "iscsi_proto.h"], includes = [],
     visibility = ["//sys/dev/cxgbe:__pkg__"])
 
 bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["iscsi_proto.h"], includes = [],
     visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["icl.h", "icl_wrappers.h", "iscsi_proto.h"], includes = [],
+    visibility = ["//sys/cam:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["icl.h", "icl_wrappers.h", "iscsi.h", "iscsi_ioctl.h", "iscsi_proto.h"], includes = [],
+    visibility = ["//sys/dev/iscsi:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["icl.h"], includes = [],
+    visibility = ["//sys/dev/iscsi:__pkg__"])
+
+filegroup(name = "icl_conn_if_module_source", srcs = [":icl_conn_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "iscsi_iscsi_module", srcs = ["iscsi.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/iscsi:compat_services_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["ICL_KERNEL_PROXY"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iscsi_icl_module", srcs = ["icl.c", ":icl_conn_if_module_source"],
+    deps = ["//sys/dev/iscsi:compat_services_module_context_2", "//sys/dev/iscsi:icl_conn_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :icl_conn_if_module_source)=icl_conn_if.c", "-fdebug-prefix-map=$(execpath :icl_conn_if_module_source)=icl_conn_if.c"], local_defines = ["ICL_KERNEL_PROXY"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iscsi_icl_soft_module", srcs = ["icl_soft.c"],
+    deps = ["//sys/vm:opencrypto_kernel_criov_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/iscsi:rdma_module_context_0", "//sys/dev/iscsi:icl_conn_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["ICL_KERNEL_PROXY"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iscsi_icl_soft_proxy_module", srcs = ["icl_soft_proxy.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/netinet:filesystems_rpc_kernel_clnt_bck_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/iscsi:compat_services_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["ICL_KERNEL_PROXY"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

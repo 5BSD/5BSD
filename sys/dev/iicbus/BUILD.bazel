@@ -78,7 +78,7 @@ bsd_source_headers(name = "gpio_module_context_0", hdrs = ["iic.h", "iiconf.h"],
     visibility = ["//sys/dev/gpio:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/viapm:__pkg__"])
 
 filegroup(name = "iicbb_if_module_header", srcs = [":iicbb_if"], output_group = "header")
-cc_library(name = "iicbb_if_headers", hdrs = [":iicbb_if_module_header"], strip_include_prefix = "iicbb_if.generated", visibility = ["//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/viapm:__pkg__"])
+cc_library(name = "iicbb_if_headers", hdrs = [":iicbb_if_module_header"], strip_include_prefix = "iicbb_if.generated", visibility = ["//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/viapm:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__"])
 
 bsd_source_headers(name = "hid_module_context_0", hdrs = ["iic.h", "iicbus.h"], includes = [],
     visibility = ["//sys/dev/hid:__pkg__"])
@@ -90,7 +90,7 @@ bsd_source_headers(name = "i2c_module_context_3", hdrs = ["iic.h", "iicbus.h", "
     visibility = ["//sys/dev/iicbus:__pkg__"])
 
 filegroup(name = "iicbus_if_module_header", srcs = [":iicbus_if"], output_group = "header")
-cc_library(name = "iicbus_if_headers", hdrs = [":iicbus_if_module_header"], strip_include_prefix = "iicbus_if.generated", visibility = ["//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__"])
+cc_library(name = "iicbus_if_headers", hdrs = [":iicbus_if_module_header"], strip_include_prefix = "iicbus_if.generated", visibility = ["//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__"])
 
 filegroup(name = "iicbb_if_module_source", srcs = [":iicbb_if"], output_group = "source")
 

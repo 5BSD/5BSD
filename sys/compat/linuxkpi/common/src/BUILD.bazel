@@ -294,3 +294,219 @@ amd64_generic_module_objects(name = "krping_lkpi_iic_if_module", srcs = [":lkpi_
 amd64_generic_module_objects(name = "iw_cxgbe_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
     deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "lindebugfs_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_of_module", srcs = ["linux_of.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_2", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_compat_module", srcs = ["linux_compat.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_compat_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/xen:x86_core_kernel_identcpu_headers", "//sys/contrib/xen:x86_core_kernel_identcpu_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_stack_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_3", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_0", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_current_module", srcs = ["linux_current.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_4", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_devres_module", srcs = ["linux_devres.c", "linux_domain.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_5", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_dmi_module", srcs = ["linux_dmi.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_6"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_eventfd_module", srcs = ["linux_eventfd.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_7", "//sys/compat/linuxkpi/dummy/include:rdma_module_context_0", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_firmware_module", srcs = ["linux_firmware.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_8", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_folio_module", srcs = ["linux_folio.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_9", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_fpu_module", srcs = ["linux_fpu.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_10", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_hrtimer_module", srcs = ["linux_hrtimer.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_11"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_idr_module", srcs = ["linux_idr.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_12", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_interrupt_module", srcs = ["linux_interrupt.c", "linux_tasklet.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_i2c_module", srcs = ["linux_i2c.c", "linux_i2cbb.c"],
+    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/vm:linuxkpi_kernel_linux_acpi_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbb_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_14", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_2", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_kmod_module", srcs = ["linux_kmod.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_kobject_module", srcs = ["linux_kobject.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_15", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_kthread_module", srcs = ["linux_kthread.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_16", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_lock_module", srcs = ["linux_lock.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_17", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_math_module", srcs = ["linux_math.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_18"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_netdev_module", srcs = ["linux_netdev.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_19", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_page_module", srcs = ["linux_page.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_page_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_20", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_3", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linuxkpi_page_pool_module", srcs = ["linuxkpi_page_pool.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_pci_module", srcs = ["linux_pci.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:network_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/backlight:backlight_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_22", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_radix_module", srcs = ["linux_radix.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_radix_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_23"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_rcu_module", srcs = ["linux_rcu.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_24", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_schedule_module", srcs = ["linux_schedule.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_25", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_seq_buf_module", srcs = ["linux_seq_buf.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_26", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_0", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_seq_file_module", srcs = ["linux_seq_file.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_27", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_shmemfs_module", srcs = ["linux_shmemfs.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_shmemfs_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_28", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_3", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_shrinker_module", srcs = ["linux_shrinker.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_radix_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_29"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_simple_attr_module", srcs = ["linux_simple_attr.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_30", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_siphash_module", srcs = ["linux_siphash.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_mhi_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_31"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_skbuff_module", srcs = ["linux_skbuff.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_32", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_slab_module", srcs = ["linux_slab.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_33"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_timesub_module", srcs = ["linux_timesub.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_34"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_usb_module", srcs = ["linux_usb.c"],
+    deps = ["//sys/dev/usb:linuxkpi_kernel_linux_usb_headers", "//sys/vm:linuxkpi_kernel_linux_usb_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_35", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_work_module", srcs = ["linux_work.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_36", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_xarray_module", srcs = ["linux_xarray.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_xarray_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_37"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_linux_acpi_module", srcs = ["linux_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/vm:linuxkpi_kernel_linux_acpi_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_38", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_2", "//sys/contrib/ck:core_kernel_kern_intr_headers"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_hdmi_linux_hdmi_module", srcs = ["linux_hdmi.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual"], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_39", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_hdmi_linuxkpi_hdmikmod_module", srcs = ["linuxkpi_hdmikmod.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_hdmi_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_video_linux_hdmi_module", srcs = ["linux_hdmi.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual"], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_39", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_video_linux_aperture_module", srcs = ["linux_aperture.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_40", "//sys/compat/linuxkpi/dummy/include:compat_services_module_context_4"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_video_linux_cmdline_module", srcs = ["linux_cmdline.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_41"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_video_linuxkpi_videokmod_module", srcs = ["linuxkpi_videokmod.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_video_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_linux_80211_fullmac_module", srcs = ["linux_80211_fullmac.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net80211:wlan_kernel_ieee80211_freebsd_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/compat/linuxkpi/common/src:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_19"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_linux_80211_module", srcs = ["linux_80211.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net80211:linuxkpi_kernel_linux_80211_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/compat/linuxkpi/common/src:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_19"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_linux_80211_macops_module", srcs = ["linux_80211_macops.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/compat/linuxkpi/common/src:linuxkpi_kernel_linux_80211_macops_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_19"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_linuxkpi_80211_pm_module", srcs = ["linuxkpi_80211_pm.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/compat/linuxkpi/common/src:linuxkpi_kernel_linux_80211_macops_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_42"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_linux_mhi_module", srcs = ["linux_mhi.c"],
+    deps = ["//sys/vm:linuxkpi_kernel_linux_mhi_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:compat_services_module_context_43"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linuxkpi_wlan_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

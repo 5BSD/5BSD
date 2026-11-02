@@ -111,3 +111,13 @@ matches the complete original/native compiler-input review. See
 [Chelsio qualification](CHELSIO-MODULES-QUALIFICATION.md) and the retained
 option-audit-correction.json diagnostic in this cohort's review directory.
 No native input, artifact or core compiler-coverage result changed.
+
+### Separate-debug evidence scope correction
+
+The CTF/debug payload comparisons above concern stripped installed module ELF
+sections, including CTF. Separate debug files were independently CRC-checked;
+that did not prove DWARF parity between Make and Bazel. Direct separate-file
+comparisons now record five differing sections and leave semantic/source lookup
+qualification open. See [module debug qualification](MODULE-DEBUG-QUALIFICATION.md)
+for exact observed scope and required follow-up. Runtime ELF/CTF, compiler-input,
+installation and instrumentation results remain unchanged.

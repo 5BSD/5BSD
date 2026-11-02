@@ -25,7 +25,106 @@ bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/amd64/sgx:__pkg__"])
 
 bsd_source_headers(name = "device_families_module_context_1", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h", "linux_util.h"], includes = [],
     visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_ioctl.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/lindebugfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_1", hdrs = ["linux.h", "linux_common.h", "linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linprocfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linsysfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_3", hdrs = ["linux.h", "linux_common.h"], includes = [],
+    visibility = ["//sys/compat/linsysfs:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_4", hdrs = ["linux.h", "linux_common.h", "linux_mib.h", "linux_misc.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_5", hdrs = ["linux_mib.h", "linux_misc.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_6", hdrs = ["linux_emul.h", "linux_misc.h", "linux_mmap.h", "linux_persona.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_7", hdrs = ["linux_dtrace.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_8", hdrs = ["linux_emul.h", "linux_mib.h", "linux_misc.h", "linux_persona.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_9", hdrs = ["linux.h", "linux_dtrace.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_10", hdrs = ["linux.h", "linux_errno.h", "linux_errno.inc"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_11", hdrs = ["linux.h", "linux_common.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_12", hdrs = ["linux.h", "linux_common.h", "linux_mib.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_13", hdrs = ["linux.h", "linux_aio.h", "linux_common.h", "linux_emul.h", "linux_errno.h", "linux_file.h", "linux_mib.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_14", hdrs = ["linux.h", "linux_common.h", "linux_mib.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_15", hdrs = ["linux_emul.h", "linux_mmap.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_16", hdrs = ["linux.h", "linux_common.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/dev/ntsync:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "linux_common_linux_common_module", srcs = ["linux_common.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/compat/linux:compat_services_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_mib_module", srcs = ["linux_mib.c"],
+    deps = ["//sys/compat/linux:compat_services_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_mmap_module", srcs = ["linux_mmap.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:compat_services_module_context_11", "//sys/compat/linux:compat_services_module_context_6", "//sys/amd64/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_util_module", srcs = ["linux_util.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/compat/linux:compat_services_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_emul_module", srcs = ["linux_emul.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/compat/linux:compat_services_module_context_8", "//sys/amd64/linux:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_dummy_module", srcs = ["linux_dummy.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:compat_services_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_errno_module", srcs = ["linux_errno.c"],
+    deps = ["//sys/compat/linux:compat_services_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_netlink_module", srcs = ["linux_netlink.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:compat_services_module_context_5", "//sys/vm:usb_net_usie_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netlink:compat_services_module_context_0", "//sys/compat/linux:compat_services_module_context_11", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_if_module", srcs = ["linux_if.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:compat_services_module_context_6", "//sys/vm:usb_net_usie_headers", "//sys/compat/linux:compat_services_module_context_12"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_aio_module", srcs = ["linux_aio.c"],
+    deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:peripheral_devices_kernel_pci_user_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:compat_services_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux_common_linux_module", srcs = ["linux.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/netlink:compat_services_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/compat/linux:compat_services_module_context_14", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

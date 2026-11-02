@@ -13,4 +13,16 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_page_headers", hdrs = ["linux/b
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 
 bsd_source_headers(name = "rdma_module_context_0", hdrs = ["linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
-    visibility = ["//sys/dev/mlx5:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux/bug.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux/bug.h", "linux/init.h", "linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_3", hdrs = ["linux/bug.h", "linux/mempolicy.h", "linux/percpu-defs.h", "linux/percpu.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_source_headers(name = "compat_services_module_context_4", hdrs = ["linux/sysfb.h"], includes = ["."],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
