@@ -100,6 +100,32 @@ name matches among 2,466 Make final-link products, leaving 668 unmatched. Three
 auxiliary generator objects remain separate. These are known amd64 graph counts,
 not complete compiled/linked coverage.
 
+
+## Persistent disk-cache experiment disposition
+
+The uncommitted managed disk-cache candidate was removed after qualification.
+The A/B/A experiment did recover both exact original generator outputs with
+actual disk-cache-hit spawn records. However, an equal-length fault injected
+into one newly created CAS blob was accepted by Bazel 9.3.1 and copied into an
+immutable capture while the build returned success. The selected
+`--remote_verify_downloads` flag did not verify this local disk-cache blob.
+A successful action receipt therefore does not establish artifact integrity.
+
+The candidate, positive reuse review, injected fault and failed capture remain in
+`/usr/obj/usr/src/bazel-managed-action-cache-matrix-r1-20261102`.
+`candidate-disposition.json` records rejection; the original cache blob was
+restored from its hash-verified pre-injection backup. Separate cache-disabled B
+then A builds regenerated both headers. `cleanup-review.json` verifies that both
+final A immutable captures equal their pre-injection originals. Source files and
+earlier immutable captures were not modified by the fault injection.
+
+The maintained backend remains at its prior configuration without a managed disk
+cache. Future cache work must explicitly describe the trusted local filesystem
+boundary, distinguish local disk cache from remote download verification, and
+measure performance. This experiment does not qualify remote-cache behavior or
+protection against compromised root. It also does not justify scanning the entire
+cache on each build or adding a replacement cache service.
+
 ## Observability and remaining gates
 
 The bounded source-hash-bound scan finds existing call-shaped tracing/CTR markers
