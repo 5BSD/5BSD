@@ -69,8 +69,10 @@ directory is `sbin/mount_virtiofs`; no directory was removed. These are recursio
 observations, not native compilation or complete package coverage counts.
 
 The full world aggregate, all bootstrap phases and parent export/override
-coverage remain separate completion gates. Next userland conversion is the
-new selected mount_virtiofs product, with independent Make compiler/link/install
-references and safe pre-mount checks. Other architectures, static LLVM linking,
+coverage remain separate completion gates. Next userland work is reconciling selected products, actual native actions and
+aggregate ownership. mount_virtiofs already has a tracked native graph and
+October 26 component qualification, despite its later addition to recursive
+Make selection; it is not a newly identified missing conversion. Its post-merge
+revalidation obligations remain separate. Other architectures, static LLVM linking,
 full upstream debugger execution, final package creation and whole-system
 runtime qualification remain open. No host installation or reboot occurred.

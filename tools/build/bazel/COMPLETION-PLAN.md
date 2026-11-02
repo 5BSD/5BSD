@@ -628,5 +628,7 @@ safe wrappers and exact prior immutable payload hashes. Existing LLDB/tests
 selection supports a zero-payload disabled family and rejects an explicitly
 requested all-incompatible suite. Four original Make parent controls pass; fresh
 recursive world inventory observes 2,128 directories, not compilation coverage.
-See LLDB-FAMILY-QUALIFICATION.md. Next selected gap: sbin/mount_virtiofs; full
-world/bootstrap/package ownership and debugger execution remain open.
+See LLDB-FAMILY-QUALIFICATION.md. Next: reconcile actual selected product/action
+and aggregate coverage. sbin/mount_virtiofs already has a native graph and
+October 26 component evidence; later recursive selection is not a missing-native
+proof. Full world/bootstrap/package ownership and debugger execution remain open.
