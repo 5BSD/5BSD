@@ -9544,3 +9544,13 @@ defect. Qualify live BPF, bridge/interface, filtering, routing, RSS and VNET
 behavior with the matching isolated test kernel before adding new events.
 See NETWORK-KERNEL-QUALIFICATION.md for retained scan/input/artifact evidence;
 no runtime probe or controlled tracing-performance result is claimed.
+
+## WPA common library and hostapd control client (2026-11-02)
+
+The eleven common-library sources and one client source have no direct SDT/
+DTrace, FIDL or BSM audit markers in the source-bound scan. All 23 default
+ordinary/PIE/client code objects retain original text and reviewed input policy.
+See [common/client qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). Safe CLI
+and rtld tests do not qualify daemon control/events or authentication audit
+delivery; review shared instrumentation with the remaining WPA services.
+No runtime tracing policy or new probes were introduced.

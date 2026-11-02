@@ -10,6 +10,12 @@ actual runtime test methods; default 63 code objects and 5,229 prerequisite
 hashes match Make. Remaining WPA programs and full-system/cross/package/runtime
 and performance gates remain open.
 
+The [WPA common library and hostapd control client](WPA-COMMON-CLIENT-QUALIFICATION.md)
+add eleven library sources and one client, distinct ordinary/PIE archives and
+source-owned installation. Four configurations pass twelve immutable ELF
+comparisons and sixteen safe CLI/loader methods. Remaining WPA service/control
+behavior and complete system gates remain open.
+
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.

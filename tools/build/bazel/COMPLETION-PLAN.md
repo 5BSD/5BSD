@@ -23,8 +23,10 @@ aggregation, cross-build or runtime/performance gates.
 Userland completed native WPA utility/crypto private libraries and passphrase
 qualification across five declared configurations; see WPA-PRIVATE-QUALIFICATION.md
 for 25 immutable ELF comparisons, 35 runtime methods and source/input/install
-checks. Remaining WPA private libraries/programs and wireless/service behavior
-are open. The next upgrade checkpoint records prepared common/control-client
+checks. The common library and hostapd control client now also pass four profiles,
+twelve immutable ELF comparisons and sixteen safe CLI/loader methods; see
+WPA-COMMON-CLIENT-QUALIFICATION.md. Remaining WPA private libraries/programs and
+wireless/service behavior are open. The next upgrade checkpoint records prepared common/control-client
 Make references, which require post-upgrade revalidation. All remaining work
 and final completion requirements below apply.
 

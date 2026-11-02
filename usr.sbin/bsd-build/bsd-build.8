@@ -5138,3 +5138,13 @@ See
 .Pa tools/build/bazel/NETWORK-KERNEL-QUALIFICATION.md
 for code/CTF, compiler input and symbolic relocation checks.
 Complete kernel link, runtime, cross-build and performance gates remain open.
+.Pp
+The same format-5 WPA settings build the common library with distinct
+ordinary and PIE objects and the hostapd control client.
+See
+.Pa tools/build/bazel/WPA-COMMON-CLIENT-QUALIFICATION.md
+for four configuration profiles, immutable artifact and install comparisons,
+and safe CLI and loader tests.
+The client is assigned to the hostapd package.
+Control requests, daemon and wireless behavior, cross builds and complete
+system qualification remain separate open gates.
