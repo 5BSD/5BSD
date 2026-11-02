@@ -1,11 +1,13 @@
 /*
  * Unix-domain transport tests for the private VFSB protocol.
  */
+#include <sys/capsicum.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -165,6 +167,91 @@ ATF_TC_BODY(backend_connect_supports_long_parent_path, tc)
 	for (i = nitems(directories); i-- > 1;)
 		ATF_REQUIRE_EQ(rmdir(directories[i]), 0);
 	ATF_REQUIRE_EQ(rmdir(root), 0);
+}
+
+/*
+ * bhyve reconnects its virtio-fs backend from capability mode after a guest
+ * reset.  A path-based connect must reopen the socket's parent directory,
+ * which capability mode refuses (ECAPMODE); a connect relative to the
+ * directory opened beforehand, limited to CAP_CONNECTAT, succeeds.
+ */
+ATF_TC_WITHOUT_HEAD(capability_mode_reconnect_uses_directory_descriptor);
+ATF_TC_BODY(capability_mode_reconnect_uses_directory_descriptor, tc)
+{
+	struct sockaddr_un address;
+	struct pollfd pollfd;
+	cap_rights_t rights;
+	char directory[] = "/tmp/vfsb.XXXXXX";
+	char path[sizeof(address.sun_path)];
+	char *name;
+	bool connecting;
+	pid_t child;
+	int accepted, client, dfd, error, listener, status;
+
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	ATF_REQUIRE(snprintf(path, sizeof(path), "%s/backend", directory) > 0);
+	listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	ATF_REQUIRE(listener >= 0);
+	memset(&address, 0, sizeof(address));
+	address.sun_family = AF_UNIX;
+	ATF_REQUIRE(strlcpy(address.sun_path, path,
+	    sizeof(address.sun_path)) < sizeof(address.sun_path));
+	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
+	    strlen(address.sun_path) + 1);
+	ATF_REQUIRE_EQ(bind(listener, (struct sockaddr *)&address,
+	    address.sun_len), 0);
+	ATF_REQUIRE_EQ(listen(listener, 2), 0);
+
+	ATF_REQUIRE_EQ(virtio_fs_backend_dir_open(path, &dfd, &name), 0);
+	ATF_CHECK_STREQ(name, "backend");
+	cap_rights_init(&rights, CAP_CONNECTAT);
+	ATF_REQUIRE_EQ(cap_rights_limit(dfd, &rights), 0);
+	ATF_CHECK_EQ(virtio_fs_backend_connect_start_at(dfd, "a/b", geteuid(),
+	    getegid(), &client, &connecting), EINVAL);
+	ATF_CHECK_EQ(client, -1);
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (cap_enter() != 0)
+			_exit(10);
+		/* The reconnect bhyve performed before this fix. */
+		error = virtio_fs_backend_connect_start(path, geteuid(),
+		    getegid(), &client, &connecting);
+		if (error != ECAPMODE)
+			_exit(11);
+		error = virtio_fs_backend_connect_start_at(dfd, name,
+		    geteuid(), getegid(), &client, &connecting);
+		if (error != 0)
+			_exit(12);
+		if (connecting) {
+			pollfd = (struct pollfd) {
+				.fd = client,
+				.events = POLLOUT,
+			};
+			if (poll(&pollfd, 1, 5000) != 1 ||
+			    virtio_fs_backend_connect_finish(client,
+			    geteuid(), getegid()) != 0)
+				_exit(13);
+		}
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(waitpid(child, &status, 0), child);
+	ATF_REQUIRE_MSG(WIFEXITED(status), "status %#x", status);
+	ATF_CHECK_MSG(WEXITSTATUS(status) != 11,
+	    "path-based connect did not fail with ECAPMODE");
+	ATF_CHECK_EQ_MSG(WEXITSTATUS(status), 0,
+	    "capability-mode connect failed at step %d", WEXITSTATUS(status));
+	pollfd = (struct pollfd) { .fd = listener, .events = POLLIN };
+	ATF_REQUIRE_EQ(poll(&pollfd, 1, 0), 1);
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+	ATF_CHECK_EQ(close(accepted), 0);
+	ATF_CHECK_EQ(close(dfd), 0);
+	free(name);
+	ATF_CHECK_EQ(close(listener), 0);
+	ATF_CHECK_EQ(unlink(path), 0);
+	ATF_CHECK_EQ(rmdir(directory), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(peer_authentication);
@@ -768,6 +855,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, api_errors_and_peer_close);
 	ATF_TP_ADD_TC(tp, backend_connect_is_bounded_and_authenticated);
 	ATF_TP_ADD_TC(tp, backend_connect_supports_long_parent_path);
+	ATF_TP_ADD_TC(tp, capability_mode_reconnect_uses_directory_descriptor);
 	ATF_TP_ADD_TC(tp, peer_authentication);
 	ATF_TP_ADD_TC(tp, frame_round_trip_and_nonblocking);
 	ATF_TP_ADD_TC(tp, truncation_and_bad_frames);

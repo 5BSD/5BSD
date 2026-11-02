@@ -43,6 +43,14 @@ int	virtio_fs_connection_connect_required(const char *, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
 	    uint32_t, virtio_fs_queue_complete_cb, void *,
 	    struct virtio_fs_connection **);
+/*
+ * As connect_required(), relative to a directory descriptor opened by
+ * virtio_fs_backend_dir_open(); usable after cap_enter(2).
+ */
+int	virtio_fs_connection_connect_required_at(int, const char *, uid_t,
+	    gid_t, const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
+	    uint32_t, virtio_fs_queue_complete_cb, void *,
+	    struct virtio_fs_connection **);
 int	virtio_fs_connection_adopt(int, uid_t, gid_t,
 	    const struct virtio_fs_backend_hello *, uint32_t, uint32_t,
 	    virtio_fs_queue_complete_cb, void *,
