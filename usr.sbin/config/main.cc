@@ -117,6 +117,7 @@ main(int argc, char **argv)
 	struct includepath* ipath;
 	int printmachine;
 	bool printident = false;
+	bool input_manifest = false;
 	bool cust_dest = false;
 
 	printmachine = 0;
@@ -133,7 +134,7 @@ main(int argc, char **argv)
 	STAILQ_INIT(&hints);
 	STAILQ_INIT(&envvars);
 	STAILQ_INIT(&optfntab);
-	while ((ch = getopt(argc, argv, "Cd:giI:mps:Vvx:")) != -1)
+	while ((ch = getopt(argc, argv, "Cd:giI:Jmps:Vvx:")) != -1)
 		switch (ch) {
 		case 'C':
 			filebased = 1;
@@ -159,6 +160,9 @@ main(int argc, char **argv)
 			ipath->path = optarg;
 			SLIST_INSERT_HEAD(&includepath, ipath, path_next);
 			break;
+		case 'J':
+			input_manifest = true;
+			break;
 		case 'm':
 			printmachine = 1;
 			break;
@@ -183,6 +187,9 @@ main(int argc, char **argv)
 		}
 	argc -= optind;
 	argv += optind;
+
+	if (input_manifest && (printident || printmachine || kernfile != NULL))
+		errx(EX_USAGE, "-J requires configuration file generation");
 
 	if (kernfile != NULL) {
 		kernconfdump(kernfile);
@@ -264,6 +271,8 @@ main(int argc, char **argv)
 	configfile();			/* put config file into kernel*/
 	options();			/* make options .h files */
 	makefile();			/* build Makefile */
+	if (input_manifest)
+		kernel_input_manifest();
 	makeenv();			/* build env.c */
 	makehints();			/* build hints.c */
 	headers();			/* make a lot of .h files */
@@ -309,7 +318,7 @@ usage(void)
 {
 
 	fprintf(stderr,
-	    "usage: config [-CgimpV] [-d destdir] [-s srcdir] sysname\n");
+	    "usage: config [-CgiJmpV] [-d destdir] [-s srcdir] sysname\n");
 	fprintf(stderr, "       config -x kernel\n");
 	exit(EX_USAGE);
 }

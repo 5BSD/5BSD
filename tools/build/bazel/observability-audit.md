@@ -9910,3 +9910,10 @@ relocations match with hash-bound diagnostic filenames. The safe producer
 checks never attach/launch a debugging target or activate tracing. This does
 not establish liblldb/LLDB debugger or tracing behavior; those remain open.
 See LLDB-GENERATORS-QUALIFICATION.md for actual and cached execution bindings.
+
+## config inventory API (2026-11-02)
+
+The new config -J parser inventory is build metadata, with no kernel C/assembly,
+DTrace probe or runtime audit changes. Tests exercise success and failure paths
+using Make-built and native config; native linker/runtime observability remains
+an open full-system gate. See KERNEL-CONFIG-INVENTORY-QUALIFICATION.md.

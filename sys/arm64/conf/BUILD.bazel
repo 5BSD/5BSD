@@ -199,3 +199,7 @@ bsd_tree_file(name = "opt_sched", tree = ":generic_config", member = "opt_sched.
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_sched_header", hdrs = [":opt_sched"],
     strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+
+# Parser-owned resolved input inventory, distinct from generated build files.
+filegroup(name = "generic_input_manifest", srcs = [":generic_config"],
+    output_group = "manifest", visibility = ["//visibility:public"])

@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd April 9, 2021
+.Dd November 2, 2026
 .Dt CONFIG 8
 .Os
 .Sh NAME
@@ -33,7 +33,7 @@
 .Nd build system configuration files
 .Sh SYNOPSIS
 .Nm
-.Op Fl CVgimpv
+.Op Fl CVgiJmpv
 .Op Fl I Ar path
 .Op Fl d Ar destdir
 .Op Fl s Ar srcdir
@@ -75,6 +75,23 @@ for any file included by the
 .Ic include
 directive.
 This option may be specified more than once.
+.It Fl J
+Write
+.Pa kernel-inputs.json
+in the configuration output directory.
+This versioned JSON inventory records the parser's resolved file selection in
+order, including source origins, object names, flags and custom recipe metadata.
+Entries marked
+.Cm no-obj
+have a null object name.
+The inventory does not evaluate custom recipe text or include the kernel build
+backend's startup objects, generated system objects or final linker policy.
+Consumers must supply those declared build inputs separately.
+This option requires normal configuration generation and cannot be combined with
+.Fl i ,
+.Fl m
+or
+.Fl x .
 .It Fl d Ar destdir
 Use
 .Ar destdir

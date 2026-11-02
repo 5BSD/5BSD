@@ -244,6 +244,7 @@ int	yylex(void);
 int	yyparse(void);
 void	options(void);
 void	makefile(void);
+void	kernel_input_manifest(void);
 void	makeenv(void);
 void	makehints(void);
 void	headers(void);

@@ -476,3 +476,14 @@ not installed LLDB completion. Next: 756-source private liblldb, two CLI option
 headers, programs, tests/install/package context and ancestor MK_LLDB selection.
 See LLDB-GENERATORS-QUALIFICATION.md; original ordinary-leaf and strict input
 failures are retained. No host installation or debugger activation occurred.
+
+## Parser-owned kernel input inventory (2026-11-02)
+
+`config -J` now exports the resolved ordered input table; native config exposes
+it as an explicit manifest without Make discovery. All 12 architecture/option
+cases match independent Make OBJS exactly; custom prefix/no-obj/JSON escaping,
+unchanged ordinary outputs, deterministic writes, failed writes and shortcut
+rejection pass using both Make-built and captured native config. Three native
+architecture manifests exactly match Make. See
+KERNEL-CONFIG-INVENTORY-QUALIFICATION.md. Next remains native aggregate coverage
+validation/link/post-processing/install; no full kernel/world completion claim.

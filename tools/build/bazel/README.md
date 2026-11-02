@@ -47632,3 +47632,14 @@ Native LLDB TableGen produces 19 original headers with exact Make output, four
 compiler-code matches and explicit bootstrap/runtime limits; see
 [LLDB-GENERATORS-QUALIFICATION.md](LLDB-GENERATORS-QUALIFICATION.md). The private
 library, CLI programs and installed debugger remain open.
+
+## Parser-owned kernel input inventory (2026-11-02)
+
+`config -J` now exports the resolved ordered input table; native config exposes
+it as an explicit manifest without Make discovery. All 12 architecture/option
+cases match independent Make OBJS exactly; custom prefix/no-obj/JSON escaping,
+unchanged ordinary outputs, deterministic writes, failed writes and shortcut
+rejection pass using both Make-built and captured native config. Three native
+architecture manifests exactly match Make. See
+KERNEL-CONFIG-INVENTORY-QUALIFICATION.md. Next remains native aggregate coverage
+validation/link/post-processing/install; no full kernel/world completion claim.
