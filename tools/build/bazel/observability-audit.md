@@ -9522,3 +9522,15 @@ compiled interface/relocation evidence. Packet, ICMPv6, neighbor discovery,
 routing/fragmentation/session event delivery and audit remain matching-kernel
 runtime gates. No host network/tracing activation or new hot-path probes were
 introduced; shared coverage and measured overhead must guide further changes.
+
+## WPA private libraries and passphrase (2026-11-02)
+
+The selected 12 utility, 19 default crypto and one passphrase source files have
+no direct DTrace/SDT schemas, FIDL generation or BSM audit calls in the bounded
+source scan. Ordinary/PIE builds preserve all 63 default object code sections
+and reviewed macro/warning policy. See [WPA qualification](WPA-PRIVATE-QUALIFICATION.md)
+for source/header/relocation bindings and runtime input/TTY checks. This does
+not qualify daemon control, wireless authentication events or security audit
+delivery. Review shared instrumentation and actual event delivery when the
+remaining supplicant/hostapd services are migrated; no invented probes or host
+tracing/service activation was added.

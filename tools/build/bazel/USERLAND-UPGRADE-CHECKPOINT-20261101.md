@@ -1,5 +1,28 @@
 # Userland upgrade stopping point — 2026-11-01
 
+## Update at the next upgrade stopping point (2026-11-02)
+
+At the user's request, userland work is paused for the November 2 kernel
+upgrade. All owned build/reference/VM processes are terminal. No host install
+or reboot was performed. Resume only after revalidating the changed host and
+execution SDK, then continue the common/control-client tranche below.
+
+The original stopping-point record below is historical. Native WPA private
+libraries and wpa_passphrase are now qualified as described in
+[WPA-PRIVATE-QUALIFICATION.md](WPA-PRIVATE-QUALIFICATION.md), including five
+configuration profiles, 25 immutable ELF comparisons and 35 actual runtime test
+methods. The focused source termios correction is committed separately as
+6c06060029c. Make remains production/default; complete WPA/system/cross/runtime
+and performance gates remain open.
+
+Next intended tranche is wpacommon (eleven sources) and hostapd_cli (one source).
+Under /usr/obj/usr/src, bazel-wpa-common-reference-matrix-20261102.json and
+bazel-wpa-hostapd-cli-reference-matrix-20261102.json record four successful
+independent Make configurations each. bazel-wpa-common-recipe-capture-20261102
+records 22 default ordinary/PIE recipes with unchanged object bytes. No native
+common/control-client declaration was added or tested. Revalidate host, source
+and SDK inputs after the next upgrade before using these references.
+
 User requested all work committed and agents stopped before a new kernel
 installation. No upgrade, installation, reboot or host service/device action was
 performed by this worker. Make remains production/default; BIP remains excluded.

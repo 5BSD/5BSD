@@ -520,3 +520,9 @@ config_setting(name = "dtrace_optimized_enabled", flag_values = {":dtrace_optimi
 # Feature support switches used by PPP's actual source/install graph.
 bool_flag(name = "pam_support", build_setting_default = True, visibility = ["//visibility:public"])
 bool_flag(name = "radius_support", build_setting_default = True, visibility = ["//visibility:public"])
+
+# Source-owned MK_WPA_SUPPLICANT_EAPOL and MK_INET6 selections for native WPA.
+bool_flag(name = "wpa_supplicant_eapol", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "wpa_supplicant_eapol_enabled", flag_values = {":wpa_supplicant_eapol": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "inet6", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet6_enabled", flag_values = {":inet6": "true"}, visibility = ["//visibility:public"])

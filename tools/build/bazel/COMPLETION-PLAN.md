@@ -20,8 +20,13 @@ IPV4-KERNEL-QUALIFICATION.md. Full kernel link/network runtime gates remain open
 Twenty-nine selected IPv6 objects now pass corresponding native object/input
 checks; see IPV6-KERNEL-QUALIFICATION.md. These cohorts do not close full kernel
 aggregation, cross-build or runtime/performance gates.
-Userland resumes from USERLAND-UPGRADE-CHECKPOINT-20261101.md with fresh WPA
-references. All remaining work and final completion requirements below apply.
+Userland completed native WPA utility/crypto private libraries and passphrase
+qualification across five declared configurations; see WPA-PRIVATE-QUALIFICATION.md
+for 25 immutable ELF comparisons, 35 runtime methods and source/input/install
+checks. Remaining WPA private libraries/programs and wireless/service behavior
+are open. The next upgrade checkpoint records prepared common/control-client
+Make references, which require post-upgrade revalidation. All remaining work
+and final completion requirements below apply.
 
 ## Work order
 

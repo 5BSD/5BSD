@@ -5114,3 +5114,18 @@ See
 for actual compiler/input, code, CTF and symbolic relocation checks.
 Complete kernel, cross-build, network runtime and performance gates
 remain open.
+.Pp
+The existing format-5 native target API builds WPA private utility and crypto
+libraries with distinct ordinary and PIE objects, and the passphrase program.
+Typed build settings
+.Va //tools/build/bazel/config:openssl ,
+.Va //tools/build/bazel/config:wpa_supplicant_eapol ,
+and
+.Va //tools/build/bazel/config:inet6
+select the maintained source configuration.
+See
+.Pa tools/build/bazel/WPA-PRIVATE-QUALIFICATION.md
+for five profile builds, actual input and ELF comparisons, installation checks
+and seven runtime input/loader methods per profile.
+Remaining WPA programs, wireless services, cross builds, full packages and
+controlled performance results are separate open gates.

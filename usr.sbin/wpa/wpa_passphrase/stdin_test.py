@@ -21,7 +21,7 @@ if OPTIONS.program is None:
                  'secure/lib/libssl', 'secure/lib/libcrypto', 'lib/libthr']]
 else:
     PROGRAM = OPTIONS.program.resolve(strict=True)
-    LIBRARIES = OPTIONS.library_directory
+    LIBRARIES = [path.resolve(strict=True) for path in OPTIONS.library_directory]
 ENV = {'PATH': '', 'LC_ALL': 'C', 'LD_LIBRARY_PATH': ':'.join(map(str, LIBRARIES))}
 SSID = 'IEEE'
 PASSWORD = 'password'
@@ -36,6 +36,28 @@ class Input(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('\tpsk=' + EXPECTED + '\n', result.stdout)
         self.assertIn('\tssid="' + SSID + '"\n', result.stdout)
+
+    def test_declared_runtime(self):
+        # FreeBSD rtld's documented trace interface resolves DSOs without
+        # entering main. Reject a dependency found outside our explicit dirs.
+        trace = dict(ENV, LD_TRACE_LOADED_OBJECTS='1',
+                     LD_TRACE_LOADED_OBJECTS_FMT1='%o|%p\\n',
+                     LD_TRACE_LOADED_OBJECTS_FMT2='%o|%p\\n')
+        result = subprocess.run([str(PROGRAM)], env=trace,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        loaded = []
+        for line in result.stdout.splitlines():
+            fields = line.split('|')
+            self.assertEqual(len(fields), 2, line)
+            name, path = fields
+            if name == path == '[vdso]':
+                continue  # Kernel-provided virtual object, not a file lookup.
+            self.assertIn(Path(path).parent, LIBRARIES, line)
+            self.assertTrue(Path(path).is_file(), line)
+            loaded.append(name)
+        self.assertTrue(loaded, 'rtld did not report any dynamic dependencies')
 
     def test_argument(self):
         result = subprocess.run([str(PROGRAM), SSID, PASSWORD], env=ENV,

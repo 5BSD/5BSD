@@ -3,6 +3,13 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have
+native ordinary/PIE source ownership, declared OpenSSL/EAPOL/IPv6 selections and
+installation metadata. Five profiles pass 25 immutable ELF comparisons and 35
+actual runtime test methods; default 63 code objects and 5,229 prerequisite
+hashes match Make. Remaining WPA programs and full-system/cross/package/runtime
+and performance gates remain open.
+
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
