@@ -2520,8 +2520,11 @@ load_kld()
 		# Once rc.d/kld has started the broker, kldload(2) is refused
 		# and the load goes through the broker.  Before then the direct
 		# load is the only path: sysextctl would start the broker early.
+		# Nothing reports "started" without activating it, so look for
+		# the broker's process; only root or its user (capability, as in
+		# its manifest) can run one under that user and name.
 		if [ "$_loader" = kldload ] && $_broker &&
-		    pgrep -q -x BSDExtension; then
+		    pgrep -q -x -U capability BSDExtension; then
 			if sysextctl load "$1" >/dev/null; then
 				_loaded=true
 			fi

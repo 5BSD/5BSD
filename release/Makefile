@@ -289,11 +289,12 @@ dvd: pkgbase-repo-dir
 .endif
 
 # Modules the loader loads on every boot (stand/lua/config.lua) that the
-# installer does not need: the Linux ABI, vmm and the DTrace user providers.
-# The rest of that set (ZFS, DTrace, pf and the others amd64 GENERIC compiles
-# in) is still loaded by a kernel that lacks it, on every architecture.
+# installer does not need: the Linux ABI, vmm, the DTrace user providers and
+# uvideo.  The rest of that set (ZFS, DTrace, pf and the others amd64 GENERIC
+# compiles in) is still loaded by a kernel that lacks it, on every
+# architecture.
 INSTALLER_NOLOAD_KMODS=	linux_common linux64 linprocfs linsysfs vmm \
-			hypertrace kinst fasttrap
+			hypertrace kinst fasttrap uvideo
 
 # These media targets are directories, so without explicit file dependencies
 # they can remain stale across installer/release script edits.

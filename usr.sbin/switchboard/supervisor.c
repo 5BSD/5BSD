@@ -376,7 +376,7 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 		svc->rc_enable_probe = false;
 		svc->state = SVC_STATE_STOPPED;
 		if (!ok) {
-			syslog(LOG_NOTICE, "rc unit %s: not enabled in rc.conf; "
+			syslog(LOG_INFO, "rc unit %s: not enabled in rc.conf; "
 			    "not started", svc->manifest.label);
 			return;
 		}
