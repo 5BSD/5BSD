@@ -19,14 +19,15 @@ cc_library(name = "dispatcher_objects", srcs = [":default_dispatch"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher_objects", pic = False,
     visibility = ["//visibility:public"])
-# No rescue executable/install/package is declared before application objects,
+# No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# First supported combined-object stage, bounded to three real applications.
-_CORE_PROGRAMS = ["cat", "echo", "head"]
-_CORE_OBJECTS = {"cat": "//bin/cat:rescue_compiler_outputs", "echo": "//bin/echo:rescue_compiler_outputs", "head": "//usr.bin/head:rescue_compiler_outputs"}
+# Supported combined-object stage, bounded to eight real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ["cat", "ed", "echo", "expr", "getfacl", "pwd", "test", "head"]]
+_CORE_OBJECTS = {p: "//" + ("usr.bin/head" if p == "head" else "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
-    object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS}, emit_stubs = True)
+    object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS},
+    aliases = {p: ALIASES[p] for p in _CORE_PROGRAMS if p in ALIASES}, emit_stubs = True)
 filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "metadata")
 [filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + p) for p in _CORE_PROGRAMS]
 # Original generated-Make stub recipe uses the parent no-SSP/no-debug policy.
@@ -46,7 +47,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real three-program executable, with native static libc and startup.
+# Bounded real eight-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],

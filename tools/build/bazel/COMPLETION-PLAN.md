@@ -1061,3 +1061,18 @@ section-archive versus separate provider/DOF and final DSO payload/installed-tes
 parity. Then expand real rescue applications, static libraries, selected options,
 complete installation/pkgbase and full world/bootstrap; this bounded correction
 does not close those gates.
+
+### Real eight-program rescue integration (November 2, 2026)
+
+[Evidence](RESCUE-EIGHT-PROGRAM-QUALIFICATION.md): five more original RESCUE
+variants add 11 application objects and a genuine no-header expr Yacc producer;
+current 17 compiler actions have 691 consumed occurrences per side. One generated C
+pair differs only 38 exact #line filename fields. Eight original stub/link/hide
+pipelines match runtime sections/relocations/symbols, with one explicit pwd
+filename control; 21 actual runtime methods pass. An identical-input original
+Make control reproduces main, eight stubs/hidden objects and the complete static ELF.
+Next expand the remaining selected applications/static libraries and preserve
+actual generator, object order, per-source policy, aliases and installation
+contracts. All 103 programs, full independent world/library parity, rescue install/
+pkgbase, options/architectures/bootstrap/hardware/publication remain open;
+libutil's archive/provider/final DSO and installed-test gates remain separate.

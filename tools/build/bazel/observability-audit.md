@@ -10374,3 +10374,18 @@ recovery, DMA/completion and controller reset/lifecycle with useful shared event
 avoid per-I/O logs and payload disclosure. Four original binary objects have no
 source scan coverage; they remain explicit vendor objects. See
 STORAGE-ADAPTERS-MODULES-QUALIFICATION.md for scope and retained evidence.
+
+## Eight-program rescue subset (November 2, 2026)
+
+No production C/probe sources changed. Actual RESCUE variants preserve original
+source probe exclusions; normal instrumented programs stay separate. Expr uses
+the actual original no-header Yacc mode, with exact generated body except 38
+producer #line filename fields. All 17 current compiler policies/691 consumed
+occurrences and eight original ordered stub/link/crunchide pipelines are bound
+to actual bytes. Original Make's identical-input whole static ELF matches native,
+including compiled instrumentation contributed by native archives. Twenty-one
+real methods execute private files/stdin and disable DOF initialization before
+each product starts. No live events or complete original-library/rescue/install
+claim. Pwd keeps canonical relative __FILE__ diagnostics; its untouched Make
+mismatch and independent compiler filename-policy control are retained. See
+RESCUE-EIGHT-PROGRAM-QUALIFICATION.md for current/cached evidence and all gates.

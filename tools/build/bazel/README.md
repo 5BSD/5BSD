@@ -48131,3 +48131,12 @@ bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remai
 open. Maintained build-bsd format-5 inputs carry this cohort; module helper and
 docs are updated without new CLI/security/publication policy. Make stays default;
 BIP remains excluded.
+
+The [eight-program rescue subset](RESCUE-EIGHT-PROGRAM-QUALIFICATION.md) adds real
+ed/expr/getfacl/pwd/test compilation and original red/[ aliases. All 17 current
+compiler actions/691 consumed occurrences and eight original combined pipelines
+are audited; 21 real runtime methods pass. Original generated Make with identical
+accepted native objects/libraries/startup reproduces the complete ELF byte for
+byte. Pwd's ordinary diagnostic filename difference and its separate Make
+filename-policy control remain explicit. This is not the full 103-program rescue
+selection, complete original-library parity, installation or pkgbase.

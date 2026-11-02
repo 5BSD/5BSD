@@ -5324,3 +5324,15 @@ values and the separate negative compiler control rejects an incorrect level.
 This source-rule feature introduces no new frontend option.
 It does not establish full libutil archive/provider, installed-library or
 complete rescue parity.
+.Pp
+The bounded native
+.Cm //rescue/rescue:rescue_core
+target combines cat, echo, ed, expr, getfacl, pwd, test and head.
+It preserves the original red and bracket aliases.
+.Cm //rescue/rescue:core_runtime_test
+executes private-file and standard-input integration cases against that static
+executable.
+These targets use ordinary format-5 inputs and declared native sources, parser,
+crunchide transforms, archives and startup objects.
+They do not represent the complete rescue selection.
+They do not install host rescue files.
