@@ -265,3 +265,27 @@ load(":nodes.bzl", _NEW_NODE_COMMON_DEPS = "NETGRAPH_NODE_DEPS", _NETGRAPH_NEW_N
     deps = [":" + node.name + "_node_headers"] + _NEW_NODE_COMMON_DEPS + node.deps +
         ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in node.options],
 ) for arch in ["arm64", "riscv"] for node in _NETGRAPH_NEW_NODES]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_ng_ubt_headers", hdrs = ["netgraph.h", "ng_message.h", "ng_parse.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_hci_cmds_headers", hdrs = ["netgraph.h", "ng_message.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_socket_headers", hdrs = ["netgraph.h", "ng_message.h", "ng_socket.h", "ng_socketvar.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC network policy built-ins.
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_base", srcs = ["ng_base.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_ng_base_headers", "//sys/net:network_policy_kernel_ng_base_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_parse", srcs = ["ng_parse.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_parse_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netinet:network_policy_kernel_nhop_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_socket", srcs = ["ng_socket.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_ng_base_headers", "//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_socket_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])

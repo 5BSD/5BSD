@@ -113,3 +113,22 @@ bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["cc.h"],
 # Native filesystem/RPC physical prerequisites; identical contexts share providers.
 bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["cc.h"],
     visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_cc_headers", hdrs = ["cc.h", "cc_module.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_cc_cubic_headers", hdrs = ["cc.h", "cc_cubic.h", "cc_module.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_netlink_sock_diag_headers", hdrs = ["cc.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC network policy built-ins.
+amd64_generic_kernel_objects(name = "generic_network_policy_cc", srcs = ["cc.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_cc_headers", "//sys/netinet:network_policy_kernel_cc_headers", "//sys/netinet/cc:network_policy_kernel_cc_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_cc_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_cc_cubic", srcs = ["cc_cubic.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_cc_cubic_headers", "//sys/netinet:network_policy_kernel_cc_cubic_headers", "//sys/netinet/cc:network_policy_kernel_cc_cubic_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])

@@ -14,3 +14,60 @@ amd64_generic_module_objects(srcs = _DUMMYNET_SOURCES, deps = _DUMMYNET_DEPS + [
 
 cc_library(name = "packet_headers", hdrs = ["dn_packet.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_dn_aqm_codel_headers", hdrs = ["dn_aqm.h", "dn_aqm_codel.h", "dn_heap.h", "dn_packet.h", "dn_sched.h", "ip_dn_private.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_dn_aqm_pie_headers", hdrs = ["dn_aqm.h", "dn_aqm_pie.h", "dn_heap.h", "dn_packet.h", "dn_sched.h", "ip_dn_private.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_dn_heap_headers", hdrs = ["dn_heap.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_dn_sched_fifo_headers", hdrs = ["dn_aqm.h", "dn_heap.h", "dn_packet.h", "dn_sched.h", "ip_dn_private.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_dn_sched_fq_codel_headers", hdrs = ["dn_aqm.h", "dn_aqm_codel.h", "dn_heap.h", "dn_packet.h", "dn_sched.h", "dn_sched_fq_codel.h", "dn_sched_fq_codel_helper.h", "ip_dn_private.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_pf_dummynet_headers", hdrs = ["dn_packet.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC network policy built-ins.
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_aqm_codel", srcs = ["dn_aqm_codel.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_aqm_codel_headers", "//sys/netinet:network_policy_kernel_dn_aqm_codel_headers", "//sys/netinet6:network_policy_kernel_netlink_sock_diag_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_aqm_codel_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_aqm_pie", srcs = ["dn_aqm_pie.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_aqm_codel_headers", "//sys/netinet:network_policy_kernel_dn_aqm_codel_headers", "//sys/netinet6:network_policy_kernel_netlink_sock_diag_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_aqm_pie_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_heap", srcs = ["dn_heap.c"],
+    deps = ["//sys/netpfil/dummynet:network_policy_kernel_dn_heap_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_fifo", srcs = ["dn_sched_fifo.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_fq_codel", srcs = ["dn_sched_fq_codel.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fq_codel_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fq_codel_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_fq_pie", srcs = ["dn_sched_fq_pie.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fq_codel_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_aqm_pie_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_prio", srcs = ["dn_sched_prio.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_qfq", srcs = ["dn_sched_qfq.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_rr", srcs = ["dn_sched_rr.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_dn_sched_wf2q", srcs = ["dn_sched_wf2q.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ip_dummynet", srcs = ["ip_dummynet.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet:network_policy_kernel_dn_sched_fifo_headers", "//sys/netinet6:network_policy_kernel_nhop_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ip_dn_io", srcs = ["ip_dn_io.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_ip_dn_io_headers", "//sys/netinet:network_policy_kernel_dn_aqm_codel_headers", "//sys/netinet6:network_policy_kernel_netlink_sock_diag_headers", "//sys/netpfil/dummynet:network_policy_kernel_dn_sched_fifo_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])

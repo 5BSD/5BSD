@@ -182,3 +182,9 @@ bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_offload_headers", hdrs = ["_cry
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_en_hw_tls_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_ipsec_pcb_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_keysock_headers", hdrs = ["_cryptodev.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])

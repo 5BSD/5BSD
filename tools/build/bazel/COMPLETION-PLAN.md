@@ -379,3 +379,7 @@ full PAM aggregation/pam.d, installed original authentication/login/SSH tests,
 other LOCALBASE/options/architectures and whole-world/pkgbase/runtime gates open.
 Next reconcile the actual configured userland action/install queue from the
 2,127-directory Make survey; source BUILD presence alone is not coverage.
+
+## Network stack and PF built-in checkpoint (2026-11-02)
+
+73 additional native Network stack and PF built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See NETWORK-POLICY-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.

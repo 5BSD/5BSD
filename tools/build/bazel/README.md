@@ -47577,3 +47577,5 @@ combined `/usr/lib/libpam.a` product: ordered original modules, preserved DTrace
 compiler/input/relocation proof, reduced options, install metadata and two fully
 static registry tests covering 24/20 modules. Authentication, full PAM/world/pkgbase
 composition, other configurations/architectures and system runtime remain open.
+
+[NETWORK-POLICY-KERNEL-QUALIFICATION.md](NETWORK-POLICY-KERNEL-QUALIFICATION.md) records 73 additional native Network stack and PF built-ins, original option/interface/USB generators, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.

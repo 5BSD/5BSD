@@ -16,3 +16,91 @@ cc_library(name = "kernel_headers", hdrs = ["drivers/ubt/ng_ubt_var.h", "hci/ng_
     deps = [":kernel_headers"] + (["//sys/dev/usb:bluetooth_headers",
         "//sys/" + arch + "/conf:generic_opt_bus_header", "//sys/" + arch + "/conf:generic_opt_usb_header"] if node.usb else []))
  for arch in ["arm64", "riscv"] for node in BLUETOOTH_MODULES]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_ng_ubt_headers", hdrs = ["drivers/ubt/ng_ubt_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_hci_cmds_headers", hdrs = ["hci/ng_hci_cmds.h", "hci/ng_hci_evnt.h", "hci/ng_hci_misc.h", "hci/ng_hci_ulpi.h", "hci/ng_hci_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_hci_main_headers", hdrs = ["hci/ng_hci_cmds.h", "hci/ng_hci_evnt.h", "hci/ng_hci_misc.h", "hci/ng_hci_prse.h", "hci/ng_hci_ulpi.h", "hci/ng_hci_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_l2cap_cmds_headers", hdrs = ["l2cap/ng_l2cap_cmds.h", "l2cap/ng_l2cap_evnt.h", "l2cap/ng_l2cap_llpi.h", "l2cap/ng_l2cap_misc.h", "l2cap/ng_l2cap_ulpi.h", "l2cap/ng_l2cap_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_ng_l2cap_main_headers", hdrs = ["l2cap/ng_l2cap_cmds.h", "l2cap/ng_l2cap_evnt.h", "l2cap/ng_l2cap_llpi.h", "l2cap/ng_l2cap_misc.h", "l2cap/ng_l2cap_prse.h", "l2cap/ng_l2cap_ulpi.h", "l2cap/ng_l2cap_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC network policy built-ins.
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_bluetooth", srcs = ["common/ng_bluetooth.c"],
+    deps = ["//sys/netgraph/bluetooth/include:network_policy_kernel_ng_bluetooth_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_ubt", srcs = ["drivers/ubt/ng_ubt.c"],
+    deps = ["//sys/dev/usb:device_id_headers", "//sys/dev/usb:network_policy_kernel_ng_ubt_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_ubt_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/kern:network_policy_kernel_bus_if_headers", "//sys/kern:network_policy_kernel_device_if_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header", "//sys/amd64/conf:network_policy_kernel_opt_usb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_ubt_intel", srcs = ["drivers/ubt/ng_ubt_intel.c"],
+    deps = ["//sys/dev/usb:device_id_headers", "//sys/dev/usb:network_policy_kernel_ng_ubt_intel_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_ubt_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/kern:network_policy_kernel_bus_if_headers", "//sys/kern:network_policy_kernel_device_if_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header", "//sys/amd64/conf:network_policy_kernel_opt_usb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_ubt_rtl", srcs = ["drivers/ubt/ng_ubt_rtl.c"],
+    deps = ["//sys/dev/usb:device_id_headers", "//sys/dev/usb:network_policy_kernel_ng_ubt_rtl_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_ubt_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/kern:network_policy_kernel_bus_if_headers", "//sys/kern:network_policy_kernel_device_if_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header", "//sys/amd64/conf:network_policy_kernel_opt_usb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ubtbcmfw", srcs = ["drivers/ubtbcmfw/ubtbcmfw.c"],
+    deps = ["//sys/dev/usb:device_id_headers", "//sys/dev/usb:network_policy_kernel_ubtbcmfw_headers", "//sys/vm:network_policy_kernel_ubtbcmfw_headers", "//sys/kern:network_policy_kernel_bus_if_headers", "//sys/kern:network_policy_kernel_device_if_headers", "//sys/amd64/conf:network_policy_kernel_opt_usb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_hci_cmds", srcs = ["hci/ng_hci_cmds.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_hci_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_hci_evnt", srcs = ["hci/ng_hci_evnt.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_hci_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_hci_main", srcs = ["hci/ng_hci_main.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_hci_main_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_hci_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_hci_misc", srcs = ["hci/ng_hci_misc.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_hci_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_hci_ulpi", srcs = ["hci/ng_hci_ulpi.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_hci_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_cmds", srcs = ["l2cap/ng_l2cap_cmds.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_evnt", srcs = ["l2cap/ng_l2cap_evnt.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_llpi", srcs = ["l2cap/ng_l2cap_llpi.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_main", srcs = ["l2cap/ng_l2cap_main.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_main_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_misc", srcs = ["l2cap/ng_l2cap_misc.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_l2cap_ulpi", srcs = ["l2cap/ng_l2cap_ulpi.c"],
+    deps = ["//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth:network_policy_kernel_ng_l2cap_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_l2cap_ulpi_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket", srcs = ["socket/ng_btsocket.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_hci_raw", srcs = ["socket/ng_btsocket_hci_raw.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_hci_raw_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_l2cap", srcs = ["socket/ng_btsocket_l2cap.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_l2cap_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_l2cap_raw", srcs = ["socket/ng_btsocket_l2cap_raw.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_l2cap_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_rfcomm", srcs = ["socket/ng_btsocket_rfcomm.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_rfcomm_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_sco", srcs = ["socket/ng_btsocket_sco.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_sco_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+amd64_generic_kernel_objects(name = "generic_network_policy_ng_btsocket_iso", srcs = ["socket/ng_btsocket_iso.c"],
+    deps = ["//sys/net:network_policy_kernel_ng_btsocket_headers", "//sys/netgraph:network_policy_kernel_ng_hci_cmds_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_btsocket_iso_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_kdb_header", "//sys/amd64/conf:network_policy_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
