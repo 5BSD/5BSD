@@ -57,8 +57,8 @@ extern char **environ;
 /*
  * Obtain the ZFS control device for a BORN-IN-CAPABILITY-MODE broker: openat("zfs")
  * under the switchboard-delivered /dev directory descriptor, never a global path.
- * The module is preloaded at boot (loader.conf zfs_load="YES"), so there is no
- * in-daemon kldload; the capability pool is the boot pool, already imported by
+ * ZFS is in the kernel or loaded by the loader (stand/lua/config.lua), so no
+ * daemon kldloads it; the capability pool is the boot pool, already imported by
  * the loader (vfs.root.mountfrom), so there is no `zpool import` (which a capmode
  * process cannot spawn anyway).  A pool that is NOT pre-imported cannot be brought
  * up here -- the caller then serves isolated-open only, as with any absent pool.
