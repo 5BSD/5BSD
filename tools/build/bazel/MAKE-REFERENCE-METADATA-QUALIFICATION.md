@@ -43,3 +43,34 @@ identify the intended pam_deny control. The original summary is retained.
 
 These checks do not qualify the native static PAM archive, authentication,
 installed default paths, a complete system build or performance.
+
+
+## NO_OBJ directory preflight (2026-11-02)
+
+Explicit --make-meta now rejects components defining NO_OBJ or legacy NOOBJ
+before output creation or build/install actions. Make uses definedness here:
+empty values and even a literal no still suppress the object directory. Ambiguous
+query output fails closed. Ordinary reference mode keeps its existing behavior.
+
+The original pam.d attempt exposed this source-write hazard: 15 untracked install
+recipe .meta files were generated in the NO_OBJ source directory. Both original
+helper receipts correctly failed their source-file-set guard. Exact files/hashes
+were preserved before removing only those generated files; all original policy
+and source bytes were rechecked against both initial snapshots.
+
+Evidence under /usr/obj/usr/src/:
+
+- bazel-pam-policy-source-metadata-preservation-r1-20261102 records all 15 copies,
+  their absent-before identity and bounded cleanup.
+- bazel-pam-policy-noobj-metadata-rejection-r1-20261102 proves the actual maintained
+  leaf rejects --make-meta before creating the requested output or changing source.
+- bazel-pam-policy-default-native-qualification-r2-20261102 runs the declared native
+  bmake regression through the normal frontend: ten actual unittest methods pass
+  (one Bazel XML wrapper case), including real Make definedness and non-executed
+  recipe controls. No host Make fallback is allowed within Bazel.
+- bazel-pam-policy-make-references-r2-20261102.json records two fresh successful
+  ordinary-mode Make install controls after the preflight fix. These are reference
+  controls; separate policy payload/installation qualification is required.
+
+No arbitrary Make-variable interface is added. Production Bazel actions, SDK/profile
+checks and the default-off metadata setting retain their existing behavior.

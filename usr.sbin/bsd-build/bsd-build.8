@@ -5198,6 +5198,13 @@ accepts
 .Fl Fl make-meta
 to record original Make recipes without filemon from the initial build.
 The option is disabled by default and accepts no arbitrary metadata-mode value.
+Components defining
+.Va NO_OBJ
+or
+.Va NOOBJ
+reject metadata mode before actions or output creation,
+including empty definitions.
+Use ordinary reference mode for these components to avoid source recipe logs.
 It does not introduce Make interpretation into production Bazel actions.
 See
 .Pa tools/build/bazel/MAKE-REFERENCE-METADATA-QUALIFICATION.md

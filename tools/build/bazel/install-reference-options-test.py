@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Validate the independent Make oracle's restricted presence-only selectors."""
 from pathlib import Path
+import os
 import subprocess
+import tempfile
 import sys
 import unittest
-from install_reference_options import component_definitions
+from install_reference_options import component_definitions, validate_metadata_component
 
 
 class ComponentDefinitionsTests(unittest.TestCase):
@@ -61,6 +63,38 @@ class ComponentDefinitionsTests(unittest.TestCase):
 
     def test_no_defines_preserves_existing_component_behavior(self):
         self.assertEqual(component_definitions(Path('/usr/src/123'), []), {})
+
+
+class MetadataDirectoryTests(unittest.TestCase):
+    def query(self, definitions):
+        if 'TEST_SRCDIR' in os.environ:
+            make = Path(os.environ['TEST_SRCDIR']) / os.environ['TEST_WORKSPACE'] / 'usr.bin/bmake/make'
+        else:
+            make = Path('/usr/bin/make')
+        self.assertTrue(make.is_file(), 'declared native bmake required in Bazel')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'Makefile').write_text(definitions + '\nall:\n\t@echo unsafe > recipe-executed\n')
+            def query(arguments):
+                return subprocess.run([str(make), '-r', '-C', str(root), *arguments],
+                                      capture_output=True, text=True, check=True).stdout
+            try:
+                return validate_metadata_component(query)
+            finally:
+                self.assertFalse((root / 'recipe-executed').exists())
+
+    def test_no_object_definedness_rejects_empty_or_no_values(self):
+        for definitions in ('NO_OBJ=', 'NO_OBJ=no', 'NOOBJ=', 'NOOBJ=no', 'NO_OBJ=\nNOOBJ='):
+            with self.subTest(definitions=definitions), self.assertRaisesRegex(ValueError, 'NO_OBJ/NOOBJ'):
+                self.query(definitions)
+
+    def test_object_component_query_does_not_run_recipe(self):
+        self.assertIsNone(self.query('UNRELATED=yes'))
+
+    def test_ambiguous_directory_policy_fails_closed(self):
+        for output in ('', 'no\n', 'no\nmaybe\n', 'no\nno\nno\n'):
+            with self.subTest(output=output), self.assertRaisesRegex(ValueError, 'ambiguous'):
+                validate_metadata_component(lambda arguments: output)
 
 
 if __name__ == '__main__':
