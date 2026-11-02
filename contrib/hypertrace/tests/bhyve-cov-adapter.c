@@ -3134,10 +3134,10 @@ source_contracts(void)
 			bootrom_instance_count = 1;
 			CHECK(migration_prod_fill_topology(&vm, topo) == 0);
 			CHECK(migration_prod_fill_topology(&vm, other) == 0);
-			CHECK(migration_topology_validate(topo, other, &reason) == 0);
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == 0);
 			bootrom_seed = 0x3d;
 			CHECK(migration_prod_fill_topology(&vm, other) == 0);
-			CHECK(migration_topology_validate(topo, other, &reason) == EINVAL &&
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == EINVAL &&
 			    reason == MIGRATION_REASON_DEVICE);
 			bootrom_seed = 0x3c;
 			/* A second range, placed above the first, also matches. */
@@ -3145,7 +3145,7 @@ source_contracts(void)
 			bootrom_instance_count = 2;
 			CHECK(migration_prod_fill_topology(&vm, topo) == 0);
 			CHECK(migration_prod_fill_topology(&vm, other) == 0);
-			CHECK(migration_topology_validate(topo, other, &reason) == 0);
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == 0);
 			bootrom_instance_count = BOOTROM_MAX_INSTANCE_RANGES + 1;
 			CHECK(migration_prod_fill_topology(&vm, other) == E2BIG);
 			bootrom_instance[1] = (struct bootrom_range){ bad[0].offset, bad[0].length };

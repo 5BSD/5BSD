@@ -158,7 +158,7 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/virtio_device_parts_handler_test.c" \
 	"$here/checkpoint_topology_test.c" \
 	"$here/checkpoint_numa_test.c" \
-	"$here/checkpoint_vmgenid_test.c" \
+	"$here/acpi_pm_restore_test.c" \
 	"$here/checkpoint_cpu_test.c" \
 	"$here/checkpoint_cpu_machdep_test.c" \
 	"$here/lib9p_fs_path_test.c" \
@@ -361,8 +361,6 @@ ln -s "$srctop/usr.sbin/bhyve/checkpoint_topology.c" "$work/checkpoint_topology.
 ln -s "$srctop/usr.sbin/bhyve/checkpoint_topology.h" "$work/checkpoint_topology.h"
 ln -s "$srctop/usr.sbin/bhyve/checkpoint_numa.c" "$work/checkpoint_numa.c"
 ln -s "$srctop/usr.sbin/bhyve/checkpoint_numa.h" "$work/checkpoint_numa.h"
-ln -s "$srctop/usr.sbin/bhyve/checkpoint_vmgenid.c" "$work/checkpoint_vmgenid.c"
-ln -s "$srctop/usr.sbin/bhyve/checkpoint_vmgenid.h" "$work/checkpoint_vmgenid.h"
 ln -s "$srctop/usr.sbin/bhyve/checkpoint_cpu.c" "$work/checkpoint_cpu.c"
 ln -s "$srctop/usr.sbin/bhyve/checkpoint_cpu.h" "$work/checkpoint_cpu.h"
 ln -s "$srctop/usr.sbin/bhyve/amd64/checkpoint_cpu_machdep.c" \
@@ -979,13 +977,6 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work" \
-	-o "$work/checkpoint-vmgenid-test" \
-	"$work/checkpoint_vmgenid_test.c"
-
-"$work/checkpoint-vmgenid-test"
-
-"$cc" -g -O1 -fsanitize="$sanitizers" \
-	-I"$work/atfshim" -I"$work" \
 	-o "$work/checkpoint-cpu-test" \
 	"$work/checkpoint_cpu_test.c"
 
@@ -1002,6 +993,16 @@ if [ "$(uname -p)" = "amd64" ]; then
 		"$work/checkpoint_cpu_machdep_test.c"
 
 	"$work/checkpoint-cpu-machdep-test"
+
+	"$cc" -g -O1 -fsanitize="$sanitizers" -DBHYVE_SNAPSHOT \
+		-I"$work/atfshim" -I"$work" \
+		-I"$srctop/sys" \
+		-I"$srctop/usr.sbin/bhyve" -I"$srctop/usr.sbin/bhyve/amd64" \
+		-I"$srctop/lib/libvmmapi" \
+		-o "$work/acpi-pm-restore-test" \
+		"$work/acpi_pm_restore_test.c"
+
+	"$work/acpi-pm-restore-test"
 fi
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \

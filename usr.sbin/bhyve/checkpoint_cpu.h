@@ -37,14 +37,11 @@ int	checkpoint_cpu_contract_validate(
 	    const struct checkpoint_cpu_contract *);
 int	checkpoint_cpu_contract_match(
 	    const struct checkpoint_cpu_contract *,
-	    const struct checkpoint_cpu_contract *);
+	    const struct checkpoint_cpu_contract *, char *, size_t);
 int	checkpoint_cpu_contract_encode(
 	    const struct checkpoint_cpu_contract *, char **);
 int	checkpoint_cpu_contract_decode(const char *,
 	    struct checkpoint_cpu_contract *);
-int	checkpoint_cpu_contract_describe_mismatch(
-	    const struct checkpoint_cpu_contract *,
-	    const struct checkpoint_cpu_contract *, char *, size_t);
 int	checkpoint_cpu_contract_capture(struct vcpu *,
 	    struct checkpoint_cpu_contract *);
 

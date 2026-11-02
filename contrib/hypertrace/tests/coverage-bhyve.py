@@ -57,7 +57,7 @@ COMPONENTS = {
     'bhyve-snapshot': [BHYVE + f for f in (
         'snapshot.c', 'snapshot_devmem.c', 'checkpoint_compat.c',
         'checkpoint_cpu.c', 'checkpoint_machine.c', 'checkpoint_manifest.c',
-        'checkpoint_numa.c', 'checkpoint_topology.c', 'checkpoint_vmgenid.c',
+        'checkpoint_numa.c', 'checkpoint_topology.c',
         'amd64/checkpoint_cpu_machdep.c')],
     'bhyve-control': [BHYVE + 'ipc.c', BHYVE + 'gdb.c', BHYVE + 'bhyverun.c'],
     'bhyvectl': ['usr.sbin/bhyvectl/bhyvectl.c',
@@ -586,8 +586,6 @@ OUTCOME_WAIVERS = {
         ('checkpoint_machine_topology_digest', ['if (SHA256_End(&context, staging) == NULL) {'], 6, 'T', 'libc-total'),
     ],
     BHYVE + 'checkpoint_cpu.c': [
-        # validate() requires the fixed contract version on both sides
-        ('checkpoint_cpu_contract_match', ['if (source->version != destination->version ||'], 6, 'T', 'validator-implied'),
         ('checkpoint_cpu_contract_encode', ['if (contract->record_count >'], 6, 'T', 'validator-implied'),
         ('checkpoint_cpu_contract_encode', ['if (byte_count > (SIZE_MAX - 1) / 2)'], 6, 'T', 'arith-bound'),
         # the text length was checked against twice the header first
@@ -1825,7 +1823,6 @@ register('bhyve-cov-hypertrace', harness='bhyve-cov-hypertrace.c',
 SNAPSHOT_SOURCES = ['usr.sbin/bhyve/' + f for f in (
     'checkpoint_compat.c', 'checkpoint_cpu.c', 'checkpoint_machine.c',
     'checkpoint_manifest.c', 'checkpoint_numa.c', 'checkpoint_topology.c',
-    'checkpoint_vmgenid.c',
     'amd64/checkpoint_cpu_machdep.c', 'snapshot_devmem.c')]
 register('bhyve-cov-snapshot', harness='bhyve-cov-snapshot.c',
          harness_flags_from='usr.sbin/bhyve/snapshot.c', sources=SNAPSHOT_SOURCES,

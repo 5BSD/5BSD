@@ -452,6 +452,10 @@ The count of vCPUs and memory configuration are read from the snapshot.
 The guest-memory member also saves fixed boot and PCI ROM contents.
 Snapshots whose memory extension predates fixed-ROM support cannot restore
 into a VM with either ROM region because their contents cannot be verified.
+A VM with a device that cannot save its state, such as a
+.Li passthru
+device, cannot be snapshotted or migrated: the request is refused, naming
+the device, before the guest is paused, and the guest keeps running.
 .Pp
 With ACPI tables, the guest's ACPI VM Generation ID
 .Pq Xr vmgenc 4
@@ -464,9 +468,11 @@ and reseeds its random number generator.
 Live migration presents the source's generation ID unchanged and raises no
 event; a snapshot taken while the guest keeps running does not change it.
 Snapshots and migration streams also carry the ACPI PM1 and GPE0 event
-registers.
-Images from earlier versions carry neither: they restore with a new ID, and a
-migration from such a source keeps the destination's own ID.
+registers, so ACPI events such as the power button keep working after a
+restore or migration.
+Images from earlier versions carry neither: they restore with a new ID but
+without a notification, so the guest does not reseed until it next reads the
+ID, and a migration from such a source keeps the destination's own ID.
 .Pp
 As for a fresh boot, a guest configured without a boot ROM
 .Pq Fl o Cm lpc.bootrom

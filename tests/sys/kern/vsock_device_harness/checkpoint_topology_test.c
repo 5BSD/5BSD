@@ -22,12 +22,13 @@ ATF_TC_BODY(exact_named_device_set, tc)
 		"hostbridge", "virtio-net0", "atkbdc", "virtio-rng0"
 	};
 
-	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, reordered, 3), 0);
-	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, missing, 2),
-	    ENODEV);
-	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, changed, 3),
-	    ENODEV);
-	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, extra, 4),
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, reordered, 3,
+	    NULL, 0), 0);
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, missing, 2,
+	    NULL, 0), ENODEV);
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, changed, 3,
+	    NULL, 0), ENODEV);
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, extra, 4, NULL, 0),
 	    ENODEV);
 }
 
@@ -39,15 +40,18 @@ ATF_TC_BODY(rejects_ambiguous_or_invalid_names, tc)
 	const char *empty[] = { "hostbridge", "" };
 	const char *null_name[] = { "hostbridge", NULL };
 
-	ATF_CHECK_EQ(checkpoint_topology_validate(duplicate, 2, valid, 2),
-	    EEXIST);
-	ATF_CHECK_EQ(checkpoint_topology_validate(valid, 2, duplicate, 2),
-	    EEXIST);
-	ATF_CHECK_EQ(checkpoint_topology_validate(empty, 2, valid, 2), EINVAL);
-	ATF_CHECK_EQ(checkpoint_topology_validate(null_name, 2, valid, 2),
+	ATF_CHECK_EQ(checkpoint_topology_validate(duplicate, 2, valid, 2,
+	    NULL, 0), EEXIST);
+	ATF_CHECK_EQ(checkpoint_topology_validate(valid, 2, duplicate, 2,
+	    NULL, 0), EEXIST);
+	ATF_CHECK_EQ(checkpoint_topology_validate(empty, 2, valid, 2, NULL, 0),
 	    EINVAL);
-	ATF_CHECK_EQ(checkpoint_topology_validate(NULL, 1, valid, 2), EINVAL);
-	ATF_CHECK_EQ(checkpoint_topology_validate(NULL, 0, NULL, 0), 0);
+	ATF_CHECK_EQ(checkpoint_topology_validate(null_name, 2, valid, 2,
+	    NULL, 0), EINVAL);
+	ATF_CHECK_EQ(checkpoint_topology_validate(NULL, 1, valid, 2, NULL, 0),
+	    EINVAL);
+	ATF_CHECK_EQ(checkpoint_topology_validate(NULL, 0, NULL, 0, NULL, 0),
+	    0);
 }
 
 ATF_TC_WITHOUT_HEAD(exact_record_partition);
@@ -252,8 +256,8 @@ ATF_TC_BODY(memory_geometry_is_exact_and_portable, tc)
 }
 
 /*
- * A refused restore names the device: the counts and the first unmatched
- * device on a cardinality mismatch, or the absent name when counts agree.
+ * A refused restore names the first unmatched device, or the malformed
+ * entry; the restore log adds the device counts when they differ.
  */
 ATF_TC_WITHOUT_HEAD(restore_mismatch_names_the_device);
 ATF_TC_BODY(restore_mismatch_names_the_device, tc)
@@ -277,51 +281,53 @@ ATF_TC_BODY(restore_mismatch_names_the_device, tc)
 	};
 	char buf[256];
 
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    reordered, 3, buf, sizeof(buf)), 0);
+	strlcpy(buf, "stale", sizeof(buf));
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, reordered, 3, buf,
+	    sizeof(buf)), 0);
 	ATF_CHECK_STREQ(buf, "");
 
-	/* Source has a device the destination lacks. */
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    missing, 2, buf, sizeof(buf)), ENODEV);
-	ATF_CHECK_STREQ(buf, "device count: source 3, destination 2; source "
-	    "device \"virtio-net@pci.0.2.0\" (entry 1) is absent at the "
-	    "destination");
+	/*
+	 * Source has a device the destination lacks.  Restore passes at most
+	 * destination_count + 1 source names, which always suffice for this.
+	 */
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, missing, 2, buf,
+	    sizeof(buf)), ENODEV);
+	ATF_CHECK_STREQ(buf, "source device \"virtio-net@pci.0.2.0\" "
+	    "(entry 1) is absent at the destination");
 
 	/* Same count, device moved to another slot. */
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    changed, 3, buf, sizeof(buf)), ENODEV);
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, changed, 3, buf,
+	    sizeof(buf)), ENODEV);
 	ATF_CHECK_STREQ(buf, "source device \"virtio-net@pci.0.2.0\" "
 	    "(entry 1) is absent at the destination");
 
 	/* Destination has a device the checkpoint lacks. */
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    extra, 4, buf, sizeof(buf)), ENODEV);
-	ATF_CHECK_STREQ(buf, "device count: source 3, destination 4; "
-	    "destination device \"virtio-rnd@pci.0.4.0\" is absent from the "
-	    "checkpoint");
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, extra, 4, buf,
+	    sizeof(buf)), ENODEV);
+	ATF_CHECK_STREQ(buf, "destination device \"virtio-rnd@pci.0.4.0\" is "
+	    "absent from the checkpoint");
 
-	/*
-	 * A caller bounds allocation to destination_count + 1 source names;
-	 * that prefix still names the difference.  Here 3 of 1000 entries
-	 * are seen against a 2-device destination.
-	 */
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 1000,
-	    missing, 2, buf, sizeof(buf)), ENODEV);
-	ATF_CHECK(strstr(buf, "device count: source 1000, destination 2; ") ==
-	    buf);
-	ATF_CHECK(strstr(buf, "\"virtio-net@pci.0.2.0\"") != NULL);
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(duplicate, 3, 3,
-	    source, 3, buf, sizeof(buf)), EEXIST);
+	/* Malformed lists are refused as such, on either side. */
+	ATF_CHECK_EQ(checkpoint_topology_validate(duplicate, 3, source, 3, buf,
+	    sizeof(buf)), EEXIST);
 	ATF_CHECK_STREQ(buf, "source device \"hostbridge@pci.0.0.0\" is "
 	    "recorded more than once");
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, duplicate, 3, buf,
+	    sizeof(buf)), EEXIST);
+	ATF_CHECK_STREQ(buf, "destination device \"hostbridge@pci.0.0.0\" is "
+	    "recorded more than once");
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, NULL, 3, buf,
+	    sizeof(buf)), EINVAL);
+	ATF_CHECK_STREQ(buf, "destination device list is missing");
+	reordered[2] = "";
+	ATF_CHECK_EQ(checkpoint_topology_validate(reordered, 3, source, 3, buf,
+	    sizeof(buf)), EINVAL);
+	ATF_CHECK_STREQ(buf, "source entry 2 has no device name");
 
 	/* Truncation is safe. */
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    changed, 3, buf, 8), ENODEV);
+	ATF_CHECK_EQ(checkpoint_topology_validate(source, 3, changed, 3, buf,
+	    8), ENODEV);
 	ATF_CHECK_EQ(strlen(buf), 7);
-	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
-	    changed, 3, NULL, 0), EINVAL);
 }
 
 ATF_TP_ADD_TCS(tp)

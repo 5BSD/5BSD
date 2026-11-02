@@ -180,7 +180,7 @@ in_helper {
 		lookup = FNR
 	if ($0 ~ /checkpoint_cpu_contract_capture\(bsp,/)
 		capture = FNR
-	if ($0 ~ /checkpoint_cpu_contract_match\(&source, &destination\)/)
+	if ($0 ~ /checkpoint_cpu_contract_match\(&source, &destination[,)]/)
 		compare_line = FNR
 	if (opened && depth == 0)
 		in_helper = 0
