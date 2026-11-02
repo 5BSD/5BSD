@@ -403,3 +403,7 @@ configurations/architectures and whole-world/pkgbase gates.
 ## Platform-support checkpoint (2026-11-02)
 
 56 platform built-ins pass object/CTF/compiler/input/relocation checks; the native ACPI assembly-to-binary/header chain matches Make. Reconciliation r30 leaves 131 missing link products and six weaker matches. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Monitoring/device checkpoint (2026-11-02)
+
+52 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks. Reconciliation r31 leaves 79 missing link products and six weaker matches. See MONITORING-DEVICES-KERNEL-QUALIFICATION.md. Full linking, generators/tracing remainder, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

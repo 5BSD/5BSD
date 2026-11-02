@@ -1420,3 +1420,25 @@ cc_library(name = "peripheral_devices_kernel_ifdi_if_headers", hdrs = [":periphe
 # Physical prerequisites for native platform support built-ins.
 bsd_source_headers(name = "platform_support_kernel_netgdb_headers", hdrs = ["debugnet.h", "if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_if_ptnet_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_bdg_headers", hdrs = ["bpf.h", "dlt.h", "if.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_freebsd_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_generic_headers", hdrs = ["if.h", "if_types.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_kloop_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "netmap_virt.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_legacy_headers", hdrs = ["bpf.h", "dlt.h", "if.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_offloadings_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netmap.h", "netmap_legacy.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_nfs_diskless_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_audit_ret_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])

@@ -1156,3 +1156,25 @@ bsd_source_headers(name = "platform_support_kernel_pci_early_quirks_headers", hd
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
 bsd_source_headers(name = "platform_support_kernel_pv_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_OsdMemory_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwpmc_logging_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwpmc_mod_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_record_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_thread_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_vm_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_if_ptnet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_freebsd_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_mbq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_audit_dtrace_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])

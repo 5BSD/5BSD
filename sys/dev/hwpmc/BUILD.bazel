@@ -34,3 +34,50 @@ bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["hwpmc_
 # Physical prerequisites for native peripheral device built-ins.
 bsd_source_headers(name = "peripheral_devices_kernel_cpuctl_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
     visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_hwpmc_logging_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwpmc_mod_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_soft.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_logging", srcs = ["hwpmc_logging.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_mod", srcs = ["hwpmc_mod.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_mod_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_soft", srcs = ["hwpmc_soft.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_amd", srcs = ["hwpmc_amd.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_perf", srcs = ["hwpmc_perf.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_ibs", srcs = ["hwpmc_ibs.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_intel", srcs = ["hwpmc_intel.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_core", srcs = ["hwpmc_core.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_uncore", srcs = ["hwpmc_uncore.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_rapl", srcs = ["hwpmc_rapl.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_tsc", srcs = ["hwpmc_tsc.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwpmc_x86", srcs = ["hwpmc_x86.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_mod_headers", "//sys/vm:monitoring_devices_kernel_OsdMemory_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

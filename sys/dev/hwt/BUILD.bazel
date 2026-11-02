@@ -7,3 +7,71 @@ cc_library(name = "hook_headers", hdrs = ["hwt_hook.h"], includes = ["../.."],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["hwt_hook.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_headers", hdrs = ["hwt_backend.h", "hwt_context.h", "hwt_contexthash.h", "hwt_hook.h", "hwt_ioctl.h", "hwt_owner.h", "hwt_ownerhash.h", "hwt_record.h", "hwt_thread.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_backend_headers", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_hook.h", "hwt_thread.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_config_headers", hdrs = ["hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_hook.h", "hwt_record.h", "hwt_thread.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_context_headers", hdrs = ["hwt_config.h", "hwt_context.h", "hwt_cpu.h", "hwt_hook.h", "hwt_owner.h", "hwt_thread.h", "hwt_vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_contexthash_headers", hdrs = ["hwt_config.h", "hwt_context.h", "hwt_contexthash.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_cpu_headers", hdrs = ["hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_cpu.h", "hwt_hook.h", "hwt_record.h", "hwt_thread.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_hook_headers", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_hook.h", "hwt_owner.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_ioctl_headers", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_cpu.h", "hwt_hook.h", "hwt_ioctl.h", "hwt_owner.h", "hwt_ownerhash.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_owner_headers", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_cpu.h", "hwt_hook.h", "hwt_owner.h", "hwt_ownerhash.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_ownerhash_headers", hdrs = ["hwt_owner.h", "hwt_ownerhash.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_hwt_thread_headers", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_contexthash.h", "hwt_hook.h", "hwt_owner.h", "hwt_ownerhash.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt", srcs = ["hwt.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_backend", srcs = ["hwt_backend.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_backend_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_config", srcs = ["hwt_config.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_config_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_context", srcs = ["hwt_context.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_context_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_contexthash", srcs = ["hwt_contexthash.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_contexthash_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_cpu", srcs = ["hwt_cpu.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_cpu_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_hook", srcs = ["hwt_hook.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_hook_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_ioctl", srcs = ["hwt_ioctl.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_ioctl_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_owner", srcs = ["hwt_owner.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_ownerhash", srcs = ["hwt_ownerhash.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_ownerhash_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_record", srcs = ["hwt_record.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwpmc:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/hwt:monitoring_devices_kernel_hwt_config_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_thread", srcs = ["hwt_thread.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_thread_headers", "//sys/vm:monitoring_devices_kernel_hwt_thread_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_vm", srcs = ["hwt_vm.c"],
+    deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers", "//sys/vm:monitoring_devices_kernel_hwt_vm_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

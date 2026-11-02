@@ -252,3 +252,36 @@ bsd_source_headers(name = "platform_support_kernel_srat_headers", hdrs = ["acpiv
 
 filegroup(name = "platform_support_kernel_acpi_if_file", srcs = [":acpi_if"], output_group = "header")
 cc_library(name = "platform_support_kernel_acpi_if_headers", hdrs = [":platform_support_kernel_acpi_if_file"], strip_include_prefix = "acpi_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_OsdDebug_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+filegroup(name = "monitoring_devices_kernel_acpi_if_file", srcs = [":acpi_if"], output_group = "header")
+cc_library(name = "monitoring_devices_kernel_acpi_if_headers", hdrs = [":monitoring_devices_kernel_acpi_if_file"], strip_include_prefix = "acpi_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdDebug", srcs = ["Osd/OsdDebug.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdDebug_headers", "//sys/ddb:monitoring_devices_kernel_OsdDebug_headers", "//sys/dev/acpica:monitoring_devices_kernel_OsdDebug_headers", "//sys/dev/acpica:monitoring_devices_kernel_acpi_if_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header", "//sys/amd64/conf:monitoring_devices_kernel_opt_ddb_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdHardware", srcs = ["Osd/OsdHardware.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdHardware_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdInterrupt", srcs = ["Osd/OsdInterrupt.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdInterrupt_headers", "//sys/dev/acpica:monitoring_devices_kernel_OsdDebug_headers", "//sys/dev/acpica:monitoring_devices_kernel_acpi_if_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdMemory", srcs = ["Osd/OsdMemory.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdHardware_headers", "//sys/vm:monitoring_devices_kernel_OsdMemory_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdSchedule", srcs = ["Osd/OsdSchedule.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdInterrupt_headers", "//sys/dev/acpica:monitoring_devices_kernel_OsdDebug_headers", "//sys/dev/acpica:monitoring_devices_kernel_acpi_if_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdStream", srcs = ["Osd/OsdStream.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdHardware_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdSynch", srcs = ["Osd/OsdSynch.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdInterrupt_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_OsdTable", srcs = ["Osd/OsdTable.c"],
+    deps = ["//sys/contrib/dev/acpica/include:monitoring_devices_kernel_OsdTable_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_acpi_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

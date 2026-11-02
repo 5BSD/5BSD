@@ -15,3 +15,11 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/vm:kernel_headers",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_mac_ntpd", srcs = ["mac_ntpd.c"],
+    deps = ["//sys/ddb:monitoring_devices_kernel_mac_ntpd_headers", "//sys/dev/mac_capability:monitoring_devices_kernel_mac_ntpd_headers", "//sys/security/mac:monitoring_devices_kernel_mac_ntpd_headers", "//sys/vm:monitoring_devices_kernel_hwpmc_logging_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

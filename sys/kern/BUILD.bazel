@@ -839,3 +839,9 @@ cc_library(name = "platform_support_kernel_cpufreq_if_headers", hdrs = [":platfo
 
 filegroup(name = "platform_support_kernel_device_if_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "platform_support_kernel_device_if_headers", hdrs = [":platform_support_kernel_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "monitoring_devices_kernel_bus_if_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "monitoring_devices_kernel_bus_if_headers", hdrs = [":monitoring_devices_kernel_bus_if_file"], strip_include_prefix = "bus_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+filegroup(name = "monitoring_devices_kernel_device_if_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "monitoring_devices_kernel_device_if_headers", hdrs = [":monitoring_devices_kernel_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])

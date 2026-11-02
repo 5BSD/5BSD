@@ -9839,3 +9839,7 @@ The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 9 o
 ## Platform-support built-ins (2026-11-02)
 
 A bounded source-hash-bound scan finds call-shaped tracing/CTR/audit markers in 0 of 56 files. This neither proves absent shared instrumentation nor live probe coverage. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md and retained observability.json. Existing hooks remain.
+
+## Monitoring/device built-ins (2026-11-02)
+
+A bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 52 converted files. These include tracing implementations whose indirect hooks require runtime qualification; marker absence proves no instrumentation gap. See MONITORING-DEVICES-KERNEL-QUALIFICATION.md and observability.json. Existing source instrumentation remains.
