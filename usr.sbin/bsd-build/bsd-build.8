@@ -5343,3 +5343,13 @@ This selected traced variant requires the existing dtrace build setting.
 The runtime wrapper covers private link and directory operations, read-only
 hostname lookup and bounded sleep inputs.
 Full rescue installation and complete original library parity remain separate.
+.Pp
+The bounded rescue core also includes chflags, chmod, cp, mv and rm, with the
+original unlink alias, ACL definition and DTrace provider transformations.
+Its private-file cases exercise flags, modes, copy, rename and removal.
+The original RESCUE mv definitions still use
+.Pa /rescue/cp
+and
+.Pa /rescue/rm
+for cross-filesystem helper execution.
+Those installed paths require separate qualification.

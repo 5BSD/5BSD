@@ -22,8 +22,8 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
 # No full rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
 
-# Supported combined-object stage, bounded to fourteen real applications.
-_CORE_PROGRAMS = [p for p in PROGRAMS if p in ["cat", "ed", "echo", "expr", "getfacl", "hostname", "ln", "mkdir", "pwd", "realpath", "rmdir", "sleep", "test", "head"]]
+# Supported combined-object stage, bounded to nineteen real applications.
+_CORE_PROGRAMS = [p for p in PROGRAMS if p in ['cat', 'chflags', 'chmod', 'cp', 'echo', 'ed', 'expr', 'getfacl', 'hostname', 'ln', 'mkdir', 'mv', 'pwd', 'realpath', 'rm', 'rmdir', 'sleep', 'test', 'head']]
 _CORE_OBJECTS = {p: "//" + ("usr.bin/head" if p == "head" else "bin/" + p) + ":rescue_compiler_outputs" for p in _CORE_PROGRAMS}
 bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
     object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS},
@@ -48,7 +48,7 @@ filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "met
 [filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
 filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")
 
-# Bounded real fourteen-program executable, with native static libc and startup.
+# Bounded real nineteen-program executable, with native static libc and startup.
 # This does not replace the complete original rescue selection/install target.
 cc_library(name = "core_dispatcher_objects", srcs = [":core_dispatch"],
     features = ["-bsd_ssp", "-bsd_debug_info"],

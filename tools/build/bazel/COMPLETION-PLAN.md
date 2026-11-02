@@ -1134,3 +1134,16 @@ outputs are unchanged. All 22 compiled SDT/DTrace module sections are preserved.
 Local BUILD presence is now 665/729, leaving 64; it does not close architecture,
 full kernel/world/rescue/library/pkgbase, bootstrap/runtime or performance gates.
 No build-bsd CLI, signing or publication policy change; Make remains default.
+
+### Real nineteen-program rescue integration (November 2, 2026)
+
+[Qualification](RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md): five actual traced
+file-operation variants add six C objects/398 consumed pairs and unlink. Two
+original one-map filename controls, six rewritten objects, five complete DOF/
+relocated-site comparisons, actual link order and 43 runtime methods pass.
+Original generated Make with identical accepted inputs reproduces the entire
+static ELF. Initial wrong cp -n expected status is retained; test-only correction
+matches source and leaves ELF bytes unchanged. Next close the genuine original
+static-library/provider/order gate or first new library dependency, remaining
+applications, original test suites and installed rescue/mv helper/pkgbase paths;
+full world/bootstrap/publication/resource gates remain open.

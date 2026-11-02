@@ -48170,3 +48170,12 @@ provider schemas, actual relocation/site bindings and path-key DOF encoding are
 audited. Thirty-one runtime methods pass. Original generated Make with identical
 accepted inputs reproduces the complete static ELF byte for byte; full rescue,
 independent library parity and installation/package gates remain open.
+
+The [nineteen-program rescue subset](RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md)
+adds actual chflags/chmod/cp/mv/rm variants and unlink. Six C objects/398 consumed
+pairs, five provider schemas/actual relocated sites/full DOF sections and original
+object order pass; 43 actual runtime methods pass. Two independent original Make
+filename controls retain ordinary assertion-path differences explicitly. Original
+generated Make on identical accepted inputs reproduces the entire static ELF.
+Fixed /rescue/cp and /rescue/rm execution for cross-filesystem mv remains an
+installed-path gate; full rescue/library/install/pkgbase parity remains open.

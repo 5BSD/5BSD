@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b"cat", b"ed", b"red", b"echo", b"expr", b"getfacl", b"hostname", b"ln", b"link", b"mkdir", b"pwd", b"realpath", b"rmdir", b"sleep", b"test", b"[", b"head"})
+        self.assertEqual(set(p.stdout.split()), {b'cat', b'chflags', b'chmod', b'cp', b'echo', b'ed', b'expr', b'getfacl', b'hostname', b'ln', b'mkdir', b'mv', b'pwd', b'realpath', b'rm', b'rmdir', b'sleep', b'test', b'head', b'red', b'link', b'unlink', b'['})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -201,6 +201,120 @@ class RescueCore(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertEqual(p.stdout, b"")
         self.assertTrue(p.stderr)
+
+    def test_chflags_private_nodump(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("chflags", "nodump", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertTrue(path.stat().st_flags & 1)  # UF_NODUMP
+            p = self.run_app("chflags", "0", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(path.stat().st_flags, 0)
+
+    def test_chflags_rejects_invalid_flag(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"unchanged\n")
+            original = path.stat().st_flags
+            p = self.run_app("chflags", "not-a-file-flag", str(path))
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual(path.stat().st_flags, original)
+            self.assertEqual(path.read_bytes(), b"unchanged\n")
+
+    def test_chmod_private_numeric_mode(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("chmod", "0640", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
+    def test_chmod_private_symbolic_mode(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("chmod", "u=rw,go=", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_cp_private_preserves_file_mode(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"copy data\x00\xff\n")
+            source.chmod(0o640)
+            p = self.run_app("cp", "-p", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(dest.read_bytes(), source.read_bytes())
+            self.assertEqual(dest.stat().st_mode & 0o777, 0o640)
+
+    def test_cp_private_recursive_symlink(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.mkdir()
+            (source / "input").write_bytes(b"tree\n")
+            (source / "alias").symlink_to("input")
+            p = self.run_app("cp", "-R", "-P", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual((dest / "input").read_bytes(), b"tree\n")
+            self.assertEqual(os.readlink(dest / "alias"), "input")
+
+    def test_cp_private_no_clobber(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"new\n")
+            dest.write_bytes(b"retained\n")
+            p = self.run_app("cp", "-n", str(source), str(dest))
+            # Original copy_file reports a skipped existing destination as 1.
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (1, b"", b""))
+            self.assertEqual(dest.read_bytes(), b"retained\n")
+
+    def test_mv_private_same_filesystem_rename(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"renamed\n")
+            inode = source.stat().st_ino
+            p = self.run_app("mv", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertFalse(source.exists())
+            self.assertEqual(dest.stat().st_ino, inode)
+            self.assertEqual(dest.read_bytes(), b"renamed\n")
+
+    def test_mv_private_no_clobber(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"source retained\n")
+            dest.write_bytes(b"dest retained\n")
+            p = self.run_app("mv", "-n", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(source.read_bytes(), b"source retained\n")
+            self.assertEqual(dest.read_bytes(), b"dest retained\n")
+
+    def test_rm_private_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("rm", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertFalse(path.exists())
+
+    def test_unlink_private_alias(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            path = Path(d) / "input"
+            path.write_bytes(b"private\n")
+            p = self.run_app("unlink", str(path))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertFalse(path.exists())
+
+    def test_rm_private_recursive_tree(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            tree = Path(d) / "tree"
+            (tree / "nested").mkdir(parents=True)
+            (tree / "nested" / "input").write_bytes(b"private\n")
+            p = self.run_app("rm", "-r", str(tree))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertFalse(tree.exists())
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,3 +47,13 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+# Original nested rescue variant: own objects with original tracing/RESCUE policy.
+cc_library(name = "rescue_objects", srcs = ['chmod.c', 'modechange_trace.h'],
+    local_defines = ['WITH_COVERAGE_DTRACE', 'RESCUE'], deps = [':provider_headers'],
+    copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_dtrace_cc_objects(name = "rescue_traced_objects", library = ":rescue_objects", provider = ":provider",
+    provider_object = 'modechange_provider', copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+filegroup(name = "rescue_compiler_outputs", srcs = [":rescue_traced_objects"], output_group = "regular",
+    visibility = ["//visibility:public"])

@@ -10423,3 +10423,16 @@ payloads and relocations. No probes were added. This does not establish live
 network events, audit completeness or lack of instrumentation elsewhere; follow
 up in actual VM/runtime qualification. Raw source/section hashes are retained in
 bazel-network-services-modules-review-r1-20261102/observability-review.json.
+
+## Nineteen-program rescue subset (November 2, 2026)
+
+Chflags/chmod/cp/mv/rm preserve original RESCUE and DTrace definitions, actual
+header/object producers and all source probes. Six raw/transformed runtime
+contracts and 398 consumed pairs are audited, with explicit original assertion
+filename controls for chflags/cp. Five complete provider schemas, actual ELF
+relocation/function/NOP sites and all DOF fields match except verified FNV path
+names and their exactly derived string/alignment extents. Cp sites resolve to
+actual utils.o definitions. Forty-three real methods disable DOF initialization
+before startup; no live registration/event or installed mv helper claim. The
+initial cp -n test expectation failure and unchanged accepted ELF remain bound.
+See RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md for source/action/cached proof limits.
