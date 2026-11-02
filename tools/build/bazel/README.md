@@ -47749,3 +47749,14 @@ See FULL-KERNEL-LINK-QUALIFICATION.md. This is not complete independently compil
 Make-kernel parity, installation or boot/runtime acceptance. Those gates plus
 modules, other configurations/architectures, world, packages, bootstrap and
 performance remain open; Make stays production/default.
+
+## LLDB command line programs (2026-11-02)
+
+Native amd64 lldb/lldb-server now pass original six-source compiler/input
+checks, two original TableGen outputs, both safe pre-initialization wrappers
+and ten Make installation records. Direct original object linking fixes the
+rejected lazy-archive candidate; all six objects and both linked programs have
+exact allocated payloads against explicit independent Make filename-policy
+controls. Ordered ELF dependencies and actual native DSO loader paths pass.
+See [LLDB-CLI-QUALIFICATION.md](LLDB-CLI-QUALIFICATION.md) for retained ordinary
+baselines, precise cache evidence and open debugger/family/package/world gates.

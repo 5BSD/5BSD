@@ -597,3 +597,14 @@ See FULL-KERNEL-LINK-QUALIFICATION.md. This is not complete independently compil
 Make-kernel parity, installation or boot/runtime acceptance. Those gates plus
 modules, other configurations/architectures, world, packages, bootstrap and
 performance remain open; Make stays production/default.
+
+## LLDB CLI milestone (2026-11-02)
+
+The original one/five-source programs, two generated option headers, native
+shared dependency closure, safe loader/pre-initialization tests and ten
+installation records now pass. Direct compiler objects preserve original Make
+link order. Every allocated object/program section matches independent explicit
+filename-policy Make controls; original baselines/rejected archive links remain.
+LLDB-CLI-QUALIFICATION.md records actual input, link, SDK and scoped cache proof.
+Next: family aggregate and inherited MK_LLDB selection/package ownership;
+debugger execution, upstream suite, cross/static variants and full world stay open.

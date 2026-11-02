@@ -27,3 +27,17 @@ bsd_source_headers(
     deps = ["//lib/clang/include:lldb_headers"],
     visibility = ["//lib/clang/liblldb:__pkg__", "//usr.bin/clang/lldb:__pkg__", "//usr.bin/clang/lldb-server:__pkg__"],
 )
+
+# Original driver/server translation units and their consumed local headers.
+exports_files([
+    "tools/driver/Driver.cpp", "tools/driver/Options.td",
+    "tools/lldb-server/LLDBServerUtilities.cpp", "tools/lldb-server/SystemInitializerLLGS.cpp",
+    "tools/lldb-server/lldb-gdbserver.cpp", "tools/lldb-server/lldb-platform.cpp",
+    "tools/lldb-server/lldb-server.cpp", "tools/lldb-server/LLGSOptions.td",
+], visibility = ["//usr.bin/clang/lldb:__pkg__", "//usr.bin/clang/lldb-server:__pkg__"])
+bsd_source_headers(name = "driver_headers",
+    hdrs = ["tools/driver/Driver.h", "tools/driver/Platform.h"],
+    visibility = ["//usr.bin/clang/lldb:__pkg__"])
+bsd_source_headers(name = "lldb-server_headers",
+    hdrs = ["tools/lldb-server/LLDBServerUtilities.h", "tools/lldb-server/SystemInitializerLLGS.h"],
+    visibility = ["//usr.bin/clang/lldb-server:__pkg__"])

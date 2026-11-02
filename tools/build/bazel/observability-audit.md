@@ -10040,3 +10040,14 @@ error/timeout recovery, and attach/detach/resource lifetime on actual devices.
 Static strong-import/provider closure now passes for the native kernel and the
 twenty-four Broadcom/GPIO/SPI modules; this does not prove loader/runtime behavior.
 See SPI-MODULES-QUALIFICATION.md for accepted evidence and remaining gates.
+
+## LLDB CLI qualification (2026-11-02)
+
+Two native Python wrappers pass three pre-initialization command paths each,
+with loader-only checks of actual native LLDB/Clang/LLVM dependencies and DOF
+disabled before startup. No attach/launch/listen or live tracing. Six actual
+compiler actions bind 5,162 original Make inputs; four final direct-object links
+preserve original order. Both programs match all allocated payloads of explicit
+independent Make controls, and ten install records/debug CRCs pass. Ordinary
+filename and lazy-archive failures are retained. See LLDB-CLI-QUALIFICATION.md;
+these checks do not qualify debugger runtime or the upstream test suite.
