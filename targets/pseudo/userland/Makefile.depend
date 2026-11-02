@@ -91,6 +91,7 @@ DIRDEPS+= \
 	sbin/mount_nfs \
 	sbin/mount_nullfs \
 	sbin/mount_unionfs \
+	sbin/mount_virtiofs \
 	sbin/natd \
 	sbin/newfs \
 	sbin/newfs_msdos \

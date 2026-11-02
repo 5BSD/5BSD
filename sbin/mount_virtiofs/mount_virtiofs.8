@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 12, 2026
+.Dd November 2, 2026
 .Dt MOUNT_VIRTIOFS 8
 .Os
 .Sh NAME
@@ -28,7 +28,7 @@ guest driver publishes one
 .Pa /dev/virtiofs Ns Ar N
 character device per virtio-fs PCI function and drives an in-kernel FUSE
 session over the device queues, so the mounted file system is of type
-.Xr fusefs 5 .
+.Xr fusefs 4 .
 .Pp
 The first argument is either the mount
 .Ar tag
@@ -60,8 +60,8 @@ bounds
 to 131072 bytes so that each FUSE read fits in a single transport request.
 .Sh SEE ALSO
 .Xr nmount 2 ,
+.Xr fusefs 4 ,
 .Xr virtio_fs 4 ,
-.Xr fusefs 5 ,
 .Xr mount 8 ,
 .Xr mount_fusefs 8
 .Sh HISTORY
