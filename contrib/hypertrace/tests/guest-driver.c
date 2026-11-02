@@ -358,16 +358,19 @@ int main(void) {
     sc.vtdtr_ready = 1;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming) - 1) == EINVAL);
     assert(sc.vtdtr_ready == 1);
+    /* A well-sized control other than READY or EOF closes the gate before
+     * it is validated; an invalid one stops the transport, so no READY is
+     * sent for it. */
     incoming.vd_delivery_id = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_delivery_id = 17;
     incoming.vd_epoch = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_epoch = 98;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_epoch = 99;
     receive_error = ENOBUFS;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == ENOBUFS);
@@ -391,19 +394,19 @@ int main(void) {
     sc.vtdtr_ready = 1;
     incoming.vd_pid = -1;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_pid = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_pid = 123;
 	assert(vtdtr_ctrl_process_event(&sc, &incoming,
 	    sizeof(incoming)) == EINVAL);
-	assert(sc.vtdtr_ready == 1);
+	assert(sc.vtdtr_ready == 0);
 	incoming.vd_source_id[0] = 0x42;
     incoming.vd_kill_vmid = 42;
     incoming.vd_kill_epoch = 98;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_kill_epoch = 99;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == 0);
     assert(sc.vtdtr_ready == 0);
