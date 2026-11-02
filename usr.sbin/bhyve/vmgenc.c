@@ -56,8 +56,12 @@ vmgenc_init(struct vmctx *ctx)
 	char *region;
 	int error;
 
-	error = bootrom_alloc(ctx, PAGE_SIZE, PROT_READ, 0, &region,
-	    &vmgen_gpa);
+	/*
+	 * The generation ID is random per process, so it must not take part
+	 * in the bootrom identity live migration compares.
+	 */
+	error = bootrom_alloc(ctx, PAGE_SIZE, PROT_READ,
+	    BOOTROM_ALLOC_INSTANCE, &region, &vmgen_gpa);
 	if (error != 0)
 		errx(4, "%s: bootrom_alloc", __func__);
 
