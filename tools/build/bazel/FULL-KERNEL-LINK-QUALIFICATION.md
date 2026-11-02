@@ -1,5 +1,10 @@
 # Complete native amd64 GENERIC link milestone (2026-11-02)
 
+Historical initial link checkpoint: the later complete comparison found a
+helper DSO DT_NEEDED build-path defect in these r2/r3 artifacts. They are retained
+as rejected parity evidence. The corrected r4 build and independent full-object/
+linked-kernel comparisons are in FULL-KERNEL-PARITY-QUALIFICATION.md.
+
 The maintained frontend now builds all selected amd64 GENERIC objects, links the
 complete kernel directly with declared lld/scripts, merges CTF and emits the
 split runtime/debug artifacts. The new linker consumes the ordered File provider

@@ -3,6 +3,19 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+## Latest kernel checkpoint (2026-11-02)
+
+Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
+objects match code/allocated data/CTF, and the linked full/runtime kernels match
+55 allocated payloads plus validated build-ID metadata, 96,147 loader symbols
+and merged CTF. The comparison found and fixed the initial helper DSO build-path
+DT_NEEDED defect; old artifacts fail the new test. See
+[FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
+Next kernel work is native installation/pkgbase metadata and module/configuration/
+architecture qualification, followed by VM/runtime and performance gates. Full
+world and bootstrap/publication remain open; Make stays production/default.
+Earlier component checkpoints below are retained historical evidence.
+
 The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have
 native ordinary/PIE source ownership, declared OpenSSL/EAPOL/IPv6 selections and
 installation metadata. Five profiles pass 25 immutable ELF comparisons and 35

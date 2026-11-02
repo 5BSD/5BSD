@@ -9933,3 +9933,14 @@ audit header dependency only; source/probe/audit bodies are unchanged and its
 text/CTF exactly match Make. ELF kernel symbols/debug CRC are checked. DTrace
 probe and audit behavior still require boot/runtime qualification; a successful
 link is not evidence of those live behaviors.
+
+## Complete controlled kernel artifact parity (2026-11-02)
+
+All 2,462 compiled object machine-code, allocated data and CTF payloads now match
+the independent same-policy Make control. Corrected linked runtime sections,
+loader symbols and merged CTF match as well, with only independently validated
+build-ID contents separate. This carries existing compiled probe/audit code
+through the build; it is not live DTrace/audit behavior qualification. The fix
+changes linker input spelling only, with no C/assembly runtime-source edits.
+See FULL-KERNEL-PARITY-QUALIFICATION.md for the real DT_NEEDED defect found and
+rejected initial artifacts.

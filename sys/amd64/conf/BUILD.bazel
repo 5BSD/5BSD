@@ -834,6 +834,7 @@ load("//tools/build/bazel:bsd_kernel_link.bzl", "bsd_kernel_link")
 # Full amd64 GENERIC link policy from the maintained architecture backend.
 bsd_kernel_link(
     name = "generic_linked_kernel", objects = ":generic_link_inputs",
+    shared_objects = ["force-dynamic-hack.pico"],
     script = "//sys/conf:ldscript.amd64", script_inputs = ["//sys/conf:debuginfo.ldscript"],
     emulation = "elf_x86_64_fbsd",
     linkopts = ["--build-id=sha1", "-z", "max-page-size=2097152", "-z", "notext", "-z", "ifunc-noplt"],
