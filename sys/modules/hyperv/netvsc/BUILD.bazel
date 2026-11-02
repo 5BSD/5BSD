@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hv_netvsc", objects = ["//sys/dev/hyperv:hv_netvsc_hn_nvs_module_object_files", "//sys/dev/hyperv:hv_netvsc_hn_rndis_module_object_files", "//sys/dev/hyperv:hv_netvsc_if_hn_module_object_files"], object_order = ["hn_nvs.o", "hn_rndis.o", "if_hn.o"], export_all = False)

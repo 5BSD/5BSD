@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hv_utils", objects = ["//sys/dev/hyperv:hv_utils_vmbus_ic_module_object_files", "//sys/dev/hyperv:hv_utils_hv_kvp_module_object_files", "//sys/dev/hyperv:hv_utils_vmbus_heartbeat_module_object_files"], object_order = ["vmbus_ic.o", "hv_kvp.o", "vmbus_heartbeat.o", "vmbus_shutdown.o", "vmbus_timesync.o"], export_all = False)

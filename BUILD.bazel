@@ -19,8 +19,7 @@ exports_files(['sys/amd64/vmm/vmm_instruction_emul.c'], visibility = ["//usr.sbi
 exports_files(["sys/contrib/dev/uath/ar5523.bin.uu"], visibility = ["//usr.sbin/uathload:__pkg__"])
 
 # Shared source ABI for FireWire operator tools.
-exports_files(["sys/dev/firewire/fwcrom.c"], visibility = ["//usr.sbin/fwcontrol:__pkg__"])
-cc_library(name = "firewire_user_headers", hdrs = ["sys/dev/firewire/firewire.h", "sys/dev/firewire/iec13213.h", "sys/dev/firewire/fwphyreg.h", "sys/dev/firewire/iec68113.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/fwcontrol:__pkg__", "//usr.sbin/dconschat:__pkg__"])
+alias(name = "firewire_user_headers", actual = "//sys/dev/firewire:userspace_headers", visibility = ["//usr.sbin/fwcontrol:__pkg__", "//usr.sbin/dconschat:__pkg__"])
 cc_library(name = "dcons_user_headers", hdrs = ["sys/dev/dcons/dcons.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/dconschat:__pkg__"])
 
 cc_library(name = "mlx_user_headers", hdrs = ["sys/dev/mlx/mlxio.h", "sys/dev/mlx/mlxreg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlxcontrol:__pkg__"])

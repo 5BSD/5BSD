@@ -17,7 +17,7 @@ cc_library(name = "storage_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h",
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "tracing_module_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h"],
-    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/dev/hyperv:__pkg__"])
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
@@ -26,13 +26,13 @@ bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["_vm_phys.h", "_v
 
 bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/ntb:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__"])
 
 # Source-tree user ABI closure selected by the maintained bsdtrace build.
 cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', 'vm_map.h', 'vm_param.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bsdtrace:__pkg__"])
 
 # Physical source prerequisites from independent Ethernet module builds.
-bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/ntb:__pkg__"])
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__"])
@@ -46,7 +46,7 @@ bsd_source_headers(
         "uma.h",
         "uma_align_mask.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/netinet/libalias:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/netinet/libalias:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__"],
 )
 
 bsd_source_headers(
@@ -263,7 +263,7 @@ bsd_source_headers(name = "core_kernel_coredump_vnode_headers", hdrs = ["uma.h",
 bsd_source_headers(name = "core_kernel_imgact_elf_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_imgact_shell_headers", hdrs = ["vm.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_dump_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_dumpset.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
@@ -879,7 +879,7 @@ bsd_source_headers(name = "x86_core_kernel_sdt_machdep_headers", hdrs = ["_vm_ra
 bsd_source_headers(name = "x86_core_kernel_stack_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_ucode_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_param.h"],
-    visibility = ["//sys/x86/x86:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],

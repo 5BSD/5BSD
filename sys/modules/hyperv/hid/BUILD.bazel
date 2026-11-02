@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hv_hid", objects = ["//sys/dev/hyperv:hv_hid_hv_hid_module_object_files"], object_order = ["hv_hid.o"], export_all = False)

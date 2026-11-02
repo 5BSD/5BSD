@@ -18,8 +18,14 @@ def amd64_generic_module(module, objects, exports = [], export_all = False, pack
         export_all = export_all, package = package, object_order = object_order,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
-def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = []):
-    """Compile a source group; explicit compatibility headers precede native headers."""
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = [], convert_ctf = True):
+    """Compile a source group; convert_ctf controls participation in the selected kernel CTF mode.
+
+    Custom original assembly recipes may explicitly skip CTF conversion. The
+    default preserves the selected kernel policy for ordinary source groups.
+    """
+    if type(convert_ctf) != "bool":
+        fail("convert_ctf must be a bool")
     # Preserve forced compatibility headers before the ordinary opt_global.h input.
     textual_hdrs = preinclude_headers + textual_hdrs
     preinclude_flags = [flag for header in preinclude_headers for flag in ["-include", "$(execpath " + header + ")"]]
@@ -39,5 +45,5 @@ def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts
         runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
             "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
         ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True,
-        enabled = _KERNEL_CTF)
+        enabled = _KERNEL_CTF if convert_ctf else False)
     native.filegroup(name = name + "_object_files", srcs = [":" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])

@@ -85,3 +85,85 @@ amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_timesync", src
 
 # Preserve the existing userland utility header provider across this package boundary.
 exports_files(["utilities/hv_kvp.h", "utilities/hv_utilreg.h", "utilities/hv_snapshot.h"], visibility = ["//:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_0", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "utilities/hv_utilreg.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_1", hdrs = ["hvsock/hv_sock.h", "include/hyperv.h", "include/vmbus.h"], includes = ["include", "hvsock"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_2", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"], includes = ["netvsc"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_3", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/hn_rndis.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"], includes = ["netvsc"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_4", hdrs = ["include/hyperv.h", "include/hyperv_busdma.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/hn_rndis.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"], includes = ["netvsc"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_5", hdrs = ["include/hyperv.h", "include/vmbus.h", "storvsc/hv_vstorage.h"], includes = ["include", "storvsc"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_6", hdrs = ["include/hyperv.h", "include/vmbus.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_7", hdrs = ["include/hyperv.h", "include/vmbus.h", "utilities/hv_kvp.h", "utilities/hv_utilreg.h", "utilities/unicode.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_8", hdrs = ["include/hyperv.h", "include/hyperv_busdma.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_9", hdrs = ["include/hyperv_busdma.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_10", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_11", hdrs = ["include/hyperv.h", "include/vmbus.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_12", hdrs = ["include/hyperv.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+bsd_source_headers(name = "firewire_hyperv_module_context_13", hdrs = ["include/vmbus_xact.h"], includes = ["include"],
+    visibility = ["//sys/dev/hyperv/vmbus:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "hv_hid_hv_hid_module", srcs = ["input/hv_hid.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_sock_hv_sock_module", srcs = ["hvsock/hv_sock.c"],
+    deps = ["//sys/net:tracing_core_headers", "//sys/dev/hyperv/vmbus:firewire_hyperv_module_context_0", "//sys/dev/hyperv:firewire_hyperv_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_netvsc_hn_nvs_module", srcs = ["netvsc/hn_nvs.c"],
+    deps = ["//sys/vm:tracing_module_headers", "//sys/net:virtualization_kernel_hn_nvs_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_netvsc_hn_rndis_module", srcs = ["netvsc/hn_rndis.c"],
+    deps = ["//sys/net:virtualization_kernel_hn_rndis_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:virtualization_kernel_hn_rndis_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_netvsc_if_hn_module", srcs = ["netvsc/if_hn.c"],
+    deps = ["//sys/vm:tracing_module_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:virtualization_kernel_if_hn_headers", "//sys/netinet:virtualization_kernel_if_hn_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_hn_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_storvsc_hv_storvsc_drv_freebsd_module", srcs = ["storvsc/hv_storvsc_drv_freebsd.c"],
+    deps = ["//sys/vm:pci_ethernet_headers", "//sys/cam:virtualization_kernel_hv_storvsc_drv_freebsd_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_utils_vmbus_ic_module", srcs = ["utilities/vmbus_ic.c"],
+    deps = ["//sys/dev/hyperv:firewire_hyperv_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_utils_hv_kvp_module", srcs = ["utilities/hv_kvp.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/hyperv:firewire_hyperv_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hyperv/vmbus:vmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "hv_utils_vmbus_heartbeat_module", srcs = ["utilities/vmbus_heartbeat.c", "utilities/vmbus_shutdown.c", "utilities/vmbus_timesync.c"],
+    deps = ["//sys/dev/hyperv:firewire_hyperv_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

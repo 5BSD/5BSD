@@ -10247,3 +10247,16 @@ application executes here. Crunchide original/native raw-layout negative checks
 run only on private copies with DOF initialization disabled before startup; the
 supported ld-r combined-input transformation remains a gate. See
 [build-only evidence](RESCUE-CORE-OBJECTS-QUALIFICATION.md).
+
+
+### FireWire and Hyper-V module qualification (2026-11-02)
+
+The bounded scan of 36 C files, vmbus_vector.S and vmbus_if.m records four explicit
+DTrace marker lines: one net send-pressure event and three storage connect/request
+pressure events. Six modules preserve original compiled SDT tracepoint sections;
+hv_netvsc/hv_storvsc also retain their probe/argument sections. Existing complete
+section/payload comparisons pass. Other scanned files lack explicit markers under
+this scan; inherited subsystem/header instrumentation and live firing remain open.
+Review FireWire bus/reset/isochronous/DMA/errors and VMBus channel/ring/interrupt/
+network/storage lifecycle for useful shared events without per-packet logging or
+payload disclosure. See FIREWIRE-HYPERV-MODULES-QUALIFICATION.md.

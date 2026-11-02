@@ -3913,6 +3913,9 @@ when both are disabled, Bazel's opt-mode debug flag is overridden. Their
 defaults are disabled and match the selected Make profile with MK_CTF=no and
 DEBUG_FLAGS unset. Defining DEBUG_FLAGS to an empty value is a different Make
 profile because its definedness affects module stripping. Another Make profile must supply matching values explicitly.
+Individual source groups retain original custom-recipe exceptions: a source
+that Make does not pass through ctfconvert may explicitly skip conversion.
+Such an exception does not enable CTF when kernel_ctf is disabled.
 These settings do not infer arbitrary src.conf configuration. Setting changes
 preserve compiled payloads.
 Package assembly, complete module coverage and runtime qualification

@@ -47941,3 +47941,34 @@ tool are built and checked against Make, including six exact allocated object
 payloads and 391 consumed input occurrences. Child strong stack protection is
 preserved despite the rescue parent's disabled setting. [Build-only scope and
 remaining relocatable/crunchide/full-rescue gates](RESCUE-CORE-OBJECTS-QUALIFICATION.md).
+
+
+### FireWire and Hyper-V module qualification (2026-11-02)
+
+Twelve additional selected amd64 leaves now use native C/assembly/KOBJ module
+stages. All twelve plain binaries match untouched Make byte-for-byte; exact CTF
+bytes, debug CRCs and 36 installation records pass. Thirty-eight original executed
+compiler contexts/4,853 prerequisites and twelve actual ordered links are bound;
+final CTF-only results reuse prior compilations, with no invented cached spawns.
+The original VMBus custom assembly recipe skips ctfconvert. A per-group boolean
+convert_ctf defaults true and participates in the global kernel setting; false
+preserves that recipe and cannot override global disable. All 22 prior ISP/Myricom
+module artifacts remain byte-identical. The frontend manual records the exception.
+
+Shared FireWire source/header ownership moved into its package with the old root
+header target retained as a native alias. fwcontrol/dconschat are built separately
+with the userland SDK: executable sections match except debug links, manifests/
+manuals are unchanged and debug CRCs validate. Archives/DWARF differ; full byte
+identity is not claimed. Rejected analysis/mixed-toolchain/CTF/archive-equality
+attempts are retained with diagnosis. See FIREWIRE-HYPERV-MODULES-QUALIFICATION.md.
+
+Local BUILD presence is 506/729 selected amd64 leaves (223 missing), not a whole
+system qualification percentage. Original export policies are retained. Six
+existing provider tests pass per module profile; hardware/loading/live probes,
+other options/architectures and complete world/rescue/pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain open.
+During ARM qualification, review/fix the existing Hyper-V Make branch that uses
+SRC instead of SRCS for its architecture sources; current evidence is amd64 only.
+Existing build-bsd C/format-5/backend inputs cover the composition; no new CLI,
+signing/security, staging or publication contract. Make remains production/
+default; BIP is excluded. Automatic parameter capture remains a frontend gate.

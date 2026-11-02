@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hv_storvsc", objects = ["//sys/dev/hyperv:hv_storvsc_hv_storvsc_drv_freebsd_module_object_files"], object_order = ["hv_storvsc_drv_freebsd.o"], export_all = False)

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "fwisound", objects = ["//sys/dev/firewire:fwisound_fwisound_module_object_files", "//sys/dev/firewire:fwisound_fwisound_pcm_module_object_files"], object_order = ["fwisound.o", "fwisound_pcm.o"], export_all = False)
