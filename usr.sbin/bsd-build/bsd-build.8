@@ -5202,3 +5202,15 @@ It does not introduce Make interpretation into production Bazel actions.
 See
 .Pa tools/build/bazel/MAKE-REFERENCE-METADATA-QUALIFICATION.md
 for controls and scope.
+.Pp
+The independent
+.Pa tools/build/bazel/dtrace-dof-inventory.py
+inspector accepts
+.Fl Fl relocatable-metadata
+for explicit amd64 object metadata and symbol-relative patched-site checks.
+Its default linked-image requirement is unchanged; this mode cannot claim
+linked load addresses or live probe firing.
+The existing format-5 target/test API runs its regression.
+See
+.Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
+for supported relocations, controls and runtime limits.
