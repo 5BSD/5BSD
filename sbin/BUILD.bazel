@@ -45,6 +45,7 @@ _ARCHIVES = [
     "//sbin/mount_nfs:install_archive",
     "//sbin/mount_nullfs:install_archive",
     "//sbin/mount_unionfs:install_archive",
+    "//sbin/mount_virtiofs:install_archive",
     "//sbin/newfs:install_archive",
     "//sbin/newfs_msdos:install_archive",
     "//sbin/nfsiod:install_archive",

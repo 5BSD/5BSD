@@ -44,6 +44,7 @@ SUBDIR=adjkerntz \
 	mount_nfs \
 	mount_nullfs \
 	mount_unionfs \
+	mount_virtiofs \
 	newfs \
 	newfs_msdos \
 	nfsiod \
