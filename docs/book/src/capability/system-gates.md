@@ -114,7 +114,7 @@ Manifests](../plane/bundles-and-manifests.md)).
 # BSDSysctl: hold the sysctl gate, become sole writer of one tunable
 capabilities {
     system  = ["sysctl"];
-    isolate = ["kern.maxfiles"];
+    isolate = ["kern.maxfiles", "kern.module_path"];
 }
 ```
 
@@ -220,7 +220,7 @@ calling process never leaves capability mode.
 |---|---|---|---|
 | BSDExtension (`system.SystemExtension`) | `usr.sbin/BSDExtension/capbundle/bsdextension.ucl` | `kldload`, `kldunload` | loads modules named by clients through `service_ensure_extension(3)` against its own allow-list; reclaims modules of uninstalled bundles |
 | BSDNamespace (`system.Namespace`) | `usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl` | `jail` | creates label-scoped jails for `service_enter_namespace(3)` callers; the caller attaches itself over the returned jail descriptor |
-| BSDSysctl (`system.Sysctl`) | `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl` | `sysctl`, `isolate = ["kern.maxfiles"]` | reads and writes on behalf of clients per `Config/sysctl.conf`; sole writer of the isolated OID |
+| BSDSysctl (`system.Sysctl`) | `usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl` | `sysctl`, `isolate = ["kern.maxfiles", "kern.module_path"]` | reads and writes on behalf of clients per `Config/sysctl.conf`; sole writer of the isolated OIDs (`kern.module_path`: the kernel linker's search path, which root loads rely on) |
 | BSDTime (`system.Time`) | `usr.sbin/BSDTime/capbundle/BSDTime.ucl` | `settime` | `SET` and `ADJUST` for clients allowed by `Config/time.conf` |
 | BSDPower (`system.Power`) | `usr.sbin/BSDPower/capbundle/BSDPower.ucl` | none | born in capability mode without a gate: `ACPIIO_REQSLPSTATE` on `/dev/acpi` is gated by device access, so authority rides on a descriptor narrowed with `cap_ioctls_limit(2)`; reboot and halt stay with capsule |
 | capsule | `claims.system` in capsule.conf(5) | whatever the operator lists | the shipped `capsule-daemon.conf` claims nothing; reboot, halt and poweroff go through the `system.lifecycle` capability and capsulectl(8) |

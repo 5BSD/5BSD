@@ -21,21 +21,21 @@ cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix
 # configuration (Make: CFLAGS.blake2b-ref.c).
 cc_library(name = "libb2_config", hdrs = ["libb2/config.h"], strip_include_prefix = "libb2")
 cc_library(name = "blake2b", srcs = ["//sys/contrib/libb2:blake2b-ref.c"],
-    deps = ["//sys/contrib/libb2:headers", ":libb2_config"], local_defines = ["SUFFIX=_ref"],
+    deps = ["//sys/contrib/libb2:headers", ":libb2_config"], local_defines = ["SUFFIX="],
     copts = ["-fPIE", "-Wno-unused-function", "-Wno-cast-qual"], target_compatible_with = _PLATFORM,
     visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
-cc_library(name = "objects"), srcs = ["bsdextension.c", "policy.c", "reclaim.c", "rootload.c", "bsdextension.h", "bsdextension_reclaim.h", "trace_pressure.h", "bsdextension_probes.h"],
-    deps = ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers', ":blake2b", "//sys/contrib/libb2:headers", "//contrib/sqlite3:headers", "//lib/libsqlite3:sqlite3"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
+cc_library(name = "objects", srcs = ["bsdextension.c", "kerneldir.c", "policy.c", "reclaim.c", "rootload.c", "bsdextension.h", "bsdextension_reclaim.h", "trace_pressure.h", "bsdextension_probes.h"],
+    deps = ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers', ":blake2b", "//sys/contrib/libb2:headers", "//contrib/sqlite3:headers", "//lib/libsqlite3:sqlite3", "//lib/libkldelf:kldelf", "//lib/libelf:elf"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
     local_defines = select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}),
     copts = ["-fPIE"], target_compatible_with = _PLATFORM)
 bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider", provider_object = "bsdextension_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 [filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
 cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
-cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers', ":blake2b", "//lib/libsqlite3:sqlite3"])
+cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"] + ['//lib/libextensioncmp:extensioncmp', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libfidl:fidl', '//lib/libthr:thr', '//lib/libextensioncmp:generated_headers', '//lib/libcapsulert:extension_protocol_headers', ":blake2b", "//lib/libsqlite3:sqlite3", "//lib/libkldelf:kldelf", "//lib/libelf:elf"])
 load("//tools/build/bazel:bsd_capimage.bzl", "bsd_capimage_policy")
 bsd_capimage_policy(name = "policy_assembly", src = "//usr.sbin/BSDExtension/capbundle:bsdextension.ucl")
 cc_binary(name = "BSDExtension", srcs = [":policy_assembly"], deps = select({_TRACE: [":traced"], "//conditions:default": [":objects"]}),
-    dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared', '//lib/libchannel:channel_shared', '//lib/libucl:ucl_shared', '//lib/libcapreclaim:capreclaim_shared', '//lib/liblogcmp:logcmp_shared', '//lib/libfidl:fidl_shared', '//lib/libthr:thr_shared', '//lib/libsqlite3:sqlite3_shared'],
+    dynamic_deps = ['//lib/libextensioncmp:extensioncmp_shared', '//lib/libservice:service_shared', '//lib/libchannel:channel_shared', '//lib/libucl:ucl_shared', '//lib/libcapreclaim:capreclaim_shared', '//lib/liblogcmp:logcmp_shared', '//lib/libfidl:fidl_shared', '//lib/libthr:thr_shared', '//lib/libsqlite3:sqlite3_shared', "//lib/libkldelf:kldelf_shared", "//lib/libelf:elf_shared"],
     linkopts = ["-pie", "-Wl,-z,now"], target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
@@ -66,7 +66,7 @@ bsd_install_archive(name = "daemon_install_archive",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"])
 
 
-exports_files(["bsdextension.c", "policy.c", "reclaim.c", "rootload.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
+exports_files(["bsdextension.c", "kerneldir.c", "policy.c", "reclaim.c", "rootload.c"], visibility = ["//usr.sbin/BSDExtension/tests:__pkg__"])
 cc_library(name = "test_headers",
     hdrs = ["bsdextension.h", "bsdextension_reclaim.h", "bsdextension_probes.h", "trace_pressure.h"],
     textual_hdrs = ["bsdextension.c"], strip_include_prefix = ".",

@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd November 1, 2026
+.Dd November 2, 2026
 .Dt SWITCHBOARD 8
 .Os
 .Sh NAME
@@ -1033,22 +1033,71 @@ exits.
 Lasting grants of adopted rc.d services.
 Each object is named by an adopted service and lists
 .Va endpoints
+(possibly empty: the grant then reaches no endpoint)
 and the executable
 .Va images
 the grant may survive exec into; it has no attributes or administrative rights.
-Such a unit is started with
+A lasting grant is extra authority, so such a unit starts only when
+.Xr rc.conf 5
+enables it:
+.Nm
+first runs
+.Dq service NAME enabled
+and, when that succeeds, starts the unit with
 .Dq service NAME onerestart ,
 replacing an instance
 .Pa /etc/rc
-started, and the grant ends with that launch.
+started; otherwise the unit stays stopped and a notice is logged.
+The grant ends with that launch.
 Exec of an unlisted image drops it in that process.
+.Pp
+Each launch opens the listed images and the kernel pins those files.
+After a base upgrade replaces one of them, a process started under the old
+grant loses it at its next exec of that path; the daemon keeps running
+without it.
+Upgrading does not restart the unit.
+Restart it through
+.Nm ,
+.Dq Nm switchboardctl Cm restart Ar NAME ,
+or reboot, to issue a grant for the new files.
+.Dq service NAME restart
+from a login shell starts the daemon with no grant at all.
+While the unit restarts its daemon is briefly absent; for
+.Xr devd 8
+the kernel queues device events meanwhile (up to
+.Va hw.bus.devctl_queue )
+and the new instance reads them; an ACPI suspend request in that window
+proceeds without consulting devd.
+.Pp
+Every listed image keeps the grant, and with
+.Pa /bin/sh
+listed every
+.Ql #!/bin/sh
+script the daemon runs keeps it too.
+The boundary is therefore what the listed endpoints admit for that client,
+not the image list.
 The packaged file gives
 .Xr devd 8
 .Dq system.SystemExtension
 so that drivers of devices attached after boot load through
 .Xr devmatch 8 ;
-see
-.Xr BSDExtension 8 .
+.Xr BSDExtension 8
+admits the
+.Dq devd
+client for hardware drivers only
+.Pq Va driver_clients
+and that is the limit on what any devd action can load.
+It gives
+.Xr ntpd 8
+no endpoint: its grant only identifies the ntpd that
+.Nm
+started, whose pinned
+.Pa /usr/sbin/ntpd
+image
+.Xr mac_ntpd 4
+lets discipline the clock while
+.Xr BSDTime 8
+holds the clock gate.
 An absent file grants nothing; an invalid file grants nothing and is logged.
 .It Pa /Capabilities/Config/switchboard/root-query.ucl
 Read-only endpoints for UID 0 sessions without software authority.
@@ -1092,6 +1141,12 @@ use from a root login shell: the broker loads only a
 module file that the package database records in a 5BSD base package, with
 a matching checksum, and unloads only what such a load loaded.
 An absent file grants nothing; an invalid file grants nothing and is logged.
+.Pp
+Both files admit on the effective UID of the kernel stamp alone; the stamp
+carries no real UID.
+A set-user-ID root program run by an ordinary user therefore qualifies like
+a root login shell, and so does any UID 0 process without a grant, for
+example a daemon restarted from a root shell.
 .El
 .Pp
 Both bundle directories and all loaded bundle contents must be root-owned and

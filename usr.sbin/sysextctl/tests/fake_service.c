@@ -330,6 +330,7 @@ root_outcome(const char *name, int load,
 		{ "changed", SYSEXT_DECISION_CHANGED },
 		{ "failed", SYSEXT_DECISION_FAILED },
 		{ "notroot", SYSEXT_DECISION_NOT_ROOT_LOADED },
+		{ "protected", SYSEXT_DECISION_PROTECTED },
 	};
 	int error;
 

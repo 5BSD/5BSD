@@ -367,6 +367,25 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 	}
 	svc->pid = 0;
 
+	if (svc->rc_enable_probe) {
+		/*
+		 * "service <label> enabled" for a unit with a lasting grant:
+		 * exit 0 starts it under the grant; otherwise rc.conf does not
+		 * enable it and it stays stopped (not a launch failure).
+		 */
+		svc->rc_enable_probe = false;
+		svc->state = SVC_STATE_STOPPED;
+		if (!ok) {
+			syslog(LOG_NOTICE, "rc unit %s: not enabled in rc.conf; "
+			    "not started", svc->manifest.label);
+			return;
+		}
+		if (svc_exec_rc_grant_start(svc, switchboard_kq) == -1)
+			syslog(LOG_ERR, "rc unit %s: cannot launch onerestart: %m",
+			    svc->manifest.label);
+		return;
+	}
+
 	if (svc->rc_checking) {
 		/*
 		 * The initial onestatus probe makes rc adoption idempotent across

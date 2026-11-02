@@ -93,9 +93,13 @@ extern const char rc_adopt_stop_verb[];		/* "onestop" */
 /*
  * "onerestart": the start verb for a unit with a lasting service grant
  * (service-authority.ucl).  An instance /etc/rc started holds only rc's
- * temporary authority, so it is restarted rather than adopted.
+ * temporary authority, so it is restarted rather than adopted.  "enabled" runs
+ * first: a lasting grant is extra authority, so such a unit starts only when
+ * its rc.conf rcvar enables it (rc.subr's "enabled" exits 0), unlike the
+ * "onestart" of other adopted units.
  */
 extern const char rc_adopt_restart_verb[];	/* "onerestart" */
+extern const char rc_adopt_enabled_verb[];	/* "enabled" */
 
 /*
  * Build the NUL-terminated service(8) argv that runs verb (onestart/onestop)
@@ -117,6 +121,7 @@ void	rc_adopt_launch_argv(const char *label, const char *out[4]);
 void	rc_adopt_status_argv(const char *label, const char *out[4]);
 void	rc_adopt_stop_argv(const char *label, const char *out[4]);
 void	rc_adopt_restart_argv(const char *label, const char *out[4]);
+void	rc_adopt_enabled_argv(const char *label, const char *out[4]);
 
 /*
  * Adopt the curated rc.d allow-list into sd.services as boot-launched RC units.

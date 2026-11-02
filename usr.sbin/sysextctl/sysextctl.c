@@ -110,22 +110,28 @@ result_text(int result, int error, char *buf, size_t len)
 		    "package recorded (modified or replaced; reinstall the "
 		    "package)");
 	case SYSEXT_DECISION_NOT_KERNEL_DIR:
-		return ("refused: no regular module file of that name in "
-		    "/boot/kernel");
+		return ("refused: no regular module file of that name in the "
+		    "running kernel's directory (/boot/kernel), a dependency "
+		    "outside it, or that directory no longer holds the running "
+		    "kernel (reboot after a kernel upgrade)");
 	case SYSEXT_DECISION_UNLOADED:
 		return ("unloaded");
 	case SYSEXT_DECISION_NOT_ROOT_LOADED:
 		return ("refused: not loaded with sysextctl load since the "
-		    "broker started, used by another client, or a protected "
-		    "module");
+		    "broker started, or used by another client");
 	case SYSEXT_DECISION_DISABLED:
 		return ("refused: root loads are not configured "
 		    "(root_load_repository in bsdextension.ucl)");
 	case SYSEXT_DECISION_PKGDB:
 		return ("refused: the package database could not be read");
 	case SYSEXT_DECISION_CHANGED:
-		return ("refused: the module file changed during the load; "
-		    "the load was undone");
+		return ("refused: a module file changed, or the kernel loaded "
+		    "a file that was not checked, during the load; the load "
+		    "was undone");
+	case SYSEXT_DECISION_PROTECTED:
+		return ("refused: protected module (security policies, "
+		    "tracing, storage, packet filters and the hypervisor are "
+		    "never loaded or unloaded from a login session)");
 	default:
 		return ("unknown");
 	}

@@ -21,7 +21,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 20, 2018
+.Dd November 2, 2026
 .Dt MAC_NTPD 4
 .Os
 .Sh NAME
@@ -88,21 +88,50 @@ which refuses the clock privileges to every process that does not hold the
 gate, root included.
 While
 .Nm
-is loaded and enabled it hands the configured uid to that gate, so a process
-running as that user still passes it for
+is loaded and enabled it hands the configured uid to that gate.
+A process running as that user (real and effective uid) passes it for
 .Dv PRIV_ADJTIME ,
 .Dv PRIV_CLOCK_SETTIME
 and
 .Dv PRIV_NTP_ADJTIME ,
 and
 .Xr ntpd 8
-can step and slew the clock.
+can step and slew the clock, only while it runs under the program-limited
+grant
+.Xr switchboard 8
+gives the
+ntpd
+unit
+.Pq Pa /Capabilities/Config/switchboard/service-authority.ucl
+and executes
+.Pa /usr/sbin/ntpd
+or another image pinned in that grant.
+A login shell holds no grant, so
+.Ql su -m ntpd -c date ...
+is refused, as is any program that is not pinned, even when it runs as the
+ntpd user; the grant ends when the process executes another image.
+An
+.Xr ntpd 8
+started with
+.Ql service ntpd start
+from a root shell has no grant and cannot discipline the clock; restart it
+through
+.Xr switchboard 8 .
 The gate never accepts uid 0 this way, nor a process in capability mode, and
 .Dv PRIV_SETTIMEOFDAY
 stays refused.
 Disabling or unloading
 .Nm
 withdraws it.
+While the clock gate is claimed,
+.Va security.mac.ntpd.uid
+cannot be changed and
+.Va security.mac.ntpd.enabled
+can only be set to 0
+.Pq Er EPERM ;
+set them as
+.Xr loader 8
+tunables instead.
 .Ss Runtime Configuration
 The following
 .Xr sysctl 8

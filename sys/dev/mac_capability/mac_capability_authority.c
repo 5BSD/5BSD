@@ -255,6 +255,32 @@ authority_valid(struct proc *p)
 	    a->issuer->cred->cr_prison == p->p_ucred->cr_prison);
 }
 /*
+ * True when p holds a valid managed, program-limited grant (CAP_AUTH_CONSTRAIN,
+ * as switchboard issues for service-authority.ucl) and is executing one of the
+ * images pinned in it.  The identity is the pinned vnode, never a path or uid;
+ * the exec hooks drop the grant in a process that runs any other image.
+ */
+bool
+cap_authority_runs_pinned_image(struct proc *p)
+{
+	struct cap_authority *a;
+	bool pinned = false;
+
+	PROC_LOCK(p);
+	a = p->p_cap_authority;
+	if (authority_valid(p) && a->kind == CAP_AUTH_MANAGED &&
+	    p->p_textvp != NULL) {
+		for (unsigned i = 0; i < a->nexec; i++) {
+			if (a->executable[i] == p->p_textvp) {
+				pinned = true;
+				break;
+			}
+		}
+	}
+	PROC_UNLOCK(p);
+	return (pinned);
+}
+/*
  * Traditional debugging cannot manufacture the target's protected authority.
  * The caller holds target's PROC lock and stabilizes actor (curproc, or the
  * parent under proctree_lock for PT_TRACE_ME). Never wait for a second PROC

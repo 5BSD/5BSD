@@ -3,7 +3,8 @@
  * Userland build configuration for sys/contrib/libb2/blake2b-ref.c in
  * bsdextension(8) (pkg file checksums for root loads).  The kernel uses
  * sys/crypto/blake2/config.h, which also shims libc headers; this one only
- * sets what blake2-impl.h reads.  Compiled with -DSUFFIX=_ref.
+ * sets what blake2-impl.h reads.  Compiled with an empty SUFFIX, so the
+ * functions keep the names blake2.h declares.
  */
 #ifndef _BSDEXTENSION_LIBB2_CONFIG_H_
 #define	_BSDEXTENSION_LIBB2_CONFIG_H_

@@ -122,6 +122,55 @@ ATF_TC_BODY(hints_classify, tc)
 	ATF_CHECK(!sysext_hints_pnp_module(im.buf, im.len, ""));
 }
 
+static void
+version(struct image *im, const char *name, int ver, const char *file)
+{
+	begin(im, MDT_VERSION);
+	put_str(im, name);
+	put_int(im, ver);
+	put_str(im, file);
+	end(im);
+}
+
+/*
+ * Dependency resolution as linker_hints_lookup(): the preferred version
+ * wins at once, else the highest within range (never version 0), else none.
+ */
+ATF_TC_WITHOUT_HEAD(hints_version_file);
+ATF_TC_BODY(hints_version_file, tc)
+{
+	struct image im;
+	char file[64];
+
+	(void)tc;
+	memset(&im, 0, sizeof(im));
+	put_int(&im, LINKER_HINTS_VERSION);
+	version(&im, "usb", 1, "kernel");
+	version(&im, "rlx", 1, "rlx_v1.ko");
+	version(&im, "rlx", 3, "rlx_v3.ko");
+	version(&im, "rlx", 2, "rlx_v2.ko");
+	version(&im, "rlz", 0, "rlz.ko");
+	ATF_CHECK(sysext_hints_version_file(im.buf, im.len, "rlx", 1, 2, 3,
+	    file, sizeof(file)));
+	ATF_CHECK_STREQ("rlx_v2.ko", file);
+	ATF_CHECK(sysext_hints_version_file(im.buf, im.len, "rlx", 1, 5, 3,
+	    file, sizeof(file)));
+	ATF_CHECK_STREQ("rlx_v3.ko", file);
+	ATF_CHECK(sysext_hints_version_file(im.buf, im.len, "usb", 1, 1, 1,
+	    file, sizeof(file)));
+	ATF_CHECK_STREQ("kernel", file);
+	ATF_CHECK(!sysext_hints_version_file(im.buf, im.len, "rlx", 4, 4, 9,
+	    file, sizeof(file)));
+	ATF_CHECK(!sysext_hints_version_file(im.buf, im.len, "rlz", 0, 1, 1,
+	    file, sizeof(file)));
+	ATF_CHECK(!sysext_hints_version_file(im.buf, im.len, "rly", 1, 1, 1,
+	    file, sizeof(file)));
+	/* Truncated anywhere: never past the end, never a partial name. */
+	for (size_t n = 0; n < im.len; n++)
+		(void)sysext_hints_version_file(im.buf, n, "rlx", 1, 2, 3,
+		    file, sizeof(file));
+}
+
 ATF_TC_WITHOUT_HEAD(hints_malformed);
 ATF_TC_BODY(hints_malformed, tc)
 {
@@ -352,6 +401,7 @@ ATF_TC_BODY(driver_clients_key, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hints_classify);
+	ATF_TP_ADD_TC(tp, hints_version_file);
 	ATF_TP_ADD_TC(tp, hints_malformed);
 	ATF_TP_ADD_TC(tp, policy_key);
 	ATF_TP_ADD_TC(tp, deny_override);

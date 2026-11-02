@@ -67,16 +67,27 @@ ntpd_publish(void)
 static int
 ntpd_sysctl_int(SYSCTL_HANDLER_ARGS)
 {
-	int error;
+	int error, value;
 
-	error = sysctl_handle_int(oidp, arg1, 0, req);
+	value = *(int *)arg1;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
 	/*
 	 * A loader tunable reaches this handler when the sysctl registers,
-	 * before the lock exists; mpo_init publishes the value then.
+	 * before the lock exists and before mpo_init; mpo_init publishes the
+	 * value then.  Once active, while the capability plane's clock claim
+	 * is held, the delegate may only narrow: the uid is fixed and the
+	 * policy may be disabled but not re-enabled.
 	 */
-	if (error == 0 && req->newptr != NULL && ntpd_active)
+	if (ntpd_active && mac_capability_clock_claimed() &&
+	    value != *(int *)arg1 &&
+	    (arg1 == &ntpd_uid || value != 0))
+		return (EPERM);
+	*(int *)arg1 = value;
+	if (ntpd_active)
 		ntpd_publish();
-	return (error);
+	return (0);
 }
 
 SYSCTL_PROC(_security_mac_ntpd, OID_AUTO, enabled,
@@ -133,3 +144,9 @@ MAC_POLICY_SET(&ntpd_ops, mac_ntpd, "MAC/ntpd",
     MPC_LOADTIME_FLAG_UNLOADOK, NULL);
 /* Lets the loader see that a kernel with "options MAC_NTPD" provides it. */
 MODULE_VERSION(mac_ntpd, 1);
+/*
+ * The clock delegate lives in mac_capability, a mandatory part of the 5BSD
+ * kernel (sys/conf/files "standard"); a kernel without it refuses the load by
+ * name instead of failing on an unresolved symbol.
+ */
+MODULE_DEPEND(mac_ntpd, mac_capability, 1, 1, 1);

@@ -119,8 +119,9 @@ answered, and a query leaks nothing about modules a client may not load.
 .Pp
 When the policy sets
 .Cm device_drivers
-to true, a module that is not allow-listed is also permitted if the kernel's
-.Pa /boot/kernel/linker.hints
+to true, a module that is not allow-listed is also permitted if the running
+kernel's
+.Pa linker.hints
 records its file with plug-and-play match data
 .Pq Dv MDT_PNP_INFO ,
 which makes it a hardware driver that
@@ -129,11 +130,13 @@ can select for an unattached device, unless an administrator
 .Cm deny
 override names it.
 .Nm
-reads the hints through the delivered
-.Pa /boot/kernel
-directory descriptor, bounded and on each such request, so a rebuilt
+reads the hints beneath the running kernel's module directory (see
+.Sx Kernel directory ) ,
+bounded, and keeps them in memory while the file's device, inode, size,
+modification and change times are unchanged, so a rebuilt
 .Pa linker.hints
-applies at once; without the directory the class permits nothing.
+applies at the next request; without the directory, or while it no longer
+holds the running kernel, the class permits nothing.
 Service modules, filesystems and modules under
 .Pa /boot/modules
 need an allow-list entry.
@@ -155,6 +158,12 @@ gives
 .Pq Pa service-authority.ucl ,
 so that a device attached after boot gets its driver through
 .Xr devmatch 8 .
+The grant follows devd into every program its images include, among them
+.Pa /bin/sh ,
+so every shell script a
+.Xr devd.conf 5
+rule runs holds it too; this class restriction, not the program list, is what
+limits what those actions can load.
 Each request is logged with its client label, for example
 .Dq ENSURE if_urndis (client devd, hardware driver): loaded .
 .Pp
@@ -308,22 +317,58 @@ from that shell stays refused by the gate.
 .Pp
 .Sy Load
 does not consult the allow-list.
-It loads
-.Pa /boot/kernel/ Ns Ar NAME Ns Pa .ko
+It refuses a protected module outright: a security policy
+.Pq Pa mac_* ,
+a tracing provider
+.Pq DTrace, HyperTrace, kinst, fbt, sdt, systrace, fasttrap, profile ,
+ZFS and opensolaris, a packet filter
+.Pq Pa pf* , ipfw* ,
+or vmm, the same list
+.Sy Unload
+refuses, with the result
+.Dq protected module .
+Before root loads existed the late-kldload gate refused all of them, and the
+MAC policies among them grant privileges.
+Otherwise it loads
+.Ar NAME Ns Pa .ko
 (the module name with
 .Pa .ko
-added when absent), by that absolute path so that
-.Va kern.module_path
-cannot redirect it, only when the policy sets
+added when absent) from the running kernel's module directory, normally
+.Pa /boot/kernel ,
+only when the policy sets
 .Cm root_load_repository ,
 no administrator
 .Cm deny
-override names the module, and:
+override names the module, and the module and every file the load would bring
+in pass the checks below.
+.Nm
+resolves the module's dependencies
+.Pq Dv MODULE_DEPEND
+before anything is loaded, as the kernel linker would: from the module
+metadata of each file, read by a forked child with
+libkldelf
+(below), a dependency that no loaded module provides is looked up in the
+kernel directory's
+.Pa linker.hints
+(the record with the preferred version, else the highest version in range),
+else as
+.Ar dependency
+or
+.Ar dependency Ns Pa .ko
+in that directory, and a file of the kernel itself
+.Pq Pa kernel
+needs nothing.
+A dependency found nowhere in the kernel directory is refused; the kernel's
+search of
+.Va kern.module_path
+.Pq for example Pa /boot/modules
+is never used.
+For the module and every such dependency:
 .Bl -bullet
 .It
-the file, opened beneath the delivered
-.Pa /boot/kernel
-directory without following symbolic links, is a regular file;
+the file, examined beneath the kernel directory without following symbolic
+links, is a regular file; anything else is refused before it is opened, so a
+device node or FIFO is never opened;
 .It
 the package database
 .Pq Pa /var/db/pkg/local.sqlite ,
@@ -342,26 +387,47 @@ the file's BLAKE2b-512 checksum, in pkg's
 .Dq 2$
 encoding, equals the checksum pkg recorded for it;
 .It
-the file is unchanged (device, inode, size, modification time) from the check
-to after the load, and every other file the kernel linker loaded with it for
-its dependencies lies directly in
-.Pa /boot/kernel
-and passes the same package and checksum checks.
+no administrator
+.Cm deny
+override names it and it is not a protected module;
+.It
+a dependency provides the version range the file that needs it declares.
 .El
 .Pp
-Otherwise the load is refused or, when the kernel already loaded it, undone
-by unloading the file (which releases the dependencies it pulled in).
+The files are then loaded dependencies first, each by its absolute path in the
+kernel directory, so the kernel resolves nothing itself.
+After each load
+.Nm
+compares the loaded files with those before it: any file other than the one
+just loaded, or a file id whose pathname
+.Xr kldstat 2
+cannot report, is a hard failure, logged at
+.Dv LOG_ERR .
+Every file this request loaded is then unloaded again and the load is
+refused, as it is when a file changed (device, inode, size, modification or
+change time) or the kernel directory changed between the check and the end of
+the load.
+At most 16 files are loaded for one request.
+Dependencies the load brought in are root loads in their own right: each can
+be unloaded with
+.Sy Unload ,
+the module that needs them first.
 A module already loaded or compiled into the kernel is reported as present
 without a check.
-The package database is not parsed in the broker: a
+.Pp
+The package database and module metadata are not parsed in the broker: a
 .Xr pdfork 2 Ns ed
 child, which has no kldload token (it is close-on-fork) and closes every
-descriptor but the database directory and its reply pipe, maps
+descriptor but the file or directory it reads and its reply pipe, does it and
+returns one fixed-size record, which the broker validates again.
+The database child maps
 .Pa local.sqlite
 privately and reads it with base's private sqlite library through
 .Fn sqlite3_deserialize
-read-only, with views, triggers and untrusted schema functions disabled, and
-returns one fixed-size record.
+read-only, with views, triggers and untrusted schema functions disabled.
+.Nm
+is threaded; the child runs only the forking thread, and libc's allocator and
+stdio have fork handlers, so the child may allocate.
 .Pp
 .Sy Unload
 unloads only a module that a root
@@ -372,11 +438,7 @@ started, through the held kldunload gate, and only while its file id still
 names that file.
 It refuses once any other client has asked for the module
 .Pq an Sy Ensure No that found it present ,
-and never unloads a security policy
-.Pq Pa mac_* ,
-a tracing provider
-.Pq DTrace, HyperTrace, kinst, fbt, sdt, systrace, fasttrap, profile ,
-ZFS, a packet filter, or vmm.
+and never unloads a protected module.
 The kernel refuses a module that is busy or that another module depends on.
 .Pp
 Each root request is recorded in the decision list with the client
@@ -393,23 +455,97 @@ The kernel stamp carries no login session or process id;
 logs those, with the audit identifiers, on its side.
 The results are: loaded, already present, administrator deny override,
 failed (with the errno), not a file of a 5BSD base package (7), checksum
-differs from the package record (8), no regular file in
-.Pa /boot/kernel
-(9), unloaded (10), not loaded by a root load (11), root loads not
-configured (12), package database unavailable (13), file changed during the
-load (14).
+differs from the package record (8), no regular file in the kernel directory,
+a dependency outside it, or a kernel directory that no longer holds the
+running kernel (9), unloaded (10), not loaded by a root load (11), root loads
+not configured (12), package database unavailable (13), a file changed or an
+unchecked file was loaded during the load (14), protected module (15).
+.Pp
+Who reaches the endpoint is
+.Xr switchboard 8 Ns 's
+decision: a session whose kernel-stamped effective uid is 0, outside a jail,
+holding no software authority.
+The stamp carries no real uid, so a set-user-ID-root program run by another
+user counts as uid 0 here, as it does for the read-only view.
+Any process running as root without a token qualifies, not only a login
+shell: for example
+.Xr devd 8
+restarted from a root shell, which then has no lasting grant, still reaches
+.Sy Load
+for any base module that passes these checks, so the program limit of devd's
+lasting grant
+.Pq Xr switchboard 8
+does not bound what root can load this way.
 .Pp
 This is a guard against mistakes and an audit trail, not containment of root.
 The package database and
-.Pa /boot/kernel
+.Pa /boot
 are writable by root: a root that edits the database, swaps a file between
-the check and the load, mounts over
-.Pa /boot/kernel ,
+the check and the load, replaces or mounts over
+.Pa /boot ,
 installs a package, or edits
 .Xr loader.conf 5
 and reboots, defeats it.
+A dependency that is already loaded is accepted by module name
+.Pq Xr modfind 2 ;
+its version is not visible to
+.Nm ,
+and when it does not satisfy the module the kernel searches
+.Va kern.module_path
+itself; the file it loads is detected and unloaded, but its initialisation
+has run.
+The capability plane isolates
+.Va kern.module_path
+.Pq Xr BSDSysctl 8 ,
+so that search stays within the loader's directories.
 .Xr mac_veriexec 4
 is the control against a compromised root.
+.Ss Kernel directory
+The manifest delivers
+.Pa /boot
+by descriptor.
+The kernel directory is the one the loader booted the running kernel from:
+the pathname
+.Xr kldstat 2
+reports for file id 1
+.Pq Pa /boot/kernel/kernel , No or for example Pa /boot/kernel.old/kernel ,
+which nothing can change after boot
+.Po
+.Va kern.bootfile
+is a writable string and is not used
+.Pc .
+It must be a single directory beneath
+.Pa /boot ,
+not a symbolic link, and its kernel file must carry the running kernel's GNU
+build-id
+.Pq Va kern.build_id .
+Booted from
+.Pa /boot/kernel.old ,
+the hardware-driver class reads that directory's
+.Pa linker.hints ;
+root loads find no package records there and are refused.
+.Pp
+Before each driver-class decision and before and after every root load,
+.Nm
+opens the directory again by name beneath
+.Pa /boot
+and compares it with the descriptor it holds:
+.Bl -bullet
+.It
+the same directory (device and inode) whose kernel file still has the running
+build-id is used;
+.It
+a different directory under the name, as after
+.Cm installkernel
+renamed the old one to
+.Pa kernel.old ,
+or after a mount over it, is adopted, and logged, only when its kernel file
+has the running build-id;
+.It
+otherwise, and when the kernel file was replaced in place (a kernel package
+upgrade before the reboot), driver and root loads are refused and logged until
+the next boot: the directory's modules belong to another kernel.
+.El
 .Sh ENVIRONMENT
 .Bl -tag -width BSDEXTENSION_RECLAIM_INTERVAL
 .It Ev BSDEXTENSION_RECLAIM_INTERVAL

@@ -54,22 +54,26 @@
 /* Root loads and unloads (system.SystemExtension.RootLoad). */
 #define	SYSEXT_DECISION_NOT_PACKAGED	7	/* no 5BSD base package owns the file */
 #define	SYSEXT_DECISION_CHECKSUM	8	/* file differs from the pkg record */
-#define	SYSEXT_DECISION_NOT_KERNEL_DIR	9	/* no regular NAME.ko in /boot/kernel */
+#define	SYSEXT_DECISION_NOT_KERNEL_DIR	9	/* no regular NAME.ko in the kernel dir */
 #define	SYSEXT_DECISION_UNLOADED	10	/* unloaded by this request */
 #define	SYSEXT_DECISION_NOT_ROOT_LOADED	11	/* unload: not a root load, or shared */
 #define	SYSEXT_DECISION_DISABLED	12	/* root loads are not configured */
 #define	SYSEXT_DECISION_PKGDB		13	/* package database unreadable */
 #define	SYSEXT_DECISION_CHANGED		14	/* file replaced during the load; undone */
-#define	SYSEXT_DECISION_MAX		SYSEXT_DECISION_CHANGED
+#define	SYSEXT_DECISION_PROTECTED	15	/* security, tracing, storage or VMM module */
+#define	SYSEXT_DECISION_MAX		SYSEXT_DECISION_PROTECTED
 
 /*
  * system.SystemExtension.RootLoad (bsd.extension.v1 SystemExtensionRootLoad):
  * Load and Unload only.  switchboard resolves it for UID 0 sessions outside a
  * jail that hold no software authority
  * (/Capabilities/Config/switchboard/root-load.ucl).  The broker loads
- * /boot/kernel/NAME.ko only when the local package database records that file
- * as part of a 5BSD base package and its current content matches the recorded
- * checksum; it unloads only what a root load loaded.
+ * NAME.ko and the modules it depends on from the running kernel's directory
+ * (/boot/kernel) only when the local package database records each file as
+ * part of a 5BSD base package, its current content matches the recorded
+ * checksum, and it is not a protected module (security policy, tracing,
+ * storage, packet filter, hypervisor); it unloads only what a root load
+ * loaded.
  */
 #define	SYSEXT_ROOTLOAD_SERVICE_NAME	"system.SystemExtension.RootLoad"
 
