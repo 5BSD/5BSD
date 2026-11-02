@@ -47601,3 +47601,5 @@ constructor-time checks and eleven reserved/malformed-key analysis tests.
 PAM test program/install producers, exact Make compiler/ELF/install contracts and
 fourteen safe wrapper passes. Ten original installed-path/root cases remain
 disposable-guest gates; full PAM/world/pkgbase completion is not claimed.
+
+[DTRACE-BUILTINS-KERNEL-QUALIFICATION.md](DTRACE-BUILTINS-KERNEL-QUALIFICATION.md) records 15 native DTrace/Solaris built-ins, checked macros/header precedence and exact machine code/CTF/input/relocation evidence. Live tracing and full-system gates remain open.

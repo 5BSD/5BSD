@@ -16,3 +16,7 @@ bsd_source_headers(name = "core_kernel_subr_prng_headers", hdrs = ["include/pcg_
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_spl_misc_headers", hdrs = ["include/pcg_variants.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["include/pcg_variants.h"],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])

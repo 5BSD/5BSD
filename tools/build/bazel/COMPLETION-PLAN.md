@@ -416,3 +416,7 @@ checks, seven ordered ELF contracts, twenty install records and fourteen safe
 wrapper results pass. Retain nine installed-path policy cases plus one root
 accounting case for disposable-guest execution, then PAM aggregate reconciliation
 and full world/pkgbase gates. No source assertions or requirements were disabled.
+
+## DTrace built-in checkpoint (2026-11-02)
+
+15 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks after fixing real parent-header namespace and late Solaris utility ordering. Reconciliation r33 leaves 64 missing link products and six weaker matches. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, generated products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

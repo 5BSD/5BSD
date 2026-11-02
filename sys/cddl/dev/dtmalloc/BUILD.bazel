@@ -7,3 +7,11 @@ amd64_cddl_module_objects(name = "dtmalloc_module", srcs = ["dtmalloc.c"],
 [cross_cddl_module_objects(arch = arch, name = "dtmalloc_module", srcs = ["dtmalloc.c"],
     deps = ["//sys/bsm:tracing_module_headers", "//sys/dev/dttransport:tracing_module_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/fs/nfs:tracing_module_headers", "//sys/fs/nfsclient:tracing_module_headers", "//sys/security/audit:tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/cddl/dev/hypertrace:tracing_module_headers", "//sys/compat/linuxkpi/common/include/linux:tracing_module_headers", "//sys/contrib/ck:kernel_headers"], header_overrides = [])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC DTrace built-in built-ins.
+amd64_generic_kernel_objects(name = "generic_dtrace_builtins_dtmalloc", srcs = ["dtmalloc.c"],
+    deps = ["//sys/cddl/contrib/opensolaris:dtrace_builtins_kernel_dtmalloc_headers", "//sys/cddl/compat/opensolaris:dtrace_builtins_kernel_dtrace_headers", "//sys/compat/linuxkpi/common/include/linux:dtrace_builtins_kernel_opensolaris_headers", "//sys/vm:dtrace_builtins_kernel_opensolaris_headers"], early_deps = ["//sys/contrib/openzfs:dtrace_builtins_kernel_dtmalloc_headers", "//sys/modules/zfs:dtrace_builtins_kernel_opensolaris_headers"],
+    pre_copts = ["-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))

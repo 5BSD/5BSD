@@ -740,7 +740,7 @@ amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uip
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 cc_library(name = "generic_assym_header", hdrs = [":generic_assym"],
-    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__"])
+    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["subr_syscall.c"],
@@ -845,3 +845,10 @@ cc_library(name = "monitoring_devices_kernel_bus_if_headers", hdrs = [":monitori
 
 filegroup(name = "monitoring_devices_kernel_device_if_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "monitoring_devices_kernel_device_if_headers", hdrs = [":monitoring_devices_kernel_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_systrace_headers", hdrs = ["systrace_args.c"],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+filegroup(name = "dtrace_builtins_kernel_linker_if_file", srcs = [":linker_if"], output_group = "header")
+cc_library(name = "dtrace_builtins_kernel_linker_if_headers", hdrs = [":dtrace_builtins_kernel_linker_if_file"], strip_include_prefix = "linker_if.generated", visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])

@@ -9853,3 +9853,7 @@ wrapper runs explicitly disable DOF registration before startup through the
 standard Bazel environment provider; this is a runtime test input, not removal
 of probes from production binaries. PAM-TESTS-QUALIFICATION.md retains the ten
 unexecuted installed-path/root cases and full instrumentation/runtime gates.
+
+## DTrace built-ins (2026-11-02)
+
+A bounded source-bound scan finds call-shaped tracing/audit markers in 4 of 15 converted files. Indirect provider machinery requires live qualification; this scan proves neither delivery nor an instrumentation gap. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Production probes remain.
