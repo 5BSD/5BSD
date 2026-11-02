@@ -3,3 +3,26 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(name = "kernel_headers", hdrs = ["camellia.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_cbc_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_icm_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_xts_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cml_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

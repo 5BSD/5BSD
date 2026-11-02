@@ -50,6 +50,15 @@ WIRELESS-KERNEL-QUALIFICATION.md. Latest known-builtin configured analysis finds
 and 1,911 unmatched products. Earlier counts above are retained snapshots.
 These remain analysis counts; full compile/link/runtime/performance gates apply.
 
+Twenty-five OpenCrypto built-ins now pass native code/CTF/input/relocation
+checks, with consumed libsodium headers owned by their source package; see
+OPENCRYPTO-KERNEL-QUALIFICATION.md. Complete known-built-in analysis passes
+across that boundary: 574 source matches among 2,466 Make final link products,
+six weaker name matches and 1,886 unmatched in this known graph. Earlier counts
+are retained snapshots; complete link/runtime/performance gates remain open.
+The existing frontend API handles these targets unchanged; no new CLI/manual
+option or signing/packaging policy is required.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

@@ -605,3 +605,7 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_vht_headers", hdrs = ["in.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["in.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["in.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

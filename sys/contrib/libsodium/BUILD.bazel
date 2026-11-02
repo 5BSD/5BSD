@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# OpenCrypto built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["src/libsodium/include/sodium/crypto_core_hchacha20.h", "src/libsodium/include/sodium/crypto_onetimeauth_poly1305.h", "src/libsodium/include/sodium/crypto_stream_chacha20.h", "src/libsodium/include/sodium/export.h"],
+    includes = ["src/libsodium/include"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_poly1305_headers", hdrs = ["src/libsodium/include/sodium/crypto_onetimeauth_poly1305.h", "src/libsodium/include/sodium/export.h"],
+    includes = ["src/libsodium/include"],
+    visibility = ["//sys/opencrypto:__pkg__"])

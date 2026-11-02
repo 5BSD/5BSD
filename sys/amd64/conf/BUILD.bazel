@@ -379,3 +379,7 @@ cc_library(name = "wlan_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__"])
 cc_library(name = "wlan_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
     strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+cc_library(name = "opencrypto_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/opencrypto:__pkg__"])

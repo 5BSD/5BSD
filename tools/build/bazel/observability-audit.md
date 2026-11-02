@@ -9575,3 +9575,11 @@ none. Device-match and protocol-state constants are excluded. Review shared
 coverage and measured overhead before adding events. No live association,
 scanning, cipher, AP/mesh, roaming or hardware behavior is qualified; see
 WIRELESS-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## OpenCrypto built-ins (2026-11-02)
+
+The bounded call-shaped scan finds recognized tracing/audit/CTR markers in
+criov, crypto, cryptodev and cryptodeflate; 21 sources have none. Existing
+code/probe plumbing is preserved. Review shared hooks before adding hot-path
+events. Live provider/session, /dev/crypto, KTLS and existing known-answer tests
+remain runtime gates; see OPENCRYPTO-KERNEL-QUALIFICATION.md.

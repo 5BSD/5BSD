@@ -15,3 +15,7 @@ cc_library(name = "kernel_headers", hdrs = ["zlib.h", "zconf.h", "zutil.h"], inc
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_subr_compressor_headers", hdrs = ["zconf.h", "zlib.h", "zutil.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["zconf.h", "zlib.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

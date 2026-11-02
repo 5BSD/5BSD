@@ -29,3 +29,39 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcm_headers", hdrs = ["rijndael.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_gmac_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_cbc_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_icm_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_xts_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cbc_mac_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cml_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_poly1305_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_rmd160_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha1_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha2_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

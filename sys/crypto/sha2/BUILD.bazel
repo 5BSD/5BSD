@@ -40,3 +40,33 @@ bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha256.h"],
 # IPv6 built-in prerequisites.
 bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["sha256.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodesc_ed25519_headers", hdrs = ["sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodesc_kdf_headers", hdrs = ["sha256.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cbc_mac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_poly1305_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_rmd160_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha1_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha2_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

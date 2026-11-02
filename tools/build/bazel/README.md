@@ -47442,3 +47442,7 @@ relocation checks, reused device/interface generators and hardware/runtime gates
 [WIRELESS-KERNEL-QUALIFICATION.md](WIRELESS-KERNEL-QUALIFICATION.md) records
 37 native amd64 GENERIC wireless built-ins, exact code/CTF and input checks,
 five source-specific warning-policy corrections and remaining runtime gates.
+
+[OPENCRYPTO-KERNEL-QUALIFICATION.md](OPENCRYPTO-KERNEL-QUALIFICATION.md) records
+25 native amd64 GENERIC OpenCrypto built-ins, narrow libsodium ownership,
+code/CTF/input/relocation checks and remaining crypto/runtime/system gates.

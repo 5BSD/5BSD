@@ -806,3 +806,15 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_vht_headers", hdrs = ["uma.h", 
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_criov_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

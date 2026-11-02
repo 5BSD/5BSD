@@ -37,3 +37,134 @@ cc_library(name = "rpc_provider_headers", hdrs = ["_cryptodev.h", "cryptodev.h"]
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "ktls.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_criov_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodesc_ed25519.h", "cryptodesc_kdf.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodesc_ed25519_headers", hdrs = ["cryptodesc_ed25519.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodesc_kdf_headers", hdrs = ["_cryptodev.h", "cryptodesc_kdf.h", "cryptodev.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "deflate.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_gmac_headers", hdrs = ["gfmult.h", "gmac.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_gfmult_headers", hdrs = ["gfmult.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "ktls.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_rmd160_headers", hdrs = ["rmd160.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_cbc_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_icm_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_aes_xts_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cbc_mac_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cml_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_deflate_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "deflate.h", "xform_comp.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h", "xform_enc.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_poly1305_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_rmd160_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha1_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha2_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+
+# Native OpenCrypto built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_opencrypto_cbc_mac", srcs = ["cbc_mac.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/opencrypto:opencrypto_kernel_cbc_mac_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_criov", srcs = ["criov.c"],
+    deps = ["//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/vm:opencrypto_kernel_criov_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_crypto", srcs = ["crypto.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_crypto_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/crypto/rijndael:opencrypto_kernel_crypto_headers", "//sys/crypto/sha2:opencrypto_kernel_crypto_headers", "//sys/ddb:opencrypto_kernel_crypto_headers", "//sys/opencrypto:opencrypto_kernel_crypto_headers", "//sys/vm:opencrypto_kernel_crypto_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:opencrypto_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_cryptodev", srcs = ["cryptodev.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_cryptodev_headers", "//sys/crypto/camellia:opencrypto_kernel_cryptodev_headers", "//sys/crypto/rijndael:opencrypto_kernel_cryptodev_headers", "//sys/crypto/sha2:opencrypto_kernel_cryptodev_headers", "//sys/opencrypto:opencrypto_kernel_cryptodev_headers", "//sys/vm:opencrypto_kernel_cryptodev_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_cryptodesc_ed25519", srcs = ["cryptodesc_ed25519.c"],
+    deps = ["//sys/crypto/sha2:opencrypto_kernel_cryptodesc_ed25519_headers", "//sys/opencrypto:opencrypto_kernel_cryptodesc_ed25519_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_cryptodesc_kdf", srcs = ["cryptodesc_kdf.c"],
+    deps = ["//sys/crypto/sha2:opencrypto_kernel_cryptodesc_kdf_headers", "//sys/opencrypto:opencrypto_kernel_cryptodesc_kdf_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_cryptosoft", srcs = ["cryptosoft.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto/camellia:opencrypto_kernel_cryptosoft_headers", "//sys/crypto/rijndael:opencrypto_kernel_cryptosoft_headers", "//sys/crypto/sha2:opencrypto_kernel_cryptosoft_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/vm:opencrypto_kernel_cryptosoft_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_cryptodeflate", srcs = ["cryptodeflate.c"],
+    deps = ["//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers", "//sys/opencrypto:opencrypto_kernel_cryptodeflate_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_gmac", srcs = ["gmac.c"],
+    deps = ["//sys/crypto/rijndael:opencrypto_kernel_gmac_headers", "//sys/opencrypto:opencrypto_kernel_gmac_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_gfmult", srcs = ["gfmult.c"],
+    deps = ["//sys/opencrypto:opencrypto_kernel_gfmult_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_ktls_ocf", srcs = ["ktls_ocf.c"],
+    deps = ["//sys/net:opencrypto_kernel_ktls_ocf_headers", "//sys/netinet:opencrypto_kernel_ktls_ocf_headers", "//sys/netinet6:opencrypto_kernel_ktls_ocf_headers", "//sys/opencrypto:opencrypto_kernel_ktls_ocf_headers", "//sys/vm:opencrypto_kernel_ktls_ocf_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_rmd160", srcs = ["rmd160.c"],
+    deps = ["//sys/opencrypto:opencrypto_kernel_rmd160_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_aes_cbc", srcs = ["xform_aes_cbc.c"],
+    deps = ["//sys/crypto/camellia:opencrypto_kernel_xform_aes_cbc_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_aes_cbc_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_cbc_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_aes_icm", srcs = ["xform_aes_icm.c"],
+    deps = ["//sys/crypto/camellia:opencrypto_kernel_xform_aes_icm_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_aes_icm_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_icm_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_aes_xts", srcs = ["xform_aes_xts.c"],
+    deps = ["//sys/crypto/camellia:opencrypto_kernel_xform_aes_xts_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_aes_xts_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_xts_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_cbc_mac", srcs = ["xform_cbc_mac.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_cbc_mac_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_cbc_mac_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_cbc_mac_headers", "//sys/opencrypto:opencrypto_kernel_xform_cbc_mac_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_chacha20_poly1305", srcs = ["xform_chacha20_poly1305.c"],
+    deps = ["//sys/contrib/libsodium:opencrypto_kernel_xform_chacha20_poly1305_headers", "//sys/crypto:opencrypto_kernel_xform_chacha20_poly1305_headers", "//sys/crypto/camellia:opencrypto_kernel_xform_chacha20_poly1305_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_chacha20_poly1305_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_chacha20_poly1305_headers", "//sys/opencrypto:opencrypto_kernel_xform_chacha20_poly1305_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_cml", srcs = ["xform_cml.c"],
+    deps = ["//sys/crypto/camellia:opencrypto_kernel_xform_cml_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_cml_headers", "//sys/opencrypto:opencrypto_kernel_xform_cml_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_deflate", srcs = ["xform_deflate.c"],
+    deps = ["//sys/opencrypto:opencrypto_kernel_xform_deflate_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_gmac", srcs = ["xform_gmac.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_gmac_headers", "//sys/crypto/camellia:opencrypto_kernel_xform_gmac_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_gmac_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_gmac_headers", "//sys/opencrypto:opencrypto_kernel_xform_gmac_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_null", srcs = ["xform_null.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_null_headers", "//sys/crypto/camellia:opencrypto_kernel_xform_null_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_null_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_null_headers", "//sys/opencrypto:opencrypto_kernel_xform_null_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_poly1305", srcs = ["xform_poly1305.c"],
+    deps = ["//sys/contrib/libsodium:opencrypto_kernel_xform_poly1305_headers", "//sys/crypto:opencrypto_kernel_xform_poly1305_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_poly1305_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_poly1305_headers", "//sys/opencrypto:opencrypto_kernel_xform_poly1305_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_rmd160", srcs = ["xform_rmd160.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_rmd160_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_rmd160_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_rmd160_headers", "//sys/opencrypto:opencrypto_kernel_xform_rmd160_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_sha1", srcs = ["xform_sha1.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_sha1_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_sha1_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_sha1_headers", "//sys/opencrypto:opencrypto_kernel_xform_sha1_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_opencrypto_xform_sha2", srcs = ["xform_sha2.c"],
+    deps = ["//sys/crypto:opencrypto_kernel_xform_sha2_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_sha2_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_sha2_headers", "//sys/opencrypto:opencrypto_kernel_xform_sha2_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
