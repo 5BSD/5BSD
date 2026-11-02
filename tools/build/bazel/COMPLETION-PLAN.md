@@ -977,3 +977,14 @@ retains exact runtime object proof and identical-input whole-file controls;
 DWARF path bytes differ explicitly. Next: real bounded static rescue dispatcher
 and safe application execution, then all selected applications/static libraries,
 full rescue install/package and option/architecture coverage.
+
+### Bounded static rescue execution (November 2, 2026)
+
+[Real cat/echo/head subset](RESCUE-CORE-PROGRAM-QUALIFICATION.md): native main,
+three hidden objects, libutil/libc/compiler_rt and startup link successfully;
+whole main/binary bytes equal original generated Make using those same native
+library/startup inputs. Ten actual runtime methods pass; two consumed-input
+inventories total86 occurrences. This does not close full world/library or rescue
+install/package parity. Next correct the existing libutil cc_library's missing
+Make standard/pipe/fno-common/warning policy, qualify its archive/DSO and repeat
+core tests, then expand the complete rescue application/static-library closure.

@@ -48059,3 +48059,9 @@ VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification remain open.
 Existing build-bsd format-5 inputs and maintained rules carry these declarations;
 no new CLI/backend/security/publication policy. Make stays production/default;
 BIP remains excluded.
+
+The [bounded static rescue executable](RESCUE-CORE-PROGRAM-QUALIFICATION.md)
+now runs real cat/echo/head through original dispatch and crunchide objects.
+Main and full ELF equal an original generated-Make control with the same native
+libraries/startup, and ten real runtime methods pass. Existing libutil compile-
+policy correction is a separate next gate; full rescue install remains open.

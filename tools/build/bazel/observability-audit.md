@@ -10310,3 +10310,15 @@ shared driver attach/reset/recovery, queue lifecycle and RDMA completion/error
 observability before adding events; avoid per-packet logging or payload leakage.
 Live events and alternate options remain unqualified. See
 NETWORK-FAMILIES-MODULES-QUALIFICATION.md for retained inventories and exact scope.
+
+## Bounded static rescue runtime (November 2, 2026)
+
+[Actual subset qualification](RESCUE-CORE-PROGRAM-QUALIFICATION.md) proves four
+direct object inputs, three native archives and native startup selection; whole
+binary bytes equal original generated Make with identical library/startup bytes.
+Ten production-application runtime methods execute with LC_ALL=C and DOF init
+disabled before startup. Actual main/expand_number header occurrences86 match
+Make; libutil member runtime code/relocations/symbols match. The first link failed
+on omitted libutil and ran no tests; that evidence is retained. No tracing is
+activated, no full rescue install is claimed, and libutil's existing compiler-
+policy discrepancy remains a distinct follow-up gate.
