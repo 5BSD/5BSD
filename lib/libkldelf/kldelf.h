@@ -160,6 +160,14 @@ int ef_obj_open(struct elf_file *ef, int verbose);
 int	elf_open_file(struct elf_file *efile, const char *filename,
     int verbose);
 
+/*
+ * The same over an open descriptor, which the elf_file then owns: it is
+ * closed by elf_close_file(), also when this fails.  'filename' only names
+ * the file in messages.
+ */
+int	elf_open_fd(struct elf_file *efile, int fd, const char *filename,
+    int verbose);
+
 /* Close an ELF file. */
 void	elf_close_file(struct elf_file *efile);
 

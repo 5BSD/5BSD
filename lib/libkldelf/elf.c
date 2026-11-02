@@ -65,16 +65,27 @@ elf_find_reloc(const GElf_Ehdr *hdr)
 int
 elf_open_file(struct elf_file *efile, const char *filename, int verbose)
 {
+	int fd;
+
+	fd = open(filename, O_RDONLY);
+	if (fd == -1) {
+		if (verbose)
+			warn("open(%s)", filename);
+		memset(efile, 0, sizeof(*efile));
+		efile->ef_fd = -1;
+		return (errno);
+	}
+	return (elf_open_fd(efile, fd, filename, verbose));
+}
+
+int
+elf_open_fd(struct elf_file *efile, int fd, const char *filename, int verbose)
+{
 	int error;
 
 	memset(efile, 0, sizeof(*efile));
 	efile->ef_filename = filename;
-	efile->ef_fd = open(filename, O_RDONLY);
-	if (efile->ef_fd == -1) {
-		if (verbose)
-			warn("open(%s)", filename);
-		return (errno);
-	}
+	efile->ef_fd = fd;
 
 	efile->ef_elf = elf_begin(efile->ef_fd, ELF_C_READ, NULL);
 	if (efile->ef_elf == NULL) {
