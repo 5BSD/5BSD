@@ -212,3 +212,9 @@ filegroup(name = "builtin_cryptodev_if_source", srcs = [":cryptodev_if"], output
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_cryptodev_if", srcs = [":builtin_cryptodev_if_source"],
     deps = ["//sys/opencrypto:kobj_builtins_physical_cryptodev_if_headers", "//sys/opencrypto:kobj_builtins_kernel_cryptodev_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native SIMD crypto built-ins.
+bsd_source_headers(name = "simd_crypto_kernel_aesni_ghash_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
+    visibility = ["//sys/crypto:__pkg__"])
+bsd_source_headers(name = "simd_crypto_kernel_aesni_wrap_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "gfmult.h", "gmac.h"],
+    visibility = ["//sys/crypto:__pkg__"])

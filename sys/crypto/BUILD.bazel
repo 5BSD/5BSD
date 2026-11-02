@@ -132,3 +132,33 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_aesni", srcs = ["aesn
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_aeskeys_amd64", srcs = ["aesni/aeskeys_amd64.S"],
     deps = [], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+
+# Physical prerequisites for native SIMD crypto built-ins.
+bsd_source_headers(name = "simd_crypto_kernel_aesni_ghash_headers", hdrs = ["aesni/aesni.h", "aesni/aesni_os.h"],
+    visibility = ["//sys/crypto:__pkg__"])
+bsd_source_headers(name = "simd_crypto_kernel_aesni_ccm_headers", hdrs = ["aesni/aesencdec.h", "aesni/aesni.h", "aesni/aesni_os.h"],
+    visibility = ["//sys/crypto:__pkg__"])
+bsd_source_headers(name = "simd_crypto_kernel_intel_sha1_headers", hdrs = ["aesni/aesni_os.h", "aesni/sha_sse.h"],
+    visibility = ["//sys/crypto:__pkg__"])
+
+# Native amd64 GENERIC SIMD crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_simd_crypto_aesni_ghash", srcs = ["aesni/aesni_ghash.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ghash_headers", "//sys/opencrypto:simd_crypto_kernel_aesni_ghash_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-error=cast-qual", "-mmmx", "-msse", "-msse4", "-maes", "-mpclmul"] + select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_simd_crypto_aesni_ccm", srcs = ["aesni/aesni_ccm.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ccm_headers", "//sys/opencrypto:simd_crypto_kernel_aesni_ghash_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-error=cast-qual", "-mmmx", "-msse", "-msse4", "-maes", "-mpclmul"] + select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_simd_crypto_aesni_wrap", srcs = ["aesni/aesni_wrap.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ccm_headers", "//sys/crypto/rijndael:simd_crypto_kernel_aesni_wrap_headers", "//sys/opencrypto:simd_crypto_kernel_aesni_wrap_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-error=cast-qual", "-mmmx", "-msse", "-msse4", "-maes"] + select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_simd_crypto_intel_sha1", srcs = ["aesni/intel_sha1.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_intel_sha1_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-mmmx", "-msse", "-msse4", "-msha"] + select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_simd_crypto_intel_sha256", srcs = ["aesni/intel_sha256.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_intel_sha1_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-mmmx", "-msse", "-msse4", "-msha"] + select({":simd_crypto_optimized": ["-O3"], "//conditions:default": []}))
+
+load("//tools/build/bazel:bsd_sdk_headers.bzl", "bsd_sdk_headers")
+config_setting(name = "simd_crypto_optimized", values = {"compilation_mode": "opt"})
+# Compiler resource headers and the explicit SDK SSP availability dependency.
+bsd_sdk_headers(name = "simd_crypto_sdk_headers", system_headers = ["ssp/ssp.h"])

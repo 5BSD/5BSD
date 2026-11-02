@@ -9865,3 +9865,7 @@ The bounded source-bound scan finds no matching call-shaped tracing/audit marker
 ## Generated kernel RPC protocols (2026-11-02)
 
 A bounded source-bound scan finds no matching call-shaped tracing/audit markers in the two original RPC schemas. This neither proves absent shared hooks nor runtime behavior. See RPC-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Original schemas/generator/instrumentation remain.
+
+## SIMD crypto built-ins (2026-11-02)
+
+The bounded source-bound scan finds no matching call-shaped tracing/audit markers in five converted crypto files. This proves neither absent shared hooks nor runtime coverage. See SIMD-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.

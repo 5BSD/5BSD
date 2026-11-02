@@ -428,3 +428,7 @@ and full world/pkgbase gates. No source assertions or requirements were disabled
 ## Generated RPC checkpoint (2026-11-02)
 
 Four RPC generated objects pass exact machine-code/CTF/runtime-section/compiler/input/relocation checks; six generator products match Make byte-for-byte. Reconciliation r35 leaves 11 missing products, 57 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 53 generated matches. See RPC-BUILTINS-KERNEL-QUALIFICATION.md. Complete linking, custom identities, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## SIMD crypto checkpoint (2026-11-02)
+
+Five optimized SIMD crypto objects pass native code/CTF/runtime-section/compiler/input/relocation comparisons; 276 external SDK header occurrences match Make. Existing 2,284 configured groups retain identical compiler commands/output paths; five debug targets select O0. Reconciliation r36 leaves six missing products and conservative generated/name-only classifications, with separate artifact/source proofs retained. See SIMD-CRYPTO-KERNEL-QUALIFICATION.md. Full linking, remaining identities, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
