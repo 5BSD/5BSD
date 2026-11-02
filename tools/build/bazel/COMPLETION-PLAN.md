@@ -253,3 +253,7 @@ Retain live control, root driver setup, wireless/EAP/authentication and audit
 event delivery as separate runtime gates. Archive construction and safe CLI
 reports do not establish those behaviors. Existing compact execution logging,
 configured exec-action caching and full pkgbase/system gates remain open.
+
+### WPA family milestone and next world gap (2026-11-02)
+
+WPA-FAMILY-QUALIFICATION.md records default family composition, 37 products, 33 install records and 23 safe methods. The old default control-client capture was invalidated and independently requalified; unsafe one-off objcopy dump invocations must not be reused. All audit tools must preserve source/reference/candidate bytes, bind producer output hashes and recheck inputs after inspection. The fresh 2,127-directory metadata survey is a review queue, not action coverage. Next convert the actual csv.enc plugin/install gap under inherited parent context, then reconcile selected world actions/generated sources/install/pkg ownership. Retain internal WPA backend failures and live runtime/full-system gates.

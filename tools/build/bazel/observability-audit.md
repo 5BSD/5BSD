@@ -9693,3 +9693,7 @@ No production instrumentation changed. Controller attach, command completion,
 reset/error recovery and disk I/O need relevant hardware/runtime qualification.
 Evidence: /usr/obj/usr/src/bazel-kernel-isci-review-r1-20261102/observability.json;
 see ISCI-KERNEL-QUALIFICATION.md for build evidence and limitations.
+
+## WPA family composition and evidence repair (2026-11-02)
+
+The aggregate retains all five programs and sixteen private source groups; no tracing/FIDL/audit instrumentation changed. Twenty-three safe methods do not qualify daemon authentication or event delivery. WPA-FAMILY-QUALIFICATION.md records immutable composition and a rejected mutated historical client capture. Fresh read-only Make/object/ELF/install checks replace unsafe one-off section-dump evidence; no old payload or receipt was rewritten.

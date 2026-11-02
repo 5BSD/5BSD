@@ -1,4 +1,23 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
 exports_files(["common.bzl"], visibility = ["//usr.sbin/wpa:__subpackages__"])
 
 exports_files(["library.bzl"])
+
+# The maintained directory selects src, then these five programs. Actual
+# producer dependencies replace Make's global .WAIT barrier without omission.
+_PROGRAMS = ['wpa_supplicant', 'wpa_cli', 'wpa_passphrase', 'hostapd', 'hostapd_cli']
+filegroup(name = "programs", srcs = ["//usr.sbin/wpa/" + name + ":" + name for name in _PROGRAMS],
+    visibility = ["//visibility:public"])
+alias(name = "private_archives", actual = "//usr.sbin/wpa/src:private_archives",
+    visibility = ["//visibility:public"])
+filegroup(name = "all_products", srcs = [":private_archives", ":programs"],
+    visibility = ["//visibility:public"])
+# Keep component manifests and directory package contexts separate. This is
+# an archive collection, not a flattened stage or completed pkg repository.
+bsd_install_archive_set(name = "installation_archives",
+    archives = ["//usr.sbin/wpa/" + name + ":install_archive" for name in _PROGRAMS],
+    visibility = ["//visibility:public"])
+test_suite(name = "safe_tests", tests = [
+    "//usr.sbin/wpa/" + name + (":stdin_test" if name == "wpa_passphrase" else ":safe_cli_test")
+    for name in _PROGRAMS], visibility = ["//visibility:public"])
