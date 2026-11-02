@@ -51,14 +51,16 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	read_pw:
-		if (fgets(buf, sizeof(buf), stdin) == NULL) {
-			fprintf(stderr, "Failed to read passphrase\n");
-			return 1;
+		pos = fgets(buf, sizeof(buf), stdin);
+		if (!notty && ctrl_echo) {
+			term.c_lflag |= ECHO;
+			if (tcsetattr(STDIN_FILENO, TCSANOW, &term) < 0) {
+				perror("tcsetattr:error enabling echo");
+				return 1;
+			}
 		}
-		term.c_lflag |= ECHO;
-		if (!notty &&
-		    ctrl_echo && tcsetattr(STDIN_FILENO, TCSANOW, &term) < 0) {
-			perror("tcsetattr:error enabling echo");
+		if (pos == NULL) {
+			fprintf(stderr, "Failed to read passphrase\n");
 			return 1;
 		}
 		buf[sizeof(buf) - 1] = '\0';
