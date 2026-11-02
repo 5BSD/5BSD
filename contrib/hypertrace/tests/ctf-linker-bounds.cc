@@ -112,6 +112,60 @@ test_typecast_symbol_bounds(dtrace_hdl_t *dtp)
 	}
 }
 
+/*
+ * A load of an enum member (`((struct vm_exit *)arg1)->exitcode') is an
+ * integer load of the enum's size, unsigned as dt_node_type_assign() types
+ * it (libctf gives an enum no encoding).  The linker rejected it as "a load
+ * of kind 8 is unsupported in DIF".
+ */
+static void
+test_enum_member_load(dtrace_hdl_t *dtp)
+{
+	using namespace dtrace;
+	int err = 0;
+	ctf_file_t *fp = ctf_create(&err);
+	assert(fp != nullptr);
+	ctf_encoding_t ienc = {CTF_INT_SIGNED, 0, 32};
+	ctf_id_t itype = ctf_add_integer(fp, CTF_ADD_ROOT, "int", &ienc);
+	ctf_id_t etype = ctf_add_enum(fp, CTF_ADD_ROOT, "tf_exitcode");
+	assert(itype != CTF_ERR && etype != CTF_ERR);
+	assert(ctf_add_enumerator(fp, etype, "TF_EXIT_INOUT", 0) == 0);
+	assert(ctf_add_enumerator(fp, etype, "TF_EXIT_BOGUS", 2) == 0);
+	/* Member sizes come from committed types. */
+	assert(ctf_update(fp) == 0);
+	ctf_id_t stype = ctf_add_struct(fp, CTF_ADD_ROOT, "tf_exit");
+	assert(stype != CTF_ERR);
+	assert(ctf_add_member(fp, stype, "inst_length", itype) == 0);
+	assert(ctf_add_member(fp, stype, "exitcode", etype) == 0);
+	assert(ctf_update(fp) == 0);
+
+	dt_module_t module{};
+	module.dm_ctfp = fp;
+	Typefile tf(dtp, &module, "enumfix");
+	for (uint8_t op : {DIF_OP_ULOAD, DIF_OP_UULOAD}) {
+		dif_instr_t insn = DIF_INSTR_LOAD(op, 2, 3);
+		dtrace_difo_t difo{};
+		difo.dtdo_buf = &insn;
+		difo.dtdo_len = 1;
+		DFGNode node(dtp, nullptr, nullptr, &difo, nullptr, 0);
+		node.tf = &tf;
+		node.ctfid = stype;
+		node.sym = (char *)"exitcode";
+		HyperTraceLinker linker(dtp, nullptr);
+		int result = linker.relocateUloadOrAdd(&node);
+		if (result != E_HYPERTRACE_NONE)
+			fprintf(stderr, "enum member load: %s\n",
+			    linker.getErrorMessage().c_str());
+		assert(result == E_HYPERTRACE_NONE && node.isRelocated);
+		assert(node.mip != nullptr && node.mip->ctm_offset == 32);
+		assert(insn == (dif_instr_t)DIF_INSTR_LOAD(op == DIF_OP_ULOAD ?
+		    DIF_OP_LDUW : DIF_OP_ULDUW, 2, 3));
+		dt_free(dtp, node.mip);
+	}
+	module.dm_ctfp = nullptr;
+	ctf_close(fp);
+}
+
 int
 main(void)
 {
@@ -120,6 +174,7 @@ main(void)
 	assert(dtp != nullptr);
 	test_usetx_preconditions(dtp);
 	test_typecast_symbol_bounds(dtp);
+	test_enum_member_load(dtp);
 	dif_instr_t insn = DIF_INSTR_USETX(0, 1);
 	dtrace_difo_t difo{};
 	difo.dtdo_buf = &insn;

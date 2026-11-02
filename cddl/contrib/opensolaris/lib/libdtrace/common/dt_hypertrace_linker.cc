@@ -454,10 +454,12 @@ HyperTraceLinker::relocateUloadOrAdd(DFGNode *node)
 	kind = node->tf->getKind(ctfid);
 	/*
 	 * NOTE: We support loading of CTF_K_ARRAY due to it
-	 * just being a pointer, really.
+	 * just being a pointer, really.  An enum is an integer of its
+	 * CTF size; libctf gives it no encoding, so it loads unsigned, as
+	 * dt_node_type_assign() types it for the D compiler.
 	 */
 	if (kind != CTF_K_INTEGER && kind != CTF_K_POINTER &&
-	    kind != CTF_K_ARRAY) {
+	    kind != CTF_K_ARRAY && kind != CTF_K_ENUM) {
 		setErrorMessage("a load of kind %d is unsupported in DIF.",
 		    kind);
 		return (E_HYPERTRACE_LINKING);
@@ -472,9 +474,15 @@ HyperTraceLinker::relocateUloadOrAdd(DFGNode *node)
 
 		new_instr = DIF_INSTR_LOAD(new_op, r1, rd);
 	} else {
-		/* An integer always has an encoding. */
+		/* An integer always has an encoding; an enum has none. */
 		ctf_encoding_t encoding = {};
-		(void)node->tf->getEncoding(ctfid, &encoding);
+		if (kind == CTF_K_INTEGER)
+			(void)node->tf->getEncoding(ctfid, &encoding);
+		else if ((node->mip->ctm_offset % NBBY) != 0) {
+			setErrorMessage("enum member %s is not byte aligned",
+			    node->sym != nullptr ? node->sym : "?");
+			return (E_HYPERTRACE_LINKING);
+		}
 		/* A bit-field: a sized load would make its neighboring bits part
 		 * of the value, even when the member begins on a byte boundary.
 		 * The load and the extraction that follows it are relocated
