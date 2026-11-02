@@ -269,10 +269,15 @@ mevent_build(struct kevent *kev)
 			 * signalled.  Apply EV_DELETE (or close the descriptor) before
 			 * moving the object to retire_head; merely returning it in a
 			 * changelist would acknowledge deletion too early.
+			 *
+			 * Several events can share one descriptor (a socket's
+			 * read and write events), and the close-delete of one
+			 * can be queued next to a plain delete of another.
+			 * Descriptors are closed only after every queued
+			 * EV_DELETE has been applied (below the loop); closing
+			 * first made the remaining EV_DELETE fail with EBADF.
 			 */
-			if (mevp->me_closefd) {
-				(void)close(mevp->me_fd);
-			} else {
+			if (!mevp->me_closefd) {
 				mevent_populate(mevp, &delete_kev);
 				error = kevent(mfd, &delete_kev, 1, NULL, 0, NULL);
 				if (error == -1 && errno != ENOENT)
@@ -283,9 +288,13 @@ mevent_build(struct kevent *kev)
 			LIST_INSERT_HEAD(&retire_head, mevp, me_list);
 			continue;
 		}
-		/* Leave excess changes queued for the next dispatch iteration. */
+		/*
+		 * Leave excess changes queued for the next dispatch iteration,
+		 * but keep scanning so that every queued delete is applied
+		 * before any close-delete's descriptor is closed.
+		 */
 		if (i == MEVENT_MAX)
-			break;
+			continue;
 		mevent_populate(mevp, &kev[i]);
 		i++;
 
@@ -294,6 +303,11 @@ mevent_build(struct kevent *kev)
 		LIST_INSERT_HEAD(&global_head, mevp, me_list);
 
 		assert(i <= MEVENT_MAX);
+	}
+
+	LIST_FOREACH(mevp, &retire_head, me_list) {
+		if (mevp->me_closefd)
+			(void)close(mevp->me_fd);
 	}
 
 	mevent_qunlock();
