@@ -1291,10 +1291,11 @@ def consumer_delivery_isolation(root, proc):
     # A host consumer that never acknowledges a delivery holds the worker
     # sending to it until the 60 s ACK deadline; deliveries to another host
     # consumer must not queue behind it, also at the default -t 1 (the
-    # one -t worker used to run them in turn).  Two uploads: one delivery worker stuck on the silent consumer
-    # delays the live consumer's second delivery whatever the recipient
-    # order, and a second worker must not take the silent consumer's next
-    # delivery, which would wait on its stream as well.
+    # one -t worker used to run them in turn).  Two uploads: one delivery
+    # worker stuck on the silent consumer delays the live consumer's second
+    # delivery whatever the recipient order, and a second worker must not
+    # take the silent consumer's next delivery, which would wait on its
+    # stream as well.
     d = {'live': []}
     elf = b'\x7fELF' + bytes(range(40))
 
