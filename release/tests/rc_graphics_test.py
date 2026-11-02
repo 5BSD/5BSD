@@ -11,11 +11,13 @@ KLD = SRC / 'libexec/rc/rc.d/kld'
 
 class ModuleStartup(unittest.TestCase):
     def invoke(self, modules, plane='YES', denied=False, early=False,
-               restore_status=0, trace_restore=False, loaded=False):
+               restore_status=0, trace_restore=False, loaded=False,
+               broker_running=False):
         seams = '''
 kldstat() { [ "__LOADED__" = YES ] || return 1; [ "$1" != -v ] || echo "$kld_list.ko"; return 0; }
 kenv() { [ "$2" = capability_plane ] || return 1; printf '%s\\n' "$test_plane"; }
 kldload() { echo "raw:$*"; }
+pgrep() { return __PGREP_STATUS__; }
 sysextctl() { if [ "$1" = restore ]; then __TRACE_RESTORE__; return __RESTORE_STATUS__; fi; echo "broker:$*"; return __BROKER_STATUS__; }
 info() { :; }
 warn() { :; }
@@ -24,6 +26,7 @@ test_plane="$2"
 kld_list="$3"
 '''.replace('__BROKER_STATUS__', '1' if denied else '0')
         seams = seams.replace('__LOADED__', 'YES' if loaded else 'NO')
+        seams = seams.replace('__PGREP_STATUS__', '0' if broker_running else '1')
         seams = seams.replace('__RESTORE_STATUS__', str(restore_status))
         seams = seams.replace('__TRACE_RESTORE__', 'echo restore' if trace_restore else ':')
         if early:
@@ -82,6 +85,12 @@ kld_list="$3"
         result = self.invoke('geom_eli', early=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), 'raw:geom_eli')
+
+    def test_load_after_broker_starts_uses_broker(self):
+        result = self.invoke('geom_eli', early=True, broker_running=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # sysextctl's report is discarded; no direct load was attempted.
+        self.assertEqual(result.stdout.strip(), '')
 
 class DeviceAutoload(unittest.TestCase):
     def invoke(self, plane='YES', denied=False, blocklist='', loaded=False):

@@ -96,7 +96,7 @@ system_taskq_init(void *arg)
 	    minclsyspri, 0, 0, 0);
 }
 /*
- * Before SI_SUB_DTRACE: a kernel with DTrace compiled in (5BSD GENERIC)
+ * Before SI_SUB_DTRACE: a kernel with DTrace and ZFS both compiled in
  * shares this taskq implementation, and dtrace_load() creates its taskq,
  * whose threads set the taskq TSD key as they start.  Initializing at
  * SI_SUB_CONFIGURE left the key unregistered (osd_get() fault in

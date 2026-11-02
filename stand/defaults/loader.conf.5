@@ -21,7 +21,7 @@
 .\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
-.Dd October 31, 2026
+.Dd November 2, 2026
 .Dt LOADER.CONF 5
 .Os
 .Sh NAME
@@ -261,22 +261,29 @@ prompt.
 Blacklisted modules may still be loaded indirectly as dependencies of other
 modules.
 .It Ar required_modules
-The Lua loader loads the 5BSD base modules on every boot, independently of
-any
+The Lua loader loads the 5BSD base modules on every boot, without
 .Ar *_load
-setting or
-.Ar module_blacklist :
-linux_common, linux64, linprocfs, linsysfs, vmm, hypertrace, kinst and
-fasttrap, which have no static build support, and dtraceall, hwt, zfs, pf,
-dummynet, nullfs, if_bridge, if_epair, fdescfs, mqueuefs, cuse and mac_ntpd,
-which the amd64 GENERIC kernel compiles in.
+lines:
+linux_common, linux64, linprocfs, linsysfs, vmm, hypertrace, kinst,
+fasttrap and uvideo, which the amd64 GENERIC kernel does not compile in, and
+dtraceall, hwt, zfs, pf, dummynet, nullfs, if_bridge, if_epair, fdescfs,
+mqueuefs, cuse and mac_ntpd, which it does.
 A module is loaded only when the selected kernel does not already provide it
 and its file is present in the kernel directory.
+A module named in
+.Ar module_blacklist ,
+or whose
+.Ar *_load
+variable is set to
+.Dq NO ,
+is left out; for example,
+.Ar uvideo_load Ns = Ns Dq NO
+leaves USB cameras to webcamd.
 Setting
 .Ar required_modules
 to
 .Dq NO
-skips them; it is meant for recovery and for installation media.
+skips them all; it is meant for recovery.
 .It Ar *_load
 If set to
 .Dq YES ,

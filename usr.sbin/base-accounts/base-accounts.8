@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd October 31, 2026
+.Dd November 2, 2026
 .Dt BASE-ACCOUNTS 8
 .Os
 .Sh NAME
@@ -78,6 +78,16 @@ An entry recorded there that is later missing was removed by the
 administrator and is not recreated unless
 .Fl a
 is given.
+.It
+The first run has no such record, so it cannot tell an account the
+administrator removed from one the installed release never had.
+It creates only the missing accounts listed in
+.Pa /usr/share/base-accounts/introduced ,
+which names each group and user a recent release introduced together with
+that release; every other missing shipped account is taken to have been
+removed, recorded, and not recreated unless
+.Fl a
+is given.
 .El
 .Pp
 Running
@@ -91,9 +101,9 @@ and log in again.
 The options are as follows:
 .Bl -tag -width "-R rootdir"
 .It Fl a
-Also recreate entries recorded in
+Also create entries recorded in
 .Pa /var/db/base-accounts
-that were removed locally.
+that were removed locally, and on a first run every missing shipped entry.
 .It Fl n
 Report what would be created without changing anything.
 .It Fl q
@@ -117,6 +127,9 @@ instead of
 for example
 .Pa /usr/src/etc
 on a system upgraded from source.
+The list of introduced accounts is read from
+.Ar refdir
+when it has one and from the installed copy otherwise.
 .It Fl v
 Also report kept, skipped and removed entries.
 .El
@@ -127,7 +140,9 @@ shipped
 .Pa group
 and
 .Pa master.passwd
-reference copies
+reference copies, and
+.Pa introduced ,
+the accounts each release introduced
 .It Pa /var/db/base-accounts
 names reconciled by the last run
 .El

@@ -2459,10 +2459,11 @@ mount_md()
 #
 # With the capability plane, kldload(2) belongs to the SystemExtension broker
 # once it has started (rc.d/kld starts it): mac_capability then refuses a
-# direct load, which kldload(8) reports as "Exec format error".  So a direct
-# load that fails is retried once through the broker (sysextctl load), whose
-# policy decides; a broker refusal is final.  Before the broker starts, or
-# with the plane disabled or in a jail, the direct load is the only path.
+# direct load, which kldload(8) reports as "Exec format error".  So while the
+# broker (BSDExtension) runs, the load is requested through it (sysextctl
+# load), whose policy decides; a broker refusal is final.  Before the broker
+# starts, or with the plane disabled or in a jail, the direct load is the only
+# path, and sysextctl is not run.
 # -b loads through the broker only (it also records the broker's boot
 # ownership of an already-loaded module); callers must run after local
 # filesystems and the capability discovery channel are available.
@@ -2516,10 +2517,12 @@ load_kld()
 		fi
 	fi
 	if ! $_loaded; then
-		if [ "$_loader" = kldload ] && $_broker; then
-			# Direct first (early boot), then the broker (late boot).
-			if kldload "$1" 2>/dev/null || sysextctl load "$1" >/dev/null
-			then
+		# Once rc.d/kld has started the broker, kldload(2) is refused
+		# and the load goes through the broker.  Before then the direct
+		# load is the only path: sysextctl would start the broker early.
+		if [ "$_loader" = kldload ] && $_broker &&
+		    pgrep -q -x BSDExtension; then
+			if sysextctl load "$1" >/dev/null; then
 				_loaded=true
 			fi
 		elif ${_loader} "$1"; then

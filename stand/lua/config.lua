@@ -839,15 +839,15 @@ function config.reload(file)
 	hook.runAll("config.reloaded")
 end
 
--- 5BSD: base subsystems every 5BSD system has at boot, whatever loader.conf
--- says.  The capability plane refuses kldload(2) after boot, so anything not
--- compiled into the kernel must be loaded here.  amd64 GENERIC compiles in all
--- of these except the ones that have no static build support (marked).  Each
--- is loaded only when the selected kernel does not already provide it and
--- its file is present beside the kernel, so every kernel configuration and
--- architecture gets the same set without duplicate loads.
--- required_modules="NO" (loader prompt or loader.conf) skips them, for
--- recovery only.
+-- 5BSD: base subsystems every 5BSD system has at boot.  The capability plane
+-- refuses kldload(2) after boot, so anything not compiled into the kernel must
+-- be loaded here.  amd64 GENERIC compiles in all of these except the ones that
+-- have no static build support (marked).  Each is loaded only when the
+-- selected kernel does not already provide it and its file is present beside
+-- the kernel, so every kernel configuration and architecture gets the same set
+-- without duplicate loads.  A module named in module_blacklist or set to
+-- <name>_load="NO" is left out; required_modules="NO" (loader prompt or
+-- loader.conf) skips them all, for recovery.
 local REQUIRED_MODULES = {
 	"linux_common",		-- Linux ABI, 64-bit only (module only)
 	"linux64",		-- (module only)
@@ -869,6 +869,7 @@ local REQUIRED_MODULES = {
 	"mqueuefs",		-- POSIX message queues
 	"cuse",			-- Userland character devices
 	"mac_ntpd",		-- ntpd privilege policy
+	"uvideo",		-- USB cameras (a module, so webcamd can have them)
 }
 
 -- Modules amd64 GENERIC compiles in, for a loader binary that predates
@@ -880,12 +881,15 @@ local AMD64_STATIC = {
 	mqueuefs = true, cuse = true, mac_ntpd = true,
 }
 
--- dtraceall.ko registers no module of its own name; ask for the framework.
-local PROVIDES = { dtraceall = "dtrace" }
+-- The module that a file registers when it is not named after the file:
+-- dtraceall.ko registers none of its own (ask for the framework), and
+-- OpenZFS registers zfsctrl.
+local PROVIDES = { dtraceall = "dtrace", zfs = "zfsctrl" }
 
 local function requiredModules()
 	local value = loader.getenv("required_modules")
 	local kernel_path = loader.getenv("kernel_path")
+	local blacklist = getBlacklist()
 
 	if value ~= nil and value:upper() == "NO" then
 		return
@@ -899,7 +903,15 @@ local function requiredModules()
 		return
 	end
 	for _, name in ipairs(REQUIRED_MODULES) do
+		local mod = modules[name]
 		local present
+		if blacklist[name] then
+			goto continue
+		end
+		if mod ~= nil and mod.load ~= nil and
+		    mod.load:upper() == "NO" then
+			goto continue
+		end
 		if loader.module_present ~= nil then
 			present = loader.module_present(PROVIDES[name] or name)
 		else
@@ -908,11 +920,14 @@ local function requiredModules()
 		end
 		local file = kernel_path .. "/" .. name .. ".ko"
 		if not present and lfs.attributes(file, "mode") == "file" then
-			config.enableModule(name)
+			if mod == nil then
+				modules[name] = {}
+			end
+			modules[name].load = "YES"
 		end
+		::continue::
 	end
 end
-
 
 function config.loadelf()
 	local xen_kernel = loader.getenv('xen_kernel')

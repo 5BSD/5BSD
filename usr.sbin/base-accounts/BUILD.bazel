@@ -8,13 +8,16 @@ bsd_install_file(name = "install_program", src = "base-accounts.sh", destination
 [bsd_install_file(name = "reference_" + name.replace(".", "_"), src = "//etc:" + name,
     destination = "/usr/share/base-accounts/" + name, owner = "root", group = "wheel", mode = "0444",
     install_tags = ["package=runtime"]) for name in ["group", "master.passwd"]]
+bsd_install_file(name = "reference_introduced", src = "introduced", destination = "/usr/share/base-accounts/introduced",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime"])
 bsd_compress(name = "manual", src = "base-accounts.8", output = "base-accounts.8.gz", arguments = ["-cn"],
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/base-accounts.8.gz",
     owner = "root", group = "wheel", mode = "0444", install_tags = select({
         "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
-bsd_install_manifest(name = "install_manifest", entries = [":install_program", ":reference_group", ":reference_master_passwd", ":install_manual"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_program", ":reference_group", ":reference_master_passwd",
+    ":reference_introduced", ":install_manual"])
 bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({
     "//tools/build/bazel/config:tests_enabled": ["//usr.sbin/base-accounts/tests:install_manifest"], "//conditions:default": []}),
     directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}' for d in ["/usr/sbin", "/usr/share/base-accounts"]} |

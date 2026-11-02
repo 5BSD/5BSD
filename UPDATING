@@ -52,6 +52,33 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	not "service ntpd restart".  Units with a lasting grant (devd,
 	ntpd) are started only when enabled in rc.conf.
 
+	base-accounts(8) no longer recreates, on its first run, base
+	accounts that an administrator removed before upgrading: without a
+	record of an earlier run it creates only the accounts listed in
+	/usr/share/base-accounts/introduced (in 16.0: groups vmm and audio,
+	group and user capability and _otel) and records the rest.  Use
+	"base-accounts -a" to create every missing base account.
+
+	The loader's required modules honour loader.conf again: a module
+	named in module_blacklist or set to NAME_load="NO" is left out, and
+	required_modules="NO" still skips the whole set.  Installation
+	media turn off only the Linux ABI, vmm and the DTrace user providers,
+	so a kernel without ZFS, DTrace or pf compiled in still gets them.
+
+	uvideo(4) is no longer compiled into amd64 GENERIC; the loader loads
+	it on every boot instead, so USB cameras work as before and
+	uvideo_load="NO" in /boot/loader.conf leaves them to webcamd(8).  To
+	hand one camera to webcamd without rebooting, run
+	"devctl detach uvideo0" and start webcamd for the camera's ugen
+	device.  intpm and ichsmb are no longer compiled in either;
+	devmatch(8) loads them at boot when the SMBus controller is present,
+	as on FreeBSD.
+
+	rc.subr load_kld sends a load through the SystemExtension broker
+	only while the broker (BSDExtension) runs, and loads directly
+	before then; it no longer starts the broker early by running
+	sysextctl after a failed direct load.
+
 20261101:
 	Root can load a kernel module of the base system from a login shell
 	again: "sysextctl load NAME" from a root login shell (effective UID

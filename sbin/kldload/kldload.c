@@ -132,12 +132,15 @@ path_check(const char *kldname, int quiet)
  * Is the named module already present, as a loaded file or compiled into the
  * kernel?  -n asks this before loading: with the 5BSD capability plane the
  * kernel refuses a late kldload(2) before it can report EEXIST, and a module
- * compiled into the kernel has no file for kldfind(2) to find.
+ * compiled into the kernel has no file for kldfind(2) to find.  The module is
+ * looked up by the file's base name without ".ko", the usual convention; a
+ * file whose modules have other names (dtraceall.ko) is found only
+ * when the file itself is loaded.
  */
 static int
 already_loaded(const char *name)
 {
-	char modname[MAXPATHLEN];
+	char modname[MAXMODNAME];
 	const char *base;
 	size_t len;
 

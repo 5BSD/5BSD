@@ -89,6 +89,15 @@ for f in "$ETC/group" "$ETC/master.passwd"; do
 	fi
 done
 
+# The accounts each release introduced.  A source tree (-r /usr/src/etc)
+# keeps the list elsewhere; use the installed one.
+INTRODUCED=$REFDIR/introduced
+[ -r "$INTRODUCED" ] || INTRODUCED=$R/usr/share/base-accounts/introduced
+if [ ! -r "$INTRODUCED" ]; then
+	vmsg "no list of introduced accounts; a first run creates none"
+	INTRODUCED=/dev/null
+fi
+
 # Print the name and id fields of the real entries in an account file:
 # comments, blank lines and NIS +/- compatibility entries are not accounts.
 entries()
@@ -110,13 +119,21 @@ id_of_name()
 	    $1 == n { print $3; exit }' "$1"
 }
 
-# Was KIND:NAME present in the reference when this system last reconciled?
-# An entry recorded there but missing now was removed by the administrator.
-seen()
+# Was KIND:NAME in the base system before and removed by the administrator?
+# The state file records what the last run reconciled.  Without one (the
+# first run) a missing entry is taken to have been removed unless the
+# reference lists it as introduced by a release, which an upgraded system
+# cannot have had.
+removed()
 {
 	$ALL && return 1
-	[ -r "$STATE" ] || return 1
-	grep -qxF "$1:$2" "$STATE"
+	if [ -r "$STATE" ]; then
+		grep -qxF "$1:$2" "$STATE"
+		return
+	fi
+	! awk -v k="$1" -v n="$2" '/^[[:space:]]*(#|$)/ { next }
+	    substr($1, 1, 1) == k && $2 == n { found = 1; exit }
+	    END { exit !found }' "$INTRODUCED"
 }
 
 pw_run()
@@ -149,7 +166,7 @@ while read -r name gid; do
 		record g "$name"
 		continue
 	fi
-	if seen g "$name"; then
+	if removed g "$name"; then
 		vmsg "group $name was removed locally; not recreating it"
 		record g "$name"
 		skipped=$((skipped + 1))
@@ -199,7 +216,7 @@ while IFS=: read -r name pass uid gid class change expire gecos home shell; do
 		record u "$name"
 		continue
 	fi
-	if seen u "$name"; then
+	if removed u "$name"; then
 		vmsg "user $name was removed locally; not recreating it"
 		record u "$name"
 		skipped=$((skipped + 1))
@@ -230,7 +247,7 @@ while IFS=: read -r name pass uid gid class change expire gecos home shell; do
 		msg "would create user $name (uid $uid, gid $gid)"
 	elif printf '%s\n' "$pass" | pw_run useradd "$name" -C /dev/null \
 	    -u "$uid" -g "$gid" -c "$gecos" -d "$home" -s "$shell" \
-	    -L "$class" -H 0; then
+	    ${class:+-L "$class"} -H 0; then
 		msg "created user $name (uid $uid, gid $gid)"
 		[ "${change:-0}" = 0 ] && [ "${expire:-0}" = 0 ] || \
 		    warn "user $name: password aging fields were not copied"

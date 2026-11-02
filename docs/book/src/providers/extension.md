@@ -467,9 +467,10 @@ kldload(2) by root fails (kldload(8) reports `Exec format error`), so:
   boot and devd(8) may load drivers`.
 - rc.subr(8) `load_kld`, used by rc.d scripts (`mac_ntpd` for ntpd, `if_vlan`,
   NFS, `geom_uzip`, the Bluetooth HID modules) and by `required_modules`,
-  tries the direct load first, which works before the broker starts, and
-  retries a failed direct load through the broker. `load_kld -b` uses only
-  the broker. Third-party rc scripts that use `load_kld` or
+  loads directly until rc.d/kld has started the broker and through the
+  broker while BSDExtension runs; it never runs `sysextctl` before then,
+  since that would start the broker early. `load_kld -b` uses only the
+  broker. Third-party rc scripts that use `load_kld` or
   `required_modules` get the same behavior.
 
 A broker denial is final; it is never retried with a direct `kldload`.
@@ -633,8 +634,9 @@ boot restoration on a release image; those require boot integration tests.
 with command seams: restoration with an empty `kld_list`, multiple requested
 modules, ownership claims for already-loaded modules, denial without a direct
 loader retry, devmatch freeze/thaw, the explicit plane-disabled path, and
-`load_kld`'s broker retry after a refused direct load (also through
-`required_modules`), which a jail or a disabled plane never attempts.
+`load_kld`'s gate (direct load before the broker runs, the broker after,
+also through `required_modules`), which a jail or a disabled plane never
+consults.
 
 ## Status and gaps
 
