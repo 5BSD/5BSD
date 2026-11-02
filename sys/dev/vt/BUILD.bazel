@@ -6,3 +6,51 @@ cc_library(name = 'framebuffer_headers', hdrs = ['vt.h', 'hw/fb/vt_fb.h', 'color
     strip_include_prefix = "/sys",
     deps = ['//sys/teken:kernel_headers', '//sys/amd64/conf:generic_opt_splash_header', '//sys/amd64/conf:generic_opt_syscons_header', '//sys/amd64/conf:generic_opt_teken_header'],
     visibility = ['//sys/dev/virtio/gpu:__pkg__'])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical device I/O prerequisites; identical contexts share providers.
+bsd_source_headers(name = "device_io_kernel_vt_termcolors_headers", hdrs = ["colors/vt_termcolors.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_vt_font_default_headers", hdrs = ["vt.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_efifb_headers", hdrs = ["colors/vt_termcolors.h", "hw/fb/vt_fb.h", "vt.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_vt_vga_headers", hdrs = ["colors/vt_termcolors.h", "hw/vga/vt_vga_reg.h", "vt.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC device I/O built-ins.
+amd64_generic_kernel_objects(name = "generic_device_io_vt_termcolors", srcs = ["colors/vt_termcolors.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_termcolors_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_font_default", srcs = ["font/vt_font_default.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_mouse_cursor", srcs = ["font/vt_mouse_cursor.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_efifb", srcs = ["hw/efifb/efifb.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_efifb_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/amd64/conf:device_io_kernel_opt_platform_header", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vbefb", srcs = ["hw/vbefb/vbefb.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_efifb_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/amd64/conf:device_io_kernel_opt_platform_header", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_fb", srcs = ["hw/fb/vt_fb.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_efifb_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_vga", srcs = ["hw/vga/vt_vga.c"],
+    deps = ["//sys/contrib/dev/acpica/include:device_io_kernel_vt_vga_headers", "//sys/dev/pci:device_io_kernel_ac97_headers", "//sys/dev/vt:device_io_kernel_vt_vga_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_acpi_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header", "//sys/dev/pci:device_io_pci_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_logo_freebsd", srcs = ["logo/logo_freebsd.c"],
+    deps = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_logo_beastie", srcs = ["logo/logo_beastie.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_buf", srcs = ["vt_buf.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_consolectl", srcs = ["vt_consolectl.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_core", srcs = ["vt_core.c"],
+    deps = ["//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_cpulogos", srcs = ["vt_cpulogos.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_font", srcs = ["vt_font.c"],
+    deps = ["//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_vt_sysmouse", srcs = ["vt_sysmouse.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/dev/vt:device_io_kernel_vt_font_default_headers", "//sys/teken:device_io_kernel_vt_font_default_headers", "//sys/amd64/conf:device_io_kernel_opt_evdev_header", "//sys/amd64/conf:device_io_kernel_opt_syscons_header", "//sys/amd64/conf:device_io_kernel_opt_teken_header", "//sys/amd64/conf:device_io_kernel_opt_splash_header", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

@@ -47549,3 +47549,9 @@ records 101 native filesystem/RPC objects, native RPC header dependencies,
 NFS tracing compatibility precedence and strict compiler/input/code/relocation
 checks. 100 CTF byte matches and one unchanged-production-verifier semantic match
 are distinguished explicitly; complete system/runtime gates remain open.
+
+[DEVICE-IO-KERNEL-QUALIFICATION.md](DEVICE-IO-KERNEL-QUALIFICATION.md) records 98
+native USB/input/audio/console objects, source-owned AWK tables and configurable
+sound presets, exact default generator contracts and object/input/relocation proof.
+Unchanged local cache hits are distinguished from retained cross-variant misses;
+persistent action-cache, system/runtime and performance gates remain open.

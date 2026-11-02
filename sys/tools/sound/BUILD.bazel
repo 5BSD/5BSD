@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+string_flag(name = "feeder_eq_presets", build_setting_default = "", visibility = ["//visibility:public"])
+string_flag(name = "feeder_rate_presets", build_setting_default = "", visibility = ["//visibility:public"])
+bsd_awk_output(name = "feeder_eq_gen", script = "feeder_eq_mkfilter.awk", output = "generated/feeder_eq_gen.h",
+    end_of_options = True, arguments_setting = ":feeder_eq_presets", awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_library(name = "feeder_eq_gen_headers", hdrs = [":feeder_eq_gen"], strip_include_prefix = "generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_awk_output(name = "feeder_rate_gen", script = "feeder_rate_mkfilter.awk", output = "generated/feeder_rate_gen.h",
+    end_of_options = True, arguments_setting = ":feeder_rate_presets", awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_library(name = "feeder_rate_gen_headers", hdrs = [":feeder_rate_gen"], strip_include_prefix = "generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_awk_output(name = "snd_fxdiv_gen", script = "snd_fxdiv_gen.awk", output = "generated/snd_fxdiv_gen.h",
+    end_of_options = True, awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+cc_library(name = "snd_fxdiv_gen_headers", hdrs = [":snd_fxdiv_gen"], strip_include_prefix = "generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])

@@ -769,3 +769,9 @@ cc_library(name = "mlx_bus_if_headers", hdrs = [":mlx_bus_if_header_file"],
 filegroup(name = "mlx_device_if_header_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "mlx_device_if_headers", hdrs = [":mlx_device_if_header_file"],
     strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/mlx5:__pkg__"])
+
+filegroup(name = "device_io_bus_if_header_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "device_io_bus_if_headers", hdrs = [":device_io_bus_if_header_file"], strip_include_prefix = "bus_if.generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+filegroup(name = "device_io_device_if_header_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "device_io_device_if_headers", hdrs = [":device_io_device_if_header_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])

@@ -9781,3 +9781,13 @@ precedence. Production instrumentation is unchanged. Live probes, RPC/TLS/auth,
 NFS locking/recovery and local filesystem consistency/error behavior remain gates.
 Evidence: /usr/obj/usr/src/bazel-kernel-filesystems-rpc-review-r1-20261102/observability.json;
 see FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md for exact scope and limitations.
+
+## Device I/O built-in batch (2026-11-02)
+
+Among 98 selected USB/input/audio/console sources, bounded call-shaped markers occur
+in five files: HID bus, PCM channel and USB device/hub/transfer paths. Other files
+do not prove missing shared hooks. Production probes are unchanged. Controller/
+device attach, hotplug/error recovery, audio rates/formats/mixing and console/input
+behavior require runtime/device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-device-io-review-r1-20261102/observability.json;
+see DEVICE-IO-KERNEL-QUALIFICATION.md for scope and remaining gates.

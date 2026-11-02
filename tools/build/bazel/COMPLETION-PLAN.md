@@ -215,6 +215,20 @@ products, leaving 766 unmatched. See FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md.
 Complete kernel/world/modules, other architectures, runtime and performance gates
 remain open.
 
+## Device I/O checkpoint (2026-11-02)
+
+98 native amd64 GENERIC USB/input/audio/console objects pass exact code/CTF,
+actual compiler/input and nondebug relocation checks. Native audio/teken tables
+use original scripts; sound preset overrides pass through normal format-5 inputs.
+Existing AWK default actions remain exact. Unchanged outputs are reused with only
+workspace-status execution (ten BEP local cache hits in the two-target closure);
+restoring previous preset configurations re-executes because no persistent disk
+action cache is configured. Retain that failed expectation and add/qualify managed
+persistent action-cache support before full-system cache/performance claims.
+Known graph: 1,792 source matches plus six name-only matches among 2,466 products,
+leaving 668 unmatched. See DEVICE-IO-KERNEL-QUALIFICATION.md. Full kernel/world,
+modules, other architectures, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
