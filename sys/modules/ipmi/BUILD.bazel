@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ipmi", objects = ["//sys/dev/ipmi:ipmi_ipmi_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_acpi_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_smbios_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_ssif_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_pci_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_smbus_module_object_files", "//sys/dev/ipmi:ipmi_ipmi_isa_module_object_files"], object_order = ["ipmi.o", "ipmi_kcs.o", "ipmi_smic.o", "ipmi_bt.o", "ipmi_acpi.o", "ipmi_smbios.o", "ipmi_ssif.o", "ipmi_pci.o", "ipmi_smbus.o", "ipmi_isa.o"], export_all = False, package = "kernel")

@@ -37,13 +37,13 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_smbus_if", srcs = [":
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 bsd_source_headers(name = "i2c_module_context_1", hdrs = ["smb.h", "smbconf.h"], includes = [],
-    visibility = ["//sys/dev/iicbus:__pkg__"])
+    visibility = ["//sys/dev/iicbus:__pkg__", "//sys/dev/ipmi:__pkg__"])
 
 bsd_source_headers(name = "i2c_module_context_3", hdrs = ["smb.h", "smbconf.h", "smbus.h"], includes = [],
-    visibility = ["//sys/dev/smbus:__pkg__"])
+    visibility = ["//sys/dev/smbus:__pkg__", "//sys/dev/ipmi:__pkg__"])
 
 filegroup(name = "smbus_if_module_header", srcs = [":smbus_if"], output_group = "header")
-cc_library(name = "smbus_if_headers", hdrs = [":smbus_if_module_header"], strip_include_prefix = "smbus_if.generated", visibility = ["//sys/dev/alpm:__pkg__", "//sys/dev/amdpm:__pkg__", "//sys/dev/amdsmb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/imcsmb:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/ismt:__pkg__", "//sys/dev/jedec_dimm:__pkg__", "//sys/dev/nfsmb:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/viapm:__pkg__"])
+cc_library(name = "smbus_if_headers", hdrs = [":smbus_if_module_header"], strip_include_prefix = "smbus_if.generated", visibility = ["//sys/dev/alpm:__pkg__", "//sys/dev/amdpm:__pkg__", "//sys/dev/amdsmb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/imcsmb:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/ismt:__pkg__", "//sys/dev/jedec_dimm:__pkg__", "//sys/dev/nfsmb:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/viapm:__pkg__", "//sys/dev/ipmi:__pkg__"])
 
 filegroup(name = "smbus_if_module_source", srcs = [":smbus_if"], output_group = "source")
 

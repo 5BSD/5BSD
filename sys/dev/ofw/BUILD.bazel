@@ -142,4 +142,4 @@ bsd_source_headers(
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["openfirm.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__"])

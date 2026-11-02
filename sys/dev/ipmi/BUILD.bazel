@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "device_families_module_context_0", hdrs = ["ipmivars.h"], includes = [],
+    visibility = ["//sys/dev/ipmi:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ipmi_ipmi_module", srcs = ["ipmi.c", "ipmi_kcs.c", "ipmi_smic.c", "ipmi_bt.c"],
+    deps = ["//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_acpi_module", srcs = ["ipmi_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/ipmi:device_families_module_context_0", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_smbios_module", srcs = ["ipmi_smbios.c"],
+    deps = ["//sys/isa:tracing_core_headers", "//sys/vm:acpi_support_headers", "//sys/dev/smbios:lowlevel_kernel_machdep_headers", "//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_ssif_module", srcs = ["ipmi_ssif.c"],
+    deps = ["//sys/dev/smbus:i2c_module_context_1", "//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/smbus:smbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_pci_module", srcs = ["ipmi_pci.c"],
+    deps = ["//sys/isa:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_smbus_module", srcs = ["ipmi_smbus.c"],
+    deps = ["//sys/isa:tracing_core_headers", "//sys/dev/smbus:i2c_module_context_3", "//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/smbus:smbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_ipmi_isa_module", srcs = ["ipmi_isa.c"],
+    deps = ["//sys/isa:device_families_module_context_1", "//sys/dev/pci:x86_core_kernel_legacy_headers", "//sys/dev/ipmi:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ipmi_linux_ipmi_linux_module", srcs = ["ipmi_linux.c"],
+    deps = ["//sys/amd64/include:linux_module_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:hardware_module_aac_linux_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

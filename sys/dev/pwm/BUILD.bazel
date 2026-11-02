@@ -2,3 +2,34 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "device_families_module_context_0", hdrs = ["pwmbus.h"], includes = [],
+    visibility = ["//sys/dev/pwm:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["pwmbus.h", "pwmc.h"], includes = [],
+    visibility = ["//sys/dev/pwm:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "pwmbus_if_module_header", srcs = [":pwmbus_if"], output_group = "header")
+cc_library(name = "pwmbus_if_headers", hdrs = [":pwmbus_if_module_header"], strip_include_prefix = "pwmbus_if.generated", visibility = ["//sys/dev/pwm:__pkg__"])
+
+filegroup(name = "pwmbus_if_module_source", srcs = [":pwmbus_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "pwmbus_pwmbus_module", srcs = ["pwmbus.c"],
+    deps = ["//sys/dev/pwm:device_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/pwm:pwmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "pwmbus_pwmbus_if_module", srcs = [":pwmbus_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pwm:pwmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :pwmbus_if_module_source)=pwmbus_if.c", "-fdebug-prefix-map=$(execpath :pwmbus_if_module_source)=pwmbus_if.c"], local_defines = [])
+
+amd64_generic_module_objects(name = "pwmc_pwmc_module", srcs = ["pwmc.c"],
+    deps = ["//sys/dev/pwm:device_families_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/pwm:pwmbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

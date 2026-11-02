@@ -31,3 +31,38 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_tbolt", src
 
 # Existing userland header providers retain their target/include namespace.
 exports_files(["mfi_ioctl.h", "mfireg.h"], visibility = ["//:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["mfi_ioctl.h", "mfireg.h"], includes = [],
+    visibility = ["//sys/dev/mfi:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mfi_mfi_module", srcs = ["mfi.c"],
+    deps = ["//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfi_mfi_pci_module", srcs = ["mfi_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfi_mfi_disk_module", srcs = ["mfi_disk.c", "mfi_syspd.c"],
+    deps = ["//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/vm:acpi_support_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfi_mfi_debug_module", srcs = ["mfi_debug.c"],
+    deps = ["//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfi_mfi_tbolt_module", srcs = ["mfi_tbolt.c"],
+    deps = ["//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfi_linux_mfi_linux_module", srcs = ["mfi_linux.c"],
+    deps = ["//sys/amd64/include:linux_module_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:device_families_module_context_1", "//sys/dev/mfi:device_families_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mfip_mfi_cam_module", srcs = ["mfi_cam.c"],
+    deps = ["//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

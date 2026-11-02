@@ -22,3 +22,27 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_mrsas_ioctl", s
 amd64_generic_kernel_objects(name = "generic_storage_controllers_mrsas_fp", srcs = ["mrsas_fp.c"],
     deps = ["//sys/cam:storage_controllers_kernel_mrsas_fp_headers", "//sys/dev/mmc:storage_controllers_kernel_aac_cam_headers", "//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/nvme:storage_controllers_kernel_aac_cam_headers", "//sys/dev/pci:storage_controllers_kernel_aac_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_ciss_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mrsas_mrsas_module", srcs = ["mrsas.c"],
+    deps = ["//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mrsas_mrsas_cam_module", srcs = ["mrsas_cam.c"],
+    deps = ["//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:storage_hba_kernel_smartpqi_cam_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mrsas_mrsas_ioctl_module", srcs = ["mrsas_ioctl.c"],
+    deps = ["//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mrsas_mrsas_fp_module", srcs = ["mrsas_fp.c"],
+    deps = ["//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/cam:isci_kernel_isci_controller_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "mrsas_linux_mrsas_linux_module", srcs = ["mrsas_linux.c"],
+    deps = ["//sys/amd64/include:linux_module_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:device_families_module_context_1", "//sys/dev/mrsas:storage_controllers_kernel_mrsas_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

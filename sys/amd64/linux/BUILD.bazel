@@ -26,7 +26,7 @@ cc_library(name = "linux_syscall_tables_headers", hdrs = [":linux_syscall_tables
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_proto.h", "linux_syscall.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
 
 filegroup(name = "module_header_sources", srcs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
     visibility = ["//sys/amd64/include:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ipmi_linux", objects = ["//sys/dev/ipmi:ipmi_linux_ipmi_linux_module_object_files"], object_order = ["ipmi_linux.o"], export_all = False, package = "kernel")

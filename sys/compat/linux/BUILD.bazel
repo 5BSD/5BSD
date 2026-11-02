@@ -25,4 +25,7 @@ bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h", "linux_util.h"], includes = [],
+    visibility = ["//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])

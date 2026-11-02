@@ -916,3 +916,27 @@ bootstrap/publication, VM and CPU/memory/disk I/O/cache/sandbox gates remain ope
 Existing build-bsd C/format-5/backend/helper inputs already carry this composition
 and package tags; no new CLI/manual behavior, signing/security, staging or
 publication requirements. Make remains production/default; BIP is excluded.
+
+
+### IPMI, storage, one-wire, PWM and VMware modules (2026-11-02)
+
+Fifteen more selected amd64 leaves now use native C/KOBJ module stages: IPMI and
+its Linux compatibility module; MFI core/Linux/CAM; MRSAS core/Linux; one-wire
+bus/temperature/GPIO controller; PWM bus/controller; VMware PVSCSI/VMCI/VMXNET3.
+Forty-four compiler contexts/5,098 consumed prerequisites and fifteen original
+ordered links pass. All fifteen plain modules match untouched Make byte-for-byte;
+CTF bytes/debug CRCs and 45 file installation records pass. Original export and
+package=kernel policies are retained. No runtime C, Makefile or common helper
+change. Three Linux modules reuse the existing declared machine/../linux header
+view; only dependency edges and narrow visibility extend. Rejected initial
+missing-view compilation is retained; failed spawns are excluded from evidence.
+See DEVICE-FAMILIES-MODULES-QUALIFICATION.md for exact scope and retained proofs.
+
+Local BUILD presence is 534/729 selected amd64 leaves (195 missing), not a whole
+system qualification percentage. Six existing provider test targets pass in each
+profile; they do not establish device/Linux-ioctl/hardware behavior. FDT-enabled
+PWM and other option/architecture variants, actual loading, live probes, complete
+world/rescue/pkgbase/hardware/bootstrap/publication, VM and CPU/memory/disk I/O/
+cache/sandbox qualification remain open. Existing build-bsd C/format-5/backend
+inputs carry these relationships; no new CLI/manual behavior, signing/security,
+staging or publication requirement. Make stays production/default; BIP excluded.

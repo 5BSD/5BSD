@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ow", objects = ["//sys/dev/ow:ow_ow_module_object_files", "//sys/dev/ow:ow_own_if_module_object_files", "//sys/dev/ow:ow_owll_if_module_object_files"], object_order = ["ow.o", "own_if.o", "owll_if.o"], export_all = False, package = "kernel")

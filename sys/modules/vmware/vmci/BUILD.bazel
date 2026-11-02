@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "vmci", objects = ["//sys/dev/vmware:vmci_vmci_module_object_files", "//sys/dev/vmware:vmci_vmci_datagram_module_object_files", "//sys/dev/vmware:vmci_vmci_doorbell_module_object_files", "//sys/dev/vmware:vmci_vmci_driver_module_object_files", "//sys/dev/vmware:vmci_vmci_event_module_object_files", "//sys/dev/vmware:vmci_vmci_hashtable_module_object_files", "//sys/dev/vmware:vmci_vmci_kernel_if_module_object_files", "//sys/dev/vmware:vmci_vmci_qpair_module_object_files", "//sys/dev/vmware:vmci_vmci_queue_pair_module_object_files", "//sys/dev/vmware:vmci_vmci_resource_module_object_files"], object_order = ["vmci.o", "vmci_datagram.o", "vmci_doorbell.o", "vmci_driver.o", "vmci_event.o", "vmci_hashtable.o", "vmci_kernel_if.o", "vmci_qpair.o", "vmci_queue_pair.o", "vmci_resource.o"], export_all = False, package = "kernel")

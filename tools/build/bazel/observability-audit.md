@@ -10274,3 +10274,15 @@ shared events; avoid per-packet logs or payload/key disclosure. No new probes
 added. 34 compiled ktest registrations are static preservation evidence only;
 live execution, two example-wrapper intentional-failure skips and failure-path
 reporting remain VM gates. See STORAGE-TCP-KTEST-MODULES-QUALIFICATION.md.
+
+
+### IPMI, storage, one-wire, PWM and VMware modules (2026-11-02)
+
+The bounded scan of 41 physical C files and three KOBJ schemas finds no explicit
+DTrace/SDT/CTR/audit marker lines under its recorded patterns. Selected compiled
+modules also have no SDT/DTrace sections in the recorded inventory. That does not
+establish absence of logging or instrumentation in shared subsystems/headers.
+Review IPMI transactions/timeouts, CAM/storage command/recovery/errors, one-wire/
+PWM lifecycle and VMCI datagram/doorbell/queue-pair/VMXNET3 attach/reset/rx/tx for
+useful shared events; avoid per-packet logs or payload/credential disclosure.
+No probes added by this migration. See DEVICE-FAMILIES-MODULES-QUALIFICATION.md.

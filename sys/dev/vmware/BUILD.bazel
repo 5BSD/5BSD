@@ -18,3 +18,85 @@ amd64_generic_kernel_objects(name = "generic_peripheral_devices_if_vmx", srcs = 
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_pvscsi", srcs = ["pvscsi/pvscsi.c"],
     deps = ["//sys/cam:peripheral_devices_kernel_pvscsi_headers", "//sys/dev/mmc:peripheral_devices_kernel_sdhci_acpi_headers", "//sys/dev/nvme:peripheral_devices_kernel_sdhci_headers", "//sys/dev/pci:peripheral_devices_kernel_ichsmb_pci_headers", "//sys/dev/vmware:peripheral_devices_kernel_pvscsi_headers", "//sys/net:peripheral_devices_kernel_md_headers", "//sys/netinet:peripheral_devices_kernel_md_headers", "//sys/netinet6:peripheral_devices_kernel_if_iwn_headers", "//sys/kern:peripheral_devices_kernel_bus_if_headers", "//sys/kern:peripheral_devices_kernel_device_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_cam_header", "//sys/dev/pci:peripheral_devices_kernel_pci_if_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+bsd_source_headers(name = "device_families_module_context_1", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_doorbell.h", "vmci/vmci_driver.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_queue.h", "vmci/vmci_queue_pair.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_2", hdrs = ["vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_driver.h", "vmci/vmci_hashtable.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_resource.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_3", hdrs = ["vmci/vmci_call_defs.h", "vmci/vmci_defs.h", "vmci/vmci_doorbell.h", "vmci/vmci_driver.h", "vmci/vmci_hashtable.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_resource.h", "vmci/vmci_utils.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_4", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_doorbell.h", "vmci/vmci_driver.h", "vmci/vmci_event.h", "vmci/vmci_hashtable.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_resource.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_5", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_driver.h", "vmci/vmci_event.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_6", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_driver.h", "vmci/vmci_hashtable.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_utils.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_7", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_queue.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_8", hdrs = ["vmci/vmci_call_defs.h", "vmci/vmci_defs.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_queue.h", "vmci/vmci_queue_pair.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_9", hdrs = ["vmci/vmci.h", "vmci/vmci_call_defs.h", "vmci/vmci_datagram.h", "vmci/vmci_defs.h", "vmci/vmci_driver.h", "vmci/vmci_event.h", "vmci/vmci_kernel_api.h", "vmci/vmci_kernel_api_1.h", "vmci/vmci_kernel_api_2.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_queue.h", "vmci/vmci_queue_pair.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+bsd_source_headers(name = "device_families_module_context_10", hdrs = ["vmci/vmci_call_defs.h", "vmci/vmci_defs.h", "vmci/vmci_driver.h", "vmci/vmci_hashtable.h", "vmci/vmci_kernel_defs.h", "vmci/vmci_kernel_if.h", "vmci/vmci_resource.h"], includes = [],
+    visibility = ["//sys/dev/vmware:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "pvscsi_pvscsi_module", srcs = ["pvscsi/pvscsi.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/vmware:peripheral_devices_kernel_pvscsi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_module", srcs = ["vmci/vmci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/vmware:device_families_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_datagram_module", srcs = ["vmci/vmci_datagram.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_doorbell_module", srcs = ["vmci/vmci_doorbell.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_driver_module", srcs = ["vmci/vmci_driver.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_event_module", srcs = ["vmci/vmci_event.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_hashtable_module", srcs = ["vmci/vmci_hashtable.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_6"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_kernel_if_module", srcs = ["vmci/vmci_kernel_if.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_7"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_qpair_module", srcs = ["vmci/vmci_qpair.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_8"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_queue_pair_module", srcs = ["vmci/vmci_queue_pair.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "vmci_vmci_resource_module", srcs = ["vmci/vmci_resource.c"],
+    deps = ["//sys/dev/vmware:device_families_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "if_vmx_if_vmx_module", srcs = ["vmxnet3/if_vmx.c"],
+    deps = ["//sys/vm:pci_ethernet_headers", "//sys/net:peripheral_devices_kernel_if_vmx_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:peripheral_devices_kernel_if_vmx_headers", "//sys/netinet6:usb_net_if_ure_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/vmware:peripheral_devices_kernel_if_vmx_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

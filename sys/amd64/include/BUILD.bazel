@@ -25,4 +25,4 @@ load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_heade
 bsd_architecture_headers(name = "linux_module_headers", headers = {
     ":architecture_view_machine_sources": "machine",
     "//sys/amd64/linux:module_header_sources": "linux",
-}, visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__"])
+}, visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])

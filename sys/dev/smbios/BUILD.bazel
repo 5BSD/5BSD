@@ -9,7 +9,7 @@ cc_library(name = "kernel_headers", hdrs = ["smbios.h"],
 # Low-level amd64 built-in prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["smbios.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/ipmi:__pkg__"])
 
 # Physical prerequisites for native peripheral device built-ins.
 bsd_source_headers(name = "peripheral_devices_kernel_smbios_headers", hdrs = ["smbios.h"],

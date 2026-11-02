@@ -44,7 +44,7 @@ bsd_source_headers(name = "openzfs_kernel_zvol_os_headers", hdrs = ["geom.h"],
 
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_cam_iosched_headers", hdrs = ["geom_disk.h"],
-    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/flash:__pkg__"])
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/mfi:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_nvme_da_headers", hdrs = ["geom.h", "geom_disk.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_nvme_ns_headers", hdrs = ["geom.h"],

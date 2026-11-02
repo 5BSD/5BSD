@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mrsas", objects = ["//sys/dev/mrsas:mrsas_mrsas_module_object_files", "//sys/dev/mrsas:mrsas_mrsas_cam_module_object_files", "//sys/dev/mrsas:mrsas_mrsas_ioctl_module_object_files", "//sys/dev/mrsas:mrsas_mrsas_fp_module_object_files"], object_order = ["mrsas.o", "mrsas_cam.o", "mrsas_ioctl.o", "mrsas_fp.o"], export_all = False, package = "kernel")
