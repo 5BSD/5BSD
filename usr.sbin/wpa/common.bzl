@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Maintained WPA Makefile.inc/Makefile.crypto configuration, owned by source."""
+load("@bazel_skylib//lib:selects.bzl", "selects")
 OPENSSL = "//tools/build/bazel/config:openssl_enabled"
 EAPOL = "//tools/build/bazel/config:wpa_supplicant_eapol_enabled"
 INET6 = "//tools/build/bazel/config:inet6_enabled"
@@ -55,7 +56,12 @@ def crypto_sources():
             "//contrib/wpa:src/crypto/crypto_internal-modexp.c", "//contrib/wpa:src/crypto/crypto_internal-rsa.c", "//contrib/wpa:src/crypto/tls_internal.c", "//contrib/wpa:src/crypto/aes-unwrap.c",
             "//contrib/wpa:src/crypto/aes-wrap.c", "//contrib/wpa:src/crypto/aes-internal.c", "//contrib/wpa:src/crypto/aes-internal-dec.c", "//contrib/wpa:src/crypto/aes-internal-enc.c", "//contrib/wpa:src/crypto/aes-cbc.c"],
     })
-    eapol = select({EAPOL: ["//contrib/wpa:src/crypto/aes-eax.c", "//contrib/wpa:src/crypto/aes-ctr.c", "//contrib/wpa:src/crypto/aes-encblock.c"], "//conditions:default": []})
+    # AES-SIV in the OpenSSL archive needs CTR even without EAPOL/EAX.
+    # Keep its original position and exactly one member when both are enabled.
+    eapol = select({EAPOL: ["//contrib/wpa:src/crypto/aes-eax.c"], "//conditions:default": []}) + selects.with_or({
+        (OPENSSL, EAPOL): ["//contrib/wpa:src/crypto/aes-ctr.c"],
+        "//conditions:default": [],
+    }) + select({EAPOL: ["//contrib/wpa:src/crypto/aes-encblock.c"], "//conditions:default": []})
     hashes = select({OPENSSL: [], "//conditions:default": ["//contrib/wpa:src/crypto/des-internal.c", "//contrib/wpa:src/crypto/md4-internal.c",
         "//contrib/wpa:src/crypto/md5.c", "//contrib/wpa:src/crypto/md5-internal.c", "//contrib/wpa:src/crypto/rc4.c", "//contrib/wpa:src/crypto/sha1-internal.c", "//contrib/wpa:src/crypto/sha1-pbkdf2.c", "//contrib/wpa:src/crypto/sha1.c",
         "//contrib/wpa:src/crypto/sha1-prf.c", "//contrib/wpa:src/crypto/sha256.c", "//contrib/wpa:src/crypto/sha256-internal.c", "//contrib/wpa:src/crypto/sha256-prf.c", "//contrib/wpa:src/crypto/sha384.c",

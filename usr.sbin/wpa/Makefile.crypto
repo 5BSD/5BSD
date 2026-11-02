@@ -1,4 +1,7 @@
 .if ${MK_OPENSSL} != "no"
+# The OpenSSL archive always builds AES-SIV, whose implementation needs CTR
+# independently of whether the EAPOL/EAX source group is enabled.
+NEED_AES_CTR=y
 LIBADD+=	ssl crypto
 CFLAGS+= -DCONFIG_SHA256
 CFLAGS+= -DCONFIG_ECC
