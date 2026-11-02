@@ -11,6 +11,7 @@
 #include <dev/virtio/virtio_ids.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <stdbool.h>
@@ -67,6 +68,15 @@ struct pci_vtfs_softc {
 	struct virtio_fs_connection *vsc_connection;
 	struct mevent *vsc_read_event;
 	struct mevent *vsc_write_event;
+	/*
+	 * Private duplicate of the backend socket that the readiness events are
+	 * registered on.  The connection closes its own descriptor as soon as
+	 * it fails; registering on that number would leave mevent issuing
+	 * kevent(2) changes for a closed (EBADF, fatal on delete) or reused
+	 * (another device's) descriptor until the guest resets the device.
+	 */
+	int vsc_event_fd;
+	bool vsc_event_fd_valid;
 	struct virtio_fs_backend_hello vsc_offer;
 	char *vsc_backend_path;
 	char *vsc_backend_identity;
@@ -204,6 +214,10 @@ pci_vtfs_disconnect_sync(struct pci_vtfs_softc *sc)
 		(void)mevent_delete_sync(sc->vsc_write_event);
 		sc->vsc_write_event = NULL;
 	}
+	if (sc->vsc_event_fd_valid) {
+		(void)close(sc->vsc_event_fd);
+		sc->vsc_event_fd_valid = false;
+	}
 	virtio_fs_connection_destroy(sc->vsc_connection);
 	if (connected)
 		VIRTIO_PROBE_FS_BACKEND("vtfs", "disconnect", 0, 0);
@@ -229,7 +243,15 @@ pci_vtfs_connect(struct pci_vtfs_softc *sc)
 		VIRTIO_PROBE_FS_BACKEND("vtfs", "connect", 0, error);
 		return (error);
 	}
-	fd = virtio_fs_connection_fd(sc->vsc_connection);
+	fd = fcntl(virtio_fs_connection_fd(sc->vsc_connection), F_DUPFD_CLOEXEC,
+	    0);
+	if (fd < 0) {
+		error = errno;
+		pci_vtfs_disconnect_sync(sc);
+		return (error);
+	}
+	sc->vsc_event_fd = fd;
+	sc->vsc_event_fd_valid = true;
 	sc->vsc_read_event = mevent_add_disabled(fd, EVF_READ,
 	    pci_vtfs_event, sc);
 	sc->vsc_write_event = mevent_add_disabled(fd, EVF_WRITE,

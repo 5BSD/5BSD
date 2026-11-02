@@ -3,8 +3,11 @@
  */
 #include <sys/endian.h>
 #include <sys/param.h>
+#include <sys/socket.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -81,6 +84,8 @@ static const char *cfg_queues;
 static bool cfg_notifications;
 static bool cfg_packed;
 static int connect_required_error;
+static int connection_fd_value = -1;
+static int mevent_added_fd = -1;
 
 #ifdef BHYVE_SNAPSHOT
 static int restore_session_calls;
@@ -221,11 +226,12 @@ mevent_disable(struct mevent *event)
 }
 
 struct mevent *
-mevent_add_disabled(int fd __unused, enum ev_type type __unused,
+mevent_add_disabled(int fd, enum ev_type type __unused,
     void (*callback)(int, enum ev_type, void *) __unused,
     void *argument __unused)
 {
 
+	mevent_added_fd = fd;
 	return ((struct mevent *)(uintptr_t)1);
 }
 
@@ -321,12 +327,18 @@ virtio_fs_connection_restore_session(
 }
 #endif
 
+/* pci_vtfs_connect() duplicates the descriptor, so default to a real one. */
 int
 virtio_fs_connection_fd(
     const struct virtio_fs_connection *connection __unused)
 {
+	static int placeholder = -1;
 
-	return (-1);
+	if (connection_fd_value >= 0)
+		return (connection_fd_value);
+	if (placeholder < 0)
+		placeholder = open("/dev/null", O_RDWR | O_CLOEXEC);
+	return (placeholder);
 }
 
 int
@@ -686,6 +698,8 @@ static void
 reset_mock_state(void)
 {
 
+	connection_fd_value = -1;
+	mevent_added_fd = -1;
 	vq_has_descs_calls = 0;
 	vq_relchain_calls = 0;
 	vq_has_descs_result = 0;
@@ -1995,6 +2009,56 @@ ATF_TC_BODY(reset_reconnect_failure_sets_needs_reset, tc)
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
 }
 
+/*
+ * The connection closes its socket as soon as the backend fails, but the
+ * readiness events stay registered until the guest resets the device.  They
+ * must therefore refer to a descriptor the device owns: on the closed number
+ * mevent's next EV_DELETE fails with EBADF (fatal, bhyve exits) or, after the
+ * number is reused, removes another device's registration.
+ */
+ATF_TC_WITHOUT_HEAD(event_descriptor_outlives_failed_connection);
+ATF_TC_BODY(event_descriptor_outlives_failed_connection, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	struct pci_vtfs_reset reset[2];
+	bool notify_pending[2];
+	int registered, sockets[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0,
+	    sockets), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_backend_path = strdup("/s");
+	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	connection_fd_value = sockets[0];
+	mevent_added_fd = -1;
+
+	ATF_REQUIRE_EQ(pci_vtfs_connect(&sc), 0);
+	registered = mevent_added_fd;
+	ATF_REQUIRE(registered >= 0);
+	ATF_CHECK(registered != sockets[0]);
+	/* Backend failure: the connection closes its own descriptor. */
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	connection_fd_value = -1;
+	ATF_CHECK(fcntl(registered, F_GETFD) != -1);
+	/* The guest's reset retires the events, then the descriptor. */
+	pci_vtfs_disconnect_sync(&sc);
+	ATF_CHECK_EQ(fcntl(registered, F_GETFD), -1);
+	ATF_CHECK_EQ(close(sockets[1]), 0);
+	free(sc.vsc_backend_path);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(suspend_and_resume_device_quiesce_backend);
 ATF_TC_BODY(suspend_and_resume_device_quiesce_backend, tc)
 {
@@ -2460,6 +2524,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, event_processes_progress_and_completions);
 	ATF_TP_ADD_TC(tp, reset_reconnects_backend);
 	ATF_TP_ADD_TC(tp, reset_reconnect_failure_sets_needs_reset);
+	ATF_TP_ADD_TC(tp, event_descriptor_outlives_failed_connection);
 	ATF_TP_ADD_TC(tp, suspend_and_resume_device_quiesce_backend);
 	ATF_TP_ADD_TC(tp, qreset_pending_and_success);
 	ATF_TP_ADD_TC(tp, notify_notification_queue_retry_error);

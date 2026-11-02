@@ -23,6 +23,7 @@ int	virtio_fs_backend_connect_finish(int, uid_t, gid_t);
 int	virtio_fs_backend_authenticate(int, uid_t, gid_t);
 int	virtio_fs_backend_send_frame(int,
 	    const struct virtio_fs_backend_header *, const void *);
+void	virtio_fs_backend_size_buffers(int, uint32_t);
 int	virtio_fs_backend_receive_frame(int,
 	    struct virtio_fs_backend_header *, void *, size_t, size_t *);
 

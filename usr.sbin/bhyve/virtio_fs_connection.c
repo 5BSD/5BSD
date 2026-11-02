@@ -3,6 +3,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/uio.h>
 
 #include <errno.h>
@@ -99,6 +100,12 @@ virtio_fs_connection_fail(struct virtio_fs_connection *connection, int error)
 		(void)queue_error;
 	}
 	if (connection->fd >= 0) {
+		/*
+		 * The device may hold a duplicate for readiness events;
+		 * shut the socket down so the backend sees the failure now
+		 * rather than at the next device reset.
+		 */
+		(void)shutdown(connection->fd, SHUT_RDWR);
 		(void)close(connection->fd);
 		connection->fd = -1;
 	}

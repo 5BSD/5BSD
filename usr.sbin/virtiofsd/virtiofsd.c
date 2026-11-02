@@ -127,10 +127,12 @@ sandbox_descriptors(int rootfd, int parentfd, int listener)
 
 	/*
 	 * Accepted sockets inherit a subset of listener rights.  Include peer
-	 * authentication, framed I/O, and poll/kqueue readiness explicitly.
+	 * authentication, framed I/O, socket-buffer sizing, and poll/kqueue
+	 * readiness explicitly.
 	 */
 	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_GETPEERNAME,
-	    CAP_GETSOCKOPT, CAP_READ, CAP_WRITE, CAP_RECV, CAP_SEND);
+	    CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_READ, CAP_WRITE, CAP_RECV,
+	    CAP_SEND);
 	limit_rights(listener, &rights, "listener");
 
 	cap_rights_init(&rights, CAP_EVENT, CAP_READ);
@@ -491,6 +493,8 @@ main(int argc, char **argv)
 			error = errno;
 			break;
 		}
+		/* Let ordinary frames move as a single socket-buffer piece. */
+		virtio_fs_backend_size_buffers(client, maximum_message);
 		error = client_run(client, rootfd, expected_uid, expected_gid,
 		    nodes, handles, maximum_message, maximum_inflight,
 		    maximum_pending, workers);
