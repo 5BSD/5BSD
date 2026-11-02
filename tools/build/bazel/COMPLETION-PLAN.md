@@ -461,3 +461,7 @@ not compiled coverage. External merge 7056e69713f changes existing userland
 sources/tests (including capability/runtime libraries, kldload/mount,
 BSDExtension/base-accounts/bhyve/switchboard/dtraced) and adds requalification
 obligations. Earlier receipts remain historical; no SDK receipt was rebound.
+
+## Generated core checkpoint (2026-11-02)
+
+Five generated built-ins and clock calibration pass source/compiler/prerequisite/code/CTF/runtime-section and 5,091 strict relocation comparisons. The initial successful build with missing debug/CTF was explicitly rejected; typed shared policy now supplies them. Config/version references use identical declared inputs without normalizing payloads. Clock declares selected-SDK SSP availability and opt-only O3. Query r47/reconciliation r40 leaves no missing or weak object-name identities in the 2,462-product configured inventory; 53 generated-name matches retain separate KOBJ/RPC proofs. See GENERATED-CORE-KERNEL-QUALIFICATION.md. Next: complete native kernel aggregation/link/order/post-processing/install and per-object debug/CTF validation. Modules, other configurations/architectures, world, packages, bootstrap, runtime and performance remain open.

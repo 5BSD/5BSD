@@ -57,27 +57,21 @@ kernel_constants(name = "generic_assym", object = ":generic_genassym_object", ki
     prerequisites = [":generic_genoffset_check_object"])
 
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_library")
-# Generated GENERIC objects use normal kernel common-symbol policy.
-[cc_library(name = "generic_" + name + "_objects", srcs = [source],
-    deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"] + extra_deps,
-    copts = [flag for flag in _AMD64_LAYOUT_FLAGS if flag != "-fcommon"] + ["-fno-common",
-        "-fmacro-prefix-map=$(execpath " + source + ")=" + name + ".c"],
-    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+# Generated built-ins use the maintained kernel compile/debug/CTF policy.
+[amd64_generic_kernel_objects(name = "generic_" + name, srcs = [source],
+    deps = extra_deps, warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-fmacro-prefix-map=$(execpath " + source + ")=" + name + ".c"])
  for name, source, extra_deps in [
     ("config", "//sys/amd64/conf:generic_config_source", ["//sys/amd64/conf:generic_config_header"]),
     ("env", "//sys/amd64/conf:generic_env_source", []),
     ("hints", "//sys/amd64/conf:generic_hints_source", []),
-    ("vnode_if", ":vnode_source", [":vnode_headers"]),
+    ("vnode_if", ":vnode_source", []),
     ("vers", ":generic_version_source", []),
 ]]
-[bsd_ctf_library(name = "generic_" + name + "_ctf", library = ":generic_" + name + "_objects",
-    converter = "//cddl/usr.bin/ctfconvert:ctfconvert",
-    runtime = ["//cddl/lib/libspl:spl_shared", "//lib/libdwarf:dwarf_shared", "//lib/libelf:elf_shared", "//lib/libz:z_shared",
-        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
-    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label", preserve_debug = True)
- for name in ["config", "env", "hints", "vnode_if", "vers"]]
-[filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_ctf"], output_group = "regular_objects", visibility = ["//visibility:public"])
+[filegroup(name = "generic_" + name + "_object", srcs = [":generic_" + name + "_object_files"],
+    visibility = ["//visibility:public"])
  for name in ["config", "env", "hints", "vnode_if", "vers"]]
 
 load("//tools/build/bazel:bsd_kernel_version.bzl", "bsd_kernel_version")
@@ -95,7 +89,6 @@ cc_library(name = "bus_if_headers", hdrs = [":bus_if_header_file"], strip_includ
 filegroup(name = "device_if_header_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "device_if_headers", hdrs = [":device_if_header_file"], strip_include_prefix = "device_if.generated", visibility = ["//visibility:public"])
 
-load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 amd64_generic_kernel_objects(name = "generic_sysvipc", srcs = ["sysv_ipc.c", "sysv_msg.c", "sysv_sem.c", "sysv_shm.c"],
     deps = ["//sys/amd64/conf:generic_opt_sysvipc_header", "//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers",
         "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers"])
@@ -399,9 +392,13 @@ amd64_generic_kernel_objects(name = "generic_clock_conversion", srcs = ["subr_cl
 
 # The amd64 calibration recipe enables floating-point instructions and -O3.
 # Its headers are declared here, so retain the native kernel's -nostdinc.
+load("//tools/build/bazel:bsd_sdk_headers.bzl", "bsd_sdk_headers")
+bsd_sdk_headers(name = "clock_calibration_sdk_headers", system_headers = ["ssp/ssp.h"])
+config_setting(name = "clock_calibration_optimized", values = {"compilation_mode": "opt"})
 amd64_generic_kernel_objects(name = "generic_clock_calibration", srcs = ["subr_clockcalib.c"],
-    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers"],
-    copts = ["-O3", "-mmmx", "-msse", "-msse2"])
+    deps = ["//sys/contrib/ck:kernel_headers", "//sys/vm:kernel_headers", ":clock_calibration_sdk_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-mmmx", "-msse", "-msse2"] + select({":clock_calibration_optimized": ["-O3"], "//conditions:default": []}))
 
 filegroup(name = "clock_if_header_file", srcs = [":clock_if"], output_group = "header")
 cc_library(name = "clock_if_headers", hdrs = [":clock_if_header_file"], strip_include_prefix = "clock_if.generated", visibility = ["//visibility:public"])
@@ -523,7 +520,6 @@ bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["uipc_v
     visibility = ["//sys/kern:__pkg__"])
 
 # Built-in core kernel objects; each source declares its own prerequisites.
-load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
 amd64_generic_kernel_objects(name = "generic_core_coredump_vnode", srcs = ["coredump_vnode.c"],
     deps = ["//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/vm:core_kernel_coredump_vnode_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

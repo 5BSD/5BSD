@@ -47625,3 +47625,5 @@ Native DWATCH literal scripts, profiles, 99 hardlink aliases and EXAMPLES select
 pass original Make installation and safe syntax checks; see
 [DWATCH-QUALIFICATION.md](DWATCH-QUALIFICATION.md) for actual/cache distinctions
 and tracing/world/package limits.
+
+[GENERATED-CORE-KERNEL-QUALIFICATION.md](GENERATED-CORE-KERNEL-QUALIFICATION.md) records the generated-object debug/CTF repair, clock SDK prerequisites, independent same-policy Make references and strict six-object parity. Complete native kernel linking and system gates remain open.

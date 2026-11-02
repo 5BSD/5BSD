@@ -9897,3 +9897,7 @@ embedded DTrace pragmas, providers and probe patterns. The new syntax-only test
 uses native sh -n with constructor-time DOF opt-out; it never evaluates DWATCH
 or activates tracing. Actual event delivery, D compilation and privilege/runtime
 behavior remain unqualified. See DWATCH-QUALIFICATION.md for immutable evidence.
+
+## Generated core and clock calibration (2026-11-02)
+
+The bounded scan records 333 call-shaped tracing/audit markers in generated vnode code and two clock timestamp enter/exit wrappers. All five generated source bodies match independent same-policy Make output; six object machine-code/CTF/runtime sections and strict relocations match. This preserves existing hooks without establishing live tracing or audit completeness. See GENERATED-CORE-KERNEL-QUALIFICATION.md and retained observability.json.
