@@ -149,3 +149,7 @@ cc_library(name = "compiler_headers", hdrs = [
     "platform/acgcc.h",
     "platform/acgccex.h",
 ], strip_include_prefix = "/sys", visibility = ["//:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

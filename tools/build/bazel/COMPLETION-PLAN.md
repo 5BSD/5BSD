@@ -75,6 +75,16 @@ a producer prerequisite for elf_machdep, not the prepared 32-source low-level
 amd64 conversion or full kernel link/runtime qualification. Existing staged
 compiler/linker/Python and format-5 artifact/host-test APIs remain the workflow.
 
+The 32-source low-level amd64 cohort now passes native object/input and
+symbolic relocation checks, including seven CTF-bearing assembly files and
+two actual Make no-CTF exceptions; see AMD64-LOWLEVEL-QUALIFICATION.md. Nested
+architecture headers retain their logical namespaces. Latest successful known-
+builtin analysis finds 606 source matches, six weaker name matches and 1,854
+unmatched among 2,466 Make final products. These remain analysis counts, not a
+linked kernel; earlier counts above are retained snapshots. The next 22 x86
+C objects have unchanged independent Make object/recipe/dependency references
+prepared; declarations and output qualification remain to be done.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

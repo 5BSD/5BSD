@@ -383,3 +383,69 @@ cc_library(name = "wlan_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
 # OpenCrypto built-in prerequisites.
 cc_library(name = "opencrypto_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
     strip_include_prefix = "generic_options", visibility = ["//sys/opencrypto:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_tree_file(name = "opt_atpic", tree = ":generic_config", member = "opt_atpic.h",
+    output = "generic_options/opt_atpic.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_clock", tree = ":generic_config", member = "opt_clock.h",
+    output = "generic_options/opt_clock.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_cpu", tree = ":generic_config", member = "opt_cpu.h",
+    output = "generic_options/opt_cpu.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_isa", tree = ":generic_config", member = "opt_isa.h",
+    output = "generic_options/opt_isa.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_maxmem", tree = ":generic_config", member = "opt_maxmem.h",
+    output = "generic_options/opt_maxmem.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_pci", tree = ":generic_config", member = "opt_pci.h",
+    output = "generic_options/opt_pci.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_pmap", tree = ":generic_config", member = "opt_pmap.h",
+    output = "generic_options/opt_pmap.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_tree_file(name = "opt_smp", tree = ":generic_config", member = "opt_smp.h",
+    output = "generic_options/opt_smp.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "lowlevel_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_atpic_header", hdrs = [":opt_atpic"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_capsicum_header", hdrs = [":opt_capsicum"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_clock_header", hdrs = [":opt_clock"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_cpu_header", hdrs = [":opt_cpu"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_isa_header", hdrs = [":opt_isa"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_maxmem_header", hdrs = [":opt_maxmem"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_pci_header", hdrs = [":opt_pci"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_platform_header", hdrs = [":opt_platform"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_pmap_header", hdrs = [":opt_pmap"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_sched_header", hdrs = [":opt_sched"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_smp_header", hdrs = [":opt_smp"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_vm_header", hdrs = [":opt_vm"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+cc_library(name = "lowlevel_kernel_opt_watchdog_header", hdrs = [":opt_watchdog"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])

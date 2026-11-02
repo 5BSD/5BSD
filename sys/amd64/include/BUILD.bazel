@@ -3,7 +3,8 @@ exports_files(["minidump.h"], visibility = ["//lib/libkvm:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
+# Preserve nested architecture headers under the same logical include namespace.
+cc_library(name = "kernel_headers", hdrs = glob(["**/*.h"]),
     strip_include_prefix = ".", include_prefix = "machine", visibility = ["//visibility:public"])
 
 # Source-tree header closure used by the amd64 libvmmapi build.

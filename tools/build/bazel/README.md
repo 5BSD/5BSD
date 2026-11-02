@@ -47462,3 +47462,8 @@ code/CTF/input/relocation checks and remaining crypto/runtime/system gates.
 [VDSO-QUALIFICATION.md](VDSO-QUALIFICATION.md) records the native amd64 VDSO
 compile/link/validation/embed graph, four byte-identical Make products, 16 native
 validator regressions and remaining signal-frame/runtime/system gates.
+
+[AMD64-LOWLEVEL-QUALIFICATION.md](AMD64-LOWLEVEL-QUALIFICATION.md) records
+32 low-level amd64 built-ins, native assym/VDSO/interface dependencies,
+source-specific assembly/CTF policy, exact machine code and declared inputs,
+symbolic filename/relocation review and remaining kernel/runtime/system gates.

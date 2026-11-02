@@ -9621,3 +9621,12 @@ preserve actual Make text, constants and 9,718 raw non-debug relocations.
 Sixteen safe CLI/loader methods return before daemon connections; they do not
 prove control events, wireless/authentication behavior or shared probe delivery.
 See [the client qualification](WPA-CLI-QUALIFICATION.md) for all remaining gates.
+
+## Low-level amd64 built-ins (2026-11-02)
+
+The source-bound call-shaped scan recognizes tracing/audit markers in pmap.c
+and sys_machdep.c, with none in 30 other selected sources. Existing code/probe
+plumbing is unchanged. Machine code, allocated payloads and symbolic nondebug
+relocations are preserved; object comparison does not prove live exception,
+syscall, memory or tracing behavior. Review shared hooks before adding hot-path
+events. See AMD64-LOWLEVEL-QUALIFICATION.md for evidence and remaining gates.

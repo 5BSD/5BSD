@@ -163,3 +163,21 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["ddb.h
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_db_disasm_headers", hdrs = ["db_access.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_db_interface_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_db_trace_headers", hdrs = ["db_access.h", "db_sym.h", "db_variables.h", "ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_exec_machdep_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_gdb_machdep_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_pmap_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

@@ -8,7 +8,7 @@ cc_library(name = "ioctl_headers", hdrs = ["acpiio.h"], strip_include_prefix = "
 
 filegroup(name = "acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
 cc_library(name = "acpi_if_headers", hdrs = [":acpi_if_header_file"], strip_include_prefix = "acpi_if.generated",
-    visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
 cc_library(name = "acpivar_headers", hdrs = ["acpivar.h"], strip_include_prefix = "/sys",
     deps = [":acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/sys:kernel_headers"],
     visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
@@ -44,3 +44,7 @@ amd64_generic_module_objects(name = "acpi_ged_module", srcs = ["acpi_ged.c"],
 
 cross_generic_module_objects(arch = "arm64", name = "acpi_ged_module", srcs = ["acpi_ged.c"],
     deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_acpi_header", "//sys/arm64/conf:generic_opt_evdev_header", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

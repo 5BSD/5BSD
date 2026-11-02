@@ -13,3 +13,16 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["rtc.h"], includes = [
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
 
 bsd_source_headers(name = "acpi_support_headers", hdrs = ["rtc.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_efirt_machdep_headers", hdrs = ["rtc.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_fpu_headers", hdrs = ["isavar.h", "pnpvar.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["isareg.h", "rtc.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# Native amd64 core consumer of the maintained ISA object interface.
+filegroup(name = "isa_if_header_file", srcs = [":isa_if"], output_group = "header")
+cc_library(name = "isa_if_headers", hdrs = [":isa_if_header_file"], strip_include_prefix = "isa_if.generated",
+    visibility = ["//sys/amd64/amd64:__pkg__"])

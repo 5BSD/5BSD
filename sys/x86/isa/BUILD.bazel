@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Low-level amd64 built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["icu.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

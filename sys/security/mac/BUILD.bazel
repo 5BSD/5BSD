@@ -123,3 +123,7 @@ bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["mac_framework
 # Wireless built-in prerequisites.
 bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/net80211:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

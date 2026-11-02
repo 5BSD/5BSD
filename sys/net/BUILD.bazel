@@ -1123,3 +1123,7 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["bpf.h", 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["vnet.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["netisr.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

@@ -818,3 +818,39 @@ bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["uma.h
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_param.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_bios_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_db_trace_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_efirt_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_elf_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_exec_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_param.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_fpu_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_initcpu_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_kexec_support_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_minidump_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_dumpset.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_pmap_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_ptrace_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_sys_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_uio_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_page.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_vm_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
