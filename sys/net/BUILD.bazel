@@ -657,3 +657,7 @@ bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["ethernet
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["vnet.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/vm:__pkg__"])

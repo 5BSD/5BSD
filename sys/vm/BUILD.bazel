@@ -332,3 +332,129 @@ bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["uma.h", "um
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_device_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_phys_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_sg_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_uma_core_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "uma_int.h", "vm.h", "vm_domainset.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_uma_dbg_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "memguard.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "uma_int.h", "vm.h", "vm_object.h", "vm_page.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_domainset_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_domainset.h", "vm_object.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_fault_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_glue_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_domainset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_init_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_kern_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_domainset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_map_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_meter_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_object_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_page_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_domainset.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_pageout_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_phys_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_page.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_radix_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_reserv_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_swapout_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_unix_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vnode_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+
+# Native virtual-memory built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_device_pager", srcs = ["device_pager.c"],
+    deps = ["//sys/vm:vm_kernel_device_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_phys_pager", srcs = ["phys_pager.c"],
+    deps = ["//sys/vm:vm_kernel_phys_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_sg_pager", srcs = ["sg_pager.c"],
+    deps = ["//sys/vm:vm_kernel_sg_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_swap_pager", srcs = ["swap_pager.c"],
+    deps = ["//sys/ddb:vm_kernel_swap_pager_headers", "//sys/geom:vm_kernel_swap_pager_headers", "//sys/net:vm_kernel_swap_pager_headers", "//sys/netinet:vm_kernel_swap_pager_headers", "//sys/netinet6:vm_kernel_swap_pager_headers", "//sys/security/mac:vm_kernel_swap_pager_headers", "//sys/vm:vm_kernel_swap_pager_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_uma_core", srcs = ["uma_core.c"],
+    deps = ["//sys/ddb:vm_kernel_uma_core_headers", "//sys/vm:vm_kernel_uma_core_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_param_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_uma_dbg", srcs = ["uma_dbg.c"],
+    deps = ["//sys/vm:vm_kernel_uma_dbg_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_domainset", srcs = ["vm_domainset.c"],
+    deps = ["//sys/vm:vm_kernel_vm_domainset_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_fault", srcs = ["vm_fault.c"],
+    deps = ["//sys/vm:vm_kernel_vm_fault_headers", "//sys/amd64/conf:vm_kernel_opt_ktrace_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_glue", srcs = ["vm_glue.c"],
+    deps = ["//sys/vm:vm_kernel_vm_glue_headers", "//sys/amd64/conf:vm_kernel_opt_kstack_max_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_usage_prof_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_init", srcs = ["vm_init.c"],
+    deps = ["//sys/vm:vm_kernel_vm_init_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_kern", srcs = ["vm_kern.c"],
+    deps = ["//sys/vm:vm_kernel_vm_kern_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_map", srcs = ["vm_map.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_map_headers", "//sys/vm:vm_kernel_vm_map_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_meter", srcs = ["vm_meter.c"],
+    deps = ["//sys/vm:vm_kernel_vm_meter_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_mmap", srcs = ["vm_mmap.c"],
+    deps = ["//sys/contrib/ck:vm_kernel_vm_mmap_headers", "//sys/ddb:vm_kernel_vm_mmap_headers", "//sys/dev/hwpmc:vm_kernel_vm_mmap_headers", "//sys/dev/hwt:vm_kernel_vm_mmap_headers", "//sys/security/audit:vm_kernel_vm_mmap_headers", "//sys/security/mac:vm_kernel_vm_mmap_headers", "//sys/vm:vm_kernel_vm_mmap_headers", "//sys/amd64/conf:vm_kernel_opt_capsicum_header", "//sys/amd64/conf:vm_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:vm_kernel_opt_hwt_hooks_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_object", srcs = ["vm_object.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_object_headers", "//sys/vm:vm_kernel_vm_object_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_page", srcs = ["vm_page.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_page_headers", "//sys/vm:vm_kernel_vm_page_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_pageout", srcs = ["vm_pageout.c"],
+    deps = ["//sys/vm:vm_kernel_vm_pageout_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_pager", srcs = ["vm_pager.c"],
+    deps = ["//sys/vm:vm_kernel_vm_pager_headers", "//sys/amd64/conf:vm_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_phys", srcs = ["vm_phys.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_phys_headers", "//sys/vm:vm_kernel_vm_phys_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_radix", srcs = ["vm_radix.c"],
+    deps = ["//sys/vm:vm_kernel_vm_radix_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_reserv", srcs = ["vm_reserv.c"],
+    deps = ["//sys/vm:vm_kernel_vm_reserv_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_swapout", srcs = ["vm_swapout.c"],
+    deps = ["//sys/vm:vm_kernel_vm_swapout_headers", "//sys/amd64/conf:vm_kernel_opt_kstack_max_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_pages_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_unix", srcs = ["vm_unix.c"],
+    deps = ["//sys/vm:vm_kernel_vm_unix_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vnode_pager", srcs = ["vnode_pager.c"],
+    deps = ["//sys/vm:vm_kernel_vnode_pager_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

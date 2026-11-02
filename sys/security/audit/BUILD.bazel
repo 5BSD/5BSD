@@ -40,3 +40,7 @@ bsd_source_headers(name = "core_kernel_uipc_mqueue_headers", hdrs = ["audit.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["audit.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/vm:__pkg__"])

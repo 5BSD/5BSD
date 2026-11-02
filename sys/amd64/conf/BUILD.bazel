@@ -242,3 +242,28 @@ cc_library(name = "core_kernel_opt_witness_header", hdrs = [":opt_witness"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_zstdio_header", hdrs = [":opt_zstdio"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_tree_file(name = "opt_kstack_max_pages", tree = ":generic_config", member = "opt_kstack_max_pages.h",
+    output = "generic_options/opt_kstack_max_pages.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "vm_kernel_opt_capsicum_header", hdrs = [":opt_capsicum"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_hwt_hooks_header", hdrs = [":opt_hwt_hooks"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_kstack_max_pages_header", hdrs = [":opt_kstack_max_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_kstack_usage_prof_header", hdrs = [":opt_kstack_usage_prof"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_param_header", hdrs = [":opt_param"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])
+cc_library(name = "vm_kernel_opt_vm_header", hdrs = [":opt_vm"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/vm:__pkg__"])

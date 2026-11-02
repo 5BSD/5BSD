@@ -51,3 +51,9 @@ bsd_source_headers(name = "core_kernel_uipc_mbuf2_headers", hdrs = ["mac_framewo
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/vm:__pkg__"])

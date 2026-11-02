@@ -7,6 +7,11 @@ The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
 
+The [virtual-memory cohort](VM-KERNEL-QUALIFICATION.md) adds twenty-four amd64
+GENERIC built-in objects with actual compile/input, machine-code and CTF checks.
+It uses a freshly staged execution baseline after the host upgrade; full native
+kernel/world/package/runtime and performance gates remain open.
+
 The [core kernel checkpoint](CORE-KERNEL-QUALIFICATION.md) adds seventy-one
 amd64 GENERIC objects qualified against a fresh, successfully linked Make
 reference kernel. Object inspection and input checks do not establish a full

@@ -9488,3 +9488,14 @@ parity do not prove live event delivery. Existing exec/jail, ptrace/socket/TTY,
 message queue, kTLS and vsock event paths must run on the matching test kernel;
 review shared coverage before adding events to marker-free sources. No tracing
 activation, new event policy or hot-path runtime change was introduced.
+
+## Virtual-memory kernel built-ins (2026-11-02)
+
+Twenty-four unchanged sys/vm sources retain their original native machine code
+and CTF against the configured Make reference. Eleven contain direct trace,
+audit, CTR or lockstat markers in the bounded source scan; thirteen do not.
+See [virtual-memory qualification](VM-KERNEL-QUALIFICATION.md) and its retained
+source hashes/lines. Fault/reclaim, paging/swap, mappings, object lifecycle and
+UMA event delivery remain matching-kernel runtime gates. Review shared probes
+and measured disabled/enabled overhead before adding hot-path events. No new
+runtime probe/policy change or event-delivery qualification is claimed.

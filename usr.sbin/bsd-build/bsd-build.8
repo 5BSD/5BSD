@@ -5077,3 +5077,12 @@ for the fresh linked Make reference, captured objects, input hashes and
 filename-related differences.
 The profile runs no runtime tests and does not qualify a complete native
 kernel link, installation, cross-kernel build or performance.
+.Pp
+The existing format-5 explicit SDK and target inputs also qualify twenty-four
+amd64 GENERIC virtual-memory built-in objects after an execution-host upgrade.
+Changed host execution dependencies require a new staged SDK receipt;
+a previous successful receipt is not silently rebound.
+See
+.Pa tools/build/bazel/VM-KERNEL-QUALIFICATION.md
+for actual compiler inputs, object and CTF comparisons and remaining complete
+kernel, runtime, cross-build and controlled performance gates.

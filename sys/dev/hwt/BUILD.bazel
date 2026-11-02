@@ -2,3 +2,8 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "hook_headers", hdrs = ["hwt_hook.h"], includes = ["../.."],
     visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["hwt_hook.h"],
+    visibility = ["//sys/vm:__pkg__"])

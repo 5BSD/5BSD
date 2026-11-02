@@ -5,6 +5,18 @@ checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
 remains supported for ports and third-party software. BIP remains out of scope.
 
+## Current resumption (2026-11-02)
+
+The user resumed after the committed kernel-upgrade checkpoint a28f294501e.
+Eight host execution input hashes changed; the maintained SDK preparation was
+rerun into bazel-postupgrade-sdk-20261102 under /usr/obj/usr/src rather than
+rebinding the historical receipt. All 16,812 new baseline checks pass. The next
+twenty-four amd64 GENERIC virtual-memory objects pass actual compile/input,
+code and CTF inspection; see VM-KERNEL-QUALIFICATION.md. This is component
+progress, not a full native kernel/world/package/runtime or performance gate.
+Userland resumes from USERLAND-UPGRADE-CHECKPOINT-20261101.md with fresh WPA
+references. All remaining work and final completion requirements below apply.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
