@@ -246,11 +246,13 @@ int main()
 	} else if (test == 1) put(socket[1], payload.data(), 2);
         else if (test == 3) put(socket[1], "bad!", 4);
         close(socket[1]); writer.join();
-        /* A closed connection or a refused frame fails that job only: the
-         * bridge re-registers (the stub then ends it) without stopping the
-         * guest daemon.  Shutdown and cleanup end it directly. */
-        assert(s.shutdown.load() == (test == 4));
-        assert(s.setup_calls == (test <= 3 ? 2u : 1u));
+        /* A closed connection fails that job only: the bridge re-registers
+         * (the stub then ends it) without stopping the guest daemon.  A
+         * malformed frame (2: impossible length, 3: not ELF) from the local
+         * daemon, this same binary, is a protocol violation that stops it, as
+         * shutdown does; cleanup ends the bridge without stopping it. */
+        assert(s.shutdown.load() == (test >= 2 && test <= 4));
+        assert(s.setup_calls == (test <= 1 ? 2u : 1u));
 	if (host.joinable()) host.join();
         close(pipefd[1]);
 	dtt_entry_t entry;

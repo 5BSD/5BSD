@@ -1178,7 +1178,8 @@ dtt_wait_socket(state *s, int64_t deadline)
  * forwarder's admission rescans outbound, and listen_dttransport()'s runtime
  * outbound scan queries and replays it), so the bridge reconnects instead of
  * stopping the guest daemon.  DTT_BRIDGE_FATAL is reserved for conditions a
- * reconnect cannot repair.
+ * reconnect cannot repair, including a malformed frame: the local daemon is
+ * this same binary, so that is a protocol violation, not a failed job.
  */
 enum dtt_bridge_result {
 	DTT_BRIDGE_STOP,	/* shutdown or cleanup owns the exit */
@@ -1186,9 +1187,11 @@ enum dtt_bridge_result {
 	DTT_BRIDGE_FATAL,	/* stop the guest daemon */
 };
 
-/* Consecutive failed connection attempts before the bridge gives up, and
- * the reconnect backoff bounds (doubling from the minimum). */
+/* Consecutive failed connection attempts, and consecutive sessions that
+ * ended without delivering a frame, before the bridge gives up; and the
+ * reconnect backoff bounds (doubling from the minimum). */
 static constexpr unsigned DTT_BRIDGE_SETUP_ATTEMPTS = 6;
+static constexpr unsigned DTT_BRIDGE_IDLE_SESSIONS = 6;
 static constexpr int64_t DTT_BRIDGE_BACKOFF_MIN_MS = 50;
 static constexpr int64_t DTT_BRIDGE_BACKOFF_MAX_MS = 2000;
 
@@ -1986,8 +1989,8 @@ dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
 		}
 		if (dtraced_wire_decode_header(&header, header_wire) != 0) {
 			ERR("guest bridge: invalid daemon ELF header: %m; "
-			    "reconnecting");
-			return (DTT_BRIDGE_RECONNECT);
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		length = header.elf.len;
 		if (header.msg_type != DTRACED_MSG_ELF ||
@@ -1998,15 +2001,15 @@ dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
 		    header.elf.vmid >= HYPERTRACE_MAX_VMS ||
 		    header.elf.epoch == 0) {
 			ERR("guest bridge: invalid daemon ELF frame; "
-			    "reconnecting");
-			return (DTT_BRIDGE_RECONNECT);
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
 		if (memcmp(header.elf.program_id, zero_id, sizeof(zero_id)) == 0 ||
 		    memcmp(header.elf.source_id, zero_id, sizeof(zero_id)) == 0) {
 			ERR("guest bridge: daemon ELF has no program or source "
-			    "identity; reconnecting");
-			return (DTT_BRIDGE_RECONNECT);
+			    "identity; protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		std::unique_ptr<unsigned char[]> data(new (std::nothrow) unsigned char[length]);
 		if (!data) {
@@ -2023,8 +2026,8 @@ dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
 		}
 		if (memcmp(data.get(), "\177ELF", 4) != 0) {
 			ERR("guest bridge: daemon payload is not ELF; "
-			    "reconnecting");
-			return (DTT_BRIDGE_RECONNECT);
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		uint8_t expected_digest[SHA256_DIGEST_LENGTH];
 		if (SHA256(data.get(), length, expected_digest) == NULL) {
@@ -2077,7 +2080,7 @@ dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
 					dtt_bridge_release_receipt(s, claimed);
 					return (DTT_BRIDGE_FATAL);
 				}
-				if (now >= deadline) {
+				if (now >= deadline && offset == 0) {
 					/* The device kept refusing for lack of
 					 * queue space: fail this job only. */
 					ERR("guest bridge: dttransport stayed full "
@@ -2085,6 +2088,19 @@ dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
 					    (uintmax_t)claimed);
 					dtt_bridge_release_receipt(s, claimed);
 					return (DTT_BRIDGE_RECONNECT);
+				}
+				if (now >= deadline) {
+					/* bhyve holds the accepted fragments and
+					 * accepts only their continuation (same
+					 * identifier and delivery); any other
+					 * frame resets the transport. */
+					ERR("guest bridge: dttransport stayed full "
+					    "after %zu of %zu bytes of delivery "
+					    "%ju; the partial ELF cannot be "
+					    "abandoned, stopping", offset, length,
+					    (uintmax_t)claimed);
+					dtt_bridge_release_receipt(s, claimed);
+					return (DTT_BRIDGE_FATAL);
 				}
 				written = write(s->dtt_fd, &e, sizeof(e));
 				if (written == (ssize_t)sizeof(e))
@@ -2178,16 +2194,17 @@ dtt_bridge_backoff(state *s, int64_t delay_ms)
  * The guest's local forwarder: a client of this daemon's own socket that
  * moves identified ELF frames to the host through /dev/dttransport.  One
  * failed job or a closed connection is logged and the bridge re-registers
- * with bounded exponential backoff.  It stops the guest daemon only on a
- * fatal device or protocol condition, or after DTT_BRIDGE_SETUP_ATTEMPTS
- * consecutive connection attempts fail.
+ * with bounded exponential backoff.  It stops the guest daemon on a fatal
+ * device or protocol condition, after DTT_BRIDGE_SETUP_ATTEMPTS consecutive
+ * connection attempts fail, or after DTT_BRIDGE_IDLE_SESSIONS consecutive
+ * sessions end without delivering a frame (a job that can never succeed).
  */
 void
 write_dttransport(void *_s)
 {
 	state *s = (state *)_s;
 	dtt_bridge_result result = DTT_BRIDGE_STOP;
-	unsigned setup_failures = 0;
+	unsigned setup_failures = 0, idle_sessions = 0;
 	int64_t backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
 	bool wait_ready = true;
 
@@ -2213,8 +2230,16 @@ write_dttransport(void *_s)
 			close(sockfd);
 			if (result != DTT_BRIDGE_RECONNECT)
 				break;
-			if (delivered != 0)
+			if (delivered != 0) {
 				backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
+				idle_sessions = 0;
+			} else if (++idle_sessions >= DTT_BRIDGE_IDLE_SESSIONS) {
+				ERR("guest bridge: %u consecutive sessions "
+				    "delivered nothing; stopping",
+				    idle_sessions);
+				result = DTT_BRIDGE_FATAL;
+				break;
+			}
 		}
 		WARN("guest bridge: re-registering with the local daemon in "
 		    "%jd ms", (intmax_t)backoff);
