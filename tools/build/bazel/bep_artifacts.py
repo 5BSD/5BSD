@@ -8,9 +8,10 @@ import stat
 from urllib.parse import unquote, urlsplit
 
 
-def snapshot(events_path, destination):
+def snapshot(events_path, destination, *, incompatible=()):
     sets = {}
-    targets = []
+    targets, excluded = [], []
+    allowed_incompatible, seen_incompatible = set(incompatible), set()
     with Path(events_path).open() as stream:
         for line in stream:
             event = json.loads(line)
@@ -23,12 +24,27 @@ def snapshot(events_path, destination):
                 identity = event['id']['targetCompleted']
                 if identity.get('aspect'):
                     continue
+                label = identity['label']
+                if 'aborted' in event:
+                    if ('completed' in event or label not in allowed_incompatible or
+                            event['aborted'].get('reason') != 'SKIPPED' or label in seen_incompatible):
+                        raise ValueError('unapproved or ambiguous aborted target: ' + label)
+                    seen_incompatible.add(label)
+                    excluded.append(dict(target=identity, reason='SKIPPED',
+                                         description=event['aborted'].get('description', '')))
+                    continue
+                if label in allowed_incompatible:
+                    raise ValueError('configured incompatible target completed: ' + label)
+                if 'completed' not in event:
+                    raise ValueError('target completion payload missing: ' + label)
                 if not event['completed'].get('success'):
                     raise ValueError('unsuccessful target output: ' + identity['label'])
                 groups = [g for g in event['completed'].get('outputGroup', []) if g['name'] in ('default', 'metadata', 'directory_metadata')]
                 if any(g.get('incomplete') for g in groups):
                     raise ValueError('incomplete captured output group')
                 targets.append((identity, [r['id'] for g in groups for r in g.get('fileSets', [])]))
+    if seen_incompatible != allowed_incompatible:
+        raise ValueError('configured incompatible target lacks skipped completion')
     if not targets:
         raise ValueError('no completed targets in BEP')
     def expand(key, active, visited):
@@ -92,7 +108,8 @@ def snapshot(events_path, destination):
     # BEP targetCompleted order can vary with parallel action scheduling. Keep
     # the retained artifact manifest stable for the same configured targets.
     records.sort(key=lambda record: json.dumps(record['target'], sort_keys=True, separators=(',', ':')))
-    report = dict(format=1, scope='completed targets, default/metadata/directory_metadata groups, regular files only; excludes runfiles and other output groups', targets=records, unique_files=len(seen), bytes=sum(seen.values()))
+    excluded.sort(key=lambda record: json.dumps(record['target'], sort_keys=True, separators=(',', ':')))
+    report = dict(incompatible_targets=excluded, format=1, scope='completed targets, default/metadata/directory_metadata groups, regular files only; excludes runfiles and other output groups', targets=records, unique_files=len(seen), bytes=sum(seen.values()))
     (destination/'manifest.json').write_text(json.dumps(report, indent=2, sort_keys=True)+'\n')
     manifest_hash = hashlib.sha256((destination/'manifest.json').read_bytes()).hexdigest()
     return dict(manifest='artifacts/manifest.json', sha256=manifest_hash, unique_files=len(seen), bytes=sum(seen.values()))

@@ -5249,3 +5249,13 @@ No new frontend, signing or publication input is required.
 See
 .Pa tools/build/bazel/ATF-ENVIRONMENT-QUALIFICATION.md
 for constructor-time and analysis rejection evidence.
+.Pp
+Native format-5 test inventories record compatible and incompatible configured
+suite members separately.
+Every compatible member must pass and supply its captured XML report.
+An incompatible member is an explicit configuration exclusion, not a passing
+test or runtime skip; its actual BEP SKIPPED identity is retained.
+Unknown aborts and requests with no compatible tests fail qualification.
+See
+.Pa tools/build/bazel/CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md
+for native controls and remaining installed-path limits.

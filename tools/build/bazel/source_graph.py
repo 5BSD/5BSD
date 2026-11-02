@@ -67,24 +67,28 @@ def test_inventory_command(argv, targets, tests):
     command = [a for a in command if not a.startswith((
         '--build_event_json_file=', '--execution_log_json_file=', '--execution_log_compact_file=',
         '--noexecution_log_sort', '--output_groups='))]
-    return command + ['--output=starlark', '--starlark:expr=json.encode(str(target.label))',
+    return command + ['--output=starlark',
+                      '--starlark:expr=json.encode({"label":str(target.label),"compatible":not any([key.endswith("IncompatiblePlatformProvider") for key in providers(target)])})',
                       'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))']
 
 
 def parse_test_inventory(text):
-    labels = set()
+    active, incompatible, seen = set(), set(), set()
     for line in text.splitlines():
-        label = json.loads(line)
-        if not isinstance(label, str):
-            raise ValueError('configured test label must be a string')
+        record = json.loads(line)
+        if (not isinstance(record, dict) or set(record) != {'label', 'compatible'} or
+                not isinstance(record['label'], str) or type(record['compatible']) is not bool):
+            raise ValueError('configured test requires an explicit label and compatibility boolean')
+        label = record['label']
         if label.startswith('@@//'):
             label = label[2:]
-        if not label.startswith('//') or ':' not in label or label in labels:
+        if not label.startswith('//') or ':' not in label or label in seen:
             raise ValueError('invalid or duplicate configured test: ' + label)
-        labels.add(label)
-    if not labels:
-        raise ValueError('requested tests expand to no configured tests')
-    return sorted(labels)
+        seen.add(label)
+        (active if record['compatible'] else incompatible).add(label)
+    if not active:
+        raise ValueError('requested tests expand to no compatible configured tests')
+    return sorted(active), sorted(incompatible)
 
 
 def test_results(events, expected):
@@ -205,7 +209,7 @@ def _qualify(config, args, state):
         commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
         (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
         if result.returncode:raise RuntimeError('native source graph failed; see bazel.stderr')
-        expected = []
+        expected, incompatible = [], []
         if config['tests']:
             query = test_inventory_command(argv, config['targets'], config['tests'])
             start = time.monotonic()
@@ -215,13 +219,13 @@ def _qualify(config, args, state):
             (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
             if result.returncode:
                 raise RuntimeError('configured test inventory failed; see test-inventory.stderr')
-            expected = parse_test_inventory((out/'test-inventory.stdout').read_text())
-        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected),indent=2)+'\n')
+            expected, incompatible = parse_test_inventory((out/'test-inventory.stdout').read_text())
+        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected,incompatible=incompatible),indent=2)+'\n')
         with (out/'events.json').open() as stream:
             tests = test_results((json.loads(line) for line in stream), expected)
         with (out/'events.json').open() as stream:
             reports = test_reports.snapshot((json.loads(line) for line in stream), out/'test-reports', expected)
-        artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts')
+        artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts', incompatible=incompatible)
         for name,value in bindings.items():
             if digest(Path(name))!=value:raise ValueError('qualification input changed: '+name)
         if bsd_toolchain.verify_repository_cache(selected['repository-cache']) != (cache_digest, cache_entries):

@@ -16,9 +16,9 @@ class ArtifactTests(unittest.TestCase):
         self.source.write_bytes(b'original\n')
         self.file = dict(name='pkg/archive.tar', pathPrefix=['bazel-out','cfg','bin'], uri=self.source.as_uri(), digest=hashlib.sha256(self.source.read_bytes()).hexdigest(), length=str(self.source.stat().st_size))
         self.events = [dict(id=dict(targetCompleted=dict(label='//pkg:archive',configuration=dict(id='cfg'))),completed=dict(success=True,outputGroup=[dict(name='default',fileSets=[dict(id='root')])])),dict(id=dict(namedSet=dict(id='root')),namedSetOfFiles=dict(fileSets=[dict(id='leaf')])),dict(id=dict(namedSet=dict(id='leaf')),namedSetOfFiles=dict(files=[self.file]))]
-    def run_snapshot(self):
+    def run_snapshot(self, **kwargs):
         p=self.root/'events.json';p.write_text(''.join(json.dumps(e)+'\n' for e in self.events))
-        return snapshot(p,self.root/'artifacts')
+        return snapshot(p,self.root/'artifacts', **kwargs)
     def test_transitive_out_of_order_snapshot_survives_rebuild(self):
         result=self.run_snapshot();self.assertEqual(result['unique_files'],1)
         self.source.write_bytes(b'replacement')
@@ -89,5 +89,35 @@ class ArtifactTests(unittest.TestCase):
     def test_incomplete_group(self):
         self.events[0]['completed']['outputGroup'][0]['incomplete']=True
         with self.assertRaisesRegex(ValueError,'incomplete'):self.run_snapshot()
+
+    def incompatible_event(self, reason='SKIPPED'):
+        return dict(id=dict(targetCompleted=dict(label='//pkg:disabled', configuration=dict(id='cfg'))),
+                    aborted=dict(reason=reason, description='Target build was skipped.'))
+    def test_only_configured_incompatible_target_is_recorded(self):
+        self.events.append(self.incompatible_event())
+        result=self.run_snapshot(incompatible=['//pkg:disabled'])
+        self.assertEqual(result['unique_files'],1)
+        manifest=json.loads((self.root/'artifacts/manifest.json').read_text())
+        self.assertEqual(manifest['incompatible_targets'],[dict(target=self.events[-1]['id']['targetCompleted'],reason='SKIPPED',description='Target build was skipped.')])
+        self.assertEqual(len(manifest['targets']),1)
+    def test_unapproved_abort_is_not_a_captured_success(self):
+        self.events.append(self.incompatible_event())
+        with self.assertRaisesRegex(ValueError,'unapproved'):
+            self.run_snapshot()
+    def test_failure_reason_cannot_use_incompatibility_allowlist(self):
+        self.events.append(self.incompatible_event('ANALYSIS_FAILURE'))
+        with self.assertRaisesRegex(ValueError,'unapproved'):
+            self.run_snapshot(incompatible=['//pkg:disabled'])
+    def test_missing_skipped_completion_is_rejected(self):
+        with self.assertRaisesRegex(ValueError,'lacks skipped'):
+            self.run_snapshot(incompatible=['//pkg:disabled'])
+    def test_duplicate_skipped_completion_is_rejected(self):
+        self.events += [self.incompatible_event(), self.incompatible_event()]
+        with self.assertRaisesRegex(ValueError,'ambiguous'):
+            self.run_snapshot(incompatible=['//pkg:disabled'])
+    def test_excluded_target_cannot_also_complete(self):
+        extra=json.loads(json.dumps(self.events[0]));extra['id']['targetCompleted']['label']='//pkg:disabled';self.events.append(extra)
+        with self.assertRaisesRegex(ValueError,'incompatible target completed'):
+            self.run_snapshot(incompatible=['//pkg:disabled'])
 
 if __name__=='__main__':unittest.main()
