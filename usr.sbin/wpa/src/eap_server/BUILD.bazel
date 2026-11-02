@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpaeap_server",
+    srcs = [
+        "//contrib/wpa:src/eap_server/eap_server.c",
+        "//contrib/wpa:src/eap_server/eap_server_aka.c",
+        "//contrib/wpa:src/eap_server/eap_server_gpsk.c",
+        "//contrib/wpa:src/eap_server/eap_server_gtc.c",
+        "//contrib/wpa:src/eap_server/eap_server_identity.c",
+        "//contrib/wpa:src/eap_server/eap_server_md5.c",
+        "//contrib/wpa:src/eap_server/eap_server_methods.c",
+        "//contrib/wpa:src/eap_server/eap_server_mschapv2.c",
+        "//contrib/wpa:src/eap_server/eap_server_pax.c",
+        "//contrib/wpa:src/eap_server/eap_server_peap.c",
+        "//contrib/wpa:src/eap_server/eap_server_pwd.c",
+        "//contrib/wpa:src/eap_server/eap_server_sake.c",
+        "//contrib/wpa:src/eap_server/eap_server_sim.c",
+        "//contrib/wpa:src/eap_server/eap_server_tls.c",
+        "//contrib/wpa:src/eap_server/eap_server_tls_common.c",
+        "//contrib/wpa:src/eap_server/eap_server_ttls.c",
+        "//contrib/wpa:src/eap_server/eap_server_wsc.c",
+        "//contrib/wpa:src/eap_server/eap_sim_db.c",
+    ],
+    headers = ["//contrib/wpa:eap_server_headers"],
+)

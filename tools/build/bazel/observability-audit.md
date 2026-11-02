@@ -9601,3 +9601,13 @@ unwind data; live signal delivery, nested/alternate-stack signals and libexecinf
 signal-frame unwinding still require the matching isolated kernel. Avoid adding
 hot-path code or widening the compact image to manufacture tracing coverage.
 See VDSO-QUALIFICATION.md for actual producer inputs, validation tests and limits.
+
+## WPA AP, EAP and TLS private libraries (2026-11-02)
+
+All 660 ordinary/PIE objects preserve actual Make code, constants and raw
+non-debug relocations across four OpenSSL/EAPOL configurations. The source-bound
+92-file direct-call marker scan records no recognized SDT/DTrace/audit/FIDL calls;
+shared instrumentation and event delivery remain unqualified. No probe or
+production body was removed. Authentication, TLS interoperability and wireless/
+service runtime coverage belongs with completed program consumers. See
+[the final private-library qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md).

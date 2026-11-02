@@ -5,8 +5,11 @@
 The saved host/SDK/reference identities were revalidated without rebinding old
 receipts. Native wpacommon and hostapd_cli now pass the bounded checks in
 [their qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). Nine further private support libraries now pass the output/input checks in
-[their qualification](WPA-SUPPORT-QUALIFICATION.md). The next WPA work is
-ap, eap_peer, eap_server and tls, followed by the remaining three programs; daemon/control/wireless runtime,
+[their qualification](WPA-SUPPORT-QUALIFICATION.md). The final four private
+libraries now pass [their qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md),
+including all 660 object/compiler/input checks and 32 archive comparisons. All
+sixteen private directories have bounded native output qualification. The next
+WPA work is wpa_cli, hostapd and wpa_supplicant; daemon/control/wireless runtime,
 cross builds and whole-system gates are still open. The earlier paused record
 and prepared-reference notes below are historical.
 

@@ -19,8 +19,11 @@ behavior and complete system gates remain open.
 The [nine WPA support libraries](WPA-SUPPORT-QUALIFICATION.md) add 47 original
 sources with explicit ordinary/PIE variants. All 38 Make configurations and
 five native profiles pass 76 archive comparisons, 418 code/policy checks and
-34,394 prerequisite hash checks. Four WPA private libraries and three programs
-remain, along with full service/runtime and system qualification.
+34,394 prerequisite hash checks. The [final four private libraries](WPA-FINAL-PRIVATE-QUALIFICATION.md)
+now add 32 archive comparisons, 660 code/policy checks and 59,912 prerequisite
+hash checks across four configurations. All sixteen private directories have
+bounded output qualification; three programs and full service/runtime/system
+gates remain open.
 
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
