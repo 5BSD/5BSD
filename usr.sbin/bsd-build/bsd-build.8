@@ -5094,3 +5094,15 @@ See
 for compiler/input, machine-code, CTF and filename/relocation comparisons.
 This does not qualify a complete kernel, cross build, network runtime or
 controlled performance result.
+.Pp
+The normal format-5 host-test API runs
+.Va //tools/build/bazel:ctf_semantics_test .
+The separate
+.Pa tools/build/bazel/ctf-artifact-check.py
+inspector accepts explicit captured target/output and Make object inputs.
+It preserves raw CTF hashes and checks supported standalone type-layout/schema
+metadata and ELF symbol associations without rewriting artifacts.
+See
+.Pa tools/build/bazel/CTF-SEMANTIC-CHECK.md
+for supported formats, negative regressions and ABI/runtime limits.
+Kernel artifact profiles retain their restriction against runnable host tests.

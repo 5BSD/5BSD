@@ -7,6 +7,11 @@ The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
 
+The [CTF semantic checker](CTF-SEMANTIC-CHECK.md) preserves raw hashes while
+checking type-layout/reference metadata and actual symbol associations across
+local type-ID encodings. Its native host-test regression includes 29 methods;
+this is separate from kernel runtime or complete ABI qualification.
+
 The [IPv4/TCP cohort](IPV4-KERNEL-QUALIFICATION.md) adds forty-three amd64
 GENERIC built-in objects with actual compiler/input, machine-code, CTF and
 filename/relocation checks. Complete kernel/network runtime and system gates

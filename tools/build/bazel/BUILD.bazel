@@ -154,3 +154,7 @@ bsd_python_test(
 )
 
 exports_files(["syscall_tables.lua"])
+
+# Binary CTF metadata equivalence and rejection of altered type associations.
+bsd_python_test(name = "ctf_semantics_test", src = "ctf_semantics-test.py",
+    data = ["ctf_semantics.py"])
