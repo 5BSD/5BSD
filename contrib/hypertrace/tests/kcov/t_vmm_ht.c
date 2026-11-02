@@ -79,9 +79,12 @@ khx_do_cpuid(u_int ax, u_int *p)
  * Host CPUID with a subleaf.  With the hybrid model enabled, simulated CPUs
  * 0-1 answer as P-cores and 2-3 as E-cores in the leaves that differ on such
  * parts (4H, 18H, 8000_0006H, 1AH), and 8000_0026H reports each CPU's own
- * extended APIC ID; every other leaf reads as absent.
+ * extended APIC ID; leaf 7 reports cpuid_leaf7_ebx on every CPU (a microcode
+ * update or the TAA mitigation may change it after vmm loaded); every other
+ * leaf reads as absent.
  */
 static int cpuid_hybrid;
+static u_int cpuid_leaf7_ebx;
 
 void
 khx_cpuid_count(u_int ax, u_int cx, u_int *p)
@@ -120,6 +123,10 @@ khx_cpuid_count(u_int ax, u_int cx, u_int *p)
 		p[1] = 1;
 		p[2] = cx & 0xff;
 		p[3] = curcpu;
+		break;
+	case 0x7:
+		if (cx == 0)
+			p[1] = cpuid_leaf7_ebx;
 		break;
 	}
 }
@@ -903,7 +910,7 @@ case_cpuid_host_cpu(void)
 	u_int saved_high, saved_exthigh;
 	struct vcpu *vcpu;
 	struct vm *vm;
-	int cpu, mode;
+	int binds, cpu, mode;
 	size_t i;
 
 	khx_host_case("cpuid_host_cpu");
@@ -914,8 +921,12 @@ case_cpuid_host_cpu(void)
 	/* MOD_LOAD reads host CPUID while a P-core model answers on CPU 0. */
 	KHX_EQ(khx_module_event("vmm", MOD_UNLOAD), 0);
 	cpuid_hybrid = 1;
+	cpuid_leaf7_ebx = CPUID_STDEXT_HLE | CPUID_STDEXT_RTM |
+	    CPUID_STDEXT_AVX2;
 	khx_set_curcpu(3);
+	binds = khx_vmm_sched_binds;
 	KHX_EQ(khx_module_event("vmm", MOD_LOAD), 0);
+	KHX_EQ(khx_vmm_sched_binds, binds + 1);	/* bound to CPU 0 */
 	vm = vm_new("hybridvm");
 	vcpu = vcpu_new(vm, 0, 0);
 	for (cpu = 0; cpu < KHX_NCPU; cpu++) {
@@ -951,9 +962,21 @@ case_cpuid_host_cpu(void)
 			continue;
 		KHX_EQ(r[0][i][0] | r[0][i][1] | r[0][i][2] | r[0][i][3], 0);
 	}
+	/* Leaf 7 is read live: TSX_CPUID_CLEAR after vmm loaded hides HLE and
+	 * RTM from guests as it does from the host. */
+	for (mode = 0; mode < 2; mode++) {
+		v[0] = 7;
+		v[1] = v[2] = v[3] = 0;
+		KHX_EQ(x86_emulate_cpuid(vcpu, &v[0], &v[1], &v[2], &v[3]), 1);
+		KHX_EQ(v[1] & (CPUID_STDEXT_HLE | CPUID_STDEXT_RTM |
+		    CPUID_STDEXT_AVX2), mode == 0 ? CPUID_STDEXT_HLE |
+		    CPUID_STDEXT_RTM | CPUID_STDEXT_AVX2 : CPUID_STDEXT_AVX2);
+		cpuid_leaf7_ebx &= ~(CPUID_STDEXT_HLE | CPUID_STDEXT_RTM);
+	}
 	vm_gone(vm);
 	khx_set_curcpu(0);
 	cpuid_hybrid = 0;
+	cpuid_leaf7_ebx = 0;
 	cpu_high = saved_high;
 	cpu_exthigh = saved_exthigh;
 	KHX_EQ(khx_module_event("vmm", MOD_UNLOAD), 0);

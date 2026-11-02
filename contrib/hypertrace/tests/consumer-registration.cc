@@ -16,7 +16,8 @@
  * than one; a refusal that bound nothing stays retryable; an unidentified
  * consumer's registration is read and refused; HPI2 with this process's real
  * kernel birth identity binds and pins the process; a registration that bound
- * the program but then failed still hands the socket to the sending worker.
+ * the program but then failed still hands the socket to the sending worker,
+ * answers status 0 and fails the job so the socket is closed.
  */
 #include <sys/event.h>
 #include <sys/ioctl.h>
@@ -212,7 +213,9 @@ main()
 
     /* 9. Registration binds the program but its import scan fails (EBUSY):
      *    status 0, yet the ELF gate is open and the sending worker owns the
-     *    socket, so the event loop must not start a second reader. */
+     *    socket, so the event loop must not start a second reader.  The job
+     *    fails after the status so the dispatcher closes the socket: a
+     *    retry on it would reach the worker as a delivery ACK. */
     char tree[] = "/tmp/consumer-registration.XXXXXX";
     assert(mkdtemp(tree) != nullptr);
     dir inbound(tree, nullptr);
@@ -223,13 +226,18 @@ main()
     c7->consumer_import_scan_active = true;
     send_frame(peer7, DTRACED_MSG_CONSUMER_PROGRAM, digest, sizeof(digest));
     pending = state_admission_test::readable(s, *c7, kq);
-    assert(pending != nullptr && pending->read_data(s));
+    assert(pending != nullptr);
+    errno = 0;
+    assert(!pending->read_data(s) && errno == EBUSY); /* fails before */
     delete pending;
     assert(read(peer7, &status, 1) == 1 && status == 0);
     assert(c7->consumer_program_valid);
-    assert(c7->consumer_registration_acked.load()); /* fails before the fix */
+    assert(c7->consumer_registration_acked.load());
     assert(write(peer7, &ack, 1) == 1);
     assert(state_admission_test::readable(s, *c7, kq) == nullptr);
+    s.kill_socket(c7);	/* the dispatcher's answer to a failed job */
+    assert(read(peer7, &status, 1) == 0);
+    s.deadfds.erase(c7);
     s.inbounddir = nullptr;
 
     s.sockfds.clear();

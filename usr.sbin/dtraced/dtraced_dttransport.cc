@@ -1187,11 +1187,10 @@ enum dtt_bridge_result {
 	DTT_BRIDGE_FATAL,	/* stop the guest daemon */
 };
 
-/* Consecutive failed connection attempts, and consecutive sessions that
- * ended without delivering a frame, before the bridge gives up; and the
- * reconnect backoff bounds (doubling from the minimum). */
+/* Consecutive failed connection attempts to the local daemon before the
+ * bridge gives up, and the reconnect backoff bounds (doubling from the
+ * minimum). */
 static constexpr unsigned DTT_BRIDGE_SETUP_ATTEMPTS = 6;
-static constexpr unsigned DTT_BRIDGE_IDLE_SESSIONS = 6;
 static constexpr int64_t DTT_BRIDGE_BACKOFF_MIN_MS = 50;
 static constexpr int64_t DTT_BRIDGE_BACKOFF_MAX_MS = 2000;
 
@@ -2195,16 +2194,19 @@ dtt_bridge_backoff(state *s, int64_t delay_ms)
  * moves identified ELF frames to the host through /dev/dttransport.  One
  * failed job or a closed connection is logged and the bridge re-registers
  * with bounded exponential backoff.  It stops the guest daemon on a fatal
- * device or protocol condition, after DTT_BRIDGE_SETUP_ATTEMPTS consecutive
- * connection attempts fail, or after DTT_BRIDGE_IDLE_SESSIONS consecutive
- * sessions end without delivering a frame (a job that can never succeed).
+ * device or protocol condition, or after DTT_BRIDGE_SETUP_ATTEMPTS
+ * consecutive connection attempts fail.  Sessions that end without a
+ * delivery are not counted: a stalled host fails each job (no receipt, a
+ * full device) for as long as it stalls, and the pending token is replayed
+ * once it drains.  A frame the bridge can never accept is a protocol
+ * violation, which is already fatal.
  */
 void
 write_dttransport(void *_s)
 {
 	state *s = (state *)_s;
 	dtt_bridge_result result = DTT_BRIDGE_STOP;
-	unsigned setup_failures = 0, idle_sessions = 0;
+	unsigned setup_failures = 0;
 	int64_t backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
 	bool wait_ready = true;
 
@@ -2230,16 +2232,8 @@ write_dttransport(void *_s)
 			close(sockfd);
 			if (result != DTT_BRIDGE_RECONNECT)
 				break;
-			if (delivered != 0) {
+			if (delivered != 0)
 				backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
-				idle_sessions = 0;
-			} else if (++idle_sessions >= DTT_BRIDGE_IDLE_SESSIONS) {
-				ERR("guest bridge: %u consecutive sessions "
-				    "delivered nothing; stopping",
-				    idle_sessions);
-				result = DTT_BRIDGE_FATAL;
-				break;
-			}
 		}
 		WARN("guest bridge: re-registering with the local daemon in "
 		    "%jd ms", (intmax_t)backoff);

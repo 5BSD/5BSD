@@ -385,6 +385,14 @@ struct vmctx {
 };
 static struct vmctx src_vm, dst_vm;
 
+/* pm.c is not linked: sci_retire() fences the SIGTERM power button. */
+static bool sci_retired;
+void
+sci_retire(void)
+{
+	sci_retired = true;
+}
+
 static void
 vm_init(struct vmctx *vm, const char *name, uint8_t seed)
 {
@@ -403,6 +411,7 @@ vm_init(struct vmctx *vm, const char *name, uint8_t seed)
 	vm->vmid = 5;
 	vm->epoch = 50;
 	vm->destroyed = vm->suspended = false;
+	sci_retired = false;
 	memset(vm->kern, 0, sizeof(vm->kern));
 	memset(vm->kern_len, 0, sizeof(vm->kern_len));
 	vm->session_active = false;
@@ -523,6 +532,9 @@ vm_destroy_checked(struct vmctx *ctx)
 {
 	int error = boundary("vm_destroy_checked");
 
+	/* bhyve lives until the IPC reply is sent: a SIGTERM power button
+	 * press must already be a no-op when the VM goes away. */
+	CHECK(sci_retired);
 	if (error != 0) {
 		errno = error == FAULT_NOERRNO ? 0 : error;
 		return (-1);

@@ -4959,6 +4959,13 @@ done:
 		if (error == 0)
 			error = pci_vtdtr_checkpoint_stop();
 		if (error == 0) {
+#ifdef __amd64__
+			/*
+			 * bhyve lives on until the IPC reply is sent: a SIGTERM
+			 * power button press must not reach the destroyed VM.
+			 */
+			sci_retire();
+#endif
 			if (vm_destroy_checked(ctx) != 0) {
 				error = errno != 0 ? errno : EIO;
 				EPRINTLN("Could not destroy checkpoint source VM: %s",
