@@ -1736,82 +1736,82 @@ test_codecs(void)
 		/* validate: every mismatch class reports its reason */
 		fill_topology(a, 16, 2);
 		fill_topology(b, 16, 2);
-		EXPECT(migration_topology_validate(NULL, b, &reason), EINVAL);
-		EXPECT(migration_topology_validate(a, NULL, &reason), EINVAL);
-		EXPECT(migration_topology_validate(a, b, &reason), 0);
+		EXPECT(migration_topology_validate(NULL, b, &reason, NULL, 0), EINVAL);
+		EXPECT(migration_topology_validate(a, NULL, &reason, NULL, 0), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), 0);
 		b->mem_size += PAGE;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		EXPECT((int)reason, MIGRATION_REASON_MEMSIZE);
 		fill_topology(b, 16, 3);
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		EXPECT((int)reason, MIGRATION_REASON_CPUCOUNT);
 		fill_topology(b, 16, 2);
 		b->sockets = 2;	/* same vCPU count, different shape */
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_TOPOLOGY);
 		/* Each CPU-shape and memory-geometry field is compared on its own. */
 		fill_topology(b, 16, 2);
 		b->cores = 1;
 		b->threads = 2;
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_TOPOLOGY);
 		fill_topology(b, 16, 2);
 		b->threads = 2;
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_TOPOLOGY);
 		fill_topology(b, 16, 2);
 		b->lowmem -= PAGE;
 		b->highmem += PAGE;	/* same total, different split */
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_MEMSIZE);
 		fill_topology(a, 16, 2);
 		fill_topology(b, 16, 2);
 		memcpy(b->devices[1].name, "devX", 5);
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_DEVICE);
 		fill_topology(b, 16, 2);
 		b->devices[0].migration_flags = MIGRATION_DEVF_STATE_CODEC |
 		    MIGRATION_DEVF_COMPAT_FIXED | MIGRATION_DEVF_DMA_TRACKED |
 		    MIGRATION_DEVF_QUIESCE_NONE;	/* eligible, but not the local contract */
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_DEVICE);
 		fill_topology(b, 16, 2);
 		b->device_count = MIGRATION_MAX_DEVICES + 1;
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_TOPOLOGY);
 		/* The reason output is optional. */
-		EXPECT(migration_topology_validate(a, b, NULL), EINVAL);
+		EXPECT(migration_topology_validate(a, b, NULL, NULL, 0), EINVAL);
 		fill_topology(b, 16, 2);
 		b->device_count = 1;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		EXPECT((int)reason, MIGRATION_REASON_DEVICE);
 		fill_topology(b, 16, 2);
 		b->devices[1].migration_flags = MIGRATION_DEVF_STATE_CODEC;
-		EXPECT(migration_topology_validate(a, b, &reason), EOPNOTSUPP);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EOPNOTSUPP);
 		EXPECT((int)reason, MIGRATION_REASON_DEVICE);
 		fill_topology(b, 16, 2);
 		b->devices[0].compat_crc32 ^= 1;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		fill_topology(b, 16, 2);
 		b->devices[1].bar_hash ^= 1;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		fill_topology(b, 16, 2);
 		b->devices[0].compat_schema ^= 1;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		fill_topology(b, 16, 2);
 		b->devices[0].name[0] = 'Y';
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		fill_topology(b, 16, 2);
 		b->highmem = PAGE;
 		b->mem_size += PAGE;
-		EXPECT(migration_topology_validate(a, b, &reason) != 0, 1);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0) != 0, 1);
 		fill_topology(b, 16, 2);
 		b->lowmem = 0;
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		EXPECT((int)reason, MIGRATION_REASON_MEMSIZE);
 		fill_topology(b, 16, 2);
 		a->mem_size += PAGE;	/* the local geometry must be valid too */
-		EXPECT(migration_topology_validate(a, b, &reason), EINVAL);
+		EXPECT(migration_topology_validate(a, b, &reason, NULL, 0), EINVAL);
 		a->mem_size -= PAGE;
 		free(a);
 		free(b);

@@ -782,6 +782,20 @@ quarantine_command(struct vmctx *ctx, const nvlist_t *nvl)
 	return (reply);
 }
 IPC_COMMAND(test_state, quarantine_command);
+
+/* Ends bhyve once answered, as a checkpoint with suspend does. */
+static nvlist_t *
+test_exit_command(struct vmctx *ctx, const nvlist_t *nvl)
+{
+	nvlist_t *reply = nvlist_create(0);
+
+	(void)ctx;
+	(void)nvl;
+	nvlist_add_bool(reply, "answered", true);
+	ipc_exit_after_reply(42);
+	return (reply);
+}
+IPC_COMMAND(test_exit, test_exit_command);
 IPC_COMMAND(migrate_recover, test_ctx_command);
 IPC_COMMAND(migrate_repair, test_ctx_command);
 
@@ -950,6 +964,19 @@ test_ipc(void)
 	reply = cmd("get_vm_pid");
 	OK(nvlist_exists_number(reply, "pid"));
 	nvlist_destroy(reply);
+	/* A handler that ends bhyve has its reply sent first: the IPC thread
+	 * (a new one in the child) answers, then exits with its status. */
+	EXPECT_EXIT(42, {
+		snprintf(rundir, sizeof(rundir), "%s", "ipcx.XXXXXX");
+		if (mkdtemp(rundir) == NULL ||
+		    init_ipc_thread(&the_vm, rundir) != 0)
+			_exit(1);
+		reply = cmd("test_exit");
+		if (reply == NULL || !nvlist_exists_bool(reply, "answered"))
+			_exit(2);
+		for (;;)
+			pause();
+	});
 
 	/* Wedge: only migrate_repair (without the context) and get_vm_pid. */
 	request = nvlist_create(0);

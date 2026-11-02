@@ -41,6 +41,8 @@
 #include <assert.h>
 #include <errno.h>
 #ifdef BHYVE_SNAPSHOT
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #endif
 
@@ -128,44 +130,113 @@ pci_snapshot_compat_shape_canonical(const char *shape, size_t capacity)
 	return (true);
 }
 
-static __inline int
-pci_snapshot_compat_validate(const struct pci_snapshot_compat *source,
-    const struct pci_snapshot_compat *destination)
+/*
+ * When two compatibility values differ, name the field and both values in
+ * reason ("source" is the checkpoint side) and return true.
+ */
+static __inline bool
+pci_snapshot_compat_field_differs(const char *field, uint64_t source,
+    uint64_t destination, char *reason, size_t reasonlen)
 {
 
-	if (source == NULL || destination == NULL ||
-	    source->schema != PCI_SNAPSHOT_COMPAT_SCHEMA ||
-	    destination->schema != PCI_SNAPSHOT_COMPAT_SCHEMA ||
-	    !pci_snapshot_compat_shape_canonical(source->queue_sizes,
+	if (source == destination)
+		return (false);
+	snprintf(reason, reasonlen, "%s: source %#jx, destination %#jx", field,
+	    (uintmax_t)source, (uintmax_t)destination);
+	return (true);
+}
+
+/* As above for two canonical shape strings. */
+static __inline bool
+pci_snapshot_compat_shape_differs(const char *field, const char *source,
+    const char *destination, char *reason, size_t reasonlen)
+{
+
+	if (memcmp(source, destination, PCI_SNAPSHOT_COMPAT_SHAPE_MAX) == 0)
+		return (false);
+	snprintf(reason, reasonlen, "%s: source \"%s\", destination \"%s\"",
+	    field, source, destination);
+	return (true);
+}
+
+/*
+ * Validate a source device's compatibility record against the destination
+ * device.  On failure, reason (which may be NULL when reasonlen is 0) names
+ * the first refused field with both values.
+ */
+static __inline int
+pci_snapshot_compat_validate(const struct pci_snapshot_compat *source,
+    const struct pci_snapshot_compat *destination, char *reason,
+    size_t reasonlen)
+{
+	uint64_t missing;
+
+	if (reasonlen != 0)
+		reason[0] = '\0';
+	if (source == NULL || destination == NULL)
+		return (EINVAL);
+	if (source->schema != PCI_SNAPSHOT_COMPAT_SCHEMA ||
+	    destination->schema != PCI_SNAPSHOT_COMPAT_SCHEMA) {
+		snprintf(reason, reasonlen, "schema: source %u, destination %u, "
+		    "supported %u", source->schema, destination->schema,
+		    PCI_SNAPSHOT_COMPAT_SCHEMA);
+		return (EINVAL);
+	}
+	if (!pci_snapshot_compat_shape_canonical(source->queue_sizes,
 	    sizeof(source->queue_sizes)) ||
 	    !pci_snapshot_compat_shape_canonical(source->shared_memory,
 	    sizeof(source->shared_memory)) ||
 	    !pci_snapshot_compat_shape_canonical(destination->queue_sizes,
 	    sizeof(destination->queue_sizes)) ||
 	    !pci_snapshot_compat_shape_canonical(destination->shared_memory,
-	    sizeof(destination->shared_memory)))
+	    sizeof(destination->shared_memory))) {
+		snprintf(reason, reasonlen, "queue_sizes or shared_memory: not "
+		    "a canonical shape");
 		return (EINVAL);
+	}
 	/*
 	 * A source cannot have negotiated a bit which its own device did not
 	 * offer.  Validate this independently of destination capabilities so a
 	 * rewritten but internally checksummed checkpoint cannot synthesize a
 	 * negotiation that was impossible on the source.
 	 */
-	if ((source->negotiated_features & ~source->offered_features) != 0)
+	missing = source->negotiated_features & ~source->offered_features;
+	if (missing != 0) {
+		snprintf(reason, reasonlen, "negotiated_features: source "
+		    "negotiated %#jx which it did not offer (offered %#jx)",
+		    (uintmax_t)missing, (uintmax_t)source->offered_features);
 		return (EINVAL);
-	if (source->transport != destination->transport ||
-	    source->queue_count != destination->queue_count ||
-	    source->msix_table_count != destination->msix_table_count ||
-	    source->config_size != destination->config_size ||
-	    memcmp(source->queue_sizes, destination->queue_sizes,
-	    sizeof(source->queue_sizes)) != 0 ||
-	    memcmp(source->shared_memory, destination->shared_memory,
-	    sizeof(source->shared_memory)) != 0)
+	}
+	if (pci_snapshot_compat_field_differs("transport", source->transport,
+	    destination->transport, reason, reasonlen) ||
+	    pci_snapshot_compat_field_differs("queue_count",
+	    source->queue_count, destination->queue_count, reason,
+	    reasonlen) ||
+	    pci_snapshot_compat_field_differs("msix_table_count",
+	    source->msix_table_count, destination->msix_table_count, reason,
+	    reasonlen) ||
+	    pci_snapshot_compat_field_differs("config_size",
+	    source->config_size, destination->config_size, reason,
+	    reasonlen) ||
+	    pci_snapshot_compat_shape_differs("queue_sizes",
+	    source->queue_sizes, destination->queue_sizes, reason,
+	    reasonlen) ||
+	    pci_snapshot_compat_shape_differs("shared_memory",
+	    source->shared_memory, destination->shared_memory, reason,
+	    reasonlen))
 		return (ENOTSUP);
-	if ((source->offered_features & ~destination->offered_features) != 0 ||
-	    (source->negotiated_features &
-	    ~destination->offered_features) != 0)
+	/*
+	 * The negotiated bits are a subset of the offered ones (above), so
+	 * this also covers every bit the source negotiated.
+	 */
+	missing = source->offered_features & ~destination->offered_features;
+	if (missing != 0) {
+		snprintf(reason, reasonlen, "offered_features: source %#jx, "
+		    "destination %#jx (destination lacks %#jx)",
+		    (uintmax_t)source->offered_features,
+		    (uintmax_t)destination->offered_features, (uintmax_t)missing);
 		return (ENOTSUP);
+	}
 	return (0);
 }
 #endif

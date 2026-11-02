@@ -894,11 +894,12 @@ ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 
 	/* Identical hosts validate clean. */
 	reason = 0xffffffff;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason), 0);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), 0);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_NONE);
 	remote.mem_size--;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_MEMSIZE);
 	remote.mem_size++;
 
@@ -907,8 +908,8 @@ ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 	local.devices[1] = local.devices[0];
 	remote.devices[1] = remote.devices[0];
 	reason = MIGRATION_REASON_NONE;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_TOPOLOGY);
 	local.device_count = remote.device_count = 1;
 
@@ -920,43 +921,92 @@ ATF_TC_BODY(topology_validate_enforces_device_identity, tc)
 	 */
 	remote.devices[0].bar_hash = local.devices[0].bar_hash ^ 0x1u;
 	reason = MIGRATION_REASON_NONE;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 	remote.devices[0].bar_hash = local.devices[0].bar_hash;
 
 	/* Regression guard: a differing compat CRC is still refused. */
 	remote.devices[0].compat_crc32 ^= 0x1u;
 	reason = MIGRATION_REASON_NONE;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 	/* The destination log names the refused device field. */
-	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
-	    detail, sizeof(detail)), EXDEV);
 	ATF_CHECK_STREQ(detail, "device 0 (virtio-blk) compat_crc32: source "
 	    "0x11223345, destination 0x11223344");
 	remote.devices[0].compat_crc32 = local.devices[0].compat_crc32;
 
 	/* And an identical pair still validates after the mutations are undone. */
 	reason = 0xffffffff;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason), 0);
-	ATF_CHECK_EQ(reason, MIGRATION_REASON_NONE);
-	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
+	strlcpy(detail, "stale", sizeof(detail));
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
 	    detail, sizeof(detail)), 0);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_NONE);
 	ATF_CHECK_STREQ(detail, "");
 	remote.device_count = 2;
 	strlcpy(remote.devices[1].name, "virtio-rnd", MIGRATION_DEVICE_NAME_MAX);
 	remote.devices[1].migration_flags = local.devices[0].migration_flags;
-	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
-	    detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 	ATF_CHECK_STREQ(detail, "device count: source 2, destination 1; "
 	    "first unmatched: source \"virtio-rnd\"");
+
+	/*
+	 * Every source device needs a migration contract, including one
+	 * beyond the destination's device count.
+	 */
+	remote.devices[1].migration_flags = MIGRATION_DEVF_STATE_CODEC;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EOPNOTSUPP);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
+	ATF_CHECK_STREQ(detail, "device 1 (virtio-rnd) has no migration "
+	    "contract: source migration_flags 0x1");
+	remote.devices[1].migration_flags = local.devices[0].migration_flags;
+
+	strlcpy(remote.devices[0].name, "virtio-net", MIGRATION_DEVICE_NAME_MAX);
+	remote.device_count = 1;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_STREQ(detail, "device 0 name: source \"virtio-net\", "
+	    "destination \"virtio-blk\"");
+	remote.devices[0] = local.devices[0];
+	remote.device_count = 2;
+
 	remote.cores = 1;
-	ATF_CHECK_EQ(migration_topology_describe_mismatch(&local, &remote,
-	    detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_TOPOLOGY);
 	ATF_CHECK_STREQ(detail, "vCPUs (n/sockets/cores/threads): source "
 	    "2/1/1/1, destination 2/1/2/1");
+	remote.cores = local.cores;
+	remote.ncpus = 4;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_CPUCOUNT);
+	ATF_CHECK_STREQ(detail, "vCPUs: source 4, destination 2");
+	remote.ncpus = local.ncpus;
+	remote.highmem = 1;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_MEMSIZE);
+	ATF_CHECK(strncmp(detail, "memory: total is not low + high: ",
+	    33) == 0);
+	remote.highmem = 0;
+	remote.lowmem = 0x8000;
+	remote.highmem = 0x8000;
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_STREQ(detail, "memory: source 65536/32768, destination "
+	    "65536/65536 (total/low)");
+	remote.lowmem = local.lowmem;
+	remote.highmem = local.highmem;
+	remote.devices[1] = remote.devices[0];
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    detail, sizeof(detail)), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_TOPOLOGY);
+	ATF_CHECK(strncmp(detail, "device list is malformed: ", 26) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(rom_content_identity_refuses_different_destination);
@@ -969,10 +1019,12 @@ ATF_TC_BODY(rom_content_identity_refuses_different_destination, tc)
 	uint32_t reason;
 
 	(void)tc;
-	ATF_REQUIRE(migration_rom_digest(source_rom, sizeof(source_rom)) !=
-	    migration_rom_digest(destination_rom, sizeof(destination_rom)));
-	ATF_REQUIRE(migration_rom_digest(source_rom, sizeof(source_rom)) !=
-	    migration_rom_digest(source_rom, sizeof(source_rom) - 1));
+	ATF_REQUIRE(migration_rom_digest_masked(source_rom, sizeof(source_rom),
+	    NULL, 0) != migration_rom_digest_masked(destination_rom,
+	    sizeof(destination_rom), NULL, 0));
+	ATF_REQUIRE(migration_rom_digest_masked(source_rom, sizeof(source_rom),
+	    NULL, 0) != migration_rom_digest_masked(source_rom,
+	    sizeof(source_rom) - 1, NULL, 0));
 	memset(&local, 0, sizeof(local));
 	local.mem_size = local.lowmem = 0x10000;
 	local.ncpus = local.sockets = local.cores = local.threads = 1;
@@ -983,22 +1035,23 @@ ATF_TC_BODY(rom_content_identity_refuses_different_destination, tc)
 	    MIGRATION_DEVF_COMPAT_FIXED | MIGRATION_DEVF_DMA_NONE |
 	    MIGRATION_DEVF_QUIESCE_NONE;
 	local.devices[0].compat_schema = 1;
-	digest = migration_rom_digest(source_rom, sizeof(source_rom));
+	digest = migration_rom_digest_masked(source_rom, sizeof(source_rom),
+	    NULL, 0);
 	local.devices[0].compat_crc32 = (uint32_t)digest;
 	local.devices[0].bar_hash = (uint32_t)(digest >> 32);
 	remote = local;
 	ATF_REQUIRE_EQ(migration_topology_validate(&local, &remote,
-	    &reason), 0);
-	digest = migration_rom_digest(destination_rom,
-	    sizeof(destination_rom));
+	    &reason, NULL, 0), 0);
+	digest = migration_rom_digest_masked(destination_rom,
+	    sizeof(destination_rom), NULL, 0);
 	remote.devices[0].compat_crc32 = (uint32_t)digest;
 	remote.devices[0].bar_hash = (uint32_t)(digest >> 32);
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 	remote.device_count = 0;
-	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason),
-	    EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&local, &remote, &reason,
+	    NULL, 0), EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 }
 
@@ -1052,7 +1105,8 @@ ATF_TC_BODY(rom_identity_ignores_per_instance_bootrom_bytes, tc)
 	rom_test_record(&src, "ht-plain-src", NULL, 0, true);
 	rom_test_record(&dst, "ht-plain-dst", NULL, 0, true);
 	reason = 0;
-	ATF_CHECK_EQ_MSG(migration_topology_validate(&src, &dst, &reason), 0,
+	ATF_CHECK_EQ_MSG(migration_topology_validate(&src, &dst, &reason,
+	    NULL, 0), 0,
 	    "identical bhyveload configs refused (reason %u): src 0x%08x "
 	    "dst 0x%08x", reason, src.devices[0].compat_crc32,
 	    dst.devices[0].compat_crc32);
@@ -1062,20 +1116,23 @@ ATF_TC_BODY(rom_identity_ignores_per_instance_bootrom_bytes, tc)
 	/* UEFI-style guest with the same firmware image on both ends. */
 	rom_test_record(&src, "ht-tls-src", firmware, sizeof(firmware), true);
 	rom_test_record(&dst, "ht-tls-dst", firmware, sizeof(firmware), true);
-	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), 0);
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason, NULL, 0),
+	    0);
 
 	/* A genuinely different firmware image is still refused. */
 	memcpy(other, firmware, sizeof(other));
 	other[sizeof(other) - 1] ^= 1;
 	rom_test_record(&dst, "ht-tls-dst", other, sizeof(other), true);
 	reason = 0;
-	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason, NULL, 0),
+	    EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 
 	/* So is firmware present on one end only. */
 	rom_test_record(&dst, "ht-tls-dst", NULL, 0, true);
 	reason = 0;
-	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), EINVAL);
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason, NULL, 0),
+	    EINVAL);
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 
 	/* A per-instance range placed differently changes the layout. */
@@ -1104,7 +1161,8 @@ ATF_TC_BODY(rom_identity_ignores_per_instance_bootrom_bytes, tc)
 	ATF_REQUIRE_EQ(migration_rom_identity_record(&dst.devices[0],
 	    "_vmm.bootrom", firmware, sizeof(firmware), NULL, 0), 0);
 	ATF_CHECK_EQ(dst.devices[0].compat_crc32,
-	    (uint32_t)migration_rom_digest(firmware, sizeof(firmware)));
+	    (uint32_t)migration_rom_digest_masked(firmware, sizeof(firmware),
+	    NULL, 0));
 }
 /* ------------------------------------------------------------------------- */
 /* Session model								     */

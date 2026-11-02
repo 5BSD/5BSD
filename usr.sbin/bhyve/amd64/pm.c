@@ -38,7 +38,7 @@
 #include <vmmapi.h>
 
 #include "acpi.h"
-#include "checkpoint_vmgenid.h"
+#include "checkpoint_topology.h"
 #include "inout.h"
 #include "mevent.h"
 #include "pci_irq.h"
@@ -282,6 +282,27 @@ pm1_control_handler(struct vmctx *ctx, int in,
 INOUT_PORT(pm1_control, PM1A_CNT_ADDR, IOPORT_F_INOUT, pm1_control_handler);
 SYSRES_IO(PM1A_EVT_ADDR, 8);
 
+/*
+ * While ACPI is enabled (SCI_EN), SIGTERM presses the guest's power button.
+ * Called with pm_lock held whenever SCI_EN may have changed.
+ */
+static void
+power_button_update(struct vmctx *ctx)
+{
+
+	if ((pm1_control & PM1_SCI_EN) != 0) {
+		if (power_button == NULL) {
+			power_button = mevent_add(SIGTERM, EVF_SIGNAL,
+			    power_button_handler, ctx);
+			old_power_handler = signal(SIGTERM, SIG_IGN);
+		}
+	} else if (power_button != NULL) {
+		mevent_delete(power_button);
+		power_button = NULL;
+		signal(SIGTERM, old_power_handler);
+	}
+}
+
 void
 acpi_raise_gpe(struct vmctx *ctx, unsigned bit)
 {
@@ -297,12 +318,13 @@ acpi_raise_gpe(struct vmctx *ctx, unsigned bit)
 	pthread_mutex_unlock(&pm_lock);
 }
 
+#ifdef BHYVE_SNAPSHOT
 /*
  * Checkpoint/migration image of the ACPI event registers.  The guest's OSPM
- * enables GPE0 and PM1 events once at boot; a restored process must present
- * the same enables (and the SCI level matching the restored interrupt
- * controller) or a later event, such as the VM generation notify or the power
- * button, never reaches the guest.
+ * enables ACPI and its GPE0 and PM1 events once at boot; a restored process
+ * must present the same enables (and the SCI level matching the restored
+ * interrupt controller) or a later event, such as the VM generation notify or
+ * the power button, never reaches the guest.
  */
 void
 acpi_pm_state_get(struct checkpoint_acpi_pm *pm)
@@ -329,8 +351,10 @@ acpi_pm_state_set(struct vmctx *ctx, const struct checkpoint_acpi_pm *pm)
 	/* The restored I/O APIC/PIC already hold the source's SCI level. */
 	sci_active = pm->sci_active ? 1 : 0;
 	sci_update(ctx);
+	power_button_update(ctx);
 	pthread_mutex_unlock(&pm_lock);
 }
+#endif
 
 static int
 gpe0_sts(struct vmctx *ctx, int in, int port __unused,
@@ -392,19 +416,11 @@ smi_cmd_handler(struct vmctx *ctx, int in, int port __unused,
 	switch (*eax) {
 	case BHYVE_ACPI_ENABLE:
 		pm1_control |= PM1_SCI_EN;
-		if (power_button == NULL) {
-			power_button = mevent_add(SIGTERM, EVF_SIGNAL,
-			    power_button_handler, ctx);
-			old_power_handler = signal(SIGTERM, SIG_IGN);
-		}
+		power_button_update(ctx);
 		break;
 	case BHYVE_ACPI_DISABLE:
 		pm1_control &= ~PM1_SCI_EN;
-		if (power_button != NULL) {
-			mevent_delete(power_button);
-			power_button = NULL;
-			signal(SIGTERM, old_power_handler);
-		}
+		power_button_update(ctx);
 		break;
 	}
 	pthread_mutex_unlock(&pm_lock);

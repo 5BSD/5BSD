@@ -29,14 +29,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "checkpoint_vmgenid.h"
+#define	VMGENC_ID_SIZE	16
 
 struct vmctx;
 
 void	vmgenc_init(struct vmctx *);
 void	vmgenc_write_dsdt(void);
-int	vmgenc_current_id(struct vmctx *, uint8_t [CHECKPOINT_VMGENID_ID_SIZE]);
-int	vmgenc_checkpoint_state(struct vmctx *, struct checkpoint_vmgenid *);
-int	vmgenc_restore_apply(struct vmctx *,
-	    const uint8_t [CHECKPOINT_VMGENID_ID_SIZE],
-	    const struct checkpoint_acpi_pm *, bool);
+#ifdef BHYVE_SNAPSHOT
+int	vmgenc_get_id(uint8_t [VMGENC_ID_SIZE]);
+void	vmgenc_set_id(struct vmctx *, const uint8_t [VMGENC_ID_SIZE], bool);
+#endif

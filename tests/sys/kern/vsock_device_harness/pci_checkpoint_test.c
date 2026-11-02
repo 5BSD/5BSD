@@ -410,62 +410,63 @@ ATF_TC_BODY(checkpoint_compatibility_preflight, tc)
 	destination = source;
 	destination.offered_features = 0xff;
 
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination), 0);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), 0);
 
 	destination.transport++;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	destination.queue_count++;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	destination.msix_table_count++;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	destination.config_size++;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	strlcpy(destination.queue_sizes, "256,128,32",
 	    sizeof(destination.queue_sizes));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	memset(destination.shared_memory, 0,
 	    sizeof(destination.shared_memory));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	destination.offered_features &= ~UINT64_C(0x40);
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	destination = source;
 	source.negotiated_features |= UINT64_C(0x02);
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
 	source.negotiated_features &= ~UINT64_C(0x02);
 	destination = source;
 	source.offered_features |= UINT64_C(0x80);
 	source.negotiated_features |= UINT64_C(0x80);
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 	source.offered_features &= ~UINT64_C(0x80);
 	source.negotiated_features &= ~UINT64_C(0x80);
 	destination = source;
 	destination.schema++;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
 	destination = source;
 	memset(destination.queue_sizes, 'x',
 	    sizeof(destination.queue_sizes));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
 	destination = source;
 	destination.shared_memory[strlen(destination.shared_memory) + 1] = 1;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
 }
 
 ATF_TP_ADD_TCS(tp)

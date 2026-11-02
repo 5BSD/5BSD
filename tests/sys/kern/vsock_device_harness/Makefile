@@ -87,11 +87,11 @@ ATF_TESTS_C+=	virtio_balloon_host_test
 ATF_TESTS_C+=	virtio_balloon_test
 ATF_TESTS_C+=	checkpoint_topology_test
 ATF_TESTS_C+=	checkpoint_numa_test
-ATF_TESTS_C+=	checkpoint_vmgenid_test
 ATF_TESTS_C+=	checkpoint_cpu_test
 ATF_TESTS_C+=	snapshot_identity_test
 ATF_TESTS_C+=	pci_checkpoint_test
 .if ${MACHINE_ARCH} == "amd64"
+ATF_TESTS_C+=	acpi_pm_restore_test
 ATF_TESTS_C+=	checkpoint_cpu_machdep_test
 ATF_TESTS_C+=	vmm_cpu_contract_abi_test
 ATF_TESTS_C+=	x86_cpuid_topology_test
@@ -323,7 +323,7 @@ SANITIZER_HARNESS_FILES=	bhyverun.h \
 				checkpoint_machine.h \
 				checkpoint_topology_test.c \
 				checkpoint_numa_test.c \
-				checkpoint_vmgenid_test.c \
+				acpi_pm_restore_test.c \
 				checkpoint_cpu_test.c \
 				checkpoint_cpu_machdep_test.c \
 				snapshot_identity_test.c \
@@ -471,7 +471,11 @@ CFLAGS.checkpoint_topology_test+= -I${.CURDIR} \
 CFLAGS.snapshot_identity_test+= -I${.CURDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_checkpoint_test+= -DBHYVE_SNAPSHOT -I${SRCTOP}/usr.sbin
-CFLAGS.checkpoint_vmgenid_test+= -I${.CURDIR} -I${.OBJDIR}
+CFLAGS.acpi_pm_restore_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} \
+				-I${SRCTOP}/sys \
+				-I${SRCTOP}/usr.sbin/bhyve \
+				-I${SRCTOP}/usr.sbin/bhyve/amd64 \
+				-I${SRCTOP}/lib/libvmmapi
 CFLAGS.checkpoint_numa_test+= -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.checkpoint_cpu_test+= -I${.CURDIR} \
@@ -945,7 +949,6 @@ CLEANFILES+=	virtio_state_range.h
 CLEANFILES+=	virtio_dma.h
 CLEANFILES+=	checkpoint_manifest.c checkpoint_manifest.h
 CLEANFILES+=	checkpoint_numa.c checkpoint_numa.h
-CLEANFILES+=	checkpoint_vmgenid.c checkpoint_vmgenid.h
 CLEANFILES+=	snapshot_identity.h
 CLEANFILES+=	pci_nvme.c
 CLEANFILES+=	pci_hda.c
@@ -1016,7 +1019,6 @@ beforedepend:	virtio_state_range.h
 beforedepend:	virtio_dma.h
 beforedepend:	checkpoint_manifest.c checkpoint_manifest.h
 beforedepend:	checkpoint_numa.c checkpoint_numa.h
-beforedepend:	checkpoint_vmgenid.c checkpoint_vmgenid.h
 beforedepend:	pci_nvme.c
 beforedepend:	pci_hda.c
 beforedepend:	pci_ahci.c
@@ -1071,10 +1073,6 @@ checkpoint_manifest.c: ${SRCTOP}/usr.sbin/bhyve/checkpoint_manifest.c
 checkpoint_manifest.h: ${SRCTOP}/usr.sbin/bhyve/checkpoint_manifest.h
 	${_COPY_ATOMIC}
 checkpoint_numa.c: ${SRCTOP}/usr.sbin/bhyve/checkpoint_numa.c
-	${_COPY_ATOMIC}
-checkpoint_vmgenid.c: ${SRCTOP}/usr.sbin/bhyve/checkpoint_vmgenid.c
-	${_COPY_ATOMIC}
-checkpoint_vmgenid.h: ${SRCTOP}/usr.sbin/bhyve/checkpoint_vmgenid.h
 	${_COPY_ATOMIC}
 checkpoint_numa.h: ${SRCTOP}/usr.sbin/bhyve/checkpoint_numa.h
 	${_COPY_ATOMIC}
