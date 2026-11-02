@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "if_bwn", objects = ["//sys/dev/bwn:if_bwn_if_bwn_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_pci_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_util_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_phy_common_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_phy_g_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_phy_lp_module_object_files", "//sys/dev/bwn:if_bwn_if_bwn_phy_n_module_object_files"],
+    object_order = ["if_bwn.o", "if_bwn_pci.o", "if_bwn_util.o", "if_bwn_phy_common.o", "if_bwn_phy_g.o", "if_bwn_phy_lp.o", "if_bwn_phy_n.o"], export_all = False)

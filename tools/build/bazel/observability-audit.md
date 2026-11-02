@@ -10002,3 +10002,15 @@ default amd64 shared configuration, not full LLDB/world completion. See
 LLDB-LIBRARY-QUALIFICATION.md for immutable receipts, actual link/input bindings,
 retained failed controls and SDK scope. Existing frontend APIs/manual remain
 applicable; no new build-bsd interface was introduced.
+
+
+### Broadcom bus/wireless module family (2026-11-02)
+
+The twelve modules preserve 66 physical C sources and 9 generated interfaces; the
+bounded call-shaped scan found no dedicated SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR
+calls. Generic FBT/bus/WLAN/framework coverage remains to be exercised. Review
+privileged GPIO/NVRAM/SPROM access, bus resource/power/clock changes, bridge
+attach/detach, failures, wireless authentication and data paths. Module-source
+export fixes restore 28 shared symbols required by five consumers; full loading
+still needs external GPIO providers. No live radio, device control or probe/audit
+delivery was exercised. See BROADCOM-MODULES-QUALIFICATION.md for exact scope.

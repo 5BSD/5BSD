@@ -9,7 +9,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["gpiobusvar.h", "intel/intelgpio.h"], includes = [],
     visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 bsd_source_headers(name = "hardware_module_amdgpio_headers", hdrs = ["gpiobusvar.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -20,3 +20,6 @@ load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objec
 
 amd64_generic_module_objects(name = "adlngpio_module", srcs = ["intel/intelgpio.c", "intel/adlngpio.c"],
     deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:hardware_module_acpi_if_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/dev/gpio:hardware_module_gpio_if_headers", "//sys/amd64/conf:hardware_module_opt_acpi_header", "//sys/amd64/conf:hardware_module_opt_platform_header"])
+
+filegroup(name = "gpio_if_module_header", srcs = [":gpio_if"], output_group = "header")
+cc_library(name = "gpio_if_headers", hdrs = [":gpio_if_module_header"], strip_include_prefix = "gpio_if.generated", visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__"])

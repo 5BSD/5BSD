@@ -53,7 +53,7 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/backlight:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__"])
 
 # Option contents come from config(8), including deliberately empty headers.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
@@ -187,7 +187,7 @@ cc_library(name = "core_kernel_opt_gzio_header", hdrs = [":opt_gzio"],
 cc_library(name = "core_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__"])
 cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
@@ -378,7 +378,7 @@ cc_library(name = "wlan_kernel_opt_inet_header", hdrs = [":opt_inet"],
 cc_library(name = "wlan_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__"])
 cc_library(name = "wlan_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/net80211:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__"])
 
 # OpenCrypto built-in prerequisites.
 cc_library(name = "opencrypto_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
@@ -883,3 +883,11 @@ cc_library(name = "hardware_module_opt_asmc_header", hdrs = [":opt_asmc"], strip
 cc_library(name = "hardware_module_opt_cam_header", hdrs = [":opt_cam"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 cc_library(name = "hardware_module_opt_platform_header", hdrs = [":opt_platform"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 cc_library(name = "hardware_module_opt_usb_header", hdrs = [":opt_usb"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+bsd_tree_file(name = "opt_bwi", tree = ":generic_config", member = "opt_bwi.h", output = "generic_options/opt_bwi.h", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "broadcom_module_opt_bwi_header", hdrs = [":opt_bwi"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/bwi:__pkg__"])
+
+bsd_tree_file(name = "opt_bwn", tree = ":generic_config", member = "opt_bwn.h", output = "generic_options/opt_bwn.h", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+
+cc_library(name = "broadcom_module_opt_bwn_header", hdrs = [":opt_bwn"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/bwn:__pkg__"])

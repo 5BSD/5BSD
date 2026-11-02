@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_exports")
+
+# Actual native module artifacts; this test does not invoke or import Make.
+_MODULES = {
+    "bhnd": "//sys/modules/bhnd:generic_module",
+    "bcma": "//sys/modules/bhnd/bcma:generic_module",
+    "bcma_bhndb": "//sys/modules/bhnd/bcma_bhndb:generic_module",
+    "bhndb": "//sys/modules/bhnd/bhndb:generic_module",
+    "bhndb_pci": "//sys/modules/bhnd/bhndb_pci:generic_module",
+    "bhnd_pci": "//sys/modules/bhnd/cores/bhnd_pci:generic_module",
+    "bhnd_pci_hostb": "//sys/modules/bhnd/cores/bhnd_pci_hostb:generic_module",
+    "bhnd_pcib": "//sys/modules/bhnd/cores/bhnd_pcib:generic_module",
+    "siba": "//sys/modules/bhnd/siba:generic_module",
+    "siba_bhndb": "//sys/modules/bhnd/siba_bhndb:generic_module",
+    "if_bwi": "//sys/modules/bwi:generic_module",
+    "if_bwn": "//sys/modules/bwn:generic_module",
+}
+bsd_host_artifact_test(name = "broadcom_known_providers_test", src = "check.py",
+    data = _MODULES.values(),
+    args = [arg for name, target in _MODULES.items() for arg in ["--module", name + "=$(location " + target + ")"]])
+
+# Reproduce the old export policy on the real provider artifact. The consumer
+# must still expose its unresolved references to the newly local definitions.
+bsd_module_exports(name = "localized_bcma", src = "//sys/modules/bhnd/bcma:generic_full",
+    output = "negative/bcma.local.ko", exports = [],
+    nm = "@bsd_sdk//toolchain:bin/llvm-nm", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    tool_inputs = ["@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:objcopy_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_host_artifact_test(name = "localized_provider_rejected_test", src = "check.py",
+    data = [":localized_bcma", "//sys/modules/bhnd/bcma_bhndb:generic_module"],
+    args = ["--expect-localized", "--module", "bcma=$(location :localized_bcma)",
+        "--module", "bcma_bhndb=$(location //sys/modules/bhnd/bcma_bhndb:generic_module)"])

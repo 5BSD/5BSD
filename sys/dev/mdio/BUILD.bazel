@@ -6,7 +6,7 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites consumed by independent MII-family module builds.
-bsd_source_headers(name = "mii_family_headers", hdrs = ["mdio.h"], visibility = ["//sys/dev/mdio:__pkg__"])
+bsd_source_headers(name = "mii_family_headers", hdrs = ["mdio.h"], visibility = ["//sys/dev/mdio:__pkg__", "//sys/dev/bhnd:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 filegroup(name = "mdio_if_header_file", srcs = [":mdio_if"], output_group = "header")

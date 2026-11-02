@@ -54,6 +54,13 @@ Its two native NVRAM header producers now match original Make output bodies with
 declared AWK/map/runtime inputs; module compilation remains open. See
 [BHND-NVRAM-GENERATOR-QUALIFICATION.md](BHND-NVRAM-GENERATOR-QUALIFICATION.md).
 
+Twelve Broadcom bus/wireless modules now pass native 75-object compile/input and
+ordered-link audits, corrected Make plain/CTF-debug comparisons and 36 install
+records. Static import review found four real provider export-policy defects;
+source fixes and positive/negative native artifact tests address those defects.
+GPIO providers and runtime/module loading remain open. See
+[BROADCOM-MODULES-QUALIFICATION.md](BROADCOM-MODULES-QUALIFICATION.md).
+
 Earlier component checkpoints below are retained historical evidence.
 
 Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local

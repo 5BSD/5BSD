@@ -1152,7 +1152,7 @@ bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "v
 
 # Physical Atheros driver/HAL prerequisites; identical contexts share providers.
 bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
-    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__"])
 bsd_source_headers(name = "ath_kernel_if_ath_btcoex_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "vnet.h"],
@@ -1160,7 +1160,7 @@ bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["bpf.h", "d
 bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
-    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__", "//sys/dev/bhnd/nvram:__pkg__"])
 
 # Physical native Intel NIC built-in prerequisites.
 bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
@@ -1481,3 +1481,9 @@ amd64_generic_kernel_objects(name = "generic_custom_names_radix", srcs = ["radix
 
 bsd_source_headers(name = "ath_module_context_5", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bwi:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__"])

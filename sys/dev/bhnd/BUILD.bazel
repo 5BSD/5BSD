@@ -2,3 +2,172 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_private.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_private.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h", "siba/sibareg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_eromvar.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_4", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd/nvram:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_5", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/pmu:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_6", hdrs = ["bcma/bcma_dmp.h", "bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/pmu:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_7", hdrs = ["bcma/bcma.h", "bcma/bcma_dmp.h", "bcma/bcma_eromreg.h", "bcma/bcma_eromvar.h", "bcma/bcmavar.h", "bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_8", hdrs = ["bcma/bcma.h", "bcma/bcma_dmp.h", "bcma/bcmavar.h", "bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_9", hdrs = ["bcma/bcma.h", "bcma/bcma_eromreg.h", "bcma/bcma_eromvar.h", "bcma/bcmavar.h", "bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_eromvar.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_10", hdrs = ["bcma/bcma.h", "bcma/bcma_eromreg.h", "bcma/bcma_eromvar.h", "bcma/bcmavar.h", "bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_11", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_12", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_13", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_eromvar.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h", "cores/pci/bhnd_pcireg.h", "siba/sibareg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_14", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h", "cores/pci/bhnd_pcireg.h", "cores/pcie2/bhnd_pcie2_reg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_15", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndvar.h", "cores/pci/bhnd_pci_hostbvar.h", "cores/pci/bhnd_pcivar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_16", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pci/bhnd_pcireg.h", "cores/pci/bhnd_pcivar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_17", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pcie2/bhnd_pcie2_reg.h", "cores/pcie2/bhnd_pcie2_var.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_18", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pci/bhnd_pci_hostbvar.h", "cores/pci/bhnd_pcireg.h", "cores/pci/bhnd_pcivar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_19", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pcie2/bhnd_pcie2_hostbvar.h", "cores/pcie2/bhnd_pcie2_reg.h", "cores/pcie2/bhnd_pcie2_var.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_20", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pci/bhnd_pcibvar.h", "cores/pci/bhnd_pcireg.h", "cores/pci/bhnd_pcivar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_21", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "cores/pcie2/bhnd_pcie2_reg.h", "cores/pcie2/bhnd_pcie2_var.h", "cores/pcie2/bhnd_pcie2b_var.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_22", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h", "siba/siba.h", "siba/siba_eromvar.h", "siba/sibareg.h", "siba/sibavar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_23", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom_types.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h", "siba/siba.h", "siba/sibareg.h", "siba/sibavar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_24", hdrs = ["bhnd.h", "bhnd_debug.h", "bhnd_erom.h", "bhnd_erom_types.h", "bhnd_eromvar.h", "bhnd_ids.h", "bhnd_match.h", "bhnd_types.h", "bhndreg.h", "bhndvar.h", "siba/siba.h", "siba/siba_eromvar.h", "siba/sibareg.h", "siba/sibavar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "bhnd_bus_if_module_header", srcs = [":bhnd_bus_if"], output_group = "header")
+cc_library(name = "bhnd_bus_if_headers", hdrs = [":bhnd_bus_if_module_header"], strip_include_prefix = "bhnd_bus_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd/nvram:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+filegroup(name = "bhnd_erom_if_module_header", srcs = [":bhnd_erom_if"], output_group = "header")
+cc_library(name = "bhnd_erom_if_headers", hdrs = [":bhnd_erom_if_module_header"], strip_include_prefix = "bhnd_erom_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__"])
+
+filegroup(name = "bhnd_bus_if_module_source", srcs = [":bhnd_bus_if"], output_group = "source")
+
+filegroup(name = "bhnd_erom_if_module_source", srcs = [":bhnd_erom_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "bhnd_bhnd_module", srcs = ["bhnd.c"],
+    deps = ["//sys/dev/bhnd/cores/pmu:broadcom_module_context_0", "//sys/dev/bhnd:broadcom_module_context_0", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_subr_module", srcs = ["bhnd_subr.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_1", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_0", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_bus_if_module", srcs = [":bhnd_bus_if_module_source"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhnd_bus_if_module_source)=bhnd_bus_if.c", "-fdebug-prefix-map=$(execpath :bhnd_bus_if_module_source)=bhnd_bus_if.c"])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_erom_module", srcs = ["bhnd_erom.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_3", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_erom_if_module", srcs = [":bhnd_erom_if_module_source"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhnd_erom_if_module_source)=bhnd_erom_if.c", "-fdebug-prefix-map=$(execpath :bhnd_erom_if_module_source)=bhnd_erom_if.c"])
+
+amd64_generic_module_objects(name = "bcma_bcma_module", srcs = ["bcma/bcma.c"],
+    deps = ["//sys/dev/bhnd/cores/pmu:broadcom_module_context_0", "//sys/dev/bhnd:broadcom_module_context_7", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bcma_bcma_subr_module", srcs = ["bcma/bcma_subr.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_8", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bcma_bcma_erom_module", srcs = ["bcma/bcma_erom.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_9", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bcma_bhndb_bcma_bhndb_module", srcs = ["bcma/bcma_bhndb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_10", "//sys/dev/bhnd/bhndb:broadcom_module_context_1", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pci_bhnd_pci_module", srcs = ["cores/pci/bhnd_pci.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_16", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/mdio:mii_family_headers", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pci_bhnd_pcie2_module", srcs = ["cores/pcie2/bhnd_pcie2.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_17", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/mdio:mii_family_headers", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pci_hostb_bhnd_pci_hostb_module", srcs = ["cores/pci/bhnd_pci_hostb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_18", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_7", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pci_hostb_bhnd_pcie2_hostb_module", srcs = ["cores/pcie2/bhnd_pcie2_hostb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_19", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pcib_bhnd_pcib_module", srcs = ["cores/pci/bhnd_pcib.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_20", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_pcib_bhnd_pcie2b_module", srcs = ["cores/pcie2/bhnd_pcie2b.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_21", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "siba_siba_module", srcs = ["siba/siba.c"],
+    deps = ["//sys/dev/bhnd/cores/chipc:broadcom_module_context_4", "//sys/dev/bhnd:broadcom_module_context_22", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc/pwrctl:broadcom_module_context_1", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/dev/bhnd/cores/chipc/pwrctl:bhnd_pwrctl_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "siba_siba_subr_module", srcs = ["siba/siba_subr.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_23", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "siba_siba_erom_module", srcs = ["siba/siba_erom.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_24", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "siba_bhndb_siba_bhndb_module", srcs = ["siba/siba_bhndb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_23", "//sys/dev/bhnd/bhndb:broadcom_module_context_1", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
