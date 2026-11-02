@@ -11,6 +11,7 @@
 
 #include "virtio_fs_backend.h"
 
+struct virtio_fs_backend_stream;
 struct virtio_fs_outbox;
 
 int	virtio_fs_outbox_create(uint32_t, uint32_t, uint32_t, uint32_t,
@@ -20,7 +21,8 @@ int	virtio_fs_outbox_enqueue(struct virtio_fs_outbox *, bool,
 	    const struct virtio_fs_backend_header *, const void *);
 int	virtio_fs_outbox_enqueue_on(struct virtio_fs_outbox *, bool,
 	    uint32_t, const struct virtio_fs_backend_header *, const void *);
-int	virtio_fs_outbox_flush_one(struct virtio_fs_outbox *, int,
+int	virtio_fs_outbox_flush_one(struct virtio_fs_outbox *,
+	    struct virtio_fs_backend_stream *, int,
 	    struct virtio_fs_backend_header *);
 uint32_t virtio_fs_outbox_reset(struct virtio_fs_outbox *);
 uint32_t virtio_fs_outbox_reset_queue(struct virtio_fs_outbox *, uint32_t);

@@ -37,6 +37,8 @@ reassembled by the receiver, and each connection's socket buffers are grown
 toward the negotiated message size, within
 .Va kern.ipc.maxsockbuf ,
 so that ordinary frames move in one piece.
+Each accepted socket is sized before any peer input is read, and then loses
+the right to change socket options.
 .Pp
 The current implementation is deliberately read-only and non-DAX.
 It supports FUSE initialization, lookup, attribute and filesystem-statistics

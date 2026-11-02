@@ -183,6 +183,18 @@ record_resize(struct blockif_ctxt *bc __unused, void *arg __unused,
 	resize_size = new_size;
 }
 
+/*
+ * Frontends own the scatter/gather storage of each request.
+ */
+static void
+init_request(struct blockif_req *req, struct iovec *iov, int iovmax)
+{
+
+	memset(req, 0, sizeof(*req));
+	req->br_iov = iov;
+	req->br_iovmax = iovmax;
+}
+
 static void
 write_pattern(int fd, uint8_t value, size_t length)
 {
@@ -328,6 +340,7 @@ ATF_TC_BODY(write_zeroes_file, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	const char *path = "block-if-zero";
 	const off_t offset = PAGE_SIZE;
 	const size_t length = MAXPHYS + PAGE_SIZE + 17;
@@ -342,7 +355,7 @@ ATF_TC_BODY(write_zeroes_file, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_offset = offset;
 	req.br_resid = length;
 	req.br_callback = record_completion;
@@ -370,11 +383,12 @@ ATF_TC_BODY(write_zeroes_errors, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = -1;
 	bc.bc_rdonly = 1;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_resid = PAGE_SIZE;
 	req.br_callback = record_completion;
 	memset(&be, 0, sizeof(be));
@@ -411,11 +425,12 @@ ATF_TC_BODY(read_write_reject_invalid_vectors, tc)
 {
 	struct blockif_ctxt bc;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	uint8_t byte;
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_magic = BLOCKIF_SIG;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 
 	/* These checks run before queue access, so no scheduler is required. */
 	req.br_offset = -1;
@@ -425,6 +440,26 @@ ATF_TC_BODY(read_write_reject_invalid_vectors, tc)
 	ATF_CHECK_EQ(blockif_write(&bc, &req), EINVAL);
 	req.br_iovcnt = BLOCKIF_IOV_LIMIT + 1;
 	ATF_CHECK_EQ(blockif_read(&bc, &req), EINVAL);
+
+	/* The frontend's storage, not the global limit, bounds the count. */
+	byte = 0;
+	for (int i = 0; i < (int)nitems(iov); i++)
+		iov[i] = (struct iovec){ .iov_base = &byte, .iov_len = 0 };
+	req.br_resid = 0;
+	req.br_iovcnt = req.br_iovmax;
+	ATF_CHECK_EQ(blockif_rw_request_validate(&req), 0);
+	req.br_iovcnt = req.br_iovmax + 1;
+	ATF_CHECK_EQ(blockif_write(&bc, &req), EINVAL);
+	req.br_iovcnt = 1;
+	req.br_iovmax = BLOCKIF_IOV_LIMIT + 1;
+	ATF_CHECK_EQ(blockif_read(&bc, &req), EINVAL);
+	req.br_iovmax = -1;
+	ATF_CHECK_EQ(blockif_read(&bc, &req), EINVAL);
+	req.br_iovmax = nitems(iov);
+	req.br_iov = NULL;
+	ATF_CHECK_EQ(blockif_write(&bc, &req), EINVAL);
+	req.br_iov = iov;
+
 	req.br_iovcnt = 1;
 	req.br_resid = 1;
 	req.br_iov[0].iov_base = NULL;
@@ -444,6 +479,7 @@ ATF_TC_BODY(translated_write_retries_short_pwrite, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	uint8_t actual[2][PAGE_SIZE];
 	uint8_t data[2][PAGE_SIZE];
 	uint8_t scratch[MAXPHYS];
@@ -459,7 +495,7 @@ ATF_TC_BODY(translated_write_retries_short_pwrite, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_iov[0] = (struct iovec){
 		.iov_base = data[0],
 		.iov_len = sizeof(data[0]),
@@ -505,6 +541,7 @@ ATF_TC_BODY(file_write_retries_short_pwritev, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	struct iovec original_iov[2];
 	uint8_t actual[2][PAGE_SIZE];
 	uint8_t data[2][PAGE_SIZE];
@@ -520,7 +557,7 @@ ATF_TC_BODY(file_write_retries_short_pwritev, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_iov[0] = (struct iovec){
 		.iov_base = data[0],
 		.iov_len = sizeof(data[0]),
@@ -566,20 +603,18 @@ ATF_TC_BODY(file_write_retries_short_pwritev, tc)
 }
 
 /*
- * pci_nvme extends br_iov[] with trailing storage (iovpadding) so that a full
- * MDTS transfer of discontiguous guest pages fits in one request.  A 1 MiB
- * guest write spans 256 pages; with blockif's validation capped at
- * BLOCKIF_IOV_MAX (128) every such request failed with EINVAL and the guest
- * saw NVMe DATA_TRANSFER_ERROR (00/04) on dd bs=1m to /dev/nda0.
+ * pci_nvme gives each request storage for a full MDTS transfer of
+ * discontiguous guest pages (br_iovmax = NVME_MAX_IOVEC).  A 1 MiB guest
+ * write spans 256 pages; with blockif's validation capped at BLOCKIF_IOV_MAX
+ * (128) every such request failed with EINVAL and the guest saw NVMe
+ * DATA_TRANSFER_ERROR (00/04) on dd bs=1m to /dev/nda0.
  */
 #define	NVME_SHAPED_PAGES	256
-ATF_TC_WITHOUT_HEAD(nvme_padded_request_accepts_mdts_iovecs);
-ATF_TC_BODY(nvme_padded_request_accepts_mdts_iovecs, tc)
+ATF_TC_WITHOUT_HEAD(nvme_request_accepts_mdts_iovecs);
+ATF_TC_BODY(nvme_request_accepts_mdts_iovecs, tc)
 {
-	struct {
-		struct blockif_req req;
-		struct iovec pad[NVME_SHAPED_PAGES - BLOCKIF_IOV_MAX];
-	} padded;
+	struct blockif_req req;
+	struct iovec iov[NVME_SHAPED_PAGES];
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	uint8_t *guest, *actual;
@@ -597,30 +632,30 @@ ATF_TC_BODY(nvme_padded_request_accepts_mdts_iovecs, tc)
 	fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
 	ATF_REQUIRE(fd >= 0);
 
-	memset(&padded, 0, sizeof(padded));
+	init_request(&req, iov, nitems(iov));
 	for (i = 0; i < NVME_SHAPED_PAGES; i++) {
 		memset(guest + 2 * i * PAGE_SIZE, i & 0xff, PAGE_SIZE);
-		padded.req.br_iov[i] = (struct iovec){
+		req.br_iov[i] = (struct iovec){
 			.iov_base = guest + 2 * i * PAGE_SIZE,
 			.iov_len = PAGE_SIZE,
 		};
 	}
-	padded.req.br_iovcnt = NVME_SHAPED_PAGES;
-	padded.req.br_resid = (ssize_t)bytes;
-	padded.req.br_callback = record_completion;
-	ATF_CHECK_EQ(blockif_rw_request_validate(&padded.req), 0);
+	req.br_iovcnt = NVME_SHAPED_PAGES;
+	req.br_resid = (ssize_t)bytes;
+	req.br_callback = record_completion;
+	ATF_CHECK_EQ(blockif_rw_request_validate(&req), 0);
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
 	memset(&be, 0, sizeof(be));
-	be.be_req = &padded.req;
+	be.be_req = &req;
 	be.be_op = BOP_WRITE;
 	callback_calls = 0;
 	callback_error = -1;
 	blockif_proc(&bc, &be, NULL);
 	ATF_REQUIRE_EQ(callback_calls, 1);
 	ATF_CHECK_EQ(callback_error, 0);
-	ATF_CHECK_EQ(padded.req.br_resid, 0);
+	ATF_CHECK_EQ(req.br_resid, 0);
 
 	done = pread(fd, actual, bytes, 0);
 	ATF_REQUIRE_EQ(done, (ssize_t)bytes);
@@ -640,6 +675,7 @@ ATF_TC_BODY(file_write_zero_progress_fails, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	uint8_t data[2][PAGE_SIZE];
 	const char *path = "block-if-zero-writev";
 	int fd;
@@ -652,7 +688,7 @@ ATF_TC_BODY(file_write_zero_progress_fails, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_iov[0] = (struct iovec){
 		.iov_base = data[0],
 		.iov_len = sizeof(data[0]),
@@ -690,6 +726,7 @@ ATF_TC_BODY(translated_read_eof_makes_progress, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	uint8_t data[2][PAGE_SIZE];
 	uint8_t scratch[MAXPHYS];
 	const char *path = "block-if-short-read";
@@ -701,7 +738,7 @@ ATF_TC_BODY(translated_read_eof_makes_progress, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_iov[0] = (struct iovec){
 		.iov_base = data[0],
 		.iov_len = sizeof(data[0]),
@@ -739,6 +776,7 @@ ATF_TC_BODY(translated_write_zero_progress_fails, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	uint8_t data[2][PAGE_SIZE];
 	uint8_t scratch[MAXPHYS];
 	const char *path = "block-if-zero-progress-write";
@@ -751,7 +789,7 @@ ATF_TC_BODY(translated_write_zero_progress_fails, tc)
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = fd;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_iov[0] = (struct iovec){
 		.iov_base = data[0],
 		.iov_len = sizeof(data[0]),
@@ -789,9 +827,10 @@ ATF_TC_BODY(delete_uses_operation_range, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem *be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 
 	init_scheduler(&bc);
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_offset = 8 * PAGE_SIZE;
 	req.br_resid = 32 * PAGE_SIZE;
 	/*
@@ -811,10 +850,11 @@ ATF_TC_BODY(delete_rejects_invalid_range, tc)
 {
 	struct blockif_ctxt bc;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_magic = BLOCKIF_SIG;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 
 	req.br_offset = -1;
 	req.br_resid = PAGE_SIZE;
@@ -833,14 +873,15 @@ ATF_TC_BODY(flush_is_scheduler_barrier, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem *be, *first, *flush;
 	struct blockif_req before, barrier, after;
+	struct iovec after_iov[1], before_iov[1];
 
 	init_scheduler(&bc);
-	memset(&before, 0, sizeof(before));
+	init_request(&before, before_iov, nitems(before_iov));
 	before.br_offset = 0;
 	before.br_iovcnt = 1;
 	before.br_iov[0].iov_len = PAGE_SIZE;
 	memset(&barrier, 0, sizeof(barrier));
-	memset(&after, 0, sizeof(after));
+	init_request(&after, after_iov, nitems(after_iov));
 	after.br_offset = 64 * PAGE_SIZE;
 	after.br_iovcnt = 1;
 	after.br_iov[0].iov_len = PAGE_SIZE;
@@ -872,11 +913,12 @@ ATF_TC_BODY(readonly_flush_is_noop, tc)
 	struct blockif_ctxt bc;
 	struct blockif_elem be;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 
 	memset(&bc, 0, sizeof(bc));
 	bc.bc_fd = -1;
 	bc.bc_rdonly = 1;
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_callback = record_completion;
 	memset(&be, 0, sizeof(be));
 	be.be_req = &req;
@@ -1009,6 +1051,7 @@ ATF_TC_BODY(suspend_timeout_rolls_back, tc)
 {
 	struct blockif_ctxt bc;
 	struct blockif_req req;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 
 	init_scheduler(&bc);
 	bc.bc_magic = BLOCKIF_SIG;
@@ -1016,7 +1059,7 @@ ATF_TC_BODY(suspend_timeout_rolls_back, tc)
 	ATF_REQUIRE_EQ(pthread_mutex_init(&bc.bc_mtx, NULL), 0);
 	ATF_REQUIRE_EQ(pthread_cond_init(&bc.bc_cond, NULL), 0);
 	ATF_REQUIRE_EQ(blockif_work_cond_init(&bc.bc_work_done_cond), 0);
-	memset(&req, 0, sizeof(req));
+	init_request(&req, iov, nitems(iov));
 	req.br_offset = 0;
 	req.br_iovcnt = 1;
 	req.br_iov[0].iov_len = PAGE_SIZE;
@@ -1042,7 +1085,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_write_reject_invalid_vectors);
 	ATF_TP_ADD_TC(tp, translated_write_retries_short_pwrite);
 	ATF_TP_ADD_TC(tp, file_write_retries_short_pwritev);
-	ATF_TP_ADD_TC(tp, nvme_padded_request_accepts_mdts_iovecs);
+	ATF_TP_ADD_TC(tp, nvme_request_accepts_mdts_iovecs);
 	ATF_TP_ADD_TC(tp, file_write_zero_progress_fails);
 	ATF_TP_ADD_TC(tp, translated_read_eof_makes_progress);
 	ATF_TP_ADD_TC(tp, translated_write_zero_progress_fails);

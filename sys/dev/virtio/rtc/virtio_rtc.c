@@ -575,13 +575,15 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 				continue;
 			}
 			error = EWOULDBLOCK;
-		} else if (virtqueue_enable_intr(sc->requestq) != 0)
+		} else if (virtqueue_enable_intr(sc->requestq) != 0) {
 			continue;
-		else if ((remaining = deadline - sbinuptime()) <= 0) {
-			error = EWOULDBLOCK;
 		} else {
-			error = msleep_sbt(sc, &sc->mtx, 0, "vtrtcr",
-			    remaining, 0, 0);
+			remaining = deadline - sbinuptime();
+			if (remaining <= 0)
+				error = EWOULDBLOCK;
+			else
+				error = msleep_sbt(sc, &sc->mtx, 0, "vtrtcr",
+				    remaining, 0, 0);
 		}
 		if (error == EWOULDBLOCK) {
 			device_printf(sc->dev, "request timed out\n");

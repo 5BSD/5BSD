@@ -84,3 +84,11 @@ cc_library(name = "virtiofsd_headers", hdrs = ["virtio_fs_backend.h", "virtio_fs
 cc_library(name = "virtiofsd_test_inputs", hdrs = ["virtio_fs_backend.h", "virtio_fs_backend_io.h", "virtio_fs_outbox.h", "virtio_state_range.h"],
     textual_hdrs = ["virtio_fs_backend.c", "virtio_fs_backend_io.c", "virtio_fs_outbox.c"], strip_include_prefix = ".",
     visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])
+# virtio_iommu_post_init_test includes the production VirtIO core, modern
+# transport, and virtio-iommu model as "bhyve/<file>" (Make: -I usr.sbin -I sys).
+_IOMMU_POST_INIT_SOURCES = ["virtio_packed.c", "virtio.c", "virtio_pci_modern.c", "virtio_iommu_config.c", "virtio_iommu_event.c",
+    "virtio_iommu_protocol.c", "virtio_iommu_queue.c", "virtio_iommu_request.c", "virtio_iommu_state.c", "virtio_iommu_topology.c",
+    "pci_virtio_iommu.c"]
+cc_library(name = "virtio_iommu_post_init_test_inputs", hdrs = ENGINE_HEADERS, textual_hdrs = _IOMMU_POST_INIT_SOURCES,
+    include_prefix = "bhyve", strip_include_prefix = ".", deps = [":engine_headers"],
+    visibility = ["//tests/sys/kern/vsock_device_harness:__pkg__"])

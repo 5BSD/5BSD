@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "virtio_fs_backend.h"
 
@@ -35,6 +36,14 @@ int	virtio_fs_backend_client_fd(
 	    const struct virtio_fs_backend_client *);
 uint32_t virtio_fs_backend_client_events(
 	    const struct virtio_fs_backend_client *);
+/*
+ * deadline() reports when a partly transferred frame must next make
+ * progress; expire() fails the client once "now" has reached it.
+ */
+bool	virtio_fs_backend_client_deadline(
+	    const struct virtio_fs_backend_client *, struct timespec *);
+int	virtio_fs_backend_client_expire(struct virtio_fs_backend_client *,
+	    const struct timespec *);
 int	virtio_fs_backend_client_progress(struct virtio_fs_backend_client *,
 	    bool, bool);
 bool	virtio_fs_backend_client_active(

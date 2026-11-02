@@ -162,14 +162,15 @@ out:
 }
 
 int
-virtio_fs_outbox_flush_one(struct virtio_fs_outbox *outbox, int fd,
+virtio_fs_outbox_flush_one(struct virtio_fs_outbox *outbox,
+    struct virtio_fs_backend_stream *stream, int fd,
     struct virtio_fs_backend_header *sent_header)
 {
 	struct virtio_fs_outbox_frame *frame;
 	struct virtio_fs_outbox_lane *lane;
 	int error;
 
-	if (outbox == NULL || sent_header == NULL)
+	if (outbox == NULL || stream == NULL || sent_header == NULL)
 		return (EINVAL);
 	if (virtio_state_ranges_overlap(sent_header, sizeof(*sent_header),
 	    outbox, sizeof(*outbox)))
@@ -187,7 +188,7 @@ virtio_fs_outbox_flush_one(struct virtio_fs_outbox *outbox, int fd,
 		error = EINVAL;
 		goto out;
 	}
-	error = virtio_fs_backend_send_frame(fd, &frame->header,
+	error = virtio_fs_backend_stream_send(stream, fd, &frame->header,
 	    frame->header.payload_len == 0 ? NULL : frame->payload);
 	if (error != 0)
 		goto out;

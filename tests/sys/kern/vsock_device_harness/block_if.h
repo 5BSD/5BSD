@@ -8,16 +8,18 @@
 #include "config.h"
 
 #define BLOCKIF_IOV_MAX 128
+#define BLOCKIF_IOV_LIMIT 1024
 #define BLOCKIF_RING_MAX 1024
 #define BLOCKIF_CHECKPOINT_ID_MAX 255
 
 struct blockif_req {
 	int br_iovcnt;
+	int br_iovmax;
 	off_t br_offset;
 	ssize_t br_resid;
 	void (*br_callback)(struct blockif_req *, int);
 	void *br_param;
-	struct iovec br_iov[BLOCKIF_IOV_MAX];
+	struct iovec *br_iov;
 };
 
 struct blockif_ctxt;

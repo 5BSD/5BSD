@@ -17,6 +17,9 @@
 #define	DOC_MAX_MESSAGE	64U
 #define	DOC_MAX_PENDING	128U
 
+/* Frames here are small: each one is sent whole. */
+static struct virtio_fs_backend_stream stream;
+
 static struct virtio_fs_backend_header
 request(uint64_t id, uint32_t length)
 {
@@ -48,18 +51,18 @@ ATF_TC_BODY(priority_precedes_normal, tc)
 	ATF_REQUIRE_EQ(virtio_fs_outbox_enqueue(outbox, true, &header,
 	    priority), 0);
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets), 0);
-	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    &sent), 0);
 	ATF_CHECK_EQ(sent.request_id, 2);
 	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
 	    output, sizeof(output), &output_len), 0);
 	ATF_CHECK_EQ(received.request_id, 2);
 	ATF_CHECK_EQ(output[0], 2);
-	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    &sent), 0);
 	ATF_CHECK_EQ(sent.request_id, 1);
-	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0], &sent),
-	    ENOENT);
+	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
+	    &sent), ENOENT);
 	ATF_REQUIRE_EQ(close(sockets[0]), 0);
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 	virtio_fs_outbox_destroy(outbox);
@@ -103,10 +106,11 @@ ATF_TC_BODY(send_failure_preserves_frame, tc)
 	header = request(9, 1);
 	ATF_REQUIRE_EQ(virtio_fs_outbox_enqueue(outbox, false, &header,
 	    &payload), 0);
-	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, -1, &sent), EBADF);
+	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, &stream, -1, &sent),
+	    EBADF);
 	ATF_CHECK_EQ(virtio_fs_outbox_count(outbox, false), 1);
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets), 0);
-	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    &sent), 0);
 	ATF_CHECK_EQ(sent.request_id, 9);
 	ATF_REQUIRE_EQ(close(sockets[0]), 0);
@@ -178,7 +182,7 @@ ATF_TC_BODY(selective_reset_preserves_other_queues, tc)
 	ATF_CHECK_EQ(virtio_fs_outbox_count(outbox, false), 0);
 	ATF_CHECK_EQ(virtio_fs_outbox_count(outbox, true), 1);
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets), 0);
-	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    &sent), 0);
 	ATF_CHECK_EQ(sent.request_id, 2);
 	ATF_CHECK_EQ(virtio_fs_outbox_reset_queue(outbox, 7), 0);
@@ -201,10 +205,10 @@ ATF_TC_BODY(completion_output_must_not_alias_outbox, tc)
 	ATF_REQUIRE_EQ(virtio_fs_outbox_enqueue(outbox, false, &header,
 	    &payload), 0);
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets), 0);
-	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_CHECK_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    (struct virtio_fs_backend_header *)(void *)outbox), EINVAL);
 	ATF_CHECK_EQ(virtio_fs_outbox_count(outbox, false), 1);
-	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, sockets[0],
+	ATF_REQUIRE_EQ(virtio_fs_outbox_flush_one(outbox, &stream, sockets[0],
 	    &sent), 0);
 	ATF_CHECK_EQ(sent.request_id, 1);
 	ATF_REQUIRE_EQ(close(sockets[0]), 0);

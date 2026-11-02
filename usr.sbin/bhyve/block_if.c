@@ -1020,7 +1020,9 @@ blockif_rw_request_validate(const struct blockif_req *breq)
 
 	if (breq == NULL || breq->br_offset < 0 || breq->br_resid < 0 ||
 	    breq->br_resid > OFF_MAX - breq->br_offset ||
-	    breq->br_iovcnt < 0 || breq->br_iovcnt > BLOCKIF_IOV_LIMIT)
+	    breq->br_iovmax < 0 || breq->br_iovmax > BLOCKIF_IOV_LIMIT ||
+	    breq->br_iovcnt < 0 || breq->br_iovcnt > breq->br_iovmax ||
+	    (breq->br_iovcnt != 0 && breq->br_iov == NULL))
 		return (EINVAL);
 
 	total = 0;

@@ -7,6 +7,7 @@
  */
 #include <stdlib.h>
 
+extern int raw_stdio;
 int raw_stdio;
 
 #define	UNREACHABLE_STUB(name)	void name(void); void name(void) { abort(); }
