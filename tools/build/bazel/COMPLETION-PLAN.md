@@ -940,3 +940,14 @@ world/rescue/pkgbase/hardware/bootstrap/publication, VM and CPU/memory/disk I/O/
 cache/sandbox qualification remain open. Existing build-bsd C/format-5/backend
 inputs carry these relationships; no new CLI/manual behavior, signing/security,
 staging or publication requirement. Make stays production/default; BIP excluded.
+
+### Rescue combined-object milestone (November 2, 2026)
+
+Three actual application objects now pass the original stub-first relocatable
+link and basename-sensitive crunchide pipeline, with 6 actual compiler actions,
+135 consumed inputs, 3 links/transforms and 12 accepted suite members (2 fresh
+negative tests; 10 cached results). [Evidence](RESCUE-COMBINED-OBJECTS-QUALIFICATION.md)
+retains exact runtime object proof and identical-input whole-file controls;
+DWARF path bytes differ explicitly. Next: real bounded static rescue dispatcher
+and safe application execution, then all selected applications/static libraries,
+full rescue install/package and option/architecture coverage.

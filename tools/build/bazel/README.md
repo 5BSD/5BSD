@@ -48026,3 +48026,9 @@ world/rescue/pkgbase/hardware/bootstrap/publication, VM and CPU/memory/disk I/O/
 cache/sandbox qualification remain open. Existing build-bsd C/format-5/backend
 inputs carry these relationships; no new CLI/manual behavior, signing/security,
 staging or publication requirement. Make stays production/default; BIP excluded.
+
+The [rescue combined-object producer qualification](RESCUE-COMBINED-OBJECTS-QUALIFICATION.md)
+adds three genuine stub → ordered ld -r → original crunchide pipelines. All
+runtime sections/relocations/symbols match original Make; identical-input controls
+also reproduce raw/hidden whole files. Debug path differences are explicit. Full
+rescue linking, execution and installation remain open.

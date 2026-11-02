@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_relocatable_link.bzl", "bsd_relocatable_link")
+load("//tools/build/bazel:bsd_crunchide.bzl", "bsd_crunchide")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools/build/bazel:bsd_crunchgen.bzl", "bsd_crunchgen")
 load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
@@ -19,3 +21,27 @@ bsd_component_objects(name = "dispatcher_compiler_outputs", group = ":dispatcher
     visibility = ["//visibility:public"])
 # No rescue executable/install/package is declared before application objects,
 # crunchide transforms and the complete static library/link contract exist.
+
+# First supported combined-object stage, bounded to three real applications.
+_CORE_PROGRAMS = ["cat", "echo", "head"]
+_CORE_OBJECTS = {"cat": "//bin/cat:rescue_compiler_outputs", "echo": "//bin/echo:rescue_compiler_outputs", "head": "//usr.bin/head:rescue_compiler_outputs"}
+bsd_crunchgen(name = "core_dispatch", executable_name = "rescue_core", programs = _CORE_PROGRAMS,
+    object_names = {p: OBJECT_NAMES[p] for p in _CORE_PROGRAMS}, emit_stubs = True)
+filegroup(name = "core_metadata", srcs = [":core_dispatch"], output_group = "metadata")
+[filegroup(name = p + "_entry_source", srcs = [":core_dispatch"], output_group = "stub_" + p) for p in _CORE_PROGRAMS]
+# Original generated-Make stub recipe uses the parent no-SSP/no-debug policy.
+# Its repeated equivalent -O2 flags use the ordinary toolchain optimization mode.
+[cc_library(name = p + "_entry_objects", srcs = [":" + p + "_entry_source"],
+    features = ["-bsd_ssp", "-bsd_debug_info"], copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments', '-Wl,--allow-multiple-definition', '-Wl,-znow', '-Wl,-zrelro', '-static', '-pipe', '-fno-common'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]) for p in _CORE_PROGRAMS]
+[bsd_component_objects(name = p + "_entry_compiler_output", group = ":" + p + "_entry_objects", pic = False) for p in _CORE_PROGRAMS]
+# These object-only links have no library lookup. Original driver --sysroot/-L
+# search roots are unused; actual emitted linker behavior is checked against Make.
+[bsd_relocatable_link(name = p + "_unhidden", objects = [":" + p + "_entry_compiler_output", _CORE_OBJECTS[p]],
+    output = p + ".lo", linker = "@bsd_sdk//toolchain:bin/ld.lld",
+    runtime = ["@bsd_sdk//toolchain:link_inputs"],
+    linkopts = ["--eh-frame-hdr", "-Bstatic", "--allow-multiple-definition", "-znow", "-zrelro"]) for p in _CORE_PROGRAMS]
+[bsd_crunchide(name = p + "_crunched", input_object = ":" + p + "_unhidden", program_name = p,
+    keep_symbols = ["_crunched_" + p + "_stub"]) for p in _CORE_PROGRAMS]
+[filegroup(name = p + "_crunched_original", srcs = [":" + p + "_crunched"], output_group = "original_name") for p in _CORE_PROGRAMS]
+filegroup(name = "crunchide_execution_tool", srcs = [":cat_crunched"], output_group = "execution_tool")

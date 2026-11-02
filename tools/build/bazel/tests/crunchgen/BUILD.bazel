@@ -28,7 +28,12 @@ bsd_crunchgen(name = "bad_program", executable_name = "mini", programs = ["foo/b
 bsd_crunchgen(name = "bad_setting", executable_name = "mini", programs = ["alpha"], object_names = {"alpha": ["a.o"]}, required_configuration = {":disabled": "true"}, tags = ["manual"])
 bsd_crunchgen(name = "bad_alias_owner", executable_name = "mini", programs = ["alpha"], object_names = {"alpha": ["a.o"]}, aliases = {"beta": ["x"]}, tags = ["manual"])
 bsd_crunchgen(name = "bad_reserved", executable_name = "mini", programs = ["--list"], object_names = {"--list": ["a.o"]}, tags = ["manual"])
+load("//tools/build/bazel:bsd_crunchide.bzl", "bsd_crunchide")
+bsd_crunchide(name = "bad_crunchide_name", input_object = "//bin/echo:rescue_compiler_outputs", program_name = "../echo", keep_symbols = ["main"], tags = ["manual"])
+bsd_crunchide(name = "bad_crunchide_keep", input_object = "//bin/echo:rescue_compiler_outputs", program_name = "echo", keep_symbols = ["main", "main"], tags = ["manual"])
 _FAILURES = {
+    "crunchide_name": [":bad_crunchide_name", "program name must be a canonical basename"],
+    "crunchide_keep": [":bad_crunchide_keep", "keep symbols must be nonempty and unique"],
     "duplicate": [":bad_duplicate", "programs must be nonempty and unique"],
     "identifier": [":bad_identifier", "program identifiers must be valid and unique"],
     "missing": [":bad_missing", "explicit object list for every program"],

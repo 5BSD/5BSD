@@ -10286,3 +10286,14 @@ Review IPMI transactions/timeouts, CAM/storage command/recovery/errors, one-wire
 PWM lifecycle and VMCI datagram/doorbell/queue-pair/VMXNET3 attach/reset/rx/tx for
 useful shared events; avoid per-packet logs or payload/credential disclosure.
 No probes added by this migration. See DEVICE-FAMILIES-MODULES-QUALIFICATION.md.
+
+## Rescue combined-object producers (November 2, 2026)
+
+[Qualification](RESCUE-COMBINED-OBJECTS-QUALIFICATION.md) binds 6 uncached CPP,
+135 consumed inputs, 3 ordered ld-r actions and 3 original crunchide actions.
+DTRACE_DOF_INIT_DISABLE=1 is declared before the execution tool starts; no tracing
+is activated. Source, objects and literal basename-sensitive hidden symbols are
+preserved. Exact allocated/relocation/symbol parity and independently repeated
+whole-file producer controls pass; decoded debug filename/comp_dir differences
+remain explicit. Two new negative tests execute, ten prior results are cached;
+no production rescue runtime or full installation claim.
