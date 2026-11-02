@@ -9,7 +9,7 @@ cc_library(name = 'kernel_headers', hdrs = ['kbdreg.h'],
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["kbdreg.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["kbdreg.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__"])
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["kbdreg.h"],

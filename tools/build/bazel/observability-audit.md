@@ -10051,3 +10051,26 @@ preserve original order. Both programs match all allocated payloads of explicit
 independent Make controls, and ten install records/debug CRCs pass. Ordinary
 filename and lazy-archive failures are retained. See LLDB-CLI-QUALIFICATION.md;
 these checks do not qualify debugger runtime or the upstream test suite.
+
+
+### HID/evdev module family (2026-11-02)
+
+Twenty-seven physical C sources and one KOBJ schema pass native artifact/input
+qualification. The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan
+has 7 local matches; raw source hashes/lines are retained with the HID review.
+Generic FBT/framework and live probe/audit delivery remain unqualified. Review
+evdev read/write/ioctl/mmap/revoke/grab permission and ownership, input injection,
+HID report parsing, game-controller callbacks, hotplug and detach/resource lifetime.
+Three public hgame callbacks now retain global exports required by four references
+from three explicitly dependent controller modules; actual positive/negative ELF
+tests cover the original defect. Static kernel-plus-48-module strong-import coverage
+passes, while actual device/event/loader behavior remains open. See
+HID-MODULES-QUALIFICATION.md for exact accepted and old rejected policy evidence.
+
+
+The HID checkpoint also checks existing instrumentation rather than only scanning
+for absence: hidbus has four report start/done DTrace call sites; vhid defines the
+Bluetooth report-injection SDT probe. Actual compiled SDT provider/probe/argument/
+tracepoint sections and relocations match original Make exactly for both modules.
+Runtime registration and event delivery remain unqualified. The raw contracts are
+retained in the HID review's compiled-probe-preservation.json.

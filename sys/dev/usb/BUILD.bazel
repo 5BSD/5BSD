@@ -12,7 +12,7 @@ load("//tools/build/bazel:bsd_usbdevs.bzl", "bsd_usbdevs_header")
 exports_files(["usbdevs"])
 bsd_usbdevs_header(name = "device_ids")
 cc_library(name = "device_id_headers", hdrs = [":device_ids"],
-    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
+    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__"])
 filegroup(name = "usb_if_header_file", srcs = [":usb_if"], output_group = "header")
 cc_library(name = "usb_if_headers", hdrs = [":usb_if_header_file"],
     strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
@@ -493,3 +493,9 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_usb_if", srcs = [":bu
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_apple_bce_headers", hdrs = ["usb.h", "usb_bus.h", "usb_busdma.h", "usb_controller.h", "usb_core.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_hub.h", "usb_process.h", "usb_transfer.h", "usb_util.h", "usbdi.h"], includes = [],
     visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_0", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_1", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])

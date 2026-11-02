@@ -79,3 +79,6 @@ bsd_source_headers(name = "gpio_module_context_0", hdrs = ["iic.h", "iiconf.h"],
 
 filegroup(name = "iicbb_if_module_header", srcs = [":iicbb_if"], output_group = "header")
 cc_library(name = "iicbb_if_headers", hdrs = [":iicbb_if_module_header"], strip_include_prefix = "iicbb_if.generated", visibility = ["//sys/dev/gpio:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_0", hdrs = ["iic.h", "iicbus.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])

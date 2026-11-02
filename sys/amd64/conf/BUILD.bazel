@@ -191,7 +191,7 @@ cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
 cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__"])
 cc_library(name = "core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
@@ -506,7 +506,7 @@ cc_library(name = "ddb_core_kernel_opt_kstack_pages_header", hdrs = [":opt_kstac
 cc_library(name = "acpica_core_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
 cc_library(name = "acpica_core_kernel_opt_evdev_header", hdrs = [":opt_evdev"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__"])
 cc_library(name = "acpica_core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
 cc_library(name = "acpica_core_kernel_opt_pci_header", hdrs = [":opt_pci"],
@@ -538,7 +538,7 @@ cc_library(name = "linuxkpi_kernel_opt_stack_header", hdrs = [":opt_stack"],
     strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 
 cc_library(name = "linuxkpi_kernel_opt_usb_header", hdrs = [":opt_usb"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/hid:__pkg__"])
 
 cc_library(name = "linuxkpi_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
     strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

@@ -79,7 +79,18 @@ kernel plus twenty-four Broadcom/GPIO/SPI modules now have providers for every
 strong import with no hidden supplied providers; loading/runtime remain open.
 See [SPI-MODULES-QUALIFICATION.md](SPI-MODULES-QUALIFICATION.md).
 
-The current 729-leaf amd64 selection has 290 local BUILD files and 439 leaves
+At the SPI checkpoint, the 729-leaf amd64 selection had 290 local BUILD files
+and 439 leaves without one; these were source-coverage counts only.
+
+Twenty-four HID/evdev modules now pass 28 actual compiler/input and 24 ordered-link
+audits, Make plain/CTF-debug comparisons and 72 install records. An original hgame
+policy hid three public callbacks needed by three controller modules; exact shared
+exports and positive/negative actual-provider tests correct it. Static strong-import
+coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime and
+hardware behavior remain open. See
+[HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
 without one. These are source-coverage counts, not qualified builds.
 
 Earlier component checkpoints below are retained historical evidence.
