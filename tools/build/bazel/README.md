@@ -47509,3 +47509,5 @@ checks, bounded filename/relocation differences and remaining controller gates.
 [LINUXKPI-KERNEL-QUALIFICATION.md](LINUXKPI-KERNEL-QUALIFICATION.md) records
 46 native compatibility built-ins, source-owned headers and generated interfaces,
 forced-include policy correction, exact code/CTF/input checks and remaining gates.
+
+[LIBXO-CSV-QUALIFICATION.md](LIBXO-CSV-QUALIFICATION.md) records conversion of a real selected world gap: native CSV plugin code/strict ELF/install checks, inherited Make context, five dynamic API methods and retained installed-path/family/pkg gates.

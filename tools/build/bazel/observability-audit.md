@@ -9707,3 +9707,7 @@ linux_80211_fullmac.c, linux_firmware.c, linux_shrinker.c and linux_work.c among
 workers/RCU and device-compatibility runtime paths remain to be qualified.
 Evidence: /usr/obj/usr/src/bazel-kernel-linuxkpi-review-r2-20261102/observability.json;
 see LINUXKPI-KERNEL-QUALIFICATION.md for build/policy corrections and limitations.
+
+## libxo CSV encoder (2026-11-02)
+
+The original enc_csv.c has no direct recognized SDT/DTrace, FIDL or BSM audit calls. Native source/flags and encoding behavior are retained without adding probes. Five dynamic API methods cover encoding/options/loader dependencies; installed-path discovery and whole-family/system behavior remain separate gates. See LIBXO-CSV-QUALIFICATION.md.
