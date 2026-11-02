@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//lib/libpam/modules:module.bzl", "pam_module")
 pam_module(
-    name = "pam_ksu",
+    name = "pam_ksu", warns = 2,
     srcs = ["pam_ksu.c", "pam_ksu_probes.h"],
     provider = "pam_ksu_provider.d",
     deps = ["//krb5/lib/krb5:krb5", "//crypto/krb5/src/include:internal_headers", "//lib/libpam/libpam:module_headers"],

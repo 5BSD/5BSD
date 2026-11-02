@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//lib/libpam/modules:module.bzl", "pam_module")
-pam_module(name = "pam_ssh", srcs = ["pam_ssh.c", "pam_ssh_probes.h"], provider = "pam_ssh_provider.d",
+pam_module(name = "pam_ssh", warns = 5, srcs = ["pam_ssh.c", "pam_ssh_probes.h"], provider = "pam_ssh_provider.d",
     deps = ["//secure/lib/libssh:ssh", "//lib/libpam/libpam:module_headers"],
     dynamic_deps = ["//secure/lib/libssh:ssh_shared"],
     copts = ["-include", "ssh_namespace.h"], package = "ssh")

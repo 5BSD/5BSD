@@ -5,7 +5,7 @@ load("//lib/libpam/modules:module.bzl", "pam_module")
 cc_library(name = "config_headers", hdrs = ["config.h"], includes = ["."], visibility = ["//contrib/pam-krb5:__pkg__"])
 copy_file(name = "copy_pam-util_options", src = "//contrib/pam-krb5:pam-util/options.c", out = "pam-util_options.c")
 copy_file(name = "copy_module_options", src = "//contrib/pam-krb5:module/options.c", out = "module_options.c")
-pam_module(name = "pam_krb5", srcs = ['//contrib/pam-krb5:module/account.c',
+pam_module(name = "pam_krb5", warns = 3, base_copts = [], srcs = ['//contrib/pam-krb5:module/account.c',
         '//contrib/pam-krb5:module/alt-auth.c',
         '//contrib/pam-krb5:pam-util/args.c',
         '//contrib/pam-krb5:module/auth.c',
@@ -25,8 +25,8 @@ pam_module(name = "pam_krb5", srcs = ['//contrib/pam-krb5:module/account.c',
         '//contrib/pam-krb5:module/setcred.c',
         '//contrib/pam-krb5:module/support.c',
         '//contrib/pam-krb5:pam-util/vector.c'],
-    deps = ["//contrib/pam-krb5:headers", "//krb5/lib/krb5:krb5", "//krb5/util/et:com_err", "//lib/libpam/libpam:module_headers"],
-    dynamic_deps = ["//krb5/lib/krb5:krb5_shared", "//krb5/util/et:com_err_shared"],
+    deps = ["//krb5/util/et:com_err", "//krb5/lib/krb5:krb5", "//contrib/pam-krb5:headers", "//lib/libpam/libpam:module_headers"],
+    dynamic_deps = ["//krb5/util/et:com_err_shared", "//krb5/lib/krb5:krb5_shared"],
     # The maintained Makefile replaces CFLAGS and has no optimization option.
     copts = ["-O0", "-fno-strict-aliasing"], local_defines = ["HAVE_CONFIG_H"],
     manual_sources = {"pam_krb5.8": "pam-krb5.8"}, package = "kerberos")

@@ -9791,3 +9791,14 @@ device attach, hotplug/error recovery, audio rates/formats/mixing and console/in
 behavior require runtime/device qualification.
 Evidence: /usr/obj/usr/src/bazel-kernel-device-io-review-r1-20261102/observability.json;
 see DEVICE-IO-KERNEL-QUALIFICATION.md for scope and remaining gates.
+
+## PAM module compiler/link policy correction (2026-11-02)
+
+The 24 default selected modules retain 19 module-specific provider declarations.
+The five without their own provider are pam_capability, pam_echo, pam_krb5,
+pam_passwdqc and pam_xdg; shared PAM dispatch instrumentation still exists.
+This is an audit follow-up, not proof that every such module needs a new probe.
+Provider definitions and production C are unchanged. Exact 94 object code
+comparisons, source-proven path-key alias/site evidence and installation metadata
+do not establish live probe firing or authentication/audit behavior. Those gates
+remain open; see PAM-MODULE-POLICY-QUALIFICATION.md.

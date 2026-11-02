@@ -47557,3 +47557,9 @@ Unchanged local cache hits are distinguished from retained cross-variant misses;
 persistent action-cache, system/runtime and performance gates remain open.
 
 [DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md](DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md) records explicit object metadata/symbol/site inspection, 19 native test methods, real-object negative controls, proven path-key differences and remaining PAM/runtime gates.
+
+[PAM-MODULE-POLICY-QUALIFICATION.md](PAM-MODULE-POLICY-QUALIFICATION.md) records
+24 default PAM module compiler/link-order corrections, 94 exact code comparisons,
+strict ordered dependency contracts, actual Make/compiler input provenance and
+145 scoped install records. Combined static PAM, authentication, reduced options
+and full relocation/runtime qualification remain open.
