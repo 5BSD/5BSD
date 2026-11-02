@@ -2,3 +2,20 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "spi_module_context_0", hdrs = ["mx25lreg.h"], includes = [],
+    visibility = ["//sys/dev/flash:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "at45d_at45d_module", srcs = ["at45d.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/spibus:spi_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "mx25l_mx25l_module", srcs = ["mx25l.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/spibus:spi_module_context_1", "//sys/dev/flash:spi_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

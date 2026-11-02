@@ -67,8 +67,18 @@ untouched baselines and a rejected first control remain recorded. SPI providers,
 full loading and runtime/performance gates remain open. See
 [GPIO-MODULES-QUALIFICATION.md](GPIO-MODULES-QUALIFICATION.md).
 
-The refreshed 729-leaf amd64 selection currently has 284 local BUILD files and
-445 leaves without one. These are source-coverage counts, not qualified builds.
+At the GPIO checkpoint, the 729-leaf amd64 selection had 284 local BUILD files
+and 445 leaves without one; these were source-coverage counts only.
+
+Six SPI controller/bus/flash/HID modules now pass eleven actual compiler/input
+and six ordered-link audits, untouched Make plain/CTF-debug comparisons and
+eighteen install records. Both profiles pass four provider tests. The qualified
+kernel plus twenty-four Broadcom/GPIO/SPI modules now have providers for every
+strong import with no hidden supplied providers; loading/runtime remain open.
+See [SPI-MODULES-QUALIFICATION.md](SPI-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 290 local BUILD files and 439 leaves
+without one. These are source-coverage counts, not qualified builds.
 
 Earlier component checkpoints below are retained historical evidence.
 

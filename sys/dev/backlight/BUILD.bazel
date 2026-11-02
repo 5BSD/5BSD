@@ -33,7 +33,7 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["backlight.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/asmc:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["backlight.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/atopcase:__pkg__"])
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_pci_headers", hdrs = ["backlight.h"],
@@ -75,3 +75,6 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_backlight_if", srcs =
 
 filegroup(name = "hardware_module_backlight_if_file", srcs = [":backlight_if"], output_group = "header")
 cc_library(name = "hardware_module_backlight_if_headers", hdrs = [":hardware_module_backlight_if_file"], strip_include_prefix = "backlight_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+filegroup(name = "backlight_if_module_header", srcs = [":backlight_if"], output_group = "header")
+cc_library(name = "backlight_if_headers", hdrs = [":backlight_if_module_header"], strip_include_prefix = "backlight_if.generated", visibility = ["//sys/dev/atopcase:__pkg__"])

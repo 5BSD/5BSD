@@ -53,3 +53,22 @@ bsd_host_artifact_test(name = "broadcom_gpio_providers_test", src = "check.py",
         "--require-edge", "bhnd", "gpiobus", "gpiobus_add_bus",
         "--require-edge", "if_bwn", "gpiobus", "gpio_pin_config_32_desc",
     ])
+
+_SPI_MODULES = {
+    "intelspi": "//sys/modules/intelspi:generic_module",
+    "at45d": "//sys/modules/spi/at45d:generic_module",
+    "atopcase": "//sys/modules/spi/atopcase:generic_module",
+    "mx25l": "//sys/modules/spi/mx25l:generic_module",
+    "spibus": "//sys/modules/spi/spibus:generic_module",
+    "spigen": "//sys/modules/spigen:generic_module",
+}
+_BROADCOM_GPIO_SPI_MODULES = dict(_BROADCOM_GPIO_MODULES.items() + _SPI_MODULES.items())
+bsd_host_artifact_test(name = "broadcom_gpio_spi_providers_test", src = "check.py",
+    data = _BROADCOM_GPIO_SPI_MODULES.values(),
+    args = [arg for name, target in _BROADCOM_GPIO_SPI_MODULES.items()
+            for arg in ["--module", name + "=$(location " + target + ")"]] + [
+        "--require-edge", "bhnd", "gpiobus", "gpiobus_add_bus",
+        "--require-edge", "if_bwn", "gpiobus", "gpio_pin_config_32_desc",
+        "--require-edge", "gpiospi", "spibus", "spibus_driver",
+        "--require-edge", "gpiospi", "spibus", "spibus_transfer_desc",
+    ])

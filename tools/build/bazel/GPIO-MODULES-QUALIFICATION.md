@@ -87,3 +87,11 @@ publication, bootstrap, VM/runtime and controlled CPU/memory/disk I/O/disk-use,
 cache and sandbox performance gates remain open. Make remains production/default;
 BIP remains excluded. No host modules were loaded and no host installation,
 upgrade or reboot occurred.
+
+
+## Later provider checkpoint
+
+The subsequent [SPI qualification](SPI-MODULES-QUALIFICATION.md) supplies the GPIO
+and SPI boundaries and records no remaining unprovided strong imports against
+the qualified kernel plus all twenty-four modules. The earlier gaps above describe
+this document's original checkpoint; actual module loading remains unqualified.

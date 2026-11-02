@@ -46,7 +46,7 @@ bsd_source_headers(
         "uma.h",
         "uma_align_mask.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__"],
 )
 
 bsd_source_headers(
@@ -1196,3 +1196,6 @@ bsd_source_headers(name = "kobj_builtins_physical_ac97_if_headers", hdrs = ["_vm
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+bsd_source_headers(name = "spi_module_context_1", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_pager.h"], includes = [],
+    visibility = ["//sys/dev/spibus:__pkg__"])

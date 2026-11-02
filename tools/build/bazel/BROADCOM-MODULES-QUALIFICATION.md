@@ -101,3 +101,11 @@ module/world/pkgbase/hardware publication, bootstrap, VM and controlled CPU,
 memory, disk I/O, disk-use, cache and sandbox performance gates remain open.
 Make stays production/default and BIP stays excluded. No host module loading,
 installation, upgrade or reboot occurred.
+
+
+## Later provider checkpoint
+
+The subsequent [SPI qualification](SPI-MODULES-QUALIFICATION.md) supplies the GPIO
+and SPI boundaries and records no remaining unprovided strong imports against
+the qualified kernel plus all twenty-four modules. The earlier gaps above describe
+this document's original checkpoint; actual module loading remains unqualified.

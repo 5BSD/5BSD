@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "spi_module_context_0", hdrs = ["atopcase_reg.h", "atopcase_var.h"], includes = [],
+    visibility = ["//sys/dev/atopcase:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "atopcase_atopcase_module", srcs = ["atopcase.c"],
+    deps = ["//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/dev/spibus:gpio_module_context_0", "//sys/dev/atopcase:spi_module_context_0", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:spi_module_opt_spi_header", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "atopcase_atopcase_acpi_module", srcs = ["atopcase_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/dev/spibus:gpio_module_context_0", "//sys/dev/atopcase:spi_module_context_0", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/backlight:backlight_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:device_io_kernel_opt_hid_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

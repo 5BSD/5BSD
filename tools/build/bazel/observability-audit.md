@@ -10027,3 +10027,16 @@ failures and attach/detach/resource lifetime through real module/hardware tests.
 The combined Broadcom/GPIO ELF tests restore the known GPIO provider boundary;
 SPI providers and live probe/audit delivery remain open. See
 GPIO-MODULES-QUALIFICATION.md for exact accepted and rejected control evidence.
+
+
+### SPI controller/bus/flash/HID module family (2026-11-02)
+
+Ten physical C sources and one KOBJ schema pass native artifact/input qualification.
+The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan has 0 local
+matches; source hashes and matched lines are retained with the SPI review. Generic
+FBT/framework coverage and live probe/audit delivery remain unqualified. Review
+transfer and pin ownership, DMA/interrupt completion, flash writes, ACPI/HID events,
+error/timeout recovery, and attach/detach/resource lifetime on actual devices.
+Static strong-import/provider closure now passes for the native kernel and the
+twenty-four Broadcom/GPIO/SPI modules; this does not prove loader/runtime behavior.
+See SPI-MODULES-QUALIFICATION.md for accepted evidence and remaining gates.
