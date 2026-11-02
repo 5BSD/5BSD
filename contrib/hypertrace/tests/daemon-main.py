@@ -236,6 +236,13 @@ if results and results[-1]['case'] == 'quiet-suppresses-warnings':
     results[-1]['passed'] = results[-1]['passed'] and 'WARNING' not in results[-1]['stderr']
 run('control-socket-bind-failure', ['-d', '-D', '@ROOT@/state'],
     {'HT_BIND': 'fail'}, expect_status=1, expect_err='failed to bind')
+# The control directory is the socket's only access control.
+for mode in (0o750, 0o701):
+    with tempfile.TemporaryDirectory(prefix='htd-', dir='/tmp') as loose:
+        os.chmod(loose, mode)
+        run('control-directory-mode-%o' % mode, ['-d', '-D', '@ROOT@/state'],
+            expect_status=71, expect_err='must be owned by uid',
+            root=loose)
 
 # Regression: with an unsigned char ABI (arm64, riscv64) the former `char ch`
 # never compared equal to getopt's -1, so every invocation fell into the

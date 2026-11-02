@@ -97,6 +97,17 @@ client_fd::is_subscribed(unsigned long long which)
 	return ((this->subs & which) != 0);
 }
 
+inline bool
+client_fd::elf_only_consumer(void)
+{
+
+	return (this->kind == DTRACED_KIND_CONSUMER &&
+	    this->is_subscribed(DTD_SUB_ELFWRITE) &&
+	    !this->is_subscribed(DTD_SUB_READDATA) &&
+	    !this->is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
+	    !this->is_subscribed(DTD_SUB_RELEASE_RECOVERY));
+}
+
 inline int
 client_fd::get_fd(void)
 {

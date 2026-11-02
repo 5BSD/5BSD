@@ -78,12 +78,14 @@ That is design work recorded as a gap below, not a configuration change.
 No allow-list entry is shipped for them, so a locally edited
 `bsdtrace.allow` is unaffected by upgrades.
 
-A HyperTrace consumer proves its identity to `dtraced` with its process ID and
-kernel birth time. libdtrace gets the birth time from a process descriptor:
-`pdopenpid(getpid())` when ambient, `pdself(2)` only in capability mode
-(`pdself` is capability-mode-only and returns `ENOTCAPABLE` otherwise; until
-November 2026 libdtrace called it unconditionally, which made every
-`dtrace -E` from a shell fail with "Capabilities insufficient").
+A HyperTrace consumer identifies itself to `dtraced` with its process ID and
+kernel birth time. `dtraced` checks the process ID against the socket's peer
+credentials when the consumer connects, and checks the birth time against the
+kernel (`pdopenpid(2)` and the descriptor's birth identity) when the consumer
+binds a program with an HPI2 registration. libdtrace gets the birth time from
+a process descriptor: `pdopenpid(getpid())` when ambient, `pdself(2)` only in
+capability mode (`pdself` is capability-mode-only and returns `ENOTCAPABLE`
+otherwise).
 
 ## Unit
 

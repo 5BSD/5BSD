@@ -2466,7 +2466,9 @@ client_request::handle_consumer_programmsg(void)
 		}
 		this->origin->consumer_import_scan_active = true;
 	}
-	/* A failed census leaves this connection retryable with the same HPI1. */
+	/* The program is bound: a failed census ends registration on this
+	 * connection (job::read_data()); the client registers again on a new
+	 * one. */
 	int queued = 0;
 	if (this->origin->consumer_replay_registration_pending.load())
 		queued = this->s.inbounddir->queue_recovered_consumer(this->origin);
