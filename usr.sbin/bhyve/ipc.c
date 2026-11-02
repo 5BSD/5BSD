@@ -52,6 +52,7 @@
 
 /* One stalled controller must not monopolize the IPC command thread. */
 #define	IPC_CLIENT_TIMEOUT_SEC	30
+#define	IPC_REPLY_TIMEOUT_SEC	5
 
 #define IPC_COMMAND_FOREACH(pvar, set) SET_FOREACH(pvar, set)
 
@@ -178,6 +179,7 @@ handle_message(struct vmctx *ctx, const char *cmd, nvlist_t *nvl)
 static void *
 ipc_thread(void *param)
 {
+	struct timeval send_timeout;
 	int fd, on;
 	nvlist_t *nvl, *reply;
 	const char *cmdname;
@@ -201,6 +203,16 @@ ipc_thread(void *param)
 		 */
 		on = 1;
 		(void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+		/*
+		 * Nor may a client that never reads its reply hold the IPC
+		 * thread, or keep bhyve alive after a handler ended the VM.
+		 */
+		send_timeout = (struct timeval) {
+			.tv_sec = IPC_REPLY_TIMEOUT_SEC,
+			.tv_usec = 0,
+		};
+		(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout,
+		    sizeof(send_timeout));
 
 		nvl = nvlist_recv(fd, 0);
 		if (nvl == NULL) {
@@ -237,7 +249,9 @@ ipc_thread(void *param)
 		/*
 		 * The handler's work ended the VM (a checkpoint with suspend):
 		 * end bhyve now that the client has its answer.  A client that
-		 * has gone away does not keep bhyve running (SO_NOSIGPIPE).
+		 * has gone away (SO_NOSIGPIPE) or does not read its reply
+		 * (SO_SNDTIMEO) does not keep bhyve running: exit even if the
+		 * reply could not be sent.
 		 */
 		if (ipc_exit_status >= 0)
 			exit(ipc_exit_status);

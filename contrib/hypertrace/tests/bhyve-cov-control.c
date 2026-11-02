@@ -790,8 +790,15 @@ test_exit_command(struct vmctx *ctx, const nvlist_t *nvl)
 	nvlist_t *reply = nvlist_create(0);
 
 	(void)ctx;
-	(void)nvl;
 	nvlist_add_bool(reply, "answered", true);
+	if (nvlist_exists_bool(nvl, "large")) {
+		/* Larger than the socket buffers: the send blocks. */
+		size_t len = 1024 * 1024;
+		void *pad = calloc(1, len);
+
+		CHECK(pad != NULL);
+		nvlist_move_binary(reply, "pad", pad, len);
+	}
 	ipc_exit_after_reply(42);
 	return (reply);
 }
@@ -973,6 +980,24 @@ test_ipc(void)
 			_exit(1);
 		reply = cmd("test_exit");
 		if (reply == NULL || !nvlist_exists_bool(reply, "answered"))
+			_exit(2);
+		for (;;)
+			pause();
+	});
+	/* A controller that never reads a reply larger than the socket
+	 * buffers cannot keep bhyve alive after the VM ended: the send times
+	 * out and bhyve exits anyway. */
+	EXPECT_EXIT(42, {
+		alarm(20);
+		snprintf(rundir, sizeof(rundir), "%s", "ipcy.XXXXXX");
+		if (mkdtemp(rundir) == NULL ||
+		    init_ipc_thread(&the_vm, rundir) != 0)
+			_exit(1);
+		int s = ipc_connect();
+		request = nvlist_create(0);
+		nvlist_add_string(request, "cmd", "test_exit");
+		nvlist_add_bool(request, "large", true);
+		if (nvlist_send(s, request) != 0)
 			_exit(2);
 		for (;;)
 			pause();
