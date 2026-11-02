@@ -190,3 +190,6 @@ bsd_pkg_create_test(name = "pkg_create_directories_test")
 exports_files(["bsd_crunchgen.bzl"], visibility = ["//visibility:public"])
 
 exports_files(["bsd_crunchide.bzl"])
+
+# Static-consumer tests use the unchanged maintained DOF reader.
+exports_files(["dtrace-dof-inventory.py"], visibility = ["//lib/libutil/tests:__pkg__"])

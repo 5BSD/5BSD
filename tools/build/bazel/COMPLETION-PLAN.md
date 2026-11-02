@@ -1201,6 +1201,17 @@ Keep default CcInfo anchored-provider static-consumer semantics as the next
 independent gate; full DSO/installed tests, untraced modes, full rescue/packages
 and runtime/performance remain open. Existing format-5 workflow only; Make default.
 
+### Default libutil static-consumer gate (November 2, 2026)
+
+[Qualification](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md): original missing-provider
+and native over-extraction defects corrected with the existing retained-anchor
+mechanism and lazy provider import. Two complete ordered extraction graphs match
+corrected original Make. All 68 actual normal/PIC compilers, 3,778 consumed
+occurrences, 35 component members and actual anchor/archive producers are bound;
+56 actual test methods pass without credential changes. Shared ELF metadata
+passes; full DSO payload/install, arbitrary CcInfo ordering and DTrace host
+provenance/cache hermeticity remain open. Make remains default.
+
 ### Compatibility/storage/tracing modules (November 2, 2026)
 
 [Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen more amd64

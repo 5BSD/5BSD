@@ -91,7 +91,7 @@ def elf(body):
     return symbols, dof
 
 
-def check(items, expected):
+def check(items, expected, anchor=None):
     names = [name.removesuffix('.nopic.o') + '.o' if name.endswith('.nopic.o') else name for name, _ in items]
     if len(set(names)) != len(names):
         raise ValueError('duplicate member identity')
@@ -100,15 +100,21 @@ def check(items, expected):
     defined, required = set(), set()
     for (name, body), normalized in zip(items, names):
         symbols, dof = elf(body)
-        if any(symbol.startswith('__bsd_dof_anchor_') for symbol, _, _ in symbols):
-            raise ValueError('synthetic static anchor')
+        anchors = [symbol for symbol, index, _ in symbols
+                   if index != 0 and symbol.startswith('__bsd_dof_anchor_')]
+        if normalized != 'logincap_provider.o' and dof:
+            raise ValueError('DOF embedded in regular member')
         if normalized == 'logincap_provider.o':
             if len(dof) != 1 or not dof[0].startswith(b'\x7fDOF'):
                 raise ValueError('separate provider DOF')
+            if anchors != ([anchor] if anchor else []):
+                raise ValueError('separate provider static anchor')
             required.update(symbol for symbol, index, _ in symbols if index == 0 and symbol.startswith('$dtrace'))
         elif dof:
             raise ValueError('DOF embedded in regular member')
         else:
+            if anchors:
+                raise ValueError('separate provider static anchor')
             defined.update(symbol for symbol, index, _ in symbols if index != 0 and symbol.startswith('$dtrace'))
     if not required or not required <= defined:
         raise ValueError('provider alias closure')
@@ -128,42 +134,51 @@ class ArchiveContract(unittest.TestCase):
             raise ValueError('one declared archive required: ' + repr(paths))
         cls.raw = paths[0].read_bytes()
         cls.items, cls.expected = members(cls.raw), fixture['members']
+        cls.anchor = fixture.get('required_provider_anchor')
 
     def test_actual(self):
-        check(self.items, self.expected)
+        check(self.items, self.expected, self.anchor)
 
     def test_order(self):
         items = self.items.copy()
         items[0], items[1] = items[1], items[0]
         with self.assertRaisesRegex(ValueError, 'order'):
-            check(items, self.expected)
+            check(items, self.expected, self.anchor)
 
     def test_duplicate(self):
         with self.assertRaisesRegex(ValueError, 'duplicate'):
-            check(self.items + [self.items[0]], self.expected)
+            check(self.items + [self.items[0]], self.expected, self.anchor)
 
     def test_suffix_collision(self):
         name, body = self.items[0]
         alias = (name.removesuffix('.nopic.o') + '.o' if name.endswith('.nopic.o')
                  else name.removesuffix('.o') + '.nopic.o')
         with self.assertRaisesRegex(ValueError, 'duplicate'):
-            check(self.items + [(alias, body)], self.expected)
+            check(self.items + [(alias, body)], self.expected, self.anchor)
 
     def test_missing_dof(self):
         items = self.items[:-1] + [(self.items[-1][0], self.items[0][1])]
         with self.assertRaisesRegex(ValueError, 'provider DOF'):
-            check(items, self.expected)
+            check(items, self.expected, self.anchor)
 
     def test_embedded_dof(self):
         items = [(self.items[0][0], self.items[-1][1])] + self.items[1:]
         with self.assertRaisesRegex(ValueError, 'embedded'):
-            check(items, self.expected)
+            check(items, self.expected, self.anchor)
+
+    def test_missing_anchor(self):
+        name, body = self.items[-1]
+        needle = self.anchor.encode('ascii') + b'\0'
+        self.assertIn(needle, body)
+        changed = body.replace(needle, b'_' * (len(needle) - 1) + b'\0')
+        with self.assertRaisesRegex(ValueError, 'static anchor'):
+            check(self.items[:-1] + [(name, changed)], self.expected, self.anchor)
 
     def test_machine(self):
         body = bytearray(self.items[0][1])
         struct.pack_into('<H', body, 18, 183)
         with self.assertRaisesRegex(ValueError, 'amd64'):
-            check([(self.items[0][0], bytes(body))] + self.items[1:], self.expected)
+            check([(self.items[0][0], bytes(body))] + self.items[1:], self.expected, self.anchor)
 
     def test_truncation(self):
         with self.assertRaises(ValueError):

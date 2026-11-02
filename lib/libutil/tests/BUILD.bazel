@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+[cc_binary(
+    name = name,
+    srcs = ["static-consumer.c"],
+    local_defines = defines,
+    deps = ["//lib/libutil:util"],
+    linkopts = ["-static"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
+) for name, defines in [
+    ("static_number", []),
+    ("static_context_reference", ["REFERENCE_LOGIN_CONTEXT"]),
+]]
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(
+    name = "static_consumer_test",
+    src = "static-consumer-test.py",
+    data = [":static_number", ":static_context_reference", "//tools/build/bazel:dtrace-dof-inventory.py"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({
+        "//tools/build/bazel/config:experimental_dtrace_section_archives_enabled": ["@platforms//:incompatible"],
+        "//tools/build/bazel/config:dtrace_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)

@@ -48186,13 +48186,15 @@ generated Make on identical accepted inputs reproduces the entire static ELF.
 Fixed /rescue/cp and /rescue/rm execution for cross-filesystem mv remains an
 installed-path gate; full rescue/library/install/pkgbase parity remains open.
 
-The [default traced libutil archive](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
-now preserves original Make's 35-member order and separate unanchored provider.
-All 34 C members match original allocated sections; all 35 nondebug relocation
-sections match. Complete provider encoding/site differences are accounted for
-with verified path keys. Eight contract methods pass; default DSO/rescue and
-explicit experimental archive/DSO remain byte-identical to accepted captures.
-Default CcInfo static-consumer extraction and full DSO/install parity remain open.
+The [default static libutil consumers](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md)
+now preserve lazy selection and selected logincap metadata using the original
+retained-anchor mechanism. Two complete extraction graphs match corrected Make;
+68 actual normal/PIC compilers and 3,778 consumed occurrences pass. Nine archive,
+four consumer and 43 rescue methods pass. No credential-changing function runs.
+The 35-member component archive preserves original order and its anchored
+provider; the [earlier archive-only checkpoint](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
+records the historical source policy. Full CcInfo ordering, DSO/install parity
+and DTrace host-provenance/cache hermeticity remain open.
 
 ## Compatibility/storage/tracing module checkpoint (2026-11-02)
 

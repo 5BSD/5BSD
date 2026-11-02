@@ -5363,5 +5363,14 @@ contract; it executes no target objects.
 Request this test only for the default traced archive composition.
 The experimental section-associated composition remains a separate explicit
 build setting.
-This archive check does not establish default CcInfo static-consumer extraction,
+The default traced
+.Cm //lib/libutil/tests:static_consumer_test
+checks two static consumers against declared provider/extraction requirements.
+The number-only consumer excludes unrelated credential code and metadata;
+the address-only consumer retains the logincap provider without invoking
+credential changes.
+Registration is disabled before child startup.
+Request this test only in the default traced composition.
+These bounded controls do not establish arbitrary CcInfo member ordering,
 full DSO payload, installation or complete library parity.
+DTrace host provenance and action-cache hermeticity remain separate gates.

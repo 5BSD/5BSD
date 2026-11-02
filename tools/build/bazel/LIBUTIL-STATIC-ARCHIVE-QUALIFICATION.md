@@ -1,5 +1,10 @@
 # libutil default traced static archive (November 2, 2026)
 
+**Historical checkpoint:** the later [static-consumer qualification](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md)
+corrects original missing-provider and native over-extraction behavior. Its
+retained anchor supersedes the unanchored policy below; the original evidence
+and its source scope remain preserved.
+
 ## Scope and source correction
 
 The independent original Make build produces 34 ordinary members followed by

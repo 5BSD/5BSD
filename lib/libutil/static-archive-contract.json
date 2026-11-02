@@ -37,9 +37,11 @@
     "logincap_provider.o"
   ],
   "source_sha256": {
-    "Makefile": "9242c8b7e9dc06195bad628c736cdbcabb438a338869d9ca9aedd67cca8f8b15",
-    "logincap_provider.d": "6571d2ef1327bab5b65be82c92b1a597f0cd6fd6ef77e6b55b045627518dad84"
+    "Makefile": "3503d62d3d8d6379fed1a7ffe820237d5c2b15b4b931b218119125c361a1d138",
+    "logincap_provider.d": "6571d2ef1327bab5b65be82c92b1a597f0cd6fd6ef77e6b55b045627518dad84",
+    "logincap_probes.h": "c720d1dd555d1f2cb0c58ccc991e459bf253f8d9124b19b6887af586a4ca1da7"
   },
-  "original_archive_metadata_sha256": "65ba732658540152b4d3afab95d5fa5ac4936f38ad19ebef0bf40f2f09228552",
-  "scope": "Independent original Make static archive order and separate-provider contract; no full ELF/DWARF/ABI/runtime assertion."
+  "original_archive_metadata_sha256": "9b249ba15703af4cea51cde360708742ca59d4eed9dd3a5af1e2f11db64a438e",
+  "scope": "Independent corrected original Make static archive order and retained-anchor provider contract; no full ELF/DWARF/ABI/runtime assertion.",
+  "required_provider_anchor": "__bsd_dof_anchor_logincap_provider"
 }

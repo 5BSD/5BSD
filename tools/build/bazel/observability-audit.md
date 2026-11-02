@@ -10469,6 +10469,19 @@ anchor removal applies to this component archive only. Existing default CcInfo
 provider semantics, activation/registration, event delivery and audit coverage
 remain separate gates. Raw hash bindings and inventories are retained.
 
+## libutil selected static provider (November 2, 2026)
+
+[LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md](LIBUTIL-STATIC-CONSUMER-QUALIFICATION.md)
+corrects original missing-provider and native unrelated-provider extraction using
+the existing retained anchor. Both exact extraction graphs and logincap schema/
+actual relocation/site contracts pass. No probe call was removed or added.
+Four safe consumer methods disable registration before process startup and never
+call credential-changing functions. Historical rescue full-byte equality is
+explicitly rejected for 220 bytes in eleven DOF UTSNAME kernel-version fields;
+all other bytes match. No artifact normalization is used. Broader host provenance,
+action-cache hermeticity, registration and live events remain open. The prior
+archive-only anchor-removal paragraph describes its historical source policy.
+
 ## Compatibility/storage/tracing modules (November 2, 2026)
 
 [Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): bounded 125 physical

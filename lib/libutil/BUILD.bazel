@@ -26,14 +26,14 @@ bsd_dtrace_spec(name = "section_provider", source = "logincap_provider.d", outpu
 cc_library(name = "objects", srcs = UTIL_SOURCES + ["logincap_probes.h"], deps = [":headers"],
     features = ["bsd_small_pic"], copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'],
     implementation_deps = ["//lib/libc/gen:pw_scan_headers"],
-    local_defines = ["NO__SCCSID"] + select({_TRACE: ["WITH_DTRACE"], "//conditions:default": []}) +
+    local_defines = ["NO__SCCSID"] + select({_SECTION_TRACE: ["WITH_DTRACE"], _TRACE: ["WITH_DTRACE", "WITH_DTRACE_STATIC_ANCHOR"], "//conditions:default": []}) +
         select({"//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": []}),
     linkstatic = True, target_compatible_with = _PLATFORM)
 bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = ":provider",
     provider_object = "logincap_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 [filegroup(name = group, srcs = [":traced_objects"], output_group = group)
  for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
-cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"], alwayslink = True)
+cc_import(name = "provider_link", objects = [":regular_provider"], pic_objects = [":pic_provider"])
 cc_import(name = "traced", objects = [":regular_objects"], pic_objects = [":pic_objects"], deps = [":provider_link"])
 bsd_dtrace_cc_objects(name = "section_objects", library = ":objects", provider = ":section_provider",
     provider_object = "logincap_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
@@ -43,9 +43,9 @@ bsd_dtrace_cc_objects(name = "section_objects", library = ":objects", provider =
 cc_import(name = "section_traced", objects = [":section_regular_archive_objects"], pic_objects = [":section_pic_archive_objects"])
 cc_library(name = "util", deps = [":headers"] + select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects"]}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-# Original Make archive has a separate provider without a synthetic static anchor.
-# The unanchored native spec is shared with the explicit experimental composition.
-bsd_dtrace_cc_objects(name = "archive_objects", library = ":objects", provider = ":section_provider",
+# Original Make archive has a separate provider with its retained static anchor.
+# Lazy extraction follows the instrumented object's original source reference.
+bsd_dtrace_cc_objects(name = "archive_objects", library = ":objects", provider = ":provider",
     provider_object = "logincap_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
 [filegroup(name = "archive_" + group, srcs = [":archive_objects"], output_group = group)
  for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
@@ -109,5 +109,5 @@ exports_files(["login_class.c", "logincap_probes.h"], visibility = ["//rescue/li
 # retain distinct composition and their separate qualification obligations.
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "static_archive_contract_test", src = "static-archive-contract-test.py",
-    data = [":static_archive", "static-archive-contract.json", "Makefile", "logincap_provider.d"],
+    data = [":static_archive", "static-archive-contract.json", "Makefile", "logincap_provider.d", "logincap_probes.h"],
     target_compatible_with = _PLATFORM + select({_SECTION_TRACE: ["@platforms//:incompatible"], _TRACE: [], "//conditions:default": ["@platforms//:incompatible"]}))
