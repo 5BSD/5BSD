@@ -3143,6 +3143,10 @@ exported as headers for every library source or dependent consumer.
 Library public compilation contexts are shared across their source actions.
 
 Declared source aliases use origins shared with maintained Make recipes.
+Byte-preserving aliases may present an original .asm input as .S so rules_cc
+selects preprocessed assembly without rewriting its source.
+Architecture header views may forward declared generated headers; their producer
+remains a dependency of the consuming compilation.
 The native graph preserves alias names for compiler context and declares alias
 outputs explicitly; origins outside the selected source tree are rejected.
 Extra variant-only sources require explicit mappings to configured objects and
@@ -4651,6 +4655,10 @@ or
 .Fl arch Ar riscv64 .
 The native amd64 SDK supplies execution tools; registered target C++ toolchains
 select the target triple, freestanding ABI and declared source headers.
+Target identity and default freestanding compilation are separate toolchain
+features. Source-owned Linux VDSO groups disable only the freestanding defaults
+and explicitly retain their original hosted/PIC compiler flags and declared
+inputs; ordinary kernel/module groups retain the defaults.
 The host platform remains native, so config and layout-extraction programs
 are built for the host. Target objects are never executed on that host.
 This profile builds artifacts only and rejects runnable test selections.

@@ -45,9 +45,8 @@ results.json, original/actual command vectors, output and dependency hashes.
 - Preserve linux_locore.asm's preprocessing semantics. The current rules_cc
   file-type list classifies .asm as raw assembly and .S as preprocessed assembly.
   Check actual actions/dependency discovery; use an explicit byte-preserving
-  source alias if needed. Existing bsd_source_alias currently accepts .S but not
-  .asm input, so any extension requires a narrow reviewed helper change and real
-  action qualification. No source-text rewrite is needed.
+  source alias if needed. The earlier bsd_source_alias accepted .S but not
+  .asm input; the narrow extension is now exercised by actual native actions. No source-text rewrite is needed.
 - Reuse declared VDSO linking and validate the target image against its actual
   architecture/runtime contract. The amd64 runtime reserves two pages; track
   the source/target layout supplying that limit instead of borrowing the native
@@ -63,7 +62,30 @@ results.json, original/actual command vectors, output and dependency hashes.
   payloads, declared/consumed inputs, link order and installation. Keep standalone
   DWARF/source resolution as an explicit separate gate.
 
-The module has no native declaration yet. Implement through maintained native
-rules and normal build-bsd format-5/backend paths; update affected helpers/tests/
-manual in the same change. Full Linuxulator execution, VM/runtime, other targets
-and performance remain open. Make stays production/default; BIP stays excluded.
+The native module graph is now applied, with 34 module objects, a native layout
+producer, generated syscall sources/headers and ordered native VDSO compilation
+and linking. The unchanged incbin source declares that generated image as an
+additional compiler input and uses its configured output directory for assembler
+lookup. No C/Make source or old Make image is copied into this graph.
+
+Both native profiles and actual module/helper/input/link/artifact/install
+comparisons now pass; see [the qualification record](LINUX64-MODULE-QUALIFICATION.md).
+The first build found an omitted architecture view member, linux_emul_md.h; its
+failed action is retained. The corrected view covers the original consumed four
+headers: two generated syscall headers and two unchanged source headers. Full
+plain-byte module equality, all five syscall payloads and the complete native
+VDSO image match original Make. This does not close changed-image invalidation,
+separate DWARF, runtime or full-system qualification.
+
+The existing source-alias primitive accepts .asm for byte-preserving .S aliases.
+Architecture views forward declared generated headers as well as source files.
+Kernel target identity is separate from default freestanding compilation flags,
+allowing the Linux VDSO helpers to disable that feature and preserve their
+original hosted compiler flags. Ordinary kernel defaults remain selected.
+Normal build-bsd format-5/backend paths carry these targets without new frontend
+inputs; the maintained manual records the source/ABI handling in this change.
+The native BSD VDSO validator has a different ABI/layout contract and is not
+silently weakened for Linux. Original/native Linux image, embedding, declared
+inputs and changed-image invalidation still require qualification. Full
+Linuxulator execution, VM/runtime, other targets and performance remain open.
+Make stays production/default; BIP stays excluded.

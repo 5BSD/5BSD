@@ -15,7 +15,7 @@ def _source_alias(ctx):
 bsd_source_alias = rule(
     implementation = _source_alias,
     attrs = {
-        "source": attr.label(allow_single_file = [".c", ".cc", ".cpp", ".cxx", ".C", ".S"], mandatory = True),
+        "source": attr.label(allow_single_file = [".c", ".cc", ".cpp", ".cxx", ".C", ".S", ".asm"], mandatory = True),
         "output": attr.output(mandatory = True),
     },
 )

@@ -76,3 +76,6 @@ amd64_generic_module_objects(name = "evdev_evdev_utils_module", srcs = ["evdev_u
 amd64_generic_module_objects(name = "uinput_uinput_module", srcs = ["uinput.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/evdev:device_io_kernel_uinput_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["input-event-codes.h", "input.h", "uinput.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

@@ -44,7 +44,7 @@ cc_library(name = "generic_genoffset_check", srcs = ["genoffset.c"],
     deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"], copts = _AMD64_LAYOUT_FLAGS,
     local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "OFFSET_TEST"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o", visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm/amd:__pkg__"])
+bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o", visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/linux:__pkg__"])
 
 cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
     deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers", "//sys/amd64/conf:generic_assym_headers",
@@ -737,7 +737,7 @@ amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uip
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 cc_library(name = "generic_assym_header", hdrs = [":generic_assym"],
-    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/amd64/sgx:__pkg__"])
+    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/amd64/linux:__pkg__"])
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["subr_syscall.c"],

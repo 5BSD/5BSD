@@ -35,7 +35,7 @@ cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', '
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/my:__pkg__", "//sys/dev/sfxge/common:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
-bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/kern:__pkg__", "//sys/dev/ena:__pkg__", "//sys/net:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/cam:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/iscsi:__pkg__"])
+bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/kern:__pkg__", "//sys/dev/ena:__pkg__", "//sys/net:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/cam:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/iscsi:__pkg__", "//sys/compat/linux:__pkg__"])
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
@@ -305,7 +305,7 @@ bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["_vm_radix.h
 bsd_source_headers(name = "core_kernel_tty_headers", hdrs = ["vm.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_info_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/dev/proto:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/amd64/vmm:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/dev/proto:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/amd64/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_inq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_tty_outq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
@@ -377,7 +377,7 @@ bsd_source_headers(name = "vm_kernel_vm_reserv_headers", hdrs = ["_vm_phys.h", "
 bsd_source_headers(name = "vm_kernel_vm_swapout_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
     visibility = ["//sys/vm:__pkg__"])
 bsd_source_headers(name = "vm_kernel_vm_unix_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h", "vm_param.h"],
-    visibility = ["//sys/vm:__pkg__"])
+    visibility = ["//sys/vm:__pkg__", "//sys/compat/linux:__pkg__"])
 bsd_source_headers(name = "vm_kernel_vnode_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vnode_pager.h"],
     visibility = ["//sys/vm:__pkg__"])
 
@@ -821,13 +821,13 @@ bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["_vm_rad
 bsd_source_headers(name = "lowlevel_kernel_bios_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_db_trace_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/coreboot:__pkg__", "//sys/dev/dcons:__pkg__", "//sys/dev/ioat:__pkg__", "//sys/x86/x86:__pkg__", "//sys/compat/linprocfs:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/coreboot:__pkg__", "//sys/dev/dcons:__pkg__", "//sys/dev/ioat:__pkg__", "//sys/x86/x86:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/amd64/linux:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_efirt_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_phys.h", "vm_radix.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_elf_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_exec_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_param.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/linux:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_fpu_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_initcpu_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
@@ -1222,12 +1222,15 @@ bsd_source_headers(name = "vmm_module_context_0", hdrs = ["_vm_phys.h", "_vm_rad
     visibility = ["//sys/amd64/vmm:__pkg__"])
 
 bsd_source_headers(name = "vmm_module_context_1", hdrs = ["_vm_radix.h", "vm.h", "vm_object.h"], includes = [],
-    visibility = ["//sys/dev/vmm:__pkg__"])
+    visibility = ["//sys/dev/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "vmm_module_context_4", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"], includes = [],
     visibility = ["//sys/dev/vmm:__pkg__"])
 
 bsd_source_headers(name = "vmm_module_context_6", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"], includes = [],
-    visibility = ["//sys/amd64/vmm:__pkg__"])
+    visibility = ["//sys/amd64/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "vmx_layout_extra_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"], includes = [], visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_4", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

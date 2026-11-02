@@ -615,7 +615,7 @@ bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["in6.h",
     visibility = ["//sys/netinet:__pkg__"])
 
 bsd_source_headers(name = "network_services_module_context_1", hdrs = ["in6.h", "in6_fib.h", "ip6_var.h"], includes = [],
-    visibility = ["//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/net:__pkg__"])
+    visibility = ["//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/net:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "network_services_module_context_3", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "scope6_var.h"], includes = [],
     visibility = ["//sys/net:__pkg__"])

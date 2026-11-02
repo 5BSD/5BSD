@@ -31,3 +31,10 @@ bsd_architecture_headers(name = "compat_services_linux_headers", headers = {
     ":architecture_view_machine_sources": "machine",
     "//sys/amd64/linux:compat_services_architecture_header_sources": "linux",
 }, visibility = ["//sys/amd64/linux:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/ntsync:__pkg__"])
+
+# Both forms occur in unchanged Linuxulator sources; all headers are declared.
+bsd_architecture_headers(name = "linux64_module_headers", headers = {
+    ":architecture_view_machine_sources": "machine",
+    "//sys/amd64/linux:module_generated_headers": "linux",
+    "//sys/amd64/linux:module_generated_headers_for_arch": "amd64/linux",
+}, visibility = ["//sys/amd64/linux:__pkg__", "//sys/compat/linux:__pkg__", "//sys/x86/linux:__pkg__"])

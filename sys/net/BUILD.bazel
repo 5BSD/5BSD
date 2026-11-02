@@ -1721,3 +1721,9 @@ bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["bpf.h", "de
 
 bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_1", hdrs = ["if.h", "if_dl.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

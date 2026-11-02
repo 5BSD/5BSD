@@ -498,7 +498,7 @@ bsd_source_headers(name = "hid_module_context_0", hdrs = ["usb.h", "usb_endian.h
     visibility = ["//sys/dev/hid:__pkg__"])
 
 bsd_source_headers(name = "hid_module_context_1", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h"], includes = [],
-    visibility = ["//sys/dev/hid:__pkg__"])
+    visibility = ["//sys/dev/hid:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])

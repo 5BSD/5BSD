@@ -10528,3 +10528,13 @@ payloads and relocations match. No probes were changed. Guest execution, live
 event delivery and audit completeness remain unqualified. Evidence:
 bazel-vmm-module-review-r1-20261102/observability-review.json;
 [module/layout/consumer scope](VMM-MODULE-QUALIFICATION.md).
+
+### Linux64 module (2026-11-02)
+
+The bounded 33-source/master scan records 28 SDT/DTrace/KTR/audit candidate lines,
+including comments/macros. Original/native compiled SDT/DTrace sections and
+relocations match. Native generated syscall payloads and VDSO also match their
+originals. No probes are changed; Linuxulator runtime, event delivery and audit
+completeness remain unqualified. Evidence:
+bazel-linux64-module-review-r1-20261102/observability-review.json;
+[module/generated-input scope](LINUX64-MODULE-QUALIFICATION.md).

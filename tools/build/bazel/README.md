@@ -182,8 +182,14 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 728 selected directories contain local BUILD
-files, leaving linux64 without. VMM passes both original/native module and layout
+GENERIC audit selects 729 modules; all 729 selected directories now contain local
+BUILD files. Linux64 now passes both native profiles, complete plain-byte parity,
+actual module/helper dependencies, generated syscall/layout/VDSO payloads and
+installation comparisons; see
+[Linux64 qualification](LINUX64-MODULE-QUALIFICATION.md). Changed-image cache
+invalidation, full current kernel/module aggregation and system gates remain
+open. This declaration count is not a complete module/system-build claim.
+VMM passes both original/native module and layout
 profiles (185 module compilers plus two layout compilers per profile), complete
 plain-byte parity, ordered links and installation. The existing bhyve consumer
 also builds after its file-label migration; see

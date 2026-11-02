@@ -12,3 +12,14 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "linux_common_linux_x86_module", srcs = ["linux_x86.c", "linux_vdso_selector_x86.c"],
     deps = ["//sys/x86/linux:compat_services_module_context_0"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["linux_x86.h", "linux_x86_sigframe.h"], includes = [],
+    visibility = ["//sys/amd64/linux:__pkg__"])
+
+amd64_generic_module_objects(name = "linux64_linux_dummy_x86_module", srcs = ["linux_dummy_x86.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:compat_services_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux_layout_extra_headers", hdrs = ["linux_x86_sigframe.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])
+
+bsd_source_headers(name = "linux_vdso_gtod_vdso_headers", hdrs = ["linux_vdso_getcpu_x86.inc", "linux_vdso_gettc_x86.inc", "linux_x86.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])

@@ -131,3 +131,6 @@ filegroup(name = "builtin_nvme_if_source", srcs = [":nvme_if"], output_group = "
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_nvme_if", srcs = [":builtin_nvme_if_source"],
     deps = ["//sys/dev/nvme:kobj_builtins_physical_nvme_if_headers", "//sys/net:kobj_builtins_physical_nvme_if_headers", "//sys/netinet:kobj_builtins_physical_nvme_if_headers", "//sys/netinet6:kobj_builtins_physical_nvme_if_headers", "//sys/vm:kobj_builtins_physical_nvme_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/nvme:kobj_builtins_kernel_nvme_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["nvme_linux.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

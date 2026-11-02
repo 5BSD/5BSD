@@ -1274,3 +1274,25 @@ pass after physical-package label relocation. Local declaration presence is
 728/729; Linux64 remains. Separate DWARF, live VM execution, alternative settings,
 cross targets and full-system/pkgbase/bootstrap/cache/performance gates remain
 open. Existing rules/format-5 frontend suffice; no new C/helper/manual option.
+
+### Linux64 native generated-input and module qualification
+
+[Qualification](LINUX64-MODULE-QUALIFICATION.md): both profiles pass 34 actual
+module compilers, 5,004 consumed occurrences and forty selected kernel options.
+Three native helpers per profile preserve original flags and 140 consumed
+occurrences. The layout header, five syscall outputs and complete 5,392-byte
+VDSO are exact original payloads; actual compiler/extractor/generator/link/image/
+incbin dependencies are independently bound. Plain full-file module equality,
+CTF/runtime/debug CRCs, complete ordered links and installation pass. The initial
+missing architecture-header declaration and observer -Wa classification failures
+are retained and corrected. Existing format-5/backend workflow and updated manual
+carry the graph without frontend-C inputs; no C/Make source changes are added.
+
+All 729 selected amd64 directories now have declarations. Next close the real
+changed-image ABA rebuild/cache check in isolated object-root qualification
+sources, refresh the complete current GENERIC kernel and aggregate module build,
+and continue original userland install/test/package closure. Cross-target world/
+kernel/modules, other options, complete pkgbase/hardware/publication, bootstrap,
+source/debug lookup, sandboxing, VM/runtime and measured CPU/memory/disk/cache
+gates remain part of the full objective. Make stays production/default; BIP is
+excluded. Directory presence or individual profile parity is not full completion.

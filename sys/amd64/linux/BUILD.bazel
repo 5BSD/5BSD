@@ -9,9 +9,7 @@ cc_library(name = "sysdecode_headers", hdrs = ["linux.h", "linux_syscall.h"],
 
 load("//tools/build/bazel:bsd_syscall_tables.bzl", "bsd_syscall_tables")
 bsd_syscall_tables(name = "linux_syscall_tables", master = "syscalls.master", config = "syscalls.conf",
-    outputs = {"systrace_args": "generated/amd64/linux/linux_systrace_args.c",
-        "syscalls": "generated/amd64/linux/linux_syscalls.c", "sysproto_h": "generated/amd64/linux/linux_proto.h",
-        "syscall_h": "generated/amd64/linux/linux_syscall.h"},
+    outputs = {"systrace_args": "generated/amd64/linux/linux_systrace_args.c", "syscalls": "generated/amd64/linux/linux_syscalls.c", "sysproto_h": "generated/amd64/linux/linux_proto.h", "syscall_h": "generated/amd64/linux/linux_syscall.h", "init_sysent": "generated/amd64/linux/linux_sysent.c"},
     visibility = ["//sys/cddl/dev/systrace:__pkg__"])
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
@@ -26,7 +24,7 @@ cc_library(name = "linux_syscall_tables_headers", hdrs = [":linux_syscall_tables
 
 # Source prerequisites from independent hardware module Make controls.
 bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_proto.h", "linux_syscall.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/ntsync:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/amd64/sgx:__pkg__", "//sys/compat/linux:__pkg__", "//sys/dev/ntsync:__pkg__", "//sys/amd64/linux:__pkg__", "//sys/x86/linux:__pkg__"])
 
 filegroup(name = "module_header_sources", srcs = ["linux.h", "linux_proto.h", "linux_syscall.h"],
     visibility = ["//sys/amd64/include:__pkg__"])
@@ -35,7 +33,7 @@ bsd_source_headers(name = "compat_services_module_context_0", hdrs = ["linux_emu
     visibility = ["//sys/amd64/linux:__pkg__", "//sys/compat/linprocfs:__pkg__", "//sys/compat/linux:__pkg__"])
 
 bsd_source_headers(name = "compat_services_module_context_2", hdrs = ["linux.h", "linux_emul_md.h", "linux_proto.h", "linux_syscall.h"], includes = [],
-    visibility = ["//sys/compat/linux:__pkg__"])
+    visibility = ["//sys/compat/linux:__pkg__", "//sys/amd64/linux:__pkg__"])
 
 load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
 
@@ -46,3 +44,70 @@ amd64_generic_module_objects(name = "linux_common_linux_pkru_module", srcs = ["l
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
 
 filegroup(name = "compat_services_architecture_header_sources", srcs = ["linux.h", "linux_emul_md.h", "linux_proto.h"], visibility = ["//sys/amd64/include:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_1", hdrs = ["linux.h", "linux_emul_md.h", "linux_syscall.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
+
+amd64_generic_module_objects(name = "linux64_linux_dummy_machdep_module", srcs = ["linux_dummy_machdep.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:compat_services_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_machdep_module", srcs = ["linux_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_exec_machdep_headers", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_syscalls_module", srcs = [":module_syscalls_source"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :module_syscalls_source)=/usr/src/sys/amd64/linux/linux_syscalls.c", "-fdebug-prefix-map=$(execpath :module_syscalls_source)=/usr/src/sys/amd64/linux/linux_syscalls.c", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_sysent_module", srcs = [":module_sysent_source", "linux_sysfs.c"],
+    deps = ["//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:tracing_remaining_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :module_sysent_source)=/usr/src/sys/amd64/linux/linux_sysent.c", "-fdebug-prefix-map=$(execpath :module_sysent_source)=/usr/src/sys/amd64/linux/linux_sysent.c", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_sysvec_module", srcs = ["linux_sysvec.c"],
+    deps = ["//sys/vm:lowlevel_kernel_db_trace_headers", "//sys/x86/linux:linux64_module_context_0", "//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_22"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_ptrace_registers_module", srcs = ["linux_ptrace_registers.c"],
+    deps = ["//sys/amd64/linux:compat_services_module_context_2", "//sys/compat/linux:linux64_module_context_26"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = [], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "linux64_linux_support_module", srcs = ["linux_support.S"],
+    deps = ["//sys/kern:generic_assym_header", "//sys/amd64/linux:module_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-x", "assembler-with-cpp", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/machine=/usr/src/sys/amd64/include", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/linux=/usr/src/sys/amd64/linux", "-fmacro-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux", "-fdebug-prefix-map=$(BINDIR)/sys/amd64/include/linux64_module_headers.includes/amd64/linux=/usr/src/sys/amd64/linux"], local_defines = ["LOCORE"], header_overrides = ["//sys/amd64/include:linux64_module_headers"], preinclude_headers = [], textual_hdrs = [], convert_ctf = False)
+
+bsd_source_headers(name = "linux_layout_extra_headers", hdrs = ["linux.h", "linux_syscall.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", _LINUX_LAYOUT_FLAGS = "AMD64_KERNEL_FLAGS", _LINUX_LAYOUT_WARNINGS = "AMD64_KERNEL_WARNING_FLAGS", _LINUX_LAYOUT_DEBUG = "AMD64_KERNEL_DEBUG_FLAGS", _LINUX_LAYOUT_HEADERS = "AMD64_KERNEL_HEADER_DEPS")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+
+# Original NOSAN_CFLAGS layout recipe retains common symbols; never link this object into linux64.ko.
+cc_library(name = "module_layout_object", srcs = ["linux_genassym.c"], deps = ["//sys/amd64/include:linux64_module_headers"] + ["//sys/amd64/linux:linux_layout_extra_headers", "//sys/compat/linux:linux_layout_extra_headers", "//sys/x86/linux:linux_layout_extra_headers"] + _LINUX_LAYOUT_HEADERS + ["//sys/kern:generic_offset_header"], copts = _LINUX_LAYOUT_FLAGS + _LINUX_LAYOUT_WARNINGS + _LINUX_LAYOUT_DEBUG, local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "module_layout", group = ":module_layout_object", out = "module_layout/linux_genassym.o")
+kernel_constants(name = "module_assym", object = ":module_layout", kind = "assym", output = "module_layout/linux_assym.h", prerequisites = ["//sys/kern:generic_genoffset_check_object"])
+cc_library(name = "module_assym_header", hdrs = [":module_assym"], strip_include_prefix = "module_layout", visibility = ["//sys/amd64/linux:__pkg__"])
+
+# The module uses the same native syscall producer as systrace.
+filegroup(name = "module_sysent_source", srcs = [":linux_syscall_tables"], output_group = "init_sysent")
+filegroup(name = "module_syscalls_source", srcs = [":linux_syscall_tables"], output_group = "syscalls")
+filegroup(name = "module_generated_headers", srcs = [":linux_syscall_tables_sysproto_h", ":linux_syscall_tables_syscall_h", "linux.h", "linux_emul_md.h"], visibility = ["//sys/amd64/include:__pkg__"])
+filegroup(name = "module_generated_headers_for_arch", srcs = [":module_generated_headers"], visibility = ["//sys/amd64/include:__pkg__"])
+
+bsd_source_headers(name = "linux_locore_vdso_headers", hdrs = ["linux_syscall.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])
+
+load("//tools/build/bazel:native_cc.bzl", "bsd_source_alias")
+bsd_source_alias(name = "module_locore_source", source = "linux_locore.asm", output = "module_vdso/linux_locore.S")
+
+cc_library(name = "module_linux_locore" , srcs = [":module_locore_source"], deps = ["//sys/kern:generic_assym_header", "//sys/amd64/include:linux64_module_headers", "//sys/amd64/linux:linux_locore_vdso_headers", "//sys/sys:kernel_headers", "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers", "//sys/bsm:kernel_headers", ":module_assym_header"], copts = ["-fPIC", "-pipe", "-O2", "-Werror", "-mcmodel=small", "-msoft-float", "-nostdinc", "-fasynchronous-unwind-tables", "-fno-omit-frame-pointer", "-foptimize-sibling-calls", "-fno-stack-protector", "-x", "assembler-with-cpp"], local_defines = ["LOCORE"], features = ["-bsd_kernel_freestanding"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "module_linux_locore_object", group = ":module_linux_locore", out = "module_vdso/linux_locore.o")
+
+bsd_source_headers(name = "linux_vdso_gtod_vdso_headers", hdrs = ["linux.h", "linux_syscall.h"], includes = [], visibility = ["//sys/amd64/linux:__pkg__"])
+
+cc_library(name = "module_linux_vdso_gtod" , srcs = ["linux_vdso_gtod.c"], deps = ["//sys/amd64/include:linux64_module_headers", "//include:linux_vdso_gtod_vdso_headers", "//sys/amd64/linux:linux_vdso_gtod_vdso_headers", "//sys/compat/linux:linux_vdso_gtod_vdso_headers", "//sys/x86/linux:linux_vdso_gtod_vdso_headers", "//sys/sys:kernel_headers", "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers", "//sys/bsm:kernel_headers"], copts = ["-fPIC", "-pipe", "-O2", "-Werror", "-mcmodel=small", "-msoft-float", "-nostdinc", "-fasynchronous-unwind-tables", "-fno-omit-frame-pointer", "-foptimize-sibling-calls", "-fno-stack-protector"], local_defines = [], features = ["-bsd_kernel_freestanding"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "module_linux_vdso_gtod_object", group = ":module_linux_vdso_gtod", out = "module_vdso/linux_vdso_gtod.o")
+
+load("//tools/build/bazel:bsd_vdso.bzl", "bsd_vdso_link")
+# Match the Linux VDSO ABI/script, not the native BSD VDSO layout.
+bsd_vdso_link(name = "module_vdso", objects = [":module_linux_locore_object", ":module_linux_vdso_gtod_object"], script = "linux_vdso.lds.s",
+    linkopts = ["--shared", "--eh-frame-hdr", "-soname=linux-vdso.so.1", "--no-undefined", "--hash-style=both", "-warn-common", "-nostdlib", "--strip-debug", "-s", "--build-id=sha1", "-Bsymbolic"], output = "module_vdso/linux_vdso.so.o", visibility = ["//sys/compat/linux:__pkg__"])

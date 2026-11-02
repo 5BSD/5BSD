@@ -91,8 +91,11 @@ OpenSSL crypto is now separately qualified in
 [its module record](OSSL-MODULE-QUALIFICATION.md), bringing current local
 presence to 727/729 at that checkpoint. VMM is now separately qualified in
 [its module/layout record](VMM-MODULE-QUALIFICATION.md), bringing current local
-presence to 728/729. Linux64 still requires native declarations and its specific
-generated-input/assembly work. Do not omit its original controls.
+presence to 728/729 at that checkpoint. Linux64 now separately passes its
+[module/generated-input qualification](LINUX64-MODULE-QUALIFICATION.md), bringing
+local declaration presence to all 729 selected amd64 directories. Full current
+kernel/module aggregation, other configurations/targets and system gates remain
+open; this is not full-system completion.
 
 Both native profiles and RTWN alternatives used maintained build-bsd format-5
 inputs, all sixteen logical CPUs and disk reserve guards, all exiting zero.

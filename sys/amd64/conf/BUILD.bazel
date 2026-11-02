@@ -199,9 +199,9 @@ cc_library(name = "core_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
 cc_library(name = "core_kernel_opt_kstack_usage_prof_header", hdrs = [":opt_kstack_usage_prof"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/compat/linux:__pkg__"])
 cc_library(name = "core_kernel_opt_mac_header", hdrs = [":opt_mac"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/compat/linux:__pkg__"])
 cc_library(name = "core_kernel_opt_maxphys_header", hdrs = [":opt_maxphys"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_maxusers_header", hdrs = [":opt_maxusers"],
@@ -538,7 +538,7 @@ cc_library(name = "linuxkpi_kernel_opt_stack_header", hdrs = [":opt_stack"],
     strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 
 cc_library(name = "linuxkpi_kernel_opt_usb_header", hdrs = [":opt_usb"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/contrib/dev/rtw88:__pkg__", "//sys/dev/otus:__pkg__", "//sys/dev/rtwn:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/contrib/dev/rtw88:__pkg__", "//sys/dev/otus:__pkg__", "//sys/dev/rtwn:__pkg__", "//sys/compat/linux:__pkg__"])
 
 cc_library(name = "linuxkpi_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
     strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

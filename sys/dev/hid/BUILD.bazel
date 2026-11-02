@@ -193,3 +193,6 @@ amd64_generic_module_objects(name = "xb360gp_xb360gp_module", srcs = ["xb360gp.c
 
 bsd_source_headers(name = "usb_remaining_module_context_1", hdrs = ["hid.h", "hidrdesc.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["hidraw.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

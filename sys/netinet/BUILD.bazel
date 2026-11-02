@@ -1172,3 +1172,6 @@ bsd_source_headers(name = "chelsio_module_context_11", hdrs = ["in.h", "in_kdtra
 
 bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["if_ether.h", "in.h", "in_systm.h", "ip.h"], includes = [],
     visibility = ["//sys/dev/iwm:__pkg__"])
+
+bsd_source_headers(name = "linux64_module_context_1", hdrs = ["icmp6.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "tcp.h", "tcp_fsm.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])

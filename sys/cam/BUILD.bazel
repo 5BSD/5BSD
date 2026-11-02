@@ -359,3 +359,6 @@ amd64_generic_module_objects(name = "ctl_ctl_util_module", srcs = ["ctl/ctl_util
 amd64_generic_module_objects(name = "ctl_scsi_ctl_module", srcs = ["ctl/scsi_ctl.c"],
     deps = ["//sys/cam:compat_services_module_context_14", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "linux64_module_context_0", hdrs = ["scsi/scsi_sg.h"], includes = [],
+    visibility = ["//sys/compat/linux:__pkg__"])
