@@ -761,3 +761,11 @@ cc_library(name = "intel_nic_bus_if_headers", hdrs = [":intel_nic_bus_if_header_
 filegroup(name = "intel_nic_device_if_header_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "intel_nic_device_if_headers", hdrs = [":intel_nic_device_if_header_file"],
     strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "mlx_bus_if_header_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "mlx_bus_if_headers", hdrs = [":mlx_bus_if_header_file"],
+    strip_include_prefix = "bus_if.generated", visibility = ["//sys/dev/mlx5:__pkg__"])
+
+filegroup(name = "mlx_device_if_header_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "mlx_device_if_headers", hdrs = [":mlx_device_if_header_file"],
+    strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/mlx5:__pkg__"])

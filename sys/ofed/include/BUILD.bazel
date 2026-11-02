@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["rdma/ib_verbs.h", "rdma/signature.h", "//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h"],
+    includes = [".", "uapi"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

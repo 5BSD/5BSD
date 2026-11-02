@@ -641,3 +641,15 @@ bsd_source_headers(name = "intel_nic_kernel_if_ice_iflib_headers", hdrs = ["in.h
     visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
 bsd_source_headers(name = "intel_nic_kernel_ice_iflib_txrx_headers", hdrs = ["in.h", "sctp.h", "sctp_uio.h", "udp.h"],
     visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["in.h", "in_pcb.h", "in_var.h", "ip.h", "tcp_lro.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_eq_headers", hdrs = ["if_ether.h", "in.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_en_main_headers", hdrs = ["if_ether.h", "in.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "tcp_ratelimit.h", "udp.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_en_rx_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_lro.h", "udp.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

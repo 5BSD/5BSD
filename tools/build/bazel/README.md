@@ -47526,3 +47526,7 @@ code/CTF/policy/input checks, bounded string/relocation proof and remaining gate
 [INTEL-NIC-KERNEL-QUALIFICATION.md](INTEL-NIC-KERNEL-QUALIFICATION.md) records
 69 native e1000/ixgbe/ice objects, exact code/CTF/policy/input checks and bhyve
 header/action-contract compatibility with an actual post-move binary build.
+
+[MLX-KERNEL-QUALIFICATION.md](MLX-KERNEL-QUALIFICATION.md) records 52 native
+Mellanox core/Ethernet/acceleration objects, ordered OFED/UAPI/LinuxKPI source
+contexts, exact code/CTF/policy/input proof and remaining device/system gates.

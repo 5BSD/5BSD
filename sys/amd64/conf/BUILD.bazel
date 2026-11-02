@@ -574,3 +574,15 @@ cc_library(name = "intel_nic_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
 cc_library(name = "intel_nic_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+cc_library(name = "mlx_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "mlx_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "mlx_kernel_opt_ipsec_header", hdrs = [":opt_ipsec"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "mlx_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "mlx_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "mlx_kernel_opt_rss_header", hdrs = [":opt_rss"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])

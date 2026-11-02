@@ -956,3 +956,7 @@ bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["_vm_radix.h
     visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
 bsd_source_headers(name = "intel_nic_kernel_if_ice_iflib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

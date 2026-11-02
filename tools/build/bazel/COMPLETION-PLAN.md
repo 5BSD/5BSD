@@ -178,6 +178,15 @@ final products, leaving 1,034 unmatched. See INTEL-NIC-KERNEL-QUALIFICATION.md.
 Full-system/module, other-architecture, device/guest/runtime and performance gates
 remain open.
 
+## Mellanox checkpoint (2026-11-02)
+
+52 native amd64 GENERIC objects pass code/CTF, compiler policy/input/compatibility
+header order and nondebug relocation checks. Explicit OFED/UAPI child exports
+preserve source ownership. Known graph reconciliation has 1,478 source matches
+plus six name-only matches among 2,466 final products, leaving 982 unmatched.
+See MLX-KERNEL-QUALIFICATION.md. Full-system/module, other-architecture,
+device/runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
