@@ -10,7 +10,13 @@ cc_library(name = "user_headers", hdrs = ["iscsi_ioctl.h", "iscsi_proto.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "rdma_module_context_0", hdrs = ["icl.h", "iscsi_proto.h"], includes = [],
-    visibility = ["//sys/dev/iser:__pkg__"])
+    visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 
 filegroup(name = "icl_conn_if_module_header", srcs = [":icl_conn_if"], output_group = "header")
-cc_library(name = "icl_conn_if_headers", hdrs = [":icl_conn_if_module_header"], strip_include_prefix = "icl_conn_if.generated", visibility = ["//sys/dev/iser:__pkg__"])
+cc_library(name = "icl_conn_if_headers", hdrs = [":icl_conn_if_module_header"], strip_include_prefix = "icl_conn_if.generated", visibility = ["//sys/dev/iser:__pkg__", "//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_0", hdrs = ["icl.h", "iscsi.h", "iscsi_ioctl.h", "iscsi_proto.h"], includes = [],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["iscsi_proto.h"], includes = [],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])

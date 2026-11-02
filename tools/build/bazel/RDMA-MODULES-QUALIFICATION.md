@@ -18,8 +18,8 @@ No host installation, reboot, upgrade or module loading occurred.
 
 All 28 untouched original Make controls build and install in isolated object/
 stage directories, using the actual selected kernel SYSDIR, tied-kernel setting,
-parent option exports, original toolchain and all 16 logical CPUs. All 561
-consumed option-header occurrences match selected kernel headers byte-for-byte.
+parent option exports, original toolchain and all 16 logical CPUs. All 554
+consumed module option-header occurrences match selected kernel headers byte-for-byte.
 
 Both native CTF/debug and plain profiles pass through maintained build-bsd
 format-5 inputs and the frozen SDK. Each has 206 actual successful uncached
@@ -101,3 +101,13 @@ declaration presence, not a percentage of full qualification. ARM64/RISC-V build
 current full GENERIC kernel refresh, complete world/rescue/library parity,
 options, installation/pkgbase, bootstrap/hardware/publication, VM/runtime and
 performance gates remain open. Make remains default pending those gates.
+
+### Supplementary option-count correction
+
+The initial supplementary observer skipped directory/KMOD mismatches and counted
+some genoffset host-helper dependency files. The corrected object-driven audit
+requires every original module metadata TARGET and -MF file; its option count
+matches the complete original/native compiler-input review. See
+[Chelsio qualification](CHELSIO-MODULES-QUALIFICATION.md) and the retained
+option-audit-correction.json diagnostic in this cohort's review directory.
+No native input, artifact or core compiler-coverage result changed.

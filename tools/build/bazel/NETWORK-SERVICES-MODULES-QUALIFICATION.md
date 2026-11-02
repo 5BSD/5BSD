@@ -22,7 +22,7 @@ the selected kernel's actual SYSDIR and supply it before module parsing, with
 MODULE_TIED and inherited parent exports. The rejected first controls remain
 recorded: six early source-lookup failures from omitted SYSDIR were control
 errors, not module-source defects. See [inventory context](MODULE-INVENTORY-CONTEXT.md).
-All 280 consumed option-header occurrences match the selected kernel bytes.
+All 365 consumed module option-header occurrences match the selected kernel bytes.
 
 Each native profile has 188 actual successful uncached compiler witnesses.
 Compiler executable/source hashes, definitions, semantic flags, warning order,
@@ -100,3 +100,13 @@ now cover 665 of 729 selected amd64 leaves (64 remain); this is BUILD presence,
 not a percentage of full-system qualification. ARM64/RISC-V conversion/builds,
 current full GENERIC kernel refresh, world/rescue/libraries/options, pkgbase,
 hardware/publication/bootstrap and VM/runtime/performance gates remain open.
+
+### Supplementary option-count correction
+
+The initial supplementary observer skipped directory/KMOD mismatches and counted
+some genoffset host-helper dependency files. The corrected object-driven audit
+requires every original module metadata TARGET and -MF file; its option count
+matches the complete original/native compiler-input review. See
+[Chelsio qualification](CHELSIO-MODULES-QUALIFICATION.md) and the retained
+option-audit-correction.json diagnostic in this cohort's review directory.
+No native input, artifact or core compiler-coverage result changed.

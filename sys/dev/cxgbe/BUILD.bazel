@@ -40,3 +40,290 @@ exports_files(["firmware/t7fw_cfg.txt"], visibility = ["//sys/modules/cxgbe/t7_f
 exports_files(["firmware/t7fw_cfg_fpga.txt"], visibility = ["//sys/modules/cxgbe/t7_firmware:__pkg__"])
 
 exports_files(["firmware/t7fw_cfg_uwire.txt"], visibility = ["//sys/modules/cxgbe/t7_firmware:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "chelsio_module_context_0", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "crypto/t4_crypto.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_1", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "cxgbei/cxgbei.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "tom/t4_tls.h", "tom/t4_tom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_tcb.h", "cxgbei/cxgbei.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "tom/t4_tls.h", "tom/t4_tom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_3", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_4", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "t4_smt.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_5", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_6", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_7", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_8", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "cudbg/cudbg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h", "t4_l2t.h", "t4_mp_ring.h", "t4_smt.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_9", hdrs = ["t4_mp_ring.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_10", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "t4_mp_ring.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_11", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_smt.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_12", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_13", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "cudbg/cudbg.h", "cudbg/cudbg_lib_common.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_14", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "cudbg/cudbg.h", "cudbg/cudbg_lib_common.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_15", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "cudbg/cudbg.h", "cudbg/cudbg_entity.h", "cudbg/cudbg_lib.h", "cudbg/cudbg_lib_common.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_16", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "cudbg/cudbg.h", "cudbg/cudbg_entity.h", "cudbg/cudbg_lib_common.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_17", hdrs = ["common/t4_hw.h", "cudbg/cudbg.h", "cudbg/cudbg_lib_common.h", "cudbg/fastlz.h", "osdep.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_18", hdrs = ["cudbg/fastlz.h", "osdep.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_19", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "crypto/t4_crypto.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h", "t4_l2t.h", "t4_mp_ring.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_20", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_mp_ring.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_21", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "iw_cxgbe/iw_cxgbe.h", "iw_cxgbe/t4.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_22", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "iw_cxgbe/iw_cxgbe.h", "iw_cxgbe/t4.h", "iw_cxgbe/user.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_23", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "iw_cxgbe/iw_cxgbe.h", "iw_cxgbe/t4.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_24", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "iw_cxgbe/iw_cxgbe.h", "iw_cxgbe/t4.h", "iw_cxgbe/user.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_25", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "tom/t4_tls.h", "tom/t4_tom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_26", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_27", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_28", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_29", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_tcb.h", "crypto/t4_crypto.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_30", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "common/t4_regs.h", "common/t4_regs_values.h", "common/t4_tcb.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_clip.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+bsd_source_headers(name = "chelsio_module_context_31", hdrs = ["adapter.h", "common/common.h", "common/t4_hw.h", "common/t4_msg.h", "firmware/t4fw_interface.h", "offload.h", "osdep.h", "t4_ioctl.h", "t4_l2t.h", "tom/t4_tls.h", "tom/t4_tom.h", "tom/t4_tom_l2t.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+filegroup(name = "t4_if_module_header", srcs = [":t4_if"], output_group = "header")
+cc_library(name = "t4_if_headers", hdrs = [":t4_if_module_header"], strip_include_prefix = "t4_if.generated", visibility = ["//sys/dev/cxgbe:__pkg__"])
+
+filegroup(name = "t4_if_module_source", srcs = [":t4_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ccr_t4_crypto_module", srcs = ["crypto/t4_crypto.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cxgbei_cxgbei_module", srcs = ["cxgbei/cxgbei.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_1", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/cam:chelsio_module_context_0", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/dev/iscsi:chelsio_module_context_0", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cxgbei_icl_cxgbei_module", srcs = ["cxgbei/icl_cxgbei.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:opencrypto_kernel_criov_headers", "//sys/netinet:chelsio_module_context_1", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/iscsi:rdma_module_context_0", "//sys/cam:chelsio_module_context_1", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iscsi:icl_conn_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_2"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cc_if_cc_module", srcs = ["if_cc.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ccv_if_ccv_module", srcs = ["if_ccv.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_clip_module", srcs = ["t4_clip.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:chelsio_module_context_0", "//sys/vm:usb_net_usie_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_3"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_filter_module", srcs = ["t4_filter.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_4"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_hw_module", srcs = ["common/t4_hw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_if_module", srcs = [":t4_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/cxgbe:t4_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :t4_if_module_source)=t4_if.c", "-fdebug-prefix-map=$(execpath :t4_if_module_source)=t4_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_iov_module", srcs = ["t4_iov.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:chelsio_module_context_2", "//sys/vm:usb_net_usie_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/dev/cxgbe:t4_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_6"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_keyctx_module", srcs = ["crypto/t4_keyctx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_l2t_module", srcs = ["t4_l2t.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_7"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_main_module", srcs = ["t4_main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:chelsio_module_context_3", "//sys/vm:pci_ethernet_headers", "//sys/netinet:chelsio_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/ddb:net_kernel_debugnet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/cxgbe:t4_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_8"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_mp_ring_module", srcs = ["t4_mp_ring.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_9"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_netmap_module", srcs = ["t4_netmap.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/net:chelsio_module_context_4", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_sched_module", srcs = ["t4_sched.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_sge_module", srcs = ["t4_sge.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:pci_ethernet_headers", "//sys/net:chelsio_module_context_5", "//sys/netinet:chelsio_module_context_3", "//sys/netinet6:tracing_core_headers", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_10"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_smt_module", srcs = ["t4_smt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_11"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_tpt_module", srcs = ["t4_tpt.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_12"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t4_tracer_module", srcs = ["t4_tracer.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_6", "//sys/dev/pci:pci_ethernet_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_6"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_cudbg_common_module", srcs = ["cudbg/cudbg_common.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_13"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_cudbg_flash_utils_module", srcs = ["cudbg/cudbg_flash_utils.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_14"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_cudbg_lib_module", srcs = ["cudbg/cudbg_lib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_15"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_cudbg_wtp_module", srcs = ["cudbg/cudbg_wtp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_16"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_fastlz_api_module", srcs = ["cudbg/fastlz_api.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_legacy_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_17"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_fastlz_module", srcs = ["cudbg/fastlz.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_legacy_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_18"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t6_kern_tls_module", srcs = ["crypto/t6_kern_tls.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_4", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_19"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbe_t7_kern_tls_module", srcs = ["crypto/t7_kern_tls.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:core_kernel_subr_param_headers", "//sys/netinet:chelsio_module_context_4", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_19"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbev_t4_vf_module", srcs = ["t4_vf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_20"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgbev_t4vf_hw_module", srcs = ["common/t4vf_hw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:chelsio_module_context_0", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxl_if_cxl_module", srcs = ["if_cxl.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxlv_if_cxlv_module", srcs = ["if_cxlv.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_cm_module", srcs = ["iw_cxgbe/cm.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:chelsio_module_context_5", "//sys/net:chelsio_module_context_7", "//sys/netinet6:rdma_module_context_0", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_21", "//sys/ofed/include:chelsio_module_context_0", "//sys/compat/linuxkpi/common/include:chelsio_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_cq_module", srcs = ["iw_cxgbe/cq.c", "iw_cxgbe/provider.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:chelsio_module_context_8", "//sys/netinet:chelsio_module_context_6", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_22", "//sys/ofed/include:chelsio_module_context_1", "//sys/compat/linuxkpi/common/include:network_families_module_context_12"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_device_module", srcs = ["iw_cxgbe/device.c", "iw_cxgbe/ev.c", "iw_cxgbe/id_table.c", "iw_cxgbe/resource.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:chelsio_module_context_8", "//sys/netinet:chelsio_module_context_6", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_23", "//sys/ofed/include:chelsio_module_context_1", "//sys/compat/linuxkpi/common/include:network_families_module_context_12"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_mem_module", srcs = ["iw_cxgbe/mem.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:chelsio_module_context_8", "//sys/netinet:chelsio_module_context_6", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_23", "//sys/ofed/include:network_families_module_context_5", "//sys/compat/linuxkpi/common/include:network_families_module_context_12"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_qp_module", srcs = ["iw_cxgbe/qp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:chelsio_module_context_7", "//sys/net:chelsio_module_context_8", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_24", "//sys/ofed/include:chelsio_module_context_1", "//sys/compat/linuxkpi/common/include:network_families_module_context_12"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "nvmf_che_nvmf_che_module", srcs = ["nvmf/nvmf_che.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:opencrypto_kernel_criov_headers", "//sys/netinet:chelsio_module_context_1", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_25"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_connect_module", srcs = ["tom/t4_connect.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:chelsio_module_context_9", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_8", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_26"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_cpl_io_module", srcs = ["tom/t4_cpl_io.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:storage_core_kernel_nvme_ctrlr_headers", "//sys/netinet:chelsio_module_context_9", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/iscsi:chelsio_module_context_2", "//sys/dev/nvmf:chelsio_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_27"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_ddp_module", srcs = ["tom/t4_ddp.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:tracing_remaining_headers", "//sys/netinet:chelsio_module_context_8", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/cam:chelsio_module_context_2", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_25"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_listen_module", srcs = ["tom/t4_listen.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:chelsio_module_context_9", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_10", "//sys/netinet6:chelsio_module_context_4", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_28"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_tls_module", srcs = ["tom/t4_tls.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_1", "//sys/net:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_29"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_tom_module", srcs = ["tom/t4_tom.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:chelsio_module_context_10", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_11", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_30"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "t4_tom_t4_tom_l2t_module", srcs = ["tom/t4_tom_l2t.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:chelsio_module_context_10", "//sys/vm:usb_net_usie_headers", "//sys/netinet:chelsio_module_context_1", "//sys/netinet6:tracing_core_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/cxgbe:chelsio_module_context_31"], preinclude_headers = [], textual_hdrs = [])

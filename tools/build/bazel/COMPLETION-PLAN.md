@@ -1163,3 +1163,18 @@ retain exact sections/relocations. Local BUILD presence is 679/729 (50 remain),
 not full-system completion. No frontend CLI/signing/publication policy change;
 Make remains default and cross-target/full world/kernel/packages/runtime and
 performance gates remain open.
+
+### Chelsio modules and complete option coverage (November 2, 2026)
+
+[Qualification](CHELSIO-MODULES-QUALIFICATION.md): eleven selected amd64 leaves,
+50 compiler contexts and exactly 11,730 original/native consumed occurrences per
+plain/CTF profile. All eleven plain ELFs are whole-file exact untouched Make;
+CTF/debug payloads/CRCs and 33 install records match, with actual ordered link
+parameter captures. Four compiled SDT/DTrace modules retain exact sections.
+A supplementary option observer's directory/KMOD and host-helper coverage bug
+was found and corrected: mandatory object-driven coverage now agrees with full
+compiler inputs (Chelsio127, network365, RDMA554 option occurrences). No native
+artifact/input result was changed; correction diagnostics retain old behavior.
+BUILD presence is 690/729 (39 remain), not full qualification. No helper/runtime/
+Make/frontend/signing/publication policy change; full architecture/world/kernel/
+packages/bootstrap/runtime/performance gates remain open and Make stays default.

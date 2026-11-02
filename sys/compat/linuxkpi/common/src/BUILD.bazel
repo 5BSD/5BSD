@@ -290,3 +290,7 @@ amd64_generic_module_objects(name = "mthca_lkpi_iic_if_module", srcs = [":lkpi_i
 amd64_generic_module_objects(name = "krping_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
     deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iw_cxgbe_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6", "LINUX_TYPES_DEFINED"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

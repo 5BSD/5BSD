@@ -12,7 +12,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_re_netmap.h", "netmap_kern.h", "netmap_mbq.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
 
 # Physical prerequisites consumed by independent network-support module builds.
-bsd_source_headers(name = "network_support_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"], visibility = ["//sys/net:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ena:__pkg__"])
+bsd_source_headers(name = "network_support_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"], visibility = ["//sys/net:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],

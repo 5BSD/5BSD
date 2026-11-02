@@ -12,7 +12,7 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['nvmf.h', 'nvmf_proto.h'], str
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["nvmf.h", "nvmf_proto.h"], includes = [],
-    visibility = ["//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/dev/usb:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["host/nvmf_var.h", "nvmf.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
     visibility = ["//sys/dev/nvmf:__pkg__"])
@@ -21,7 +21,7 @@ bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["host/nv
     visibility = ["//sys/dev/nvmf:__pkg__"])
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_2", hdrs = ["nvmf.h", "nvmf_proto.h", "nvmf_tcp.h", "nvmf_transport.h", "nvmf_transport_internal.h"], includes = [],
-    visibility = ["//sys/dev/nvmf:__pkg__"])
+    visibility = ["//sys/dev/nvmf:__pkg__", "//sys/dev/cxgbe:__pkg__"])
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_3", hdrs = ["nvmf.h", "nvmf_proto.h", "nvmf_transport.h", "nvmf_transport_internal.h"], includes = [],
     visibility = ["//sys/dev/nvmf:__pkg__"])
@@ -82,3 +82,6 @@ amd64_generic_module_objects(name = "nvmft_nvmft_subr_module", srcs = ["controll
 amd64_generic_module_objects(name = "nvmft_nvmft_qpair_module", srcs = ["controller/nvmft_qpair.c"],
     deps = ["//sys/dev/nvmf:storage_tcp_ktest_module_context_6", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_tcp_ktest_module_context_2"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+bsd_source_headers(name = "chelsio_module_context_2", hdrs = ["nvmf_proto.h"], includes = [],
+    visibility = ["//sys/dev/cxgbe:__pkg__"])

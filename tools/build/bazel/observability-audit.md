@@ -10446,3 +10446,13 @@ were added. Source-line counts include macros/comments; this is not a claim of
 missing instrumentation elsewhere, live probe delivery, audit completeness or
 RDMA/device runtime behavior. Raw bindings and actual section comparisons:
 bazel-rdma-modules-review-r1-20261102/observability-review.json.
+
+## Chelsio modules (November 2, 2026)
+
+[Qualification](CHELSIO-MODULES-QUALIFICATION.md): bounded 50 physical C/schema
+input scan records 448 SDT/DTrace/KTR/audit candidate lines (including comments/
+macros). All four modules with compiled SDT/DTrace sections preserve exact
+payloads and relocations. No probes were added. No hardware/RDMA/TLS/storage
+offload runtime, live events, audit completeness or instrumentation-absence
+claim is established. Raw bindings: bazel-chelsio-modules-review-r1-20261102/
+observability-review.json.
