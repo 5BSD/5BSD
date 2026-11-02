@@ -32,3 +32,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["sha256.h", "sha512.h"], stri
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["sha256.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha256.h"],
+    visibility = ["//sys/netinet:__pkg__"])

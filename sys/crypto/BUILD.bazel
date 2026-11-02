@@ -25,3 +25,8 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 ) for arch in ["arm64", "riscv"]]
 
 exports_files(["sha1.c"], visibility = ["//sys/netgraph:__pkg__", "//sys/netinet:__pkg__"])
+
+# IPv4 built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/netinet:__pkg__"])

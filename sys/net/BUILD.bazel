@@ -661,3 +661,89 @@ bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["vnet.h"],
 # Virtual-memory built-in prerequisites.
 bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["if.h", "vnet.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_algo_headers", hdrs = ["if.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["ethernet.h", "if.h", "if_gif.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_id_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["if.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "pfil.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["if.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["ethernet.h", "if.h", "if_llatbl.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_var.h", "ifq.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["if.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_lagg.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "infiniband.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["if.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["if.h", "netisr.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])

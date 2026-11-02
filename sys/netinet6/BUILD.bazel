@@ -145,3 +145,89 @@ bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["in6.h"],
 # Virtual-memory built-in prerequisites.
 bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["in6.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_algo_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_id_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["in6.h", "ip6_ecn.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_rss.h", "in6_var.h", "ip6_var.h", "nd6.h", "tcp6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["in6.h", "in6_pcb.h", "ip6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["in6.h", "in6_pcb.h", "ip6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["in6.h", "in6_fib.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h", "tcp6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_rss.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["in6.h", "in6_pcb.h", "tcp6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["in6.h", "in6_pcb.h", "in6_rss.h", "in6_var.h", "ip6_var.h", "scope6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])

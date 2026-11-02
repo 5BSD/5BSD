@@ -9499,3 +9499,15 @@ source hashes/lines. Fault/reclaim, paging/swap, mappings, object lifecycle and
 UMA event delivery remain matching-kernel runtime gates. Review shared probes
 and measured disabled/enabled overhead before adding hot-path events. No new
 runtime probe/policy change or event-delivery qualification is claimed.
+
+## IPv4/TCP kernel built-ins (2026-11-02)
+
+Forty-three unchanged selected sys/netinet sources retain original machine code
+and CTF against Make. The bounded scan recognizes actual TCP/IP/UDP/MIB probe
+wrappers, not only generic SDT tokens: fourteen sources have recognized markers,
+twenty-nine do not. The initial narrower scan is retained separately. See
+[IPv4/TCP qualification](IPV4-KERNEL-QUALIFICATION.md) and its source-bound lines,
+physical interfaces and symbolic relocation comparisons. Packet/session,
+retransmit/timer/MIB events and audit delivery remain matching-kernel runtime
+checks. No host network/tracing activation or new hot-path instrumentation was
+performed; review shared coverage and measured overhead before adding events.

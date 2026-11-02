@@ -57,3 +57,37 @@ bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["mac_framework
     visibility = ["//sys/vm:__pkg__"])
 bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet:__pkg__"])

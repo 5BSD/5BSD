@@ -214,3 +214,222 @@ bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["in.h", "
 # Virtual-memory built-in prerequisites.
 bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["in.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["if_ether.h", "in.h", "in_fib.h", "in_var.h", "ip_carp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["igmp.h", "igmp_var.h", "in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip_mroute.h", "ip_options.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["if_ether.h", "igmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip_carp.h", "ip_var.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["in.h", "in_systm.h", "ip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["in.h", "in_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["in.h", "in_fib.h", "in_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_algo_headers", hdrs = ["in.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_ecn.h", "ip_encap.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_id_headers", hdrs = ["in.h", "in_kdtrace.h", "ip.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["in.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["igmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip_mroute.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_pcb_var.h", "in_var.h", "ip6.h", "ip_var.h", "tcp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["in.h", "in_pcb.h", "in_systm.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["in.h", "in_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["in.h", "in_kdtrace.h", "in_var.h", "ip.h", "ip_icmp.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["in.h", "in_pcb.h", "in_rss.h", "in_var.h", "ip.h", "tcp.h", "udp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["in.h", "in_systm.h", "ip.h", "ip6.h", "ip_ecn.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["in.h", "in_kdtrace.h", "ip_encap.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip_icmp.h", "ip_options.h", "ip_var.h", "sctp_crc32.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["icmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip_icmp.h", "ip_options.h", "ip_var.h", "sctp.h", "sctp_uio.h", "tcp.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["igmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip_carp.h", "ip_encap.h", "ip_icmp.h", "ip_mroute.h", "ip_options.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip_icmp.h", "ip_options.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip_mroute.h", "ip_options.h", "ip_var.h", "sctp.h", "sctp_crc32.h", "sctp_uio.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["in.h", "in_kdtrace.h", "in_rss.h", "ip.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["if_ether.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip_icmp.h", "ip_mroute.h", "ip_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["icmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_options.h", "ip_var.h", "sctp.h", "sctp_auth.h", "sctp_constants.h", "sctp_crc32.h", "sctp_header.h", "sctp_lock_bsd.h", "sctp_os.h", "sctp_os_bsd.h", "sctp_pcb.h", "sctp_structs.h", "sctp_sysctl.h", "sctp_uio.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_ecn.h", "tcp_fsm.h", "tcp_seq.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["icmp6.h", "icmp_var.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_options.h", "ip_var.h", "tcp.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_offload.h", "tcp_seq.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "tcp.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_seq.h", "tcp_var.h", "tcpip.h", "udp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "ip.h", "ip6.h", "ip_options.h", "ip_var.h", "tcp.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_offload.h", "tcp_seq.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_offload.h", "tcp_var.h", "toecore.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_options.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["icmp6.h", "icmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_var.h", "tcp.h", "tcp_accounting.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_offload.h", "tcp_seq.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_options.h", "ip_var.h", "tcp.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "toecore.h", "udp.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_offload.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["icmp_var.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_options.h", "ip_var.h", "udp.h", "udp_var.h", "udplite.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+
+# Native IPv4 built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_ipv4_if_ether", srcs = ["if_ether.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_if_ether_headers", "//sys/ddb:ipv4_kernel_if_ether_headers", "//sys/net:ipv4_kernel_if_ether_headers", "//sys/netinet:ipv4_kernel_if_ether_headers", "//sys/netinet6:ipv4_kernel_if_ether_headers", "//sys/security/mac:ipv4_kernel_if_ether_headers", "//sys/vm:ipv4_kernel_if_ether_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_igmp", srcs = ["igmp.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_igmp_headers", "//sys/ddb:ipv4_kernel_igmp_headers", "//sys/net:ipv4_kernel_igmp_headers", "//sys/netinet:ipv4_kernel_igmp_headers", "//sys/netinet6:ipv4_kernel_igmp_headers", "//sys/security/mac:ipv4_kernel_igmp_headers", "//sys/vm:ipv4_kernel_igmp_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in", srcs = ["in.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_headers", "//sys/ddb:ipv4_kernel_in_headers", "//sys/net:ipv4_kernel_in_headers", "//sys/netinet:ipv4_kernel_in_headers", "//sys/netinet6:ipv4_kernel_in_headers", "//sys/security/mac:ipv4_kernel_in_headers", "//sys/vm:ipv4_kernel_in_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_cksum", srcs = ["in_cksum.c"],
+    deps = ["//sys/net:ipv4_kernel_in_cksum_headers", "//sys/netinet:ipv4_kernel_in_cksum_headers", "//sys/netinet6:ipv4_kernel_in_cksum_headers", "//sys/vm:ipv4_kernel_in_cksum_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_debug", srcs = ["in_debug.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_debug_headers", "//sys/ddb:ipv4_kernel_in_debug_headers", "//sys/net:ipv4_kernel_in_debug_headers", "//sys/netinet:ipv4_kernel_in_debug_headers", "//sys/netinet6:ipv4_kernel_in_debug_headers", "//sys/vm:ipv4_kernel_in_debug_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_kdtrace", srcs = ["in_kdtrace.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_fib", srcs = ["in_fib.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_fib_headers", "//sys/net:ipv4_kernel_in_fib_headers", "//sys/netinet:ipv4_kernel_in_fib_headers", "//sys/netinet6:ipv4_kernel_in_fib_headers", "//sys/vm:ipv4_kernel_in_fib_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_route_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_fib_algo", srcs = ["in_fib_algo.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_fib_algo_headers", "//sys/net:ipv4_kernel_in_fib_algo_headers", "//sys/netinet:ipv4_kernel_in_fib_algo_headers", "//sys/netinet6:ipv4_kernel_in_fib_algo_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_gif", srcs = ["in_gif.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_gif_headers", "//sys/net:ipv4_kernel_in_gif_headers", "//sys/netinet:ipv4_kernel_in_gif_headers", "//sys/netinet6:ipv4_kernel_in_gif_headers", "//sys/vm:ipv4_kernel_in_gif_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_id", srcs = ["ip_id.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_id_headers", "//sys/net:ipv4_kernel_ip_id_headers", "//sys/netinet:ipv4_kernel_ip_id_headers", "//sys/netinet6:ipv4_kernel_ip_id_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_jail", srcs = ["in_jail.c"],
+    deps = ["//sys/net:ipv4_kernel_in_jail_headers", "//sys/netinet:ipv4_kernel_in_jail_headers", "//sys/netinet6:ipv4_kernel_in_jail_headers", "//sys/vm:ipv4_kernel_in_jail_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_mcast", srcs = ["in_mcast.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_mcast_headers", "//sys/net:ipv4_kernel_in_mcast_headers", "//sys/netinet:ipv4_kernel_in_mcast_headers", "//sys/netinet6:ipv4_kernel_in_mcast_headers", "//sys/vm:ipv4_kernel_in_mcast_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_pcb", srcs = ["in_pcb.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_pcb_headers", "//sys/ddb:ipv4_kernel_in_pcb_headers", "//sys/net:ipv4_kernel_in_pcb_headers", "//sys/netinet:ipv4_kernel_in_pcb_headers", "//sys/netinet6:ipv4_kernel_in_pcb_headers", "//sys/netipsec:ipv4_kernel_in_pcb_headers", "//sys/security/mac:ipv4_kernel_in_pcb_headers", "//sys/vm:ipv4_kernel_in_pcb_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_ratelimit_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_prot", srcs = ["in_prot.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_prot_headers", "//sys/ddb:ipv4_kernel_in_prot_headers", "//sys/net:ipv4_kernel_in_prot_headers", "//sys/netinet:ipv4_kernel_in_prot_headers", "//sys/netinet6:ipv4_kernel_in_prot_headers", "//sys/security/audit:ipv4_kernel_in_prot_headers", "//sys/security/mac:ipv4_kernel_in_prot_headers", "//sys/vm:ipv4_kernel_in_prot_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_proto", srcs = ["in_proto.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_proto_headers", "//sys/net:ipv4_kernel_in_proto_headers", "//sys/netinet:ipv4_kernel_in_proto_headers", "//sys/netinet6:ipv4_kernel_in_proto_headers", "//sys/vm:ipv4_kernel_in_proto_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_mrouting_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_rmx", srcs = ["in_rmx.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_rmx_headers", "//sys/net:ipv4_kernel_in_rmx_headers", "//sys/netinet:ipv4_kernel_in_rmx_headers", "//sys/netinet6:ipv4_kernel_in_rmx_headers", "//sys/vm:ipv4_kernel_in_rmx_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_in_rss", srcs = ["in_rss.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_in_rss_headers", "//sys/net:ipv4_kernel_in_rss_headers", "//sys/netinet:ipv4_kernel_in_rss_headers", "//sys/netinet6:ipv4_kernel_in_rss_headers", "//sys/vm:ipv4_kernel_in_rss_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_ecn", srcs = ["ip_ecn.c"],
+    deps = ["//sys/net:ipv4_kernel_ip_ecn_headers", "//sys/netinet:ipv4_kernel_ip_ecn_headers", "//sys/netinet6:ipv4_kernel_ip_ecn_headers", "//sys/vm:ipv4_kernel_ip_ecn_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_encap", srcs = ["ip_encap.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_encap_headers", "//sys/net:ipv4_kernel_ip_encap_headers", "//sys/netinet:ipv4_kernel_ip_encap_headers", "//sys/netinet6:ipv4_kernel_ip_encap_headers", "//sys/vm:ipv4_kernel_ip_encap_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_fastfwd", srcs = ["ip_fastfwd.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_fastfwd_headers", "//sys/net:ipv4_kernel_ip_fastfwd_headers", "//sys/netinet:ipv4_kernel_ip_fastfwd_headers", "//sys/netinet6:ipv4_kernel_ip_fastfwd_headers", "//sys/vm:ipv4_kernel_ip_fastfwd_headers", "//sys/amd64/conf:ipv4_kernel_opt_ipstealth_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_icmp", srcs = ["ip_icmp.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_icmp_headers", "//sys/ddb:ipv4_kernel_ip_icmp_headers", "//sys/net:ipv4_kernel_ip_icmp_headers", "//sys/netinet:ipv4_kernel_ip_icmp_headers", "//sys/netinet6:ipv4_kernel_ip_icmp_headers", "//sys/security/mac:ipv4_kernel_ip_icmp_headers", "//sys/vm:ipv4_kernel_ip_icmp_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_input", srcs = ["ip_input.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_input_headers", "//sys/ddb:ipv4_kernel_ip_input_headers", "//sys/net:ipv4_kernel_ip_input_headers", "//sys/netinet:ipv4_kernel_ip_input_headers", "//sys/netinet6:ipv4_kernel_ip_input_headers", "//sys/netipsec:ipv4_kernel_ip_input_headers", "//sys/security/mac:ipv4_kernel_ip_input_headers", "//sys/vm:ipv4_kernel_ip_input_headers", "//sys/amd64/conf:ipv4_kernel_opt_bootp_header", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_ipstealth_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_options", srcs = ["ip_options.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_options_headers", "//sys/net:ipv4_kernel_ip_options_headers", "//sys/netinet:ipv4_kernel_ip_options_headers", "//sys/netinet6:ipv4_kernel_ip_options_headers", "//sys/vm:ipv4_kernel_ip_options_headers", "//sys/amd64/conf:ipv4_kernel_opt_ipstealth_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_output", srcs = ["ip_output.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_output_headers", "//sys/ddb:ipv4_kernel_ip_output_headers", "//sys/net:ipv4_kernel_ip_output_headers", "//sys/netinet:ipv4_kernel_ip_output_headers", "//sys/netinet6:ipv4_kernel_ip_output_headers", "//sys/netipsec:ipv4_kernel_ip_output_headers", "//sys/security/mac:ipv4_kernel_ip_output_headers", "//sys/vm:ipv4_kernel_ip_output_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_kern_tls_header", "//sys/amd64/conf:ipv4_kernel_opt_mbuf_stress_test_header", "//sys/amd64/conf:ipv4_kernel_opt_ratelimit_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_ip_reass", srcs = ["ip_reass.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_ip_reass_headers", "//sys/ddb:ipv4_kernel_ip_reass_headers", "//sys/net:ipv4_kernel_ip_reass_headers", "//sys/netinet:ipv4_kernel_ip_reass_headers", "//sys/netinet6:ipv4_kernel_ip_reass_headers", "//sys/security/mac:ipv4_kernel_ip_reass_headers", "//sys/vm:ipv4_kernel_ip_reass_headers", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_raw_ip", srcs = ["raw_ip.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_raw_ip_headers", "//sys/ddb:ipv4_kernel_raw_ip_headers", "//sys/net:ipv4_kernel_raw_ip_headers", "//sys/netinet:ipv4_kernel_raw_ip_headers", "//sys/netinet6:ipv4_kernel_raw_ip_headers", "//sys/netipsec:ipv4_kernel_raw_ip_headers", "//sys/security/mac:ipv4_kernel_raw_ip_headers", "//sys/vm:ipv4_kernel_raw_ip_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_sctp_crc32", srcs = ["sctp_crc32.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_sctp_crc32_headers", "//sys/crypto:ipv4_kernel_sctp_crc32_headers", "//sys/crypto/sha2:ipv4_kernel_sctp_crc32_headers", "//sys/net:ipv4_kernel_sctp_crc32_headers", "//sys/netinet:ipv4_kernel_sctp_crc32_headers", "//sys/netinet6:ipv4_kernel_sctp_crc32_headers", "//sys/vm:ipv4_kernel_sctp_crc32_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_ecn", srcs = ["tcp_ecn.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_ecn_headers", "//sys/net:ipv4_kernel_tcp_ecn_headers", "//sys/netinet:ipv4_kernel_tcp_ecn_headers", "//sys/netinet/cc:ipv4_kernel_tcp_ecn_headers", "//sys/netinet6:ipv4_kernel_tcp_ecn_headers", "//sys/vm:ipv4_kernel_tcp_ecn_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_fastopen", srcs = ["tcp_fastopen.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_fastopen_headers", "//sys/crypto/siphash:ipv4_kernel_tcp_fastopen_headers", "//sys/net:ipv4_kernel_tcp_fastopen_headers", "//sys/netinet:ipv4_kernel_tcp_fastopen_headers", "//sys/netinet/cc:ipv4_kernel_tcp_fastopen_headers", "//sys/netinet6:ipv4_kernel_tcp_fastopen_headers", "//sys/vm:ipv4_kernel_tcp_fastopen_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_hostcache", srcs = ["tcp_hostcache.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_hostcache_headers", "//sys/net:ipv4_kernel_tcp_hostcache_headers", "//sys/netinet:ipv4_kernel_tcp_hostcache_headers", "//sys/netinet/cc:ipv4_kernel_tcp_hostcache_headers", "//sys/netinet6:ipv4_kernel_tcp_hostcache_headers", "//sys/vm:ipv4_kernel_tcp_hostcache_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_input", srcs = ["tcp_input.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_input_headers", "//sys/ddb:ipv4_kernel_tcp_input_headers", "//sys/net:ipv4_kernel_tcp_input_headers", "//sys/netinet:ipv4_kernel_tcp_input_headers", "//sys/netinet/cc:ipv4_kernel_tcp_input_headers", "//sys/netinet6:ipv4_kernel_tcp_input_headers", "//sys/netipsec:ipv4_kernel_tcp_input_headers", "//sys/security/mac:ipv4_kernel_tcp_input_headers", "//sys/vm:ipv4_kernel_tcp_input_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_log_buf", srcs = ["tcp_log_buf.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_log_buf_headers", "//sys/ddb:ipv4_kernel_tcp_log_buf_headers", "//sys/dev/tcp_log:ipv4_kernel_tcp_log_buf_headers", "//sys/net:ipv4_kernel_tcp_log_buf_headers", "//sys/netinet:ipv4_kernel_tcp_log_buf_headers", "//sys/netinet/cc:ipv4_kernel_tcp_log_buf_headers", "//sys/netinet6:ipv4_kernel_tcp_log_buf_headers", "//sys/vm:ipv4_kernel_tcp_log_buf_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header", "//sys/amd64/conf:ipv4_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_lro", srcs = ["tcp_lro.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_lro_headers", "//sys/net:ipv4_kernel_tcp_lro_headers", "//sys/netinet:ipv4_kernel_tcp_lro_headers", "//sys/netinet/cc:ipv4_kernel_tcp_lro_headers", "//sys/netinet6:ipv4_kernel_tcp_lro_headers", "//sys/vm:ipv4_kernel_tcp_lro_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_output", srcs = ["tcp_output.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_output_headers", "//sys/ddb:ipv4_kernel_tcp_output_headers", "//sys/net:ipv4_kernel_tcp_output_headers", "//sys/netinet:ipv4_kernel_tcp_output_headers", "//sys/netinet/cc:ipv4_kernel_tcp_output_headers", "//sys/netinet6:ipv4_kernel_tcp_output_headers", "//sys/netipsec:ipv4_kernel_tcp_output_headers", "//sys/security/mac:ipv4_kernel_tcp_output_headers", "//sys/vm:ipv4_kernel_tcp_output_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_kern_tls_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_offload", srcs = ["tcp_offload.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_offload_headers", "//sys/net:ipv4_kernel_tcp_offload_headers", "//sys/netinet:ipv4_kernel_tcp_offload_headers", "//sys/netinet/cc:ipv4_kernel_tcp_offload_headers", "//sys/netinet6:ipv4_kernel_tcp_offload_headers", "//sys/vm:ipv4_kernel_tcp_offload_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_reass", srcs = ["tcp_reass.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_reass_headers", "//sys/net:ipv4_kernel_tcp_reass_headers", "//sys/netinet:ipv4_kernel_tcp_reass_headers", "//sys/netinet/cc:ipv4_kernel_tcp_reass_headers", "//sys/netinet6:ipv4_kernel_tcp_reass_headers", "//sys/vm:ipv4_kernel_tcp_reass_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_sack", srcs = ["tcp_sack.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_sack_headers", "//sys/net:ipv4_kernel_tcp_sack_headers", "//sys/netinet:ipv4_kernel_tcp_sack_headers", "//sys/netinet/cc:ipv4_kernel_tcp_sack_headers", "//sys/netinet6:ipv4_kernel_tcp_sack_headers", "//sys/vm:ipv4_kernel_tcp_sack_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_subr", srcs = ["tcp_subr.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_subr_headers", "//sys/crypto/siphash:ipv4_kernel_tcp_subr_headers", "//sys/ddb:ipv4_kernel_tcp_subr_headers", "//sys/net:ipv4_kernel_tcp_subr_headers", "//sys/netinet:ipv4_kernel_tcp_subr_headers", "//sys/netinet/cc:ipv4_kernel_tcp_subr_headers", "//sys/netinet6:ipv4_kernel_tcp_subr_headers", "//sys/netipsec:ipv4_kernel_tcp_subr_headers", "//sys/security/mac:ipv4_kernel_tcp_subr_headers", "//sys/vm:ipv4_kernel_tcp_subr_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_kern_tls_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_syncache", srcs = ["tcp_syncache.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_syncache_headers", "//sys/crypto/siphash:ipv4_kernel_tcp_syncache_headers", "//sys/ddb:ipv4_kernel_tcp_syncache_headers", "//sys/net:ipv4_kernel_tcp_syncache_headers", "//sys/netinet:ipv4_kernel_tcp_syncache_headers", "//sys/netinet/cc:ipv4_kernel_tcp_syncache_headers", "//sys/netinet6:ipv4_kernel_tcp_syncache_headers", "//sys/netipsec:ipv4_kernel_tcp_syncache_headers", "//sys/security/mac:ipv4_kernel_tcp_syncache_headers", "//sys/vm:ipv4_kernel_tcp_syncache_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_timer", srcs = ["tcp_timer.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_timer_headers", "//sys/net:ipv4_kernel_tcp_timer_headers", "//sys/netinet:ipv4_kernel_tcp_timer_headers", "//sys/netinet/cc:ipv4_kernel_tcp_timer_headers", "//sys/netinet6:ipv4_kernel_tcp_timer_headers", "//sys/vm:ipv4_kernel_tcp_timer_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_timewait", srcs = ["tcp_timewait.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_timewait_headers", "//sys/ddb:ipv4_kernel_tcp_timewait_headers", "//sys/net:ipv4_kernel_tcp_timewait_headers", "//sys/netinet:ipv4_kernel_tcp_timewait_headers", "//sys/netinet/cc:ipv4_kernel_tcp_timewait_headers", "//sys/netinet6:ipv4_kernel_tcp_timewait_headers", "//sys/netipsec:ipv4_kernel_tcp_timewait_headers", "//sys/security/mac:ipv4_kernel_tcp_timewait_headers", "//sys/vm:ipv4_kernel_tcp_timewait_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_kern_tls_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_tcp_usrreq", srcs = ["tcp_usrreq.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_tcp_usrreq_headers", "//sys/ddb:ipv4_kernel_tcp_usrreq_headers", "//sys/net:ipv4_kernel_tcp_usrreq_headers", "//sys/netinet:ipv4_kernel_tcp_usrreq_headers", "//sys/netinet/cc:ipv4_kernel_tcp_usrreq_headers", "//sys/netinet6:ipv4_kernel_tcp_usrreq_headers", "//sys/netipsec:ipv4_kernel_tcp_usrreq_headers", "//sys/vm:ipv4_kernel_tcp_usrreq_headers", "//sys/amd64/conf:ipv4_kernel_opt_ddb_header", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_kern_tls_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv4_udp_usrreq", srcs = ["udp_usrreq.c"],
+    deps = ["//sys/contrib/ck:ipv4_kernel_udp_usrreq_headers", "//sys/ddb:ipv4_kernel_udp_usrreq_headers", "//sys/net:ipv4_kernel_udp_usrreq_headers", "//sys/netinet:ipv4_kernel_udp_usrreq_headers", "//sys/netinet6:ipv4_kernel_udp_usrreq_headers", "//sys/netipsec:ipv4_kernel_udp_usrreq_headers", "//sys/security/mac:ipv4_kernel_udp_usrreq_headers", "//sys/vm:ipv4_kernel_udp_usrreq_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

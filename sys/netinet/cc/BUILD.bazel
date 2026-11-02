@@ -69,3 +69,35 @@ bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["cc.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["cc.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet:__pkg__"])

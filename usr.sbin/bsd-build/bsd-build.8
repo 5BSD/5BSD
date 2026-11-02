@@ -5086,3 +5086,11 @@ See
 .Pa tools/build/bazel/VM-KERNEL-QUALIFICATION.md
 for actual compiler inputs, object and CTF comparisons and remaining complete
 kernel, runtime, cross-build and controlled performance gates.
+.Pp
+The existing format-5 native target API also qualifies forty-three selected
+amd64 GENERIC IPv4/TCP built-in objects with the selected staged SDK.
+See
+.Pa tools/build/bazel/IPV4-KERNEL-QUALIFICATION.md
+for compiler/input, machine-code, CTF and filename/relocation comparisons.
+This does not qualify a complete kernel, cross build, network runtime or
+controlled performance result.

@@ -10,3 +10,11 @@ cc_library(name = "packet_filter_headers", hdrs = ["siphash.h"], strip_include_p
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["siphash.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["siphash.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["siphash.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["siphash.h"],
+    visibility = ["//sys/netinet:__pkg__"])

@@ -7,6 +7,11 @@ The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
 
+The [IPv4/TCP cohort](IPV4-KERNEL-QUALIFICATION.md) adds forty-three amd64
+GENERIC built-in objects with actual compiler/input, machine-code, CTF and
+filename/relocation checks. Complete kernel/network runtime and system gates
+remain open.
+
 The [virtual-memory cohort](VM-KERNEL-QUALIFICATION.md) adds twenty-four amd64
 GENERIC built-in objects with actual compile/input, machine-code and CTF checks.
 It uses a freshly staged execution baseline after the host upgrade; full native

@@ -14,6 +14,9 @@ rebinding the historical receipt. All 16,812 new baseline checks pass. The next
 twenty-four amd64 GENERIC virtual-memory objects pass actual compile/input,
 code and CTF inspection; see VM-KERNEL-QUALIFICATION.md. This is component
 progress, not a full native kernel/world/package/runtime or performance gate.
+A further forty-three selected IPv4/TCP built-in objects pass the same native
+compile/input, code/CTF and symbolic relocation checks; see
+IPV4-KERNEL-QUALIFICATION.md. Full kernel link/network runtime gates remain open.
 Userland resumes from USERLAND-UPGRADE-CHECKPOINT-20261101.md with fresh WPA
 references. All remaining work and final completion requirements below apply.
 

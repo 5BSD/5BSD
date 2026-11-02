@@ -458,3 +458,85 @@ amd64_generic_kernel_objects(name = "generic_vm_unix", srcs = ["vm_unix.c"],
 amd64_generic_kernel_objects(name = "generic_vnode_pager", srcs = ["vnode_pager.c"],
     deps = ["//sys/vm:vm_kernel_vnode_pager_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])

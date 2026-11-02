@@ -44,3 +44,7 @@ bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["audit.
 # Virtual-memory built-in prerequisites.
 bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["audit.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/netinet:__pkg__"])
