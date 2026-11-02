@@ -1,0 +1,787 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Explicit ACPICA debugger source/header inputs.
+exports_files([
+    "common/acfileio.c",
+    "common/acgetline.c",
+    "common/ahids.c",
+    "common/ahuuids.c",
+    "common/cmfsize.c",
+    "components/debugger/dbcmds.c",
+    "components/debugger/dbconvert.c",
+    "components/debugger/dbdisply.c",
+    "components/debugger/dbexec.c",
+    "components/debugger/dbfileio.c",
+    "components/debugger/dbhistry.c",
+    "components/debugger/dbinput.c",
+    "components/debugger/dbmethod.c",
+    "components/debugger/dbnames.c",
+    "components/debugger/dbobject.c",
+    "components/debugger/dbstats.c",
+    "components/debugger/dbtest.c",
+    "components/debugger/dbutils.c",
+    "components/debugger/dbxface.c",
+    "components/disassembler/dmbuffer.c",
+    "components/disassembler/dmcstyle.c",
+    "components/disassembler/dmdeferred.c",
+    "components/disassembler/dmnames.c",
+    "components/disassembler/dmopcode.c",
+    "components/disassembler/dmresrc.c",
+    "components/disassembler/dmresrcl.c",
+    "components/disassembler/dmresrcl2.c",
+    "components/disassembler/dmresrcs.c",
+    "components/disassembler/dmutils.c",
+    "components/disassembler/dmwalk.c",
+    "components/dispatcher/dsargs.c",
+    "components/dispatcher/dscontrol.c",
+    "components/dispatcher/dsdebug.c",
+    "components/dispatcher/dsfield.c",
+    "components/dispatcher/dsinit.c",
+    "components/dispatcher/dsmethod.c",
+    "components/dispatcher/dsmthdat.c",
+    "components/dispatcher/dsobject.c",
+    "components/dispatcher/dsopcode.c",
+    "components/dispatcher/dspkginit.c",
+    "components/dispatcher/dsutils.c",
+    "components/dispatcher/dswexec.c",
+    "components/dispatcher/dswload.c",
+    "components/dispatcher/dswload2.c",
+    "components/dispatcher/dswscope.c",
+    "components/dispatcher/dswstate.c",
+    "components/events/evevent.c",
+    "components/events/evglock.c",
+    "components/events/evgpe.c",
+    "components/events/evgpeblk.c",
+    "components/events/evgpeinit.c",
+    "components/events/evgpeutil.c",
+    "components/events/evhandler.c",
+    "components/events/evmisc.c",
+    "components/events/evregion.c",
+    "components/events/evrgnini.c",
+    "components/events/evsci.c",
+    "components/events/evxface.c",
+    "components/events/evxfevnt.c",
+    "components/events/evxfregn.c",
+    "components/executer/exconcat.c",
+    "components/executer/exconfig.c",
+    "components/executer/exconvrt.c",
+    "components/executer/excreate.c",
+    "components/executer/exdebug.c",
+    "components/executer/exdump.c",
+    "components/executer/exfield.c",
+    "components/executer/exfldio.c",
+    "components/executer/exmisc.c",
+    "components/executer/exmutex.c",
+    "components/executer/exnames.c",
+    "components/executer/exoparg1.c",
+    "components/executer/exoparg2.c",
+    "components/executer/exoparg3.c",
+    "components/executer/exoparg6.c",
+    "components/executer/exprep.c",
+    "components/executer/exregion.c",
+    "components/executer/exresnte.c",
+    "components/executer/exresolv.c",
+    "components/executer/exresop.c",
+    "components/executer/exserial.c",
+    "components/executer/exstore.c",
+    "components/executer/exstoren.c",
+    "components/executer/exstorob.c",
+    "components/executer/exsystem.c",
+    "components/executer/extrace.c",
+    "components/executer/exutils.c",
+    "components/hardware/hwacpi.c",
+    "components/hardware/hwesleep.c",
+    "components/hardware/hwgpe.c",
+    "components/hardware/hwpci.c",
+    "components/hardware/hwregs.c",
+    "components/hardware/hwsleep.c",
+    "components/hardware/hwvalid.c",
+    "components/hardware/hwxface.c",
+    "components/hardware/hwxfsleep.c",
+    "components/namespace/nsaccess.c",
+    "components/namespace/nsalloc.c",
+    "components/namespace/nsarguments.c",
+    "components/namespace/nsconvert.c",
+    "components/namespace/nsdump.c",
+    "components/namespace/nseval.c",
+    "components/namespace/nsinit.c",
+    "components/namespace/nsload.c",
+    "components/namespace/nsnames.c",
+    "components/namespace/nsobject.c",
+    "components/namespace/nsparse.c",
+    "components/namespace/nspredef.c",
+    "components/namespace/nsprepkg.c",
+    "components/namespace/nsrepair.c",
+    "components/namespace/nsrepair2.c",
+    "components/namespace/nssearch.c",
+    "components/namespace/nsutils.c",
+    "components/namespace/nswalk.c",
+    "components/namespace/nsxfeval.c",
+    "components/namespace/nsxfname.c",
+    "components/namespace/nsxfobj.c",
+    "components/parser/psargs.c",
+    "components/parser/psloop.c",
+    "components/parser/psobject.c",
+    "components/parser/psopcode.c",
+    "components/parser/psopinfo.c",
+    "components/parser/psparse.c",
+    "components/parser/psscope.c",
+    "components/parser/pstree.c",
+    "components/parser/psutils.c",
+    "components/parser/pswalk.c",
+    "components/parser/psxface.c",
+    "components/resources/rsaddr.c",
+    "components/resources/rscalc.c",
+    "components/resources/rscreate.c",
+    "components/resources/rsdump.c",
+    "components/resources/rsdumpinfo.c",
+    "components/resources/rsinfo.c",
+    "components/resources/rsio.c",
+    "components/resources/rsirq.c",
+    "components/resources/rslist.c",
+    "components/resources/rsmemory.c",
+    "components/resources/rsmisc.c",
+    "components/resources/rsserial.c",
+    "components/resources/rsutils.c",
+    "components/resources/rsxface.c",
+    "components/tables/tbdata.c",
+    "components/tables/tbfadt.c",
+    "components/tables/tbfind.c",
+    "components/tables/tbinstal.c",
+    "components/tables/tbprint.c",
+    "components/tables/tbutils.c",
+    "components/tables/tbxface.c",
+    "components/tables/tbxfload.c",
+    "components/utilities/utaddress.c",
+    "components/utilities/utalloc.c",
+    "components/utilities/utascii.c",
+    "components/utilities/utbuffer.c",
+    "components/utilities/utcache.c",
+    "components/utilities/utcksum.c",
+    "components/utilities/utcopy.c",
+    "components/utilities/utdebug.c",
+    "components/utilities/utdecode.c",
+    "components/utilities/utdelete.c",
+    "components/utilities/uterror.c",
+    "components/utilities/uteval.c",
+    "components/utilities/utexcep.c",
+    "components/utilities/utglobal.c",
+    "components/utilities/uthex.c",
+    "components/utilities/utids.c",
+    "components/utilities/utinit.c",
+    "components/utilities/utlock.c",
+    "components/utilities/utmath.c",
+    "components/utilities/utmisc.c",
+    "components/utilities/utmutex.c",
+    "components/utilities/utnonansi.c",
+    "components/utilities/utobject.c",
+    "components/utilities/utosi.c",
+    "components/utilities/utownerid.c",
+    "components/utilities/utpredef.c",
+    "components/utilities/utresdecode.c",
+    "components/utilities/utresrc.c",
+    "components/utilities/utstate.c",
+    "components/utilities/utstring.c",
+    "components/utilities/utstrsuppt.c",
+    "components/utilities/utstrtoul64.c",
+    "components/utilities/uttrack.c",
+    "components/utilities/utuuid.c",
+    "components/utilities/utxface.c",
+    "components/utilities/utxferror.c",
+    "components/utilities/utxfinit.c",
+    "os_specific/service_layers/osgendbg.c",
+    "os_specific/service_layers/osunixxf.c"
+], visibility = ["//usr.sbin/acpi/acpidb:__pkg__", "//usr.sbin/acpi/iasl:__pkg__"])
+cc_library(name = "acpidb_headers", hdrs = ["compiler/asldefine.h"],
+    deps = ["//sys/contrib/dev/acpica/include:debugger_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/acpidb:__pkg__", "//usr.sbin/acpi/iasl:__pkg__"])
+
+# ACPICA ASL compiler inputs not already exported for acpidb.
+exports_files([
+    "common/adfile.c",
+    "common/adisasm.c",
+    "common/adwalk.c",
+    "common/ahpredef.c",
+    "common/ahtable.c",
+    "common/dmextern.c",
+    "common/dmrestag.c",
+    "common/dmswitch.c",
+    "common/dmtable.c",
+    "common/dmtables.c",
+    "common/dmtbdump.c",
+    "common/dmtbdump1.c",
+    "common/dmtbdump2.c",
+    "common/dmtbdump3.c",
+    "common/dmtbinfo.c",
+    "common/dmtbinfo1.c",
+    "common/dmtbinfo2.c",
+    "common/dmtbinfo3.c",
+    "common/getopt.c",
+    "compiler/aslallocate.c",
+    "compiler/aslanalyze.c",
+    "compiler/aslascii.c",
+    "compiler/aslbtypes.c",
+    "compiler/aslcache.c",
+    "compiler/aslcodegen.c",
+    "compiler/aslcompile.c",
+    "compiler/aslcompiler.l",
+    "compiler/aslcstyle.y",
+    "compiler/asldebug.c",
+    "compiler/aslerror.c",
+    "compiler/aslexternal.c",
+    "compiler/aslfileio.c",
+    "compiler/aslfiles.c",
+    "compiler/aslfold.c",
+    "compiler/aslhelp.c",
+    "compiler/aslhelpers.y",
+    "compiler/aslhex.c",
+    "compiler/aslkeywords.y",
+    "compiler/asllength.c",
+    "compiler/asllisting.c",
+    "compiler/asllistsup.c",
+    "compiler/aslload.c",
+    "compiler/asllookup.c",
+    "compiler/aslmain.c",
+    "compiler/aslmap.c",
+    "compiler/aslmapenter.c",
+    "compiler/aslmapoutput.c",
+    "compiler/aslmaputils.c",
+    "compiler/aslmessages.c",
+    "compiler/aslmethod.c",
+    "compiler/aslnamesp.c",
+    "compiler/asloffset.c",
+    "compiler/aslopcodes.c",
+    "compiler/asloperands.c",
+    "compiler/aslopt.c",
+    "compiler/asloptions.c",
+    "compiler/aslparseop.c",
+    "compiler/aslparser.y",
+    "compiler/aslpld.c",
+    "compiler/aslpredef.c",
+    "compiler/aslprepkg.c",
+    "compiler/aslprimaries.y",
+    "compiler/aslprintf.c",
+    "compiler/aslprune.c",
+    "compiler/aslresource.c",
+    "compiler/aslresources.y",
+    "compiler/aslrestype1.c",
+    "compiler/aslrestype1i.c",
+    "compiler/aslrestype2.c",
+    "compiler/aslrestype2d.c",
+    "compiler/aslrestype2e.c",
+    "compiler/aslrestype2q.c",
+    "compiler/aslrestype2s.c",
+    "compiler/aslrestype2w.c",
+    "compiler/aslrules.y",
+    "compiler/aslstartup.c",
+    "compiler/aslstubs.c",
+    "compiler/aslsupport.y",
+    "compiler/asltokens.y",
+    "compiler/asltransform.c",
+    "compiler/asltree.c",
+    "compiler/asltypes.y",
+    "compiler/aslutils.c",
+    "compiler/asluuid.c",
+    "compiler/aslwalks.c",
+    "compiler/aslxref.c",
+    "compiler/aslxrefout.c",
+    "compiler/cvcompiler.c",
+    "compiler/cvdisasm.c",
+    "compiler/cvparser.c",
+    "compiler/dtcompile.c",
+    "compiler/dtcompilerparser.l",
+    "compiler/dtcompilerparser.y",
+    "compiler/dtexpress.c",
+    "compiler/dtfield.c",
+    "compiler/dtio.c",
+    "compiler/dtparser.l",
+    "compiler/dtparser.y",
+    "compiler/dtsubtable.c",
+    "compiler/dttable.c",
+    "compiler/dttable1.c",
+    "compiler/dttable2.c",
+    "compiler/dttemplate.c",
+    "compiler/dtutils.c",
+    "compiler/prexpress.c",
+    "compiler/prmacros.c",
+    "compiler/prparser.l",
+    "compiler/prparser.y",
+    "compiler/prscan.c",
+    "compiler/prutils.c"
+], visibility = ["//usr.sbin/acpi/iasl:__pkg__"])
+cc_library(name = "iasl_headers", hdrs = ["compiler/aslcompiler.h", "compiler/asldefine.h", "compiler/aslglobal.h", "compiler/aslmessages.h", "compiler/aslsupport.l", "compiler/asltypes.h", "compiler/dtcompiler.h", "compiler/dttemplate.h", "compiler/preprocess.h"],
+    deps = ["//sys/contrib/dev/acpica/include:compiler_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/acpi/iasl:__pkg__"])
+
+
+# Native amd64 GENERIC ACPICA engine objects; userland uses the same physical sources above.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsargs", srcs = ["components/dispatcher/dsargs.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsargs_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dscontrol", srcs = ["components/dispatcher/dscontrol.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dscontrol_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsdebug", srcs = ["components/dispatcher/dsdebug.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsfield", srcs = ["components/dispatcher/dsfield.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsinit", srcs = ["components/dispatcher/dsinit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsinit_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsmethod", srcs = ["components/dispatcher/dsmethod.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsmethod_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsmthdat", srcs = ["components/dispatcher/dsmthdat.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsmthdat_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsobject", srcs = ["components/dispatcher/dsobject.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsopcode", srcs = ["components/dispatcher/dsopcode.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsopcode_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dspkginit", srcs = ["components/dispatcher/dspkginit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dsutils", srcs = ["components/dispatcher/dsutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsmethod_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dswexec", srcs = ["components/dispatcher/dswexec.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsmethod_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dswload", srcs = ["components/dispatcher/dswload.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dswload2", srcs = ["components/dispatcher/dswload2.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dswload2_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dswscope", srcs = ["components/dispatcher/dswscope.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dswscope_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_dswstate", srcs = ["components/dispatcher/dswstate.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dswstate_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evevent", srcs = ["components/events/evevent.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evglock", srcs = ["components/events/evglock.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evglock_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evgpe", srcs = ["components/events/evgpe.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evgpeblk", srcs = ["components/events/evgpeblk.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evgpeinit", srcs = ["components/events/evgpeinit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evgpeutil", srcs = ["components/events/evgpeutil.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evhandler", srcs = ["components/events/evhandler.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evhandler_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evmisc", srcs = ["components/events/evmisc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evregion", srcs = ["components/events/evregion.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evhandler_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evrgnini", srcs = ["components/events/evrgnini.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evhandler_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evsci", srcs = ["components/events/evsci.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evxface", srcs = ["components/events/evxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evhandler_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evxfevnt", srcs = ["components/events/evxfevnt.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evxfgpe", srcs = ["components/events/evxfgpe.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_evxfregn", srcs = ["components/events/evxfregn.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evgpe_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exconcat", srcs = ["components/executer/exconcat.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconcat_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exconfig", srcs = ["components/executer/exconfig.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconfig_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exconvrt", srcs = ["components/executer/exconvrt.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconvrt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_excreate", srcs = ["components/executer/excreate.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_excreate_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exdebug", srcs = ["components/executer/exdebug.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exdump", srcs = ["components/executer/exdump.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_excreate_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exfield", srcs = ["components/executer/exfield.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exfldio", srcs = ["components/executer/exfldio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exfldio_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exmisc", srcs = ["components/executer/exmisc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconvrt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exmutex", srcs = ["components/executer/exmutex.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evglock_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exnames", srcs = ["components/executer/exnames.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconvrt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exoparg1", srcs = ["components/executer/exoparg1.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exoparg2", srcs = ["components/executer/exoparg2.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exoparg2_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exoparg3", srcs = ["components/executer/exoparg3.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exoparg3_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exoparg6", srcs = ["components/executer/exoparg6.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exoparg3_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exprep", srcs = ["components/executer/exprep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exprep_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exregion", srcs = ["components/executer/exregion.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exresnte", srcs = ["components/executer/exresnte.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsmthdat_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exresolv", srcs = ["components/executer/exresolv.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exprep_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exresop", srcs = ["components/executer/exresop.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exresop_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exserial", srcs = ["components/executer/exserial.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exstore", srcs = ["components/executer/exstore.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exprep_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exstoren", srcs = ["components/executer/exstoren.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconvrt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exstorob", srcs = ["components/executer/exstorob.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exsystem", srcs = ["components/executer/exsystem.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_extrace", srcs = ["components/executer/extrace.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_extrace_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_exutils", srcs = ["components/executer/exutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exconvrt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwacpi", srcs = ["components/hardware/hwacpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwesleep", srcs = ["components/hardware/hwesleep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwgpe", srcs = ["components/hardware/hwgpe.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwpci", srcs = ["components/hardware/hwpci.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwregs", srcs = ["components/hardware/hwregs.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evevent_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwsleep", srcs = ["components/hardware/hwsleep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwtimer", srcs = ["components/hardware/hwtimer.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwvalid", srcs = ["components/hardware/hwvalid.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwxface", srcs = ["components/hardware/hwxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_hwxfsleep", srcs = ["components/hardware/hwxfsleep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsaccess", srcs = ["components/namespace/nsaccess.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsaccess_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsalloc", srcs = ["components/namespace/nsalloc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsarguments", srcs = ["components/namespace/nsarguments.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsarguments_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsconvert", srcs = ["components/namespace/nsconvert.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsconvert_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsdump", srcs = ["components/namespace/nsdump.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nseval", srcs = ["components/namespace/nseval.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nseval_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsinit", srcs = ["components/namespace/nsinit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsinit_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsload", srcs = ["components/namespace/nsload.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsinit_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsnames", srcs = ["components/namespace/nsnames.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsnames_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsobject", srcs = ["components/namespace/nsobject.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsparse", srcs = ["components/namespace/nsparse.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsparse_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nspredef", srcs = ["components/namespace/nspredef.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsarguments_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsprepkg", srcs = ["components/namespace/nsprepkg.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsarguments_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsrepair", srcs = ["components/namespace/nsrepair.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsconvert_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsrepair2", srcs = ["components/namespace/nsrepair2.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nssearch", srcs = ["components/namespace/nssearch.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsutils", srcs = ["components/namespace/nsutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsnames_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nswalk", srcs = ["components/namespace/nswalk.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsxfeval", srcs = ["components/namespace/nsxfeval.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_extrace_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsxfname", srcs = ["components/namespace/nsxfname.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsxfname_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_nsxfobj", srcs = ["components/namespace/nsxfobj.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psargs", srcs = ["components/parser/psargs.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psargs_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psloop", srcs = ["components/parser/psloop.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psloop_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psobject", srcs = ["components/parser/psobject.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psobject_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psopcode", srcs = ["components/parser/psopcode.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psopcode_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psopinfo", srcs = ["components/parser/psopinfo.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psopinfo_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psparse", srcs = ["components/parser/psparse.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_dsfield_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psscope", srcs = ["components/parser/psscope.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_psscope_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_pstree", srcs = ["components/parser/pstree.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_pstree_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psutils", srcs = ["components/parser/psutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_pstree_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_pswalk", srcs = ["components/parser/pswalk.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_pswalk_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_psxface", srcs = ["components/parser/psxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsparse_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsaddr", srcs = ["components/resources/rsaddr.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rscalc", srcs = ["components/resources/rscalc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rscalc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rscreate", srcs = ["components/resources/rscreate.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rscalc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsdumpinfo", srcs = ["components/resources/rsdumpinfo.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsinfo", srcs = ["components/resources/rsinfo.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsio", srcs = ["components/resources/rsio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsirq", srcs = ["components/resources/rsirq.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rslist", srcs = ["components/resources/rslist.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsmemory", srcs = ["components/resources/rsmemory.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsmisc", srcs = ["components/resources/rsmisc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsserial", srcs = ["components/resources/rsserial.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsutils", srcs = ["components/resources/rsutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rscalc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_rsxface", srcs = ["components/resources/rsxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rscalc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbdata", srcs = ["components/tables/tbdata.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_tbdata_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbfadt", srcs = ["components/tables/tbfadt.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbfind", srcs = ["components/tables/tbfind.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbinstal", srcs = ["components/tables/tbinstal.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbprint", srcs = ["components/tables/tbprint.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_tbprint_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbutils", srcs = ["components/tables/tbutils.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbxface", srcs = ["components/tables/tbxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbxfload", srcs = ["components/tables/tbxfload.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_tbdata_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_tbxfroot", srcs = ["components/tables/tbxfroot.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evxfevnt_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utaddress", srcs = ["components/utilities/utaddress.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utalloc", srcs = ["components/utilities/utalloc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_utalloc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utascii", srcs = ["components/utilities/utascii.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utbuffer", srcs = ["components/utilities/utbuffer.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utcache", srcs = ["components/utilities/utcache.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utcksum", srcs = ["components/utilities/utcksum.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_utcksum_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utcopy", srcs = ["components/utilities/utcopy.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utdebug", srcs = ["components/utilities/utdebug.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utdecode", srcs = ["components/utilities/utdecode.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_nsnames_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utdelete", srcs = ["components/utilities/utdelete.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_evhandler_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_uterror", srcs = ["components/utilities/uterror.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_uteval", srcs = ["components/utilities/uteval.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utexcep", srcs = ["components/utilities/utexcep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utglobal", srcs = ["components/utilities/utglobal.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_uthex", srcs = ["components/utilities/uthex.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utids", srcs = ["components/utilities/utids.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_exdebug_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utinit", srcs = ["components/utilities/utinit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_tbdata_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utlock", srcs = ["components/utilities/utlock.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utmath", srcs = ["components/utilities/utmath.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utmisc", srcs = ["components/utilities/utmisc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utmutex", srcs = ["components/utilities/utmutex.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utnonansi", srcs = ["components/utilities/utnonansi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utobject", srcs = ["components/utilities/utobject.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utosi", srcs = ["components/utilities/utosi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utownerid", srcs = ["components/utilities/utownerid.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utpredef", srcs = ["components/utilities/utpredef.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_utpredef_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utresrc", srcs = ["components/utilities/utresrc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_rsaddr_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utstate", srcs = ["components/utilities/utstate.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utstring", srcs = ["components/utilities/utstring.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwxface_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utstrsuppt", srcs = ["components/utilities/utstrsuppt.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utstrtoul64", srcs = ["components/utilities/utstrtoul64.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utxface", srcs = ["components/utilities/utxface.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_utalloc_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utxferror", srcs = ["components/utilities/utxferror.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_hwacpi_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_engine_utxfinit", srcs = ["components/utilities/utxfinit.c"],
+    deps = ["//sys/contrib/dev/acpica/include:engine_utxfinit_headers", "//sys/amd64/conf:acpica_engine_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

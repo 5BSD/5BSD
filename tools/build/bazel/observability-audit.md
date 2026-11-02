@@ -9675,3 +9675,12 @@ and compiled probe plumbing are preserved. Object/generator parity does not
 qualify firmware AML, EC, power/thermal events, interrupt routing, suspend/resume
 or live event delivery. Review shared hooks before adding hot-path events.
 See ACPICA-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## ACPICA engine batch (2026-11-02)
+
+156 source-hash-bound upstream engine files have no call-shaped DTrace/audit/CTR
+markers in the bounded scan. Code/probe plumbing is unchanged; absence is not a
+finding that shared kernel instrumentation is missing. AML evaluation, firmware
+events and ACPI diagnostics require isolated full-kernel/hardware qualification.
+Evidence: bazel-kernel-acpica-engine-review-r1-20261102/observability.json under
+/usr/obj/usr/src; see ACPICA-ENGINE-KERNEL-QUALIFICATION.md.

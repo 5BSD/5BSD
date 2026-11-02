@@ -47495,3 +47495,7 @@ resource/cache/system qualification remains open.
 records 29 ACPI platform built-ins, native quirk-table generation, exact code/CTF
 and declared input checks, upstream compact-log action provenance, symbolic
 relocation review and remaining firmware/runtime/system gates.
+
+[ACPICA-ENGINE-KERNEL-QUALIFICATION.md](ACPICA-ENGINE-KERNEL-QUALIFICATION.md)
+records 156 native engine objects, upstream source ownership, exact code/CTF/input
+checks, affected userland action/build/smoke checks and remaining system gates.

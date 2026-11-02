@@ -119,6 +119,16 @@ without expanded disk logs. Latest successful known-builtin analysis finds
 Make final products. Earlier counts remain snapshots; full kernel/world/package,
 cross-build, runtime and controlled resource/performance gates remain open.
 
+## ACPICA engine checkpoint (2026-11-02)
+
+156 additional amd64 GENERIC engine objects pass exact code/CTF, actual compiler
+input and relocation checks. The upstream source-owner move also passes affected
+acpidb/iasl configured action comparison, native binary/archive builds and bounded
+host-runtime launch checks. See ACPICA-ENGINE-KERNEL-QUALIFICATION.md for evidence
+and limitations. Known kernel reconciliation now has 835 source matches plus six
+name-only matches among 2,466 products; 1,625 remain unmatched. Full kernel/world,
+all architectures, package, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
