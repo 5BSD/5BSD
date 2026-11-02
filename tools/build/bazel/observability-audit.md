@@ -10074,3 +10074,13 @@ Bluetooth report-injection SDT probe. Actual compiled SDT provider/probe/argumen
 tracepoint sections and relocations match original Make exactly for both modules.
 Runtime registration and event delivery remain unqualified. The raw contracts are
 retained in the HID review's compiled-probe-preservation.json.
+
+## LLDB family composition (2026-11-02)
+
+Three native safe wrappers pass together: library API/data checks and both
+pre-initialization CLI checks, actual private DSO loader paths, DOF disabled
+before startup. No attach/launch/listen. Three component archives retain all
+fifteen Make records and exact accepted payloads; LLDB-off has zero products
+and an explicitly requested disabled suite fails before execution. Original
+Make parent-option controls and recursive selection are separately recorded
+in LLDB-FAMILY-QUALIFICATION.md; no full debugger/world runtime claim.

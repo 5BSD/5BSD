@@ -37,3 +37,20 @@ cc_test(name = "clang_tools_test", srcs = ["clang_tools_test.c", "tool_test.h"],
     data = ["//usr.bin/clang/clang:clang", "//usr.bin/clang/clang-scan-deps:clang-scan-deps", "//usr.bin/clang/clang-format:clang-format"],
     args = ["$(location //usr.bin/clang/clang:clang)", "$(location //usr.bin/clang/clang-scan-deps:clang-scan-deps)", "$(location //usr.bin/clang/clang-format:clang-format)"],
     linkopts = ["-static"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"] + select({"//tools/build/bazel/config:clang_format_or_extras_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}), visibility = ["//visibility:public"])
+
+# Debugger package components in maintained selected-world order. Their private
+# Clang/LLVM runtime packages remain explicit separate dependency components.
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+_DEBUGGER_COMPONENTS = ["//lib/clang/liblldb", "//usr.bin/clang/lldb", "//usr.bin/clang/lldb-server"]
+filegroup(name = "debugger_products", srcs = select({
+    "//tools/build/bazel/config:lldb_enabled": ["//lib/clang/liblldb:lldb_shared", "//usr.bin/clang/lldb:lldb", "//usr.bin/clang/lldb-server:lldb-server"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
+# Preserve each component's directory/package-tag context; do not flatten them.
+bsd_install_archive_set(name = "debugger_installation_archives", archives = select({
+    "//tools/build/bazel/config:lldb_enabled": [c + ":install_archive" for c in _DEBUGGER_COMPONENTS],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
+test_suite(name = "debugger_safe_tests", tests = [
+    "//lib/clang/liblldb:api_smoke_test", "//usr.bin/clang/lldb:safe_cli_test", "//usr.bin/clang/lldb-server:safe_cli_test",
+], visibility = ["//visibility:public"])

@@ -619,3 +619,14 @@ filename-policy Make controls; original baselines/rejected archive links remain.
 LLDB-CLI-QUALIFICATION.md records actual input, link, SDK and scoped cache proof.
 Next: family aggregate and inherited MK_LLDB selection/package ownership;
 debugger execution, upstream suite, cross/static variants and full world stay open.
+
+## LLDB family milestone (2026-11-02)
+
+The native debugger subset now composes three independently qualified components
+with original order and separate installation contexts: fifteen records, three
+safe wrappers and exact prior immutable payload hashes. Existing LLDB/tests
+selection supports a zero-payload disabled family and rejects an explicitly
+requested all-incompatible suite. Four original Make parent controls pass; fresh
+recursive world inventory observes 2,128 directories, not compilation coverage.
+See LLDB-FAMILY-QUALIFICATION.md. Next selected gap: sbin/mount_virtiofs; full
+world/bootstrap/package ownership and debugger execution remain open.

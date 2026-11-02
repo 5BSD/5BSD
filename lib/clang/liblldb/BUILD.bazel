@@ -266,5 +266,5 @@ cc_test(name = "api_smoke_test", srcs = ["api_smoke_test.cpp"],
     args = ["$(location :lldb_shared)", "$(location //lib/clang/libclang:clang_shared)", "$(location //lib/clang/libllvm:llvm_shared)"],
     copts = ["-std=c++17", "-nostdinc++"], features = ["bsd_test_runtime_paths"],
     env = {"DTRACE_DOF_INIT_DISABLE": "1"},
-    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:lldb_tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
     visibility = ["//visibility:public"])

@@ -47771,3 +47771,14 @@ exact allocated payloads against explicit independent Make filename-policy
 controls. Ordered ELF dependencies and actual native DSO loader paths pass.
 See [LLDB-CLI-QUALIFICATION.md](LLDB-CLI-QUALIFICATION.md) for retained ordinary
 baselines, precise cache evidence and open debugger/family/package/world gates.
+
+## Selected LLDB family (2026-11-02)
+
+`//lib/clang:debugger_products`, `debugger_installation_archives` and
+`debugger_safe_tests` now compose the qualified library and two programs. Three
+safe native wrappers pass; all three products and nine archive/context payloads
+match immutable component captures, preserving fifteen Make records separately.
+LLDB-off selects no payloads and explicitly requesting its disabled tests is
+rejected before execution. Original parent controls and fresh recursive Make
+inventory are documented in [LLDB-FAMILY-QUALIFICATION.md](LLDB-FAMILY-QUALIFICATION.md).
+World observations total 2,128 directories; they are not compiled coverage.
