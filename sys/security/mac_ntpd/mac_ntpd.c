@@ -78,7 +78,11 @@ ntpd_sysctl_int(SYSCTL_HANDLER_ARGS)
 	 * before the lock exists and before mpo_init; mpo_init publishes the
 	 * value then.  Once active, while the capability plane's clock claim
 	 * is held, the delegate may only narrow: the uid is fixed and the
-	 * policy may be disabled but not re-enabled.
+	 * policy may be disabled but not re-enabled.  The check is not atomic
+	 * with the claim: a write that races BSDTime's claim takes effect as
+	 * though it came just before it, which is allowed then.  ntpd_publish()
+	 * reads both values under ntpd_lock, so the delegate is always the
+	 * last value stored.
 	 */
 	if (ntpd_active && mac_capability_clock_claimed() &&
 	    value != *(int *)arg1 &&
