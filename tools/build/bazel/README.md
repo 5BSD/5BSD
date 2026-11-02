@@ -47522,3 +47522,7 @@ symbol/relocation qualification, with remaining filesystem/system gates.
 [ATH-KERNEL-QUALIFICATION.md](ATH-KERNEL-QUALIFICATION.md) records 130 native
 Atheros driver/HAL objects, source-owned headers and generated options, exact
 code/CTF/policy/input checks, bounded string/relocation proof and remaining gates.
+
+[INTEL-NIC-KERNEL-QUALIFICATION.md](INTEL-NIC-KERNEL-QUALIFICATION.md) records
+69 native e1000/ixgbe/ice objects, exact code/CTF/policy/input checks and bhyve
+header/action-contract compatibility with an actual post-move binary build.

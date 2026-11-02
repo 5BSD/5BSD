@@ -9734,3 +9734,12 @@ missing shared hooks. Production instrumentation is unchanged. Radio attach,
 calibration, authentication, rate control, TX/RX and recovery remain runtime gates.
 Evidence: /usr/obj/usr/src/bazel-kernel-ath-review-r1-20261102/observability.json;
 see ATH-KERNEL-QUALIFICATION.md for build/policy and CTF comparison limits.
+
+## Intel NIC built-in batch (2026-11-02)
+
+Among 69 source-bound files, existing call-shaped tracing/CTR-family markers occur
+in if_igb_iov.c, if_ix.c, if_sriov.c and ice_fw_logging.c. No matches in 65 other files
+do not establish missing shared hooks. No production instrumentation changed.
+Queue/offload/RSS/netmap/SR-IOV/RDMA and reset/recovery behavior remain runtime gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-intel-nic-review-r1-20261102/observability.json;
+see INTEL-NIC-KERNEL-QUALIFICATION.md for build/header ownership and comparison scope.

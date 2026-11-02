@@ -17,3 +17,7 @@ bsd_source_headers(name = "network_support_headers", hdrs = ["netmap_kern.h", "n
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

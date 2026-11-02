@@ -558,3 +558,19 @@ cc_library(name = "ath_kernel_opt_inet_header", hdrs = [":opt_inet"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 cc_library(name = "ath_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+cc_library(name = "intel_nic_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+cc_library(name = "intel_nic_kernel_opt_device_polling_header", hdrs = [":opt_device_polling"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+bsd_tree_file(name = "opt_driver_failpoints", tree = ":generic_config", member = "opt_driver_failpoints.h",
+    output = "generic_options/opt_driver_failpoints.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "intel_nic_kernel_opt_driver_failpoints_header", hdrs = [":opt_driver_failpoints"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+cc_library(name = "intel_nic_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+cc_library(name = "intel_nic_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+cc_library(name = "intel_nic_kernel_opt_rss_header", hdrs = [":opt_rss"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

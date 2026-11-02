@@ -631,3 +631,13 @@ bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["if_ether.h", "in
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_if_ath_keycache_headers", hdrs = ["in.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["if_ether.h", "in.h", "in_rss.h", "in_systm.h", "ip.h", "ip6.h", "tcp.h", "udp.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["if_ether.h", "in.h", "in_rss.h", "in_systm.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ice_iflib_headers", hdrs = ["in.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_iflib_txrx_headers", hdrs = ["in.h", "sctp.h", "sctp_uio.h", "udp.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

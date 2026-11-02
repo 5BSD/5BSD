@@ -1161,3 +1161,27 @@ bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h",
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_igb_iov_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_e1000_80003es2lan_headers", hdrs = ["ethernet.h", "if.h", "if_var.h", "iflib.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "netmap.h", "netmap_legacy.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ice_iflib_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_lib_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_resmgr_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_strings_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_iov_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "if_vf_status.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "intel_nic_ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
+cc_library(name = "intel_nic_ifdi_if_headers", hdrs = [":intel_nic_ifdi_if_header_file"],
+    strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

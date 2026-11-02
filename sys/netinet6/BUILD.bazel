@@ -518,3 +518,7 @@ bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["in6.h"],
 # Physical Atheros driver/HAL prerequisites; identical contexts share providers.
 bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["in6.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

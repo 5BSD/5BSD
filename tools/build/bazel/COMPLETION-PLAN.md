@@ -168,6 +168,16 @@ Known graph reconciliation now has 1,357 source matches plus six name-only match
 among 2,466 final products, leaving 1,103 unmatched. See ATH-KERNEL-QUALIFICATION.md.
 Full-system, module, other-architecture, radio/runtime and performance gates remain.
 
+## Intel NIC checkpoint (2026-11-02)
+
+69 native amd64 GENERIC objects pass code/CTF, compiler policy/input/header-order
+and nondebug relocation checks. bhyve's header/action contracts remain unchanged
+apart from 333 recorded action keys; an actual post-move binary build passes. Known
+graph reconciliation has 1,426 source matches plus six name-only matches among 2,466
+final products, leaving 1,034 unmatched. See INTEL-NIC-KERNEL-QUALIFICATION.md.
+Full-system/module, other-architecture, device/guest/runtime and performance gates
+remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

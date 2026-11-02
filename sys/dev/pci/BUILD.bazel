@@ -105,3 +105,17 @@ cc_library(name = "linuxkpi_pcib_if_headers", hdrs = [":linuxkpi_pcib_if_header_
 # Physical Atheros driver/HAL prerequisites; identical contexts share providers.
 bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["pci_iov.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_igbv_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "intel_nic_pci_if_header_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "intel_nic_pci_if_headers", hdrs = [":intel_nic_pci_if_header_file"],
+    strip_include_prefix = "pci_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "intel_nic_pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
+cc_library(name = "intel_nic_pci_iov_if_headers", hdrs = [":intel_nic_pci_iov_if_header_file"],
+    strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

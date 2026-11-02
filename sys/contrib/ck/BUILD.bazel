@@ -1100,3 +1100,8 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = 
 bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
     includes = ["include"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
