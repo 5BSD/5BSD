@@ -1461,3 +1461,7 @@ filegroup(name = "builtin_ifdi_if_source", srcs = [":ifdi_if"], output_group = "
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_ifdi_if", srcs = [":builtin_ifdi_if_source"],
     deps = ["//sys/contrib/ck:kobj_builtins_physical_ifdi_if_headers", "//sys/net:kobj_builtins_physical_ifdi_if_headers", "//sys/vm:kobj_builtins_physical_nvme_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/net:kobj_builtins_kernel_ifdi_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native generated RPC built-ins.
+bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/rpc:__pkg__"])

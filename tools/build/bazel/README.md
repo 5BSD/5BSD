@@ -47605,3 +47605,5 @@ disposable-guest gates; full PAM/world/pkgbase completion is not claimed.
 [DTRACE-BUILTINS-KERNEL-QUALIFICATION.md](DTRACE-BUILTINS-KERNEL-QUALIFICATION.md) records 15 native DTrace/Solaris built-ins, checked macros/header precedence and exact machine code/CTF/input/relocation evidence. Live tracing and full-system gates remain open.
 
 [KOBJ-BUILTINS-KERNEL-QUALIFICATION.md](KOBJ-BUILTINS-KERNEL-QUALIFICATION.md) records 49 native generated-interface objects and 98 original-generator C/header comparisons. Machine code/CTF/runtime sections and compiler inputs match Make; full-system/runtime gates remain open.
+
+[RPC-BUILTINS-KERNEL-QUALIFICATION.md](RPC-BUILTINS-KERNEL-QUALIFICATION.md) records four native generated RPC kernel objects and six byte-identical source/header comparisons, preserving original warning policy. Full-system/runtime gates remain open.

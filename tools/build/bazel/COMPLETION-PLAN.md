@@ -424,3 +424,7 @@ and full world/pkgbase gates. No source assertions or requirements were disabled
 ## Generated-interface checkpoint (2026-11-02)
 
 49 KOBJ interface objects and 98 generated C/header bodies pass independent Make comparisons through the maintained frontend. Reconciliation r34 leaves 15 missing link products, 53 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 49 of those generated matches. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, remaining generators/custom products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Generated RPC checkpoint (2026-11-02)
+
+Four RPC generated objects pass exact machine-code/CTF/runtime-section/compiler/input/relocation checks; six generator products match Make byte-for-byte. Reconciliation r35 leaves 11 missing products, 57 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 53 generated matches. See RPC-BUILTINS-KERNEL-QUALIFICATION.md. Complete linking, custom identities, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

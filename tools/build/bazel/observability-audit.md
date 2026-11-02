@@ -9861,3 +9861,7 @@ A bounded source-bound scan finds call-shaped tracing/audit markers in 4 of 15 c
 ## Generated KOBJ interfaces (2026-11-02)
 
 The bounded source-bound scan finds no matching call-shaped tracing/audit markers in 49 original schemas. This proves neither absent shared/indirect instrumentation nor runtime behavior. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md and retained observability.json. Original schemas/generator remain.
+
+## Generated kernel RPC protocols (2026-11-02)
+
+A bounded source-bound scan finds no matching call-shaped tracing/audit markers in the two original RPC schemas. This neither proves absent shared hooks nor runtime behavior. See RPC-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Original schemas/generator/instrumentation remain.
