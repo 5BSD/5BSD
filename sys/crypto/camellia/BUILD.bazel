@@ -7,7 +7,7 @@ cc_library(name = "kernel_headers", hdrs = ["camellia.h"], strip_include_prefix 
 # OpenCrypto built-in prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["camellia.h"],
-    visibility = ["//sys/opencrypto:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["camellia.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["camellia.h"],
@@ -53,3 +53,11 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_camellia", srcs = ["c
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_camellia-api", srcs = ["camellia-api.c"],
     deps = ["//sys/crypto/camellia:codecs_crypto_kernel_camellia_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "crypto_camellia_module", srcs = ["camellia.c", "camellia-api.c"],
+    deps = ["//sys/crypto/camellia:opencrypto_kernel_crypto_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])

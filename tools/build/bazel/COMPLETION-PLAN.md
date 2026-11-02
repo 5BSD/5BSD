@@ -90,14 +90,25 @@ coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime an
 hardware behavior remain open. See
 [HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
 
-The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
-without one. These are source-coverage counts, not qualified builds.
+At the HID checkpoint, the 729-leaf amd64 selection had 314 local BUILD files
+and 415 leaves without one; these were source-coverage counts only.
 
 Module export tests enforce explicit ELF bindings; the source loader defaults permit
 local-symbol lookup for compatibility. Earlier claims that local-only findings
 necessarily caused default load failures are withdrawn. Explicit exports remain;
 actual VM loading under both settings is still required. See
 [MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
+
+Four crypto modules now pass 80 actual compiler/input and four ordered-link audits,
+untouched Make plain/CTF-debug comparisons and twelve install records. Assembly,
+fifteen custom SIMD compilations and 820 explicit SDK header occurrences are covered;
+48 prior HID artifacts remain byte-identical and all six provider regressions pass
+in both profiles. Existing OpenCrypto SDT descriptor/relocation sections match Make.
+Crypto runtime/known-answer/performance gates remain open. See
+[CRYPTO-MODULES-QUALIFICATION.md](CRYPTO-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 318 local BUILD files and 411 leaves
+without one. These are source-coverage counts, not qualified builds.
 
 Earlier component checkpoints below are retained historical evidence.
 

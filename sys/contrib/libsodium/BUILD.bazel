@@ -78,3 +78,43 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_chacha20_ref", srcs =
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_verify", srcs = ["src/libsodium/crypto_verify/sodium/verify.c"],
     deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_verify_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "crypto_ed25519_ref10_module", srcs = ["src/libsodium/crypto_core/ed25519/ref10/ed25519_ref10.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_ed25519_ref10_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_ed25519_ref10_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-function"], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_core_hchacha20_module", srcs = ["src/libsodium/crypto_core/hchacha20/core_hchacha20.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_ed25519_ref10_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_core_hchacha20_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_onetimeauth_poly1305_module", srcs = ["src/libsodium/crypto_onetimeauth/poly1305/onetimeauth_poly1305.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_onetimeauth_poly1305_headers", "//sys/crypto:codecs_crypto_kernel_onetimeauth_poly1305_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_poly1305_donna_module", srcs = ["src/libsodium/crypto_onetimeauth/poly1305/donna/poly1305_donna.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_poly1305_donna_headers", "//sys/crypto:codecs_crypto_kernel_onetimeauth_poly1305_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_stream_chacha20_module", srcs = ["src/libsodium/crypto_stream/chacha20/stream_chacha20.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_stream_chacha20_headers", "//sys/crypto:codecs_crypto_kernel_ed25519_ref10_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_chacha20_ref_module", srcs = ["src/libsodium/crypto_stream/chacha20/ref/chacha20_ref.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_ed25519_ref10_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_chacha20_ref_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_scalarmult_curve25519_module", srcs = ["src/libsodium/crypto_scalarmult/curve25519/scalarmult_curve25519.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_scalarmult_curve25519_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_x25519_ref10_module", srcs = ["src/libsodium/crypto_scalarmult/curve25519/ref10/x25519_ref10.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_ed25519_ref10_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_x25519_ref10_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-function"], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_verify_module", srcs = ["src/libsodium/crypto_verify/sodium/verify.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_verify_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])

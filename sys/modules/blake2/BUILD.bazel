@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "blake2", objects = ["//sys/crypto:blake2_blake2b-sse2_module_object_files", "//sys/crypto:blake2_blake2b-ssse3_module_object_files", "//sys/crypto:blake2_blake2b-sse41_module_object_files", "//sys/crypto:blake2_blake2b-avx_module_object_files", "//sys/crypto:blake2_blake2b-xop_module_object_files", "//sys/crypto:blake2_blake2s-sse2_module_object_files", "//sys/crypto:blake2_blake2s-ssse3_module_object_files", "//sys/crypto:blake2_blake2s-sse41_module_object_files", "//sys/crypto:blake2_blake2s-avx_module_object_files", "//sys/crypto:blake2_blake2s-xop_module_object_files", "//sys/contrib/libb2:blake2_blake2-dispatch_module_object_files", "//sys/contrib/libb2:blake2_blake2bp_module_object_files", "//sys/crypto:blake2_blake2_cryptodev_module_object_files"],
+    object_order = ["blake2b-sse2.o", "blake2b-ssse3.o", "blake2b-sse41.o", "blake2b-avx.o", "blake2b-xop.o", "blake2s-sse2.o", "blake2s-ssse3.o", "blake2s-sse41.o", "blake2s-avx.o", "blake2s-xop.o", "blake2-dispatch.o", "blake2bp.o", "blake2sp.o", "blake2_cryptodev.o"], export_all = False)

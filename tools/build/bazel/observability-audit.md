@@ -10095,3 +10095,17 @@ do not emulate that runtime compatibility behavior. VM tests must record both
 leak_locals settings and qualify default/disabled lookup, dependency metadata,
 built-in providers, load/unload, probe registration and live event delivery.
 No kernel policy or host sysctl changed. See MODULE-LOADER-EXPORT-CONTRACT.md.
+
+
+### Crypto/accelerator module family (2026-11-02)
+
+Seventy-seven physical C sources, two assembly sources and one interface schema
+pass native artifact/input qualification. The bounded source scan has 39 matching
+SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR lines, retained with source hashes. Actual
+OpenCrypto SDT provider/probe/argument/tracepoint sections and relocations match
+Make exactly. This is compiled preservation, not live registration or event delivery.
+Review session/dispatch/completion/error events, hardware/FPU ownership, CPU dispatch
+and fallback, key-buffer cleanup and audit semantics without exposing secrets.
+All module export policies remain original; local-symbol fallback and strict ELF
+contract distinctions still apply. No live crypto device/session was exercised.
+See CRYPTO-MODULES-QUALIFICATION.md for exact input/artifact scope and remaining gates.

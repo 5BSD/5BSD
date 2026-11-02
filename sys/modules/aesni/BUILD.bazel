@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "aesni", objects = ["//sys/crypto:aesni_aesni_ghash_module_object_files", "//sys/crypto:aesni_aesni_wrap_module_object_files", "//sys/crypto:aesni_aesni_ccm_module_object_files", "//sys/crypto:aesni_intel_sha1_module_object_files", "//sys/crypto:aesni_aesni_module_object_files", "//sys/crypto:aesni_aeskeys_amd64_module_object_files"],
+    object_order = ["aesni_ghash.o", "aesni_wrap.o", "aesni_ccm.o", "intel_sha1.o", "intel_sha256.o", "aesni.o", "aeskeys_amd64.o"], export_all = False)

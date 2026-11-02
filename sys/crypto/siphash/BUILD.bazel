@@ -9,7 +9,7 @@ cc_library(name = "packet_filter_headers", hdrs = ["siphash.h"], strip_include_p
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["siphash.h"],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto/siphash:__pkg__"])
 
 # IPv4 built-in prerequisites.
 bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["siphash.h"],
@@ -41,3 +41,11 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_siphash_test", srcs =
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["siphash.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "crypto_siphash_module", srcs = ["siphash.c"],
+    deps = ["//sys/crypto/siphash:core_kernel_uipc_mbuf_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])

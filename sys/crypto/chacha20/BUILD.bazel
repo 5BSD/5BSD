@@ -12,7 +12,7 @@ cc_library(name = "libc_embedded", hdrs = ["chacha.c"],
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["_chacha.h", "chacha.h"],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto/chacha20:__pkg__"])
 
 # Physical prerequisites for native codec and crypto built-ins.
 bsd_source_headers(name = "codecs_crypto_kernel_chacha_headers", hdrs = ["_chacha.h", "chacha.h"],
@@ -33,3 +33,15 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_chacha-sw", srcs = ["
 
 # hash.c embeds this implementation with its own source-level configuration.
 bsd_source_headers(name = "codecs_crypto_kernel_hash_headers", hdrs = ["_chacha.h", "chacha.c", "chacha.h"], visibility = ["//sys/dev/random:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "crypto_chacha_module", srcs = ["chacha.c"],
+    deps = ["//sys/crypto/chacha20:core_kernel_kern_shutdown_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_chacha-sw_module", srcs = ["chacha-sw.c"],
+    deps = ["//sys/crypto/chacha20:core_kernel_kern_shutdown_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_cbc_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
