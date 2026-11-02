@@ -5,6 +5,39 @@ checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
 remains supported for ports and third-party software. BIP remains out of scope.
 
+## Current work awaiting native qualification (2026-11-02)
+
+The next network/RDMA batch covers nine modules in axgbe, bnxt, bxe, cxgb and
+qlnx. All eighteen original Make build/install controls (plain and CTF/debug)
+passed. Native declarations are prepared outside the source tree: 98 compiler
+contexts, 76 distinct ordinary C files and one generated interface schema.
+Preparation preserves original before/after-opt_global forced headers, physical
+include-root order, per-driver debug/inlining policy, typed WERROR, export and
+package tags. Header file ownership and narrow visibility are retained; grouped
+file exports have identical visibility to the reviewed initial stage.
+
+Evidence and reviewed declarations are retained under
+`/usr/obj/usr/src/bazel-network-families-modules-review-r1-20261102/`;
+`preparation-status.json` identifies the current stage and metadata bindings.
+The original Make resource baseline records CPU time, largest-child RSS, block
+operations and observed object-tree allocation with explicit limitations; it is
+not a performance comparison or pass. The pending native observer also checks
+actual compiler dependency files against action input digests, beyond comparing
+original Make prerequisites. No native compilation, artifact parity, runtime or
+hardware qualification is claimed for these nine modules yet.
+
+The separate rescue work is qualifying a real static cat/echo/head dispatcher,
+including native libc/startup/linker closure and safe application execution.
+The previously qualified combined-object stages do not establish that executable
+or the full selected rescue application set. Native source changes wait for the
+existing build's source snapshot to be bound. The last committed amd64 module
+BUILD presence remains 534/729 (195 missing), not a completion percentage.
+Full world/rescue/pkgbase/hardware/bootstrap/publication, ARM64/RISC-V and
+VM/runtime/performance/cache/sandbox qualification remain open. Existing
+build-bsd format-5 inputs and maintained rules express the pending network
+composition; no CLI/backend/security/publication policy changes are needed.
+Make remains production/default; BIP remains excluded.
+
 ## Latest kernel checkpoint (2026-11-02)
 
 Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
