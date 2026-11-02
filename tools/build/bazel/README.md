@@ -47853,3 +47853,15 @@ registration and .incbin inputs are native and declared. See
 [USB-REMAINING-MODULES-QUALIFICATION.md](USB-REMAINING-MODULES-QUALIFICATION.md).
 Local BUILD presence is 430/729 reviewed selected amd64 leaves, not full
 qualification. Hardware/runtime, other architectures and aggregate gates remain.
+
+
+## Native default rescue C generation (2026-11-02)
+
+The genuine native crunchgen now generates the original 103-program/39-alias
+rescue dispatcher without Make discovery. Its C bytes, compiled dispatcher,
+corrected crunchgen tool policy/objects/program and five installation records
+match independent Make controls. Nine negative analysis tests plus six safe
+fixture runtime methods pass. This is a generator/tool/dispatcher milestone;
+592 application object descriptors are not compiled rescue coverage. See
+[RESCUE-DISPATCH-QUALIFICATION.md](RESCUE-DISPATCH-QUALIFICATION.md) for exact
+configuration, debug-policy and remaining full-rescue gates.

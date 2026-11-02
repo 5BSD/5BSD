@@ -761,3 +761,17 @@ CTF/debug/install parity, prior firmware regressions and honest configuration/
 runtime limits. These 38 modules still count as missing native declarations;
 coverage remains 430/729 local BUILD leaves. Hardware/firmware-loading, complete
 world/cross/pkgbase/bootstrap/publication and performance gates remain open.
+
+
+### Rescue tool and dispatcher generation (2026-11-02)
+
+The original native crunchgen, declared cwd/runtime and explicit object metadata
+now produce the default 103-program/39-alias dispatcher with no Make invocation.
+C bytes, three normal compiler objects, program ABI/allocated payloads, actual
+input/link chains and five tool installation records match original controls;
+ten native wrapper targets pass (nine analysis negatives and six runtime methods
+inside one fixture wrapper). See RESCUE-DISPATCH-QUALIFICATION.md. The 592 original
+application object names remain descriptors: actual RESCUE/static/NOSSP source
+variants, generated stubs, crunchide transforms, complete static link/aliases/
+script installation and runtime/package matrices remain required. No full rescue
+or complete option/architecture/world coverage claim is added.

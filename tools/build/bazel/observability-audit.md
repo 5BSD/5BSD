@@ -10180,3 +10180,15 @@ failures. Review access-control/audit paths and firmware provenance/version,
 without logging device data, input reports or packet payload secrets. Actual
 i2ctinyusb duplicate sysinit/metadata was corrected and checked statically in
 both variants; runtime controller attach/error cleanup still needs qualification.
+
+
+### Native rescue dispatcher generation (2026-11-02)
+
+The original crunchgen and generated dispatcher retain exact checked Make code,
+allocated data, non-debug relocations and symbols. Generator actions use declared
+runtime inputs and DTRACE_DOF_INIT_DISABLE=1 before native tool startup. Six
+runtime fixture methods execute only two print/return stubs through the actual
+generated dispatcher, with the same child-startup disable flag. No original rescue
+application, login/credential operation, tracing registration or host install is
+exercised. Future crunched application probe/DOF preservation and full static
+constructor/runtime behavior remain open; see RESCUE-DISPATCH-QUALIFICATION.md.

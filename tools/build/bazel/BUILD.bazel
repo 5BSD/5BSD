@@ -186,3 +186,5 @@ bsd_python_test(name = "kernel_inventory_validate_test",
 
 load(":bsd_pkg_create_test.bzl", "bsd_pkg_create_test")
 bsd_pkg_create_test(name = "pkg_create_directories_test")
+
+exports_files(["bsd_crunchgen.bzl"], visibility = ["//visibility:public"])
