@@ -38,6 +38,7 @@
 #include <vmmapi.h>
 
 #include "acpi.h"
+#include "checkpoint_vmgenid.h"
 #include "inout.h"
 #include "mevent.h"
 #include "pci_irq.h"
@@ -292,6 +293,41 @@ acpi_raise_gpe(struct vmctx *ctx, unsigned bit)
 
 	pthread_mutex_lock(&pm_lock);
 	gpe0_active |= mask;
+	sci_update(ctx);
+	pthread_mutex_unlock(&pm_lock);
+}
+
+/*
+ * Checkpoint/migration image of the ACPI event registers.  The guest's OSPM
+ * enables GPE0 and PM1 events once at boot; a restored process must present
+ * the same enables (and the SCI level matching the restored interrupt
+ * controller) or a later event, such as the VM generation notify or the power
+ * button, never reaches the guest.
+ */
+void
+acpi_pm_state_get(struct checkpoint_acpi_pm *pm)
+{
+	pthread_mutex_lock(&pm_lock);
+	pm->pm1_enable = pm1_enable;
+	pm->pm1_status = pm1_status;
+	pm->pm1_control = pm1_control;
+	pm->gpe0_enable = (uint8_t)gpe0_enabled;
+	pm->gpe0_status = (uint8_t)gpe0_active;
+	pm->sci_active = sci_active != 0;
+	pthread_mutex_unlock(&pm_lock);
+}
+
+void
+acpi_pm_state_set(struct vmctx *ctx, const struct checkpoint_acpi_pm *pm)
+{
+	pthread_mutex_lock(&pm_lock);
+	pm1_enable = pm->pm1_enable & CHECKPOINT_ACPI_PM1_EN_MASK;
+	pm1_status = pm->pm1_status & CHECKPOINT_ACPI_PM1_STS_MASK;
+	pm1_control = pm->pm1_control & CHECKPOINT_ACPI_PM1_CNT_MASK;
+	gpe0_enabled = pm->gpe0_enable & gpe0_valid;
+	gpe0_active = pm->gpe0_status & gpe0_valid;
+	/* The restored I/O APIC/PIC already hold the source's SCI level. */
+	sci_active = pm->sci_active ? 1 : 0;
 	sci_update(ctx);
 	pthread_mutex_unlock(&pm_lock);
 }

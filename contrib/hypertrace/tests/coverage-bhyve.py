@@ -57,7 +57,7 @@ COMPONENTS = {
     'bhyve-snapshot': [BHYVE + f for f in (
         'snapshot.c', 'snapshot_devmem.c', 'checkpoint_compat.c',
         'checkpoint_cpu.c', 'checkpoint_machine.c', 'checkpoint_manifest.c',
-        'checkpoint_numa.c', 'checkpoint_topology.c',
+        'checkpoint_numa.c', 'checkpoint_topology.c', 'checkpoint_vmgenid.c',
         'amd64/checkpoint_cpu_machdep.c')],
     'bhyve-control': [BHYVE + 'ipc.c', BHYVE + 'gdb.c', BHYVE + 'bhyverun.c'],
     'bhyvectl': ['usr.sbin/bhyvectl/bhyvectl.c',
@@ -277,7 +277,7 @@ OUTCOME_WAIVERS = {
         # size; the ROM record names are short literals
         ('prod_vsock_state', ['if (strlcpy(items[devices].name, pdi->pi_name,'], 7, 'T', 'type-bound'),
         ('migration_prod_fill_topology', ['if (strlcpy(rec->name, pdi->pi_name,'], 7, 'T', 'type-bound'),
-        ('migration_prod_append_rom_identity', ['if (strlcpy(rec->name, record_name, sizeof(rec->name)) >='],
+        ('migration_rom_identity_record', ['if (strlcpy(rec->name, name, sizeof(rec->name)) >= sizeof(rec->name))'],
          6, 'T', 'type-bound'),
         # encode recomputes the size that just succeeded; a captured table
         # is recorded before any later failure
@@ -1825,6 +1825,7 @@ register('bhyve-cov-hypertrace', harness='bhyve-cov-hypertrace.c',
 SNAPSHOT_SOURCES = ['usr.sbin/bhyve/' + f for f in (
     'checkpoint_compat.c', 'checkpoint_cpu.c', 'checkpoint_machine.c',
     'checkpoint_manifest.c', 'checkpoint_numa.c', 'checkpoint_topology.c',
+    'checkpoint_vmgenid.c',
     'amd64/checkpoint_cpu_machdep.c', 'snapshot_devmem.c')]
 register('bhyve-cov-snapshot', harness='bhyve-cov-snapshot.c',
          harness_flags_from='usr.sbin/bhyve/snapshot.c', sources=SNAPSHOT_SOURCES,
@@ -1833,7 +1834,8 @@ register('bhyve-cov-snapshot', harness='bhyve-cov-snapshot.c',
                'lseek', 'flock', 'mmap', 'memfd_create', 'fdopen', 'fwrite', 'fread',
                'fseek', 'ftell', 'ucl_parser_new', 'ucl_parser_add_fd',
                'xo_create_to_file', 'close', 'fclose', 'fflush', 'xo_finish_h',
-               'asprintf', 'clock_gettime', 'nanosleep', 'exit', 'isatty', 'ioctl'],
+               'asprintf', 'clock_gettime', 'nanosleep', 'exit', 'isatty', 'ioctl',
+               'getentropy'],
          libs=['-lprivateucl', '-lxo', '-lnv', '-lmd', '-lutil', '-lz', '-pthread'], runs=[[]],
          timeout=1200)
 

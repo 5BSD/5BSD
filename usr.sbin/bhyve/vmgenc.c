@@ -46,9 +46,14 @@
 
 #include "acpi.h"
 #include "bootrom.h"
+#include "checkpoint_vmgenid.h"
 #include "vmgenc.h"
 
+_Static_assert(sizeof(struct uuid) == CHECKPOINT_VMGENID_ID_SIZE,
+    "VM generation ID size");
+
 static uint64_t	vmgen_gpa;
+static char	*vmgen_region;
 
 void
 vmgenc_init(struct vmctx *ctx)
@@ -72,11 +77,67 @@ vmgenc_init(struct vmctx *ctx)
 	error = getentropy(region, sizeof(struct uuid));
 	if (error == -1)
 		err(4, "%s: getentropy", __func__);
+	vmgen_region = region;
 
-	/* XXX When we have suspend/resume/rollback. */
-#if 0
-	acpi_raise_gpe(ctx, GPE_VMGENC);
+	/*
+	 * No notification at boot: the guest reads the ID when its driver
+	 * attaches.  Checkpoint restore changes the ID and raises the GPE
+	 * through vmgenc_restore_apply().
+	 */
+}
+
+/* The ID the guest currently sees; ENOENT without a generation device. */
+int
+vmgenc_current_id(struct vmctx *ctx __unused,
+    uint8_t id[CHECKPOINT_VMGENID_ID_SIZE])
+{
+	if (vmgen_region == NULL)
+		return (ENOENT);
+	memcpy(id, vmgen_region, CHECKPOINT_VMGENID_ID_SIZE);
+	return (0);
+}
+
+int
+vmgenc_checkpoint_state(struct vmctx *ctx, struct checkpoint_vmgenid *record)
+{
+	int error;
+
+	memset(record, 0, sizeof(*record));
+	error = vmgenc_current_id(ctx, record->id);
+	if (error != 0)
+		return (error);
+#ifdef __amd64__
+	acpi_pm_state_get(&record->pm);
 #endif
+	return (0);
+}
+
+/*
+ * Publish the destination's ID before any vCPU runs.  'pm' is the source's
+ * ACPI event register image (NULL for an image without one); 'notify' raises
+ * the generation GPE, whose _E00 method performs Notify(\_SB.GENC, 0x80).
+ */
+int
+vmgenc_restore_apply(struct vmctx *ctx,
+    const uint8_t id[CHECKPOINT_VMGENID_ID_SIZE],
+    const struct checkpoint_acpi_pm *pm, bool notify)
+{
+	if (vmgen_region == NULL)
+		return (ENOENT);
+	memcpy(vmgen_region, id, CHECKPOINT_VMGENID_ID_SIZE);
+	__compiler_membar();
+#ifdef __amd64__
+	if (pm != NULL)
+		acpi_pm_state_set(ctx, pm);
+	if (notify)
+		acpi_raise_gpe(ctx, GPE_VMGENC);
+#else
+	(void)ctx;
+	(void)pm;
+	if (notify)
+		return (EOPNOTSUPP);
+#endif
+	return (0);
 }
 
 void

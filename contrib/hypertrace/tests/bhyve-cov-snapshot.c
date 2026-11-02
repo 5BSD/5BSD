@@ -1053,6 +1053,81 @@ done:
 	return (ret);
 }
 
+/*
+ * VM generation device (vmgenc.c) per VM: the page the guest reads, the ACPI
+ * PM event registers and the GPE notifications raised.  A destination's page
+ * starts with its own random ID; a checkpoint restore's fixed-ROM copy is
+ * modelled by the test writing the checkpoint's ID there first.
+ */
+static bool vmgenc_present[2] = { true, true };
+static uint8_t vmgenc_page[2][CHECKPOINT_VMGENID_ID_SIZE];
+static struct checkpoint_acpi_pm vmgenc_pm[2];
+static int vmgenc_notifies[2], vmgenc_pm_writes[2];
+static int entropy_repeat;	/* draws that repeat the destination's ID */
+static const uint8_t *entropy_queue[4];	/* scripted draws, last first */
+static int entropy_queued;
+
+int
+vmgenc_current_id(struct vmctx *ctx, uint8_t id[CHECKPOINT_VMGENID_ID_SIZE])
+{
+	int vm = ctx == &dst_vm;
+
+	if (!vmgenc_present[vm])
+		return (ENOENT);
+	memcpy(id, vmgenc_page[vm], CHECKPOINT_VMGENID_ID_SIZE);
+	return (0);
+}
+
+int
+vmgenc_checkpoint_state(struct vmctx *ctx, struct checkpoint_vmgenid *record)
+{
+	int vm = ctx == &dst_vm;
+
+	memset(record, 0, sizeof(*record));
+	if (!vmgenc_present[vm])
+		return (ENOENT);
+	memcpy(record->id, vmgenc_page[vm], CHECKPOINT_VMGENID_ID_SIZE);
+	record->pm = vmgenc_pm[vm];
+	return (0);
+}
+
+int
+vmgenc_restore_apply(struct vmctx *ctx,
+    const uint8_t id[CHECKPOINT_VMGENID_ID_SIZE],
+    const struct checkpoint_acpi_pm *pm, bool notify)
+{
+	int vm = ctx == &dst_vm, error = boundary("vmgenc_restore_apply");
+
+	if (error != 0)
+		return (error == FAULT_NOERRNO ? EIO : error);
+	CHECK(vmgenc_present[vm]);
+	memcpy(vmgenc_page[vm], id, CHECKPOINT_VMGENID_ID_SIZE);
+	if (pm != NULL) {
+		vmgenc_pm[vm] = *pm;
+		vmgenc_pm_writes[vm]++;
+	}
+	if (notify)
+		vmgenc_notifies[vm]++;
+	return (0);
+}
+
+int __real_getentropy(void *, size_t);
+int
+__wrap_getentropy(void *buf, size_t len)
+{
+	LIBC_FAULT("getentropy", -1);
+	if (entropy_queued > 0 && len == CHECKPOINT_VMGENID_ID_SIZE) {
+		memcpy(buf, entropy_queue[--entropy_queued], len);
+		return (0);
+	}
+	if (entropy_repeat > 0 && len == CHECKPOINT_VMGENID_ID_SIZE) {
+		entropy_repeat--;
+		memcpy(buf, vmgenc_page[1], len);
+		return (0);
+	}
+	return (__real_getentropy(buf, len));
+}
+
 static bool fwcfg_on = true;
 bool qemu_fwcfg_enabled(void) { return (fwcfg_on); }
 
@@ -1728,6 +1803,235 @@ test_migration_blob(bool fresh)
 	vtdtr_present = false;
 	printf("snapshot migration blob (fresh %d): %zu bytes, device and kernel state equal\n",
 	    fresh, len);
+}
+
+/* ------------------------------------------------- VM generation ID */
+static void
+vmgenid_seed(int vm, uint8_t seed)
+{
+	for (int i = 0; i < CHECKPOINT_VMGENID_ID_SIZE; i++)
+		vmgenc_page[vm][i] = (uint8_t)(seed + i * 3);
+}
+
+static bool
+pm_equal(const struct checkpoint_acpi_pm *a, const struct checkpoint_acpi_pm *b)
+{
+	return (a->pm1_enable == b->pm1_enable && a->pm1_status == b->pm1_status &&
+	    a->pm1_control == b->pm1_control && a->gpe0_enable == b->gpe0_enable &&
+	    a->gpe0_status == b->gpe0_status && a->sci_active == b->sci_active);
+}
+
+static void
+vmgenid_dest_reset(const uint8_t *page)
+{
+	memcpy(vmgenc_page[1], page, CHECKPOINT_VMGENID_ID_SIZE);
+	memset(&vmgenc_pm[1], 0, sizeof(vmgenc_pm[1]));
+	vmgenc_notifies[1] = vmgenc_pm_writes[1] = 0;
+}
+
+/* Capture a migration blob from src_vm and commit it into dst_vm. */
+static int
+vmgenid_migrate(bool corrupt)
+{
+	struct vm_snapshot_capture cap = {0};
+	uint8_t *blob = NULL, *p;
+	size_t len = 0;
+	int error;
+
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == 0);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, false) == 0);
+	p = memmem(blob, len, "\"" JSON_VMGENID_STATE_KEY "\"", sizeof(JSON_VMGENID_STATE_KEY) + 1);
+	CHECK((p != NULL) == vmgenc_present[0]);
+	if (corrupt) {
+		p = memmem(p, len - (size_t)(p - blob), "\"1:", 3);
+		CHECK(p != NULL);
+		p[1] = '2';	/* an unknown record version */
+	}
+	vm_init(&dst_vm, "dst", 0x45);
+	side = 1;
+	state = dst_state;
+	checkpoint_restore_startup_hold();
+	error = vm_migrate_commit_state(&dst_vm, blob, len);
+	if (error == 0)
+		CHECK(vm_migrate_resume(&dst_vm) == 0);
+	else
+		(void)checkpoint_restore_startup_release();
+	free(blob);
+	side = 0;
+	state = src_state;
+	return (error);
+}
+
+static void
+test_vmgenid(void)
+{
+	const struct checkpoint_acpi_pm pm = { .pm1_enable = 0x0120,
+	    .pm1_status = 0x0100, .pm1_control = 0x0001, .gpe0_enable = 1,
+	    .gpe0_status = 0, .sci_active = true };
+	uint8_t ckpt[CHECKPOINT_VMGENID_ID_SIZE], first[CHECKPOINT_VMGENID_ID_SIZE];
+	uint8_t own[CHECKPOINT_VMGENID_ID_SIZE];
+
+	fresh_dir();
+	vm_init(&src_vm, "src", 0x21);
+	devices_init();
+	vmgenid_seed(0, 0x40);
+	vmgenc_pm[0] = pm;
+	vmgenc_notifies[0] = 0;
+	memcpy(ckpt, vmgenc_page[0], sizeof(ckpt));
+
+	/* A checkpoint of a running VM leaves its generation unchanged. */
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "gen.ckp", false) == 0);
+	CHECK(memcmp(vmgenc_page[0], ckpt, sizeof(ckpt)) == 0);
+	CHECK(vmgenc_notifies[0] == 0);
+
+	/* Each restore of the same checkpoint is a new generation, notified. */
+	for (int round = 0; round < 2; round++) {
+		vmgenid_dest_reset(ckpt);	/* the fixed-ROM restore result */
+		CHECK(restore_into_destination("gen.ckp", true) == 0);
+		CHECK(memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0);
+		CHECK(vmgenc_notifies[1] == 1 && vmgenc_pm_writes[1] == 1);
+		CHECK(pm_equal(&vmgenc_pm[1], &pm));
+		if (round == 0)
+			memcpy(first, vmgenc_page[1], sizeof(first));
+		else
+			CHECK(memcmp(first, vmgenc_page[1], sizeof(first)) != 0);
+	}
+	/* A draw equal to the ID being replaced is drawn again ... */
+	vmgenid_dest_reset(ckpt);
+	entropy_repeat = 2;
+	CHECK(restore_into_destination("gen.ckp", true) == 0);
+	CHECK(entropy_repeat == 0 && memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0);
+	CHECK(vmgenc_notifies[1] == 1);
+	/* ... and a source that never yields a new ID fails the restore. */
+	vmgenid_dest_reset(ckpt);
+	entropy_repeat = 8;
+	CHECK(restore_into_destination("gen.ckp", false) == EAGAIN);
+	CHECK(vmgenc_notifies[1] == 0);
+	entropy_repeat = 0;
+	/* Neither an all-zero ID nor the checkpoint's own ID is accepted, also
+	 * when the destination page differs from the checkpoint's. */
+	{
+		static const uint8_t zero[CHECKPOINT_VMGENID_ID_SIZE];
+		uint8_t other[CHECKPOINT_VMGENID_ID_SIZE];
+
+		memset(other, 0x5a, sizeof(other));
+		vmgenid_dest_reset(other);
+		entropy_queue[1] = zero;
+		entropy_queue[0] = ckpt;
+		entropy_queued = 2;
+		CHECK(restore_into_destination("gen.ckp", true) == 0);
+		CHECK(entropy_queued == 0 && vmgenc_notifies[1] == 1);
+		CHECK(memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0 &&
+		    memcmp(vmgenc_page[1], zero, sizeof(zero)) != 0 &&
+		    memcmp(vmgenc_page[1], other, sizeof(other)) != 0);
+	}
+	{
+		struct restore_state blank;
+
+		memset(&blank, 0, sizeof(blank));
+		CHECK(lookup_vmgenid_state(&blank) == EINVAL && !blank.vmgenid_present);
+	}
+	/* A destination without a generation device ignores the record. */
+	vmgenc_present[1] = false;
+	vmgenid_dest_reset(ckpt);
+	CHECK(restore_into_destination("gen.ckp", true) == 0);
+	CHECK(vmgenc_notifies[1] == 0 && memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) == 0);
+	vmgenc_present[1] = true;
+
+	/* Live migration presents the source's ID, without a notification. */
+	vm_init(&src_vm, "src", 0x22);
+	devices_init();
+	vmgenid_seed(0, 0x80);
+	vmgenid_seed(1, 0x10);
+	vmgenid_dest_reset(vmgenc_page[1]);
+	CHECK(vmgenid_migrate(false) == 0);
+	CHECK(memcmp(vmgenc_page[1], vmgenc_page[0], CHECKPOINT_VMGENID_ID_SIZE) == 0);
+	CHECK(vmgenc_notifies[1] == 0 && vmgenc_pm_writes[1] == 1);
+	CHECK(pm_equal(&vmgenc_pm[1], &vmgenc_pm[0]));
+	/* A malformed record is refused before the destination changes. */
+	vmgenid_seed(1, 0x10);
+	memcpy(own, vmgenc_page[1], sizeof(own));
+	vmgenid_dest_reset(own);
+	CHECK(vmgenid_migrate(true) == EINVAL);
+	CHECK(memcmp(vmgenc_page[1], own, sizeof(own)) == 0 && vmgenc_pm_writes[1] == 0);
+
+	/* An older source sends no record: the destination keeps its own ID. */
+	vmgenc_present[0] = false;
+	vmgenid_dest_reset(own);
+	CHECK(vmgenid_migrate(false) == 0);
+	CHECK(memcmp(vmgenc_page[1], own, sizeof(own)) == 0);
+	CHECK(vmgenc_notifies[1] == 0 && vmgenc_pm_writes[1] == 0);
+	/* An older checkpoint without the record still restores as a new
+	 * generation; the PM registers keep their reset values. */
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "old.ckp", false) == 0);
+	vmgenid_dest_reset(ckpt);
+	CHECK(restore_into_destination("old.ckp", true) == 0);
+	CHECK(memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0);
+	CHECK(vmgenc_notifies[1] == 1 && vmgenc_pm_writes[1] == 0);
+	vmgenc_present[0] = true;
+	/* A PM image the record cannot carry fails the checkpoint. */
+	vmgenc_pm[0].gpe0_enable = 2;
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "bad.ckp", false) != 0);
+	vmgenc_pm[0] = pm;
+	printf("vmgenid: restore renews and notifies, migration keeps the source ID\n");
+}
+
+static void
+test_vmgenid_codec(void)
+{
+	struct checkpoint_vmgenid r = {0}, d;
+	char text[CHECKPOINT_VMGENID_TEXT_SIZE], bad[CHECKPOINT_VMGENID_TEXT_SIZE + 1];
+	uint8_t cur[CHECKPOINT_VMGENID_ID_SIZE] = {1}, next[CHECKPOINT_VMGENID_ID_SIZE];
+	bool notify;
+	static const struct { size_t at; char c; } edits[] = {
+		{ 0, '2' }, { 1, '-' }, { 2, 'G' }, { 3, 'A' }, { 34, '-' },
+		{ 35, 'x' }, { 39, '-' }, { 35, 'f' }, { 40, 'f' }, { 45, 'f' },
+		{ 50, '2' }, { 53, '2' }, { 56, '2' }, { 56, 'z' },
+	};
+
+	for (int i = 0; i < CHECKPOINT_VMGENID_ID_SIZE; i++)
+		r.id[i] = (uint8_t)(0xa0 + i);
+	r.pm = (struct checkpoint_acpi_pm){ 0x0520, 0x8731, 0x1ffd, 1, 1, true };
+	CHECK(checkpoint_vmgenid_encode(&r, text, sizeof(text)) == 0);
+	CHECK(strcmp(text, "1:a0a1a2a3a4a5a6a7a8a9aaabacadaeaf:0520:8731:1ffd:01:01:1") == 0);
+	CHECK(checkpoint_vmgenid_decode(text, &d) == 0);
+	CHECK(memcmp(d.id, r.id, sizeof(r.id)) == 0 && pm_equal(&d.pm, &r.pm));
+	CHECK(checkpoint_vmgenid_encode(NULL, text, sizeof(text)) == EINVAL);
+	CHECK(checkpoint_vmgenid_encode(&r, NULL, sizeof(text)) == EINVAL);
+	CHECK(checkpoint_vmgenid_encode(&r, text, sizeof(text) - 1) == EINVAL);
+	for (int f = 0; f < 5; f++) {
+		struct checkpoint_vmgenid m = r;
+
+		switch (f) {
+		case 0: m.pm.pm1_enable |= 0x0001; break;
+		case 1: m.pm.pm1_status |= 0x0002; break;
+		case 2: m.pm.pm1_control |= 0x0002; break;
+		case 3: m.pm.gpe0_enable |= 0x02; break;
+		case 4: m.pm.gpe0_status |= 0x02; break;
+		}
+		CHECK(checkpoint_vmgenid_encode(&m, bad, sizeof(bad)) == EINVAL);
+	}
+	CHECK(checkpoint_vmgenid_decode(NULL, &d) == EINVAL);
+	CHECK(checkpoint_vmgenid_decode(text, NULL) == EINVAL);
+	CHECK(checkpoint_vmgenid_decode("1:00", &d) == EINVAL);
+	for (size_t i = 0; i < nitems(edits); i++) {
+		strlcpy(bad, text, sizeof(bad));
+		bad[edits[i].at] = edits[i].c;
+		CHECK(checkpoint_vmgenid_decode(bad, &d) == EINVAL);
+	}
+	/* Plan guards. */
+	CHECK(checkpoint_vmgenid_plan(CHECKPOINT_VMGENID_MIGRATE, NULL, NULL, NULL,
+	    next, &notify) == EINVAL);
+	CHECK(checkpoint_vmgenid_plan(CHECKPOINT_VMGENID_MIGRATE, NULL, cur, NULL,
+	    NULL, &notify) == EINVAL);
+	CHECK(checkpoint_vmgenid_plan(CHECKPOINT_VMGENID_MIGRATE, NULL, cur, NULL,
+	    next, NULL) == EINVAL);
+	CHECK(checkpoint_vmgenid_plan(CHECKPOINT_VMGENID_RESTORE, NULL, cur, NULL,
+	    next, &notify) == EINVAL);
+	CHECK(checkpoint_vmgenid_plan((enum checkpoint_vmgenid_restore)7, NULL,
+	    cur, NULL, next, &notify) == EINVAL);
+	printf("vmgenid codec: canonical text, %zu malformed forms refused\n",
+	    nitems(edits) + 1);
 }
 
 /* ------------------------------------------- generic device memory */
@@ -5920,6 +6224,8 @@ main(void)
 	test_progress();
 	test_vcpu_fence();
 	test_devmem_extension();
+	test_vmgenid_codec();
+	test_vmgenid();
 	devmem_enabled = true;
 	for (int seg = 0; seg < 2; seg++)
 		for (int i = 0; i < 8192; i++)
