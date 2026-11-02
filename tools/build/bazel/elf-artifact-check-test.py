@@ -48,6 +48,30 @@ def main():
     passed.append('archive-identical')
     members = subprocess.run([ar, 't', a.archive], check=True, text=True,
                              stdout=subprocess.PIPE).stdout.split()
+    # Ordinary DTrace objects use .nopic.o; variant spelling must not alter
+    # source identity, order or any member symbol contract.
+    variant_dir = a.work / 'nopic-members'
+    variant_dir.mkdir()
+    variant_members = []
+    for member in members:
+        data = subprocess.run([ar, 'p', a.archive, member], check=True,
+                              stdout=subprocess.PIPE).stdout
+        target = variant_dir / (m.stem(member) + '.nopic.o')
+        target.write_bytes(data)
+        variant_members.append(target)
+    variant = a.work / 'nopic-members.a'
+    subprocess.run([ar, 'rcs', variant, *variant_members], check=True)
+    m.compare_archive(nm, ar, variant, a.archive)
+    passed.append('archive-nopic-member-spelling')
+    collision_member = variant_dir / (m.stem(members[0]) + '.o')
+    shutil.copyfile(variant_members[0], collision_member)
+    collision = a.work / 'normalized-collision.a'
+    shutil.copyfile(variant, collision)
+    subprocess.run([ar, 'r', collision, collision_member], check=True)
+    expect_failure(lambda: m.compare_archive(nm, ar, collision, a.archive),
+                   'ambiguous normalized archive members')
+    passed.append('archive-normalized-collision-rejected')
+
     missing = a.work / 'missing-member.a'
     shutil.copyfile(a.archive, missing)
     subprocess.run([ar, 'd', missing, members[-1]], check=True)

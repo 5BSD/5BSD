@@ -174,7 +174,7 @@ def compare_shared(readelf, objcopy, candidate, reference, soname, scratch):
 
 
 def stem(member):
-    for suffix in ('.pic.o', '.pieo', '.o'):
+    for suffix in ('.nopic.o', '.pic.o', '.pieo', '.o'):
         if member.endswith(suffix):
             return member[:-len(suffix)]
     raise ValueError('unexpected archive member: ' + member)
@@ -197,6 +197,9 @@ def compare_archive(nm, ar, candidate, reference):
         members = run([ar, 't', path]).split()
         if len(members) != len(set(members)):
             raise ValueError(key + ': duplicate archive members')
+        identities = [stem(member) for member in members]
+        if len(identities) != len(set(identities)):
+            raise ValueError(key + ': ambiguous normalized archive members')
         records[key] = {'path': str(path), 'sha256': sha(path), 'members': members,
                         'symbols': parse_archive(nm, path)}
     a, b = records['candidate'], records['make_reference']

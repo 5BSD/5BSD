@@ -47536,3 +47536,5 @@ contexts, exact code/CTF/policy/input proof and remaining device/system gates.
 [STORAGE-HBA-KERNEL-QUALIFICATION.md](STORAGE-HBA-KERNEL-QUALIFICATION.md) records
 39 native OCS FC/SmartPQI objects, exact code/CTF and compiler input/policy checks,
 strict nondebug relocation review and remaining storage/system gates.
+
+[RELOCATABLE-ARCHIVE-QUALIFICATION.md](RELOCATABLE-ARCHIVE-QUALIFICATION.md) records ordered archive/runtime inputs, unchanged old partial-link actions, real execution bindings, strict archive variant/collision tests and explicit PAM/bootstrap limits.
