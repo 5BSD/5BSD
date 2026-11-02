@@ -10482,6 +10482,16 @@ all other bytes match. No artifact normalization is used. Broader host provenanc
 action-cache hermeticity, registration and live events remain open. The prior
 archive-only anchor-removal paragraph describes its historical source policy.
 
+## libutil linked DSO payload (November 2, 2026)
+
+[LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md)
+accounts for every allocated section and all nine DOF sections after correcting
+PIC order. The unchanged reader verifies original logincap schema and actual
+linked function/address/NOP sites. A cross-origin provider/class pair correctly
+fails the strict path-key link; no symbol waiver or artifact normalization.
+No probes changed or ran. Host provenance/cache hermeticity, registration, live
+events and separate debug/source lookup remain open.
+
 ## Compatibility/storage/tracing modules (November 2, 2026)
 
 [Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): bounded 125 physical

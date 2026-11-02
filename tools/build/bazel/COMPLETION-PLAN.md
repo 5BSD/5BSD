@@ -1212,6 +1212,17 @@ occurrences, 35 component members and actual anchor/archive producers are bound;
 passes; full DSO payload/install, arbitrary CcInfo ordering and DTrace host
 provenance/cache hermeticity remain open. Make remains default.
 
+### libutil DSO allocated-payload gate (November 2, 2026)
+
+[Qualification](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md): actual link controls isolate
+misordered pw_scan and missing original local-symbol discard. Two native
+declarations repair these; corrected allocated sections match original Make
+except fully accounted DOF path encoding and verified actual linked sites.
+Each mode preserves 68 actual compiler controls; unaffected archive/consumers/
+rescue remain byte-identical. Default 56 and experimental 43 methods are cached
+accepted results. Whole/debug/install/original ATF, arbitrary CcInfo and full
+world/package/runtime/provenance gates remain open; Make remains default.
+
 ### Compatibility/storage/tracing modules (November 2, 2026)
 
 [Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen more amd64

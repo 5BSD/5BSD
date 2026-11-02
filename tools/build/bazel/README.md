@@ -48206,6 +48206,14 @@ provider; the [earlier archive-only checkpoint](LIBUTIL-STATIC-ARCHIVE-QUALIFICA
 records the historical source policy. Full CcInfo ordering, DSO/install parity
 and DTrace host-provenance/cache hermeticity remain open.
 
+The [libutil DSO payload correction](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md)
+restores original PIC object order and local-symbol discard. Every allocated
+section now matches original Make except independently verified path-derived
+DOF encoding; all nine DOF sections and actual linked probe sites are accounted
+for. Existing default/experimental compiler, consumer and rescue regressions
+pass with cached test results stated explicitly. Whole/debug/install/library
+and world parity remain open.
+
 ## Compatibility/storage/tracing module checkpoint (2026-11-02)
 
 [Qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md): eighteen leaves,

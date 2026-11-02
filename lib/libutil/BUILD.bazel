@@ -74,7 +74,7 @@ bsd_configured_version_map(
 
 cc_shared_library(name = "util_shared", deps = [":util"], shared_lib_name = "libutil.so.10",
     additional_linker_inputs = [":version_map"],
-    user_link_flags = ["-Wl,-soname,libutil.so.10", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    user_link_flags = ["-Wl,-x", "-Wl,-soname,libutil.so.10", "-Wl,--version-script=$(location :version_map),--no-undefined-version", "-Wl,--fatal-warnings,--warn-shared-textrel"],
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 
 load(":installation.bzl", "util_installation")

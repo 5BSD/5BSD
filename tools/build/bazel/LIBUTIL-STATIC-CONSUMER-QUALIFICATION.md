@@ -1,5 +1,9 @@
 # libutil default static consumers (November 2, 2026)
 
+The later [DSO payload qualification](LIBUTIL-DSO-PAYLOAD-QUALIFICATION.md)
+corrects native PIC object order and original local-symbol discard. It narrows
+the metadata-only DSO scope below while retaining whole/debug/install gates.
+
 ## Corrected source contract
 
 Two independent original static consumers exposed distinct defects. An
