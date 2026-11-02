@@ -115,8 +115,8 @@ class state {
 	std::thread basetd;    /* base monitoring thread */
 
 	size_t threadpool_size; /* size of the thread pool (workers) */
-	/* thread pool for the joblist; on a control machine the last worker
-	 * delivers ELF to host consumers (process_consumer_deliveries()) */
+	/* thread pool for the joblist; on a control machine as many more
+	 * workers deliver ELF to host consumers (process_consumer_deliveries()) */
 	std::vector<std::thread> workers;
 
 	std::thread socktd; /* config socket thread */
