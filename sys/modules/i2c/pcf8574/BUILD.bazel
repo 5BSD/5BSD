@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "pcf8574", objects = ["//sys/dev/iicbus:pcf8574_pcf8574_module_object_files"],
+    object_order = ["pcf8574.o"], export_all = False)

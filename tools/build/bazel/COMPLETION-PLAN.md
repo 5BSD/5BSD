@@ -662,3 +662,19 @@ oracle defect, corrected by a complete-byte comparison to native env with no
 filtering. A missing ATF tr dependency was caught after green XML and fixed
 before qualification. See PRINTENV-QUALIFICATION.md. This bounded completion
 adds no full-world, cross-architecture or final-package completion claim.
+
+## I2C/SMBus module milestone (2026-11-02)
+
+Qualified 39 selected amd64 GENERIC leaves spanning controllers, buses, devices
+and muxes: 51 actual compiles/5,089 original consumed prerequisite occurrences,
+39 ordered initial links and 117 plain/CTF-debug installation records. All plain
+artifacts are exact respective Make references: 37 untouched originals plus two
+independent canonical-filename controls whose four actual recipes differ only
+by one explicit map and whose 382 prerequisites agree. Existing SDT sections
+and relocations are exact. No runtime/Make/helper/CLI policy changed. See
+I2C-MODULES-QUALIFICATION.md. Discovery coverage is 357/729 local BUILD leaves,
+not a qualified percentage; 372 still lack local BUILD declarations in this
+selection. Remaining configurations, architectures, actual bus/controller/input/
+RTC/sensor behavior, aggregate world/pkgbase/bootstrap, VM and performance gates
+remain open. The six existing family provider regressions passing each profile
+are regression evidence, not I2C hardware execution or strict-loader proof.

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "ig4", objects = ["//sys/dev/ichiic:ig4_ig4_acpi_module_object_files", "//sys/dev/ichiic:ig4_ig4_iic_module_object_files", "//sys/dev/ichiic:ig4_ig4_pci_module_object_files"],
+    object_order = ["ig4_acpi.o", "ig4_iic.o", "ig4_pci.o"], export_all = False)

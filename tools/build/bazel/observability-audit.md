@@ -10120,3 +10120,19 @@ streaming behavior. Four original ATF cases pass using declared runtime tools,
 with DTRACE_DOF_INIT_DISABLE=1 before process startup. No live tracing,
 registration, debugger or host configuration operation was performed. Test
 closure and retained failure details are in PRINTENV-QUALIFICATION.md.
+
+## I2C/SMBus module review (2026-11-02)
+
+The bounded scan of 47 physical C sources and four KOBJ schemas records eleven
+existing SDT declarations/calls in iiconf.c: iicbus provider, acquire start/done
+and transfer start/done. Actual plain iicbus provider/probe/argument/tracepoint
+sections and relocations match original Make exactly; live registration/event
+delivery remains open. Evidence: bazel-i2c-modules-review-r1-20261102 under
+/usr/obj/usr/src; see I2C-MODULES-QUALIFICATION.md.
+
+Keep per-controller/device gaps on the audit queue: transaction submission/
+completion, arbitration/locking/contention, timeout/NACK/retry, mux selection,
+interrupt/polling/DMA ownership and hotplug/error cleanup. User-visible EEPROM/
+RTC/GPIO writes and sensor/input access also need security/audit review; do not
+assume every raw bus transaction should be audited or expose payload secrets.
+Static preservation proves neither hardware coverage nor comprehensive probes.

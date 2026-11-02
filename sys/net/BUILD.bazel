@@ -1487,3 +1487,6 @@ bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["debugnet.h", "et
 
 bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "i2c_module_context_0", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/iicbus:__pkg__"])

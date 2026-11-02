@@ -47809,3 +47809,14 @@ runtime tools; default eight and TESTS-off five installation records match Make.
 The object/program allocated payloads match exactly. The focused environment
 oracle portability correction, retained initial failures and runtime limits are
 recorded in [PRINTENV-QUALIFICATION.md](PRINTENV-QUALIFICATION.md).
+
+## I2C/SMBus selected module family (2026-11-02)
+
+All 39 selected amd64 GENERIC I2C subtree leaves now use native module rules.
+Their 51 objects, consumed inputs, ordered links, CTF/debug contents and 117
+installation records pass independent Make comparisons. Thirty-seven plain
+modules match untouched Make byte for byte; two match explicitly documented
+filename-policy controls. Existing IIC bus SDT sections/relocations are preserved.
+See [I2C-MODULES-QUALIFICATION.md](I2C-MODULES-QUALIFICATION.md) for exact evidence
+and configuration/hardware/runtime limits. Local BUILD presence is now 357 of
+729 reviewed amd64 selected leaves; presence is not complete qualification.

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "amdpm_amdpm_module", srcs = ["amdpm.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/smbus:peripheral_devices_kernel_ichsmb_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/smbus:smbus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

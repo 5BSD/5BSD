@@ -25,7 +25,7 @@ bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["isareg.h",
 # Native amd64 core consumer of the maintained ISA object interface.
 filegroup(name = "isa_if_header_file", srcs = [":isa_if"], output_group = "header")
 cc_library(name = "isa_if_headers", hdrs = [":isa_if_header_file"], strip_include_prefix = "isa_if.generated",
-    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/amdsbwd:__pkg__"])
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/amdsbwd:__pkg__", "//sys/dev/viapm:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["isavar.h", "pnpvar.h"],
@@ -79,7 +79,7 @@ cc_library(name = "peripheral_devices_kernel_isa_if_headers", hdrs = [":peripher
 
 # Physical prerequisites for native platform support built-ins.
 bsd_source_headers(name = "platform_support_kernel_isa_common_headers", hdrs = ["isa_common.h", "isavar.h", "pnpvar.h"],
-    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/dev/viapm:__pkg__"])
 bsd_source_headers(name = "platform_support_kernel_vga_isa_headers", hdrs = ["isareg.h", "isavar.h", "pnpvar.h"],
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
 bsd_source_headers(name = "platform_support_kernel_atrtc_headers", hdrs = ["isareg.h", "isavar.h", "pnpvar.h", "rtc.h"],

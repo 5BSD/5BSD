@@ -77,9 +77,7 @@ bsd_source_headers(
         "in6.h",
         "in6_var.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/iicbus:__pkg__"],
 )
 
 bsd_source_headers(

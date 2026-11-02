@@ -802,3 +802,6 @@ bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["i
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["icmp6.h", "icmp_var.h", "if_ether.h", "igmp.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_icmp.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "udp.h", "udp_var.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+bsd_source_headers(name = "i2c_module_context_0", hdrs = ["if_ether.h", "in.h", "in_systm.h", "in_var.h", "ip.h"], includes = [],
+    visibility = ["//sys/dev/iicbus:__pkg__"])
