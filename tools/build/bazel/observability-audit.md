@@ -10260,3 +10260,17 @@ this scan; inherited subsystem/header instrumentation and live firing remain ope
 Review FireWire bus/reset/isochronous/DMA/errors and VMBus channel/ring/interrupt/
 network/storage lifecycle for useful shared events without per-packet logging or
 payload disclosure. See FIREWIRE-HYPERV-MODULES-QUALIFICATION.md.
+
+
+### NVMe-oF, TCP and kernel-test modules (2026-11-02)
+
+The bounded scan of 27 physical C files records seven explicit DTrace marker
+lines in NVMe-oF disconnect/reconnect/capsule-pressure paths. A separate scan
+retains 72 TCP_LOG_EVENT-family call lines in HPTS/LRO/BBR/RACK/common code. Eight
+modules preserve compiled probe/tracepoint sections against respective original/
+control Make. Other files lack explicit markers under these patterns, not all
+instrumentation. Review lifecycle/error and test-failure reporting with useful
+shared events; avoid per-packet logs or payload/key disclosure. No new probes
+added. 34 compiled ktest registrations are static preservation evidence only;
+live execution, two example-wrapper intentional-failure skips and failure-path
+reporting remain VM gates. See STORAGE-TCP-KTEST-MODULES-QUALIFICATION.md.

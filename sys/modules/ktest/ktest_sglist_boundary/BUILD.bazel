@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ktest_sglist_boundary", objects = ["//sys/tests:ktest_sglist_boundary_ktest_sglist_boundary_module_object_files"], object_order = ["ktest_sglist_boundary.o"], export_all = False, package = "tests")

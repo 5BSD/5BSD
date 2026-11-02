@@ -13,3 +13,72 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["nvmf.h", "nvmf_proto.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["host/nvmf_var.h", "nvmf.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["host/nvmf_var.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_2", hdrs = ["nvmf.h", "nvmf_proto.h", "nvmf_tcp.h", "nvmf_transport.h", "nvmf_transport_internal.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_3", hdrs = ["nvmf.h", "nvmf_proto.h", "nvmf_transport.h", "nvmf_transport_internal.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_4", hdrs = ["controller/nvmft_subr.h", "controller/nvmft_var.h", "nvmf.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_5", hdrs = ["controller/nvmft_subr.h", "nvmf_proto.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_6", hdrs = ["controller/nvmft_var.h", "nvmf.h", "nvmf_proto.h", "nvmf_transport.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "nvmf_nvmf_module", srcs = ["host/nvmf.c", "host/nvmf_ctldev.c", "host/nvmf_qpair.c"],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_nvmf_aer_module", srcs = ["host/nvmf_aer.c"],
+    deps = ["//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_nvmf_cmd_module", srcs = ["host/nvmf_cmd.c"],
+    deps = ["//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_nvmf_ns_module", srcs = ["host/nvmf_ns.c"],
+    deps = ["//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_nvmf_sim_module", srcs = ["host/nvmf_sim.c"],
+    deps = ["//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_tcp_nvmf_tcp_module", srcs = ["nvmf_tcp.c"],
+    deps = ["//sys/vm:mii_family_headers", "//sys/netinet:tracing_core_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmf_transport_nvmf_transport_module", srcs = ["nvmf_transport.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmft_ctl_frontend_nvmf_module", srcs = ["controller/ctl_frontend_nvmf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_4", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_tcp_ktest_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmft_nvmft_controller_module", srcs = ["controller/nvmft_controller.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/nvmf:storage_tcp_ktest_module_context_4", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_tcp_ktest_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmft_nvmft_subr_module", srcs = ["controller/nvmft_subr.c"],
+    deps = ["//sys/dev/nvmf:storage_tcp_ktest_module_context_5", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "nvmft_nvmft_qpair_module", srcs = ["controller/nvmft_qpair.c"],
+    deps = ["//sys/dev/nvmf:storage_tcp_ktest_module_context_6", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/cam:storage_tcp_ktest_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

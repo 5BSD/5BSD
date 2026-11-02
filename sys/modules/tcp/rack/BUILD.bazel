@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tcp_rack", objects = ["//sys/netinet:tcp_rack_rack_module_object_files", "//sys/netinet:tcp_rack_sack_filter_module_object_files", "//sys/netinet:tcp_rack_rack_bbr_common_module_object_files", "//sys/netinet:tcp_rack_tailq_hash_module_object_files"], object_order = ["rack.o", "sack_filter.o", "rack_bbr_common.o", "tailq_hash.o", "rack_pcm.o"], export_all = False, package = "kernel")

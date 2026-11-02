@@ -24,7 +24,7 @@ bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["netlink.h", "ne
 
 # Native filesystem/RPC physical prerequisites; identical contexts share providers.
 bsd_source_headers(name = "filesystems_rpc_kernel_clnt_nl_headers", hdrs = ["netlink.h", "netlink_ctl.h", "netlink_generic.h", "netlink_message_parser.h", "netlink_message_writer.h"],
-    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__", "//sys/tests:__pkg__"])
 
 # Physical prerequisites for native network policy built-ins.
 bsd_source_headers(name = "network_policy_kernel_netlink_glue_headers", hdrs = ["netlink.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_var.h", "route/route_var.h"],
@@ -92,3 +92,17 @@ amd64_generic_kernel_objects(name = "generic_network_policy_nexthop", srcs = ["r
 amd64_generic_kernel_objects(name = "generic_network_policy_rt", srcs = ["route/rt.c"],
     deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/net:network_policy_kernel_rt_headers", "//sys/netinet:network_policy_kernel_nhop_headers", "//sys/netinet6:network_policy_kernel_route_rtentry_headers", "//sys/netlink:network_policy_kernel_netlink_route_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, early_deps = [])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["netlink.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h"], includes = [],
+    visibility = ["//sys/tests:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_2", hdrs = ["ktest_netlink_message_writer.h", "netlink.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_var.h"], includes = [],
+    visibility = ["//sys/netlink:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ktest_netlink_message_writer_ktest_netlink_message_writer_module", srcs = ["ktest_netlink_message_writer.c"],
+    deps = ["//sys/tests:storage_tcp_ktest_module_context_0", "//sys/netlink:storage_tcp_ktest_module_context_2", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

@@ -50,7 +50,7 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["ata/ata_all.h", "
 bsd_source_headers(name = "isci_kernel_isci_controller_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_interrupt_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
-    visibility = ["//sys/dev/isci:__pkg__"])
+    visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/nvmf:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_io_request_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
 
@@ -233,3 +233,9 @@ bsd_source_headers(name = "peripheral_devices_kernel_pvscsi_headers", hdrs = ["a
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["ctl/ctl.h", "ctl/ctl_backend.h", "ctl/ctl_debug.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["ctl/ctl.h", "ctl/ctl_error.h", "ctl/ctl_frontend.h", "ctl/ctl_ha.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "ctl/ctl_private.h", "scsi/scsi_all.h", "scsi/scsi_cd.h", "scsi/scsi_da.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_2", hdrs = ["ctl/ctl.h", "ctl/ctl_frontend.h", "ctl/ctl_io.h", "ctl/ctl_ioctl.h", "scsi/scsi_all.h"], includes = [],
+    visibility = ["//sys/dev/nvmf:__pkg__"])

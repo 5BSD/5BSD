@@ -35,7 +35,7 @@ cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', '
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
-bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__"])
+bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netinet:__pkg__"])
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
@@ -46,7 +46,7 @@ bsd_source_headers(
         "uma.h",
         "uma_align_mask.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/netinet/libalias:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/netinet/libalias:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__"],
 )
 
 bsd_source_headers(
@@ -1199,3 +1199,6 @@ bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["uma
 
 bsd_source_headers(name = "spi_module_context_1", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_pager.h"], includes = [],
     visibility = ["//sys/dev/spibus:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_map.h", "vm_page.h"], includes = [],
+    visibility = ["//sys/tests:__pkg__"])

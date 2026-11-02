@@ -92,7 +92,7 @@ cc_library(name = "storage_module_headers", hdrs = ["in.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["in.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/netlink:__pkg__", "//sys/tests:__pkg__"])
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "ip.h", "ip6.h", "tcp.h", "udp.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
@@ -826,3 +826,72 @@ bsd_source_headers(name = "alias_ntb_module_context_3", hdrs = ["in.h", "in_syst
 
 bsd_source_headers(name = "alias_ntb_module_context_4", hdrs = ["in.h", "in_systm.h", "ip.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h", "udp.h"], includes = [],
     visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_1", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_hpts_internal.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_2", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_offload.h", "tcp_ratelimit.h", "tcp_seq.h", "tcp_stacks/rack_bbr_common.h", "tcp_stacks/sack_filter.h", "tcp_stacks/tcp_bbr.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_3", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "tcp.h", "tcp_fsm.h", "tcp_seq.h", "tcp_stacks/sack_filter.h", "tcp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_4", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_offload.h", "tcp_seq.h", "tcp_stacks/rack_bbr_common.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_5", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_hpts_internal.h", "tcp_log_buf.h", "tcp_seq.h", "tcp_timer.h", "tcp_var.h", "tcpip.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_6", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_hpts_internal.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_7", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_accounting.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_offload.h", "tcp_ratelimit.h", "tcp_seq.h", "tcp_stacks/rack_bbr_common.h", "tcp_stacks/sack_filter.h", "tcp_stacks/tailq_hash.h", "tcp_stacks/tcp_rack.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_8", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_accounting.h", "tcp_ecn.h", "tcp_fastopen.h", "tcp_fsm.h", "tcp_hpts.h", "tcp_log_buf.h", "tcp_lro.h", "tcp_offload.h", "tcp_seq.h", "tcp_stacks/sack_filter.h", "tcp_stacks/tailq_hash.h", "tcp_stacks/tcp_rack.h", "tcp_syncache.h", "tcp_timer.h", "tcp_var.h", "tcpip.h", "udp.h", "udp_var.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_9", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_var.h", "udp.h"], includes = [],
+    visibility = ["//sys/netipsec:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ktest_tcphpts_tcp_hpts_test_module", srcs = ["tcp_hpts_test.c"],
+    deps = ["//sys/tests:storage_tcp_ktest_module_context_0", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:storage_tcp_ktest_module_context_1", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet/cc:network_support_headers", "//sys/dev/tcp_log:ipv4_kernel_tcp_log_buf_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "tcp_bbr_bbr_module", srcs = ["tcp_stacks/bbr.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_3", "//sys/netinet:storage_tcp_ktest_module_context_2", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_bbr", "STACKNAME=bbr"])
+
+amd64_generic_module_objects(name = "tcp_bbr_sack_filter_module", srcs = ["tcp_stacks/sack_filter.c"],
+    deps = ["//sys/netinet:storage_tcp_ktest_module_context_3", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:network_support_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_bbr", "STACKNAME=bbr"])
+
+amd64_generic_module_objects(name = "tcp_bbr_rack_bbr_common_module", srcs = ["tcp_stacks/rack_bbr_common.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_4", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:storage_tcp_ktest_module_context_4", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_bbr", "STACKNAME=bbr"])
+
+amd64_generic_module_objects(name = "tcphpts_tcp_hpts_module", srcs = ["tcp_hpts.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet:storage_tcp_ktest_module_context_5", "//sys/netinet6:ipv4_kernel_tcp_lro_headers", "//sys/netinet/cc:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "tcphpts_tcp_lro_hpts_module", srcs = ["tcp_lro_hpts.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_5", "//sys/netinet:storage_tcp_ktest_module_context_6", "//sys/netinet6:ipv4_kernel_tcp_lro_headers", "//sys/netinet/cc:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "tcp_rack_rack_module", srcs = ["tcp_stacks/rack.c", "tcp_stacks/rack_pcm.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_6", "//sys/netinet:storage_tcp_ktest_module_context_7", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:storage_tcp_ktest_module_context_1", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_rack", "STACKNAME=rack"])
+
+amd64_generic_module_objects(name = "tcp_rack_sack_filter_module", srcs = ["tcp_stacks/sack_filter.c"],
+    deps = ["//sys/netinet:storage_tcp_ktest_module_context_3", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:network_support_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_rack", "STACKNAME=rack"])
+
+amd64_generic_module_objects(name = "tcp_rack_rack_bbr_common_module", srcs = ["tcp_stacks/rack_bbr_common.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_4", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:storage_tcp_ktest_module_context_4", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/netinet/cc:network_support_headers", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_rack", "STACKNAME=rack"])
+
+amd64_generic_module_objects(name = "tcp_rack_tailq_hash_module", srcs = ["tcp_stacks/tailq_hash.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:storage_tcp_ktest_module_context_6", "//sys/netinet:storage_tcp_ktest_module_context_8", "//sys/netinet6:storage_tcp_ktest_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet/cc:storage_tcp_ktest_module_context_1", "//sys/netipsec:storage_tcp_ktest_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["MODNAME=tcp_rack", "STACKNAME=rack"])

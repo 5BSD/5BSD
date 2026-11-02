@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "storage_tcp_ktest_module_context_0", hdrs = ["ktest.h"], includes = [],
+    visibility = ["//sys/netinet:__pkg__", "//sys/netlink:__pkg__", "//sys/tests:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ktest_ktest_module", srcs = ["ktest.c"],
+    deps = ["//sys/netlink:filesystems_rpc_kernel_clnt_nl_headers", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/tests:storage_tcp_ktest_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ktest_example_ktest_example_module", srcs = ["ktest_example.c"],
+    deps = ["//sys/tests:storage_tcp_ktest_module_context_0", "//sys/netlink:storage_tcp_ktest_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ktest_sglist_boundary_ktest_sglist_boundary_module", srcs = ["ktest_sglist_boundary.c"],
+    deps = ["//sys/vm:storage_tcp_ktest_module_context_0", "//sys/tests:storage_tcp_ktest_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

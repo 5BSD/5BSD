@@ -47972,3 +47972,33 @@ SRC instead of SRCS for its architecture sources; current evidence is amd64 only
 Existing build-bsd C/format-5/backend inputs cover the composition; no new CLI,
 signing/security, staging or publication contract. Make remains production/
 default; BIP is excluded. Automatic parameter capture remains a frontend gate.
+
+
+### NVMe-oF, TCP and kernel-test modules (2026-11-02)
+
+Thirteen more selected amd64 leaves use native C/module stages: four NVMe-oF,
+four TCP and five ktest modules. Twenty-nine compiler contexts/4,803 consumed
+prerequisites and thirteen actual ordered links pass. All thirteen plain modules
+match respective Make references byte-for-byte: eleven untouched originals and
+two independently checked BBR/RACK filename-policy controls. Sixteen original/
+control recipes and 3,218 prerequisites differ only by one source-path-derived
+macro map. Original noncanonical-path differences are retained; no final artifact
+normalization or production source/compiler-policy change. CTF bytes/debug CRCs
+and 39 file installation records pass, including original package=tests for the
+five test modules and package=kernel for the other eight. Export policy retained.
+
+Static registration checks preserve 34 compiled ktest cases, including twenty
+enabled HPTS functional cases, not merely its disabled warning stub. None is
+claimed executed. The example Python wrapper skips two intentional failures;
+matching-guest VM qualification must report skips and explicitly test failure
+reporting. Six existing provider test targets pass per build profile; these do
+not demonstrate protocol/storage/kernel-test runtime behavior. See
+STORAGE-TCP-KTEST-MODULES-QUALIFICATION.md for bounded evidence and open gates.
+
+Local BUILD presence is 519/729 selected amd64 leaves (210 missing), not a whole
+system qualification percentage. ARM64/RISC-V, alternate KERNCONF/options, actual
+loading/ktest/NVMe-oF/TCP/live-probe behavior, complete world/rescue/pkgbase/hardware/
+bootstrap/publication, VM and CPU/memory/disk I/O/cache/sandbox gates remain open.
+Existing build-bsd C/format-5/backend/helper inputs already carry this composition
+and package tags; no new CLI/manual behavior, signing/security, staging or
+publication requirements. Make remains production/default; BIP is excluded.

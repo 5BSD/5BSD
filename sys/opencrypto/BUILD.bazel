@@ -52,7 +52,7 @@ bsd_source_headers(name = "opencrypto_kernel_cryptodesc_ed25519_headers", hdrs =
 bsd_source_headers(name = "opencrypto_kernel_cryptodesc_kdf_headers", hdrs = ["_cryptodev.h", "cryptodesc_kdf.h", "cryptodev.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
-    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__", "//sys/netipsec:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "deflate.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_gmac_headers", hdrs = ["gfmult.h", "gmac.h"],
@@ -179,7 +179,7 @@ bsd_source_headers(name = "openzfs_kernel_crypto_os_headers", hdrs = ["_cryptode
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_offload_headers", hdrs = ["_cryptodev.h"],
-    visibility = ["//sys/dev/mlx5:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/netinet:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_en_hw_tls_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 

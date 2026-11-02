@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tcpmd5", objects = ["//sys/netipsec:tcpmd5_xform_tcp_module_object_files"], object_order = ["xform_tcp.o"], export_all = False, package = "kernel")

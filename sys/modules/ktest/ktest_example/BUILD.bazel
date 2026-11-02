@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ktest_example", objects = ["//sys/tests:ktest_example_ktest_example_module_object_files"], object_order = ["ktest_example.o"], export_all = False, package = "tests")
