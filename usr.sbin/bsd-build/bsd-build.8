@@ -5336,3 +5336,10 @@ These targets use ordinary format-5 inputs and declared native sources, parser,
 crunchide transforms, archives and startup objects.
 They do not represent the complete rescue selection.
 They do not install host rescue files.
+.Pp
+The bounded rescue core also includes hostname, ln, mkdir, realpath, rmdir and
+sleep, preserving the original link alias and DTrace provider transformations.
+This selected traced variant requires the existing dtrace build setting.
+The runtime wrapper covers private link and directory operations, read-only
+hostname lookup and bounded sleep inputs.
+Full rescue installation and complete original library parity remain separate.

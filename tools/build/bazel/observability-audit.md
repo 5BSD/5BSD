@@ -10401,3 +10401,15 @@ absences do not establish missing shared-subsystem instrumentation. Review share
 request/completion/error/recovery, device lifecycle, terminal and image activation
 with useful events; avoid per-I/O logs or payload/credential disclosure. The test
 framework is compiled, not executed. See SYSTEM-IO-MODULES-QUALIFICATION.md.
+
+## Fourteen-program rescue subset (November 2, 2026)
+
+Five added original RESCUE variants retain WITH_COVERAGE_DTRACE, genuine native
+header producers and object/provider transformations; hostname is untraced.
+All six raw/rewritten allocated code and relocation contracts match original
+Make. Complete DOF schemas and actual ET_REL function/patch/relocation sites
+match; only independently verified FNV path keys and their exactly derived
+string/alignment layout differ. No production probe source/checker changes or
+artifact rewriting. Thirty-one actual methods disable DOF initialization before
+product startup; no registration, live event or full rescue claim. See
+RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md for original/current/cached evidence.

@@ -19,7 +19,7 @@ class RescueCore(unittest.TestCase):
     def test_catalog(self):
         p = self.run_app("--list")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(set(p.stdout.split()), {b"cat", b"ed", b"red", b"echo", b"expr", b"getfacl", b"pwd", b"test", b"[", b"head"})
+        self.assertEqual(set(p.stdout.split()), {b"cat", b"ed", b"red", b"echo", b"expr", b"getfacl", b"hostname", b"ln", b"link", b"mkdir", b"pwd", b"realpath", b"rmdir", b"sleep", b"test", b"[", b"head"})
 
     def test_echo(self):
         p = self.run_app("echo", "alpha", "beta")
@@ -128,6 +128,79 @@ class RescueCore(unittest.TestCase):
             p = self.run_app("getfacl", str(path))
             self.assertEqual((p.returncode, p.stderr), (0, b""))
             self.assertIn(b"# file: " + str(path).encode(), p.stdout)
+
+    def test_hostname_readonly(self):
+        p = self.run_app("hostname")
+        self.assertEqual((p.returncode, p.stdout, p.stderr),
+            (0, (os.uname().nodename + "\n").encode(), b""))
+
+    def test_ln_private_hardlink(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"private\n")
+            p = self.run_app("ln", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(source.stat().st_ino, dest.stat().st_ino)
+            self.assertEqual(dest.read_bytes(), b"private\n")
+
+    def test_link_alias_private_file(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"alias\n")
+            p = self.run_app("link", str(source), str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(source.stat().st_ino, dest.stat().st_ino)
+
+    def test_ln_private_symbolic_link(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            dest = Path(d) / "dest"
+            p = self.run_app("ln", "-s", "relative-target", str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertEqual(os.readlink(dest), "relative-target")
+
+    def test_mkdir_private_parents_mode(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            target = Path(d) / "parent" / "child"
+            p = self.run_app("mkdir", "-p", "-m", "0700", str(target))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertTrue(target.is_dir())
+            self.assertEqual(target.stat().st_mode & 0o777, 0o700)
+
+    def test_realpath_private_symlink(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            source, dest = Path(d) / "source", Path(d) / "dest"
+            source.write_bytes(b"private\n")
+            dest.symlink_to("source")
+            p = self.run_app("realpath", str(dest))
+            self.assertEqual((p.returncode, p.stdout, p.stderr),
+                (0, (str(source.resolve()) + "\n").encode(), b""))
+
+    def test_rmdir_private_empty(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            target = Path(d) / "empty"
+            target.mkdir()
+            p = self.run_app("rmdir", str(target))
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+            self.assertFalse(target.exists())
+
+    def test_rmdir_rejects_nonempty(self):
+        with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
+            target = Path(d) / "nonempty"
+            target.mkdir()
+            (target / "input").write_bytes(b"retained\n")
+            p = self.run_app("rmdir", str(target))
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual((target / "input").read_bytes(), b"retained\n")
+
+    def test_sleep_zero(self):
+        p = self.run_app("sleep", "0")
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"", b""))
+
+    def test_sleep_rejects_invalid(self):
+        p = self.run_app("sleep", "invalid")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(p.stdout, b"")
+        self.assertTrue(p.stderr)
 
 if __name__ == "__main__":
     unittest.main()

@@ -48159,3 +48159,12 @@ percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
 bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
 open. Existing build-bsd format-5 inputs/rules carry this cohort; no new CLI or
 security/publication policy. Make stays production/default; BIP remains excluded.
+
+The [fourteen-program rescue subset](RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md)
+adds hostname, ln/link, mkdir, realpath, rmdir and sleep with their actual original
+RESCUE compiler policies and five retained DTrace provider transformations.
+Six regular objects and 314 consumed input pairs match original Make; complete
+provider schemas, actual relocation/site bindings and path-key DOF encoding are
+audited. Thirty-one runtime methods pass. Original generated Make with identical
+accepted inputs reproduces the complete static ELF byte for byte; full rescue,
+independent library parity and installation/package gates remain open.

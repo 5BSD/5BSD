@@ -1095,3 +1095,15 @@ actual generator, object order, per-source policy, aliases and installation
 contracts. All 103 programs, full independent world/library parity, rescue install/
 pkgbase, options/architectures/bootstrap/hardware/publication remain open;
 libutil's archive/provider/final DSO and installed-test gates remain separate.
+
+### Real fourteen-program rescue integration (November 2, 2026)
+
+[Qualification](RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md) adds six original RESCUE
+variants, including five actual DTrace header/provider transformations. Six raw
+and transformed object contracts, 314 consumed input pairs, complete DOF schemas/
+relocated sites/encoding, actual ordered links and 31 runtime methods pass.
+Original generated Make on identical accepted native objects/archives/startup
+reproduces the entire static ELF. Continue remaining actual rescue applications
+and library dependencies, selected options and original standalone tests, then
+complete rescue install/pkgbase and world/bootstrap. The full 103-program graph
+and independent full-library/installed-test parity are not closed by this subset.
