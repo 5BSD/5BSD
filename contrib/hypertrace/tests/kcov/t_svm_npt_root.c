@@ -346,9 +346,16 @@ case_wire_failure(void)
 	svm_nested_npt_root_destroy(root);
 }
 
+static void
+destroy_cb(void *root)
+{
+	svm_nested_npt_root_destroy(root);
+}
+
 /*
  * An alias without a system wiring breaks populate's invariant.  Refusing
- * the clear is a recoverable error; sleeping on a later alias is not.
+ * the clear is a recoverable error and destroy reports the broken
+ * invariant; sleeping on a later alias is neither.
  */
 static void
 case_unwired_alias_refused(void)
@@ -362,6 +369,8 @@ case_unwired_alias_refused(void)
 	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspace, 0x8000, 0x8000,
 	    PAGE_SIZE, VM_PROT_READ, VM_PROT_READ, NULL), 0);
 	KHX_EQ(svm_nested_npt_root_clear(root), EPROTO);
+	KHX_EQ(model_sleeps, 0);
+	KHX_CHECK(KHX_PANICS(destroy_cb, root));
 	KHX_EQ(model_sleeps, 0);
 }
 

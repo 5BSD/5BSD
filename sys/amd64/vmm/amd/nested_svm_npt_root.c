@@ -84,6 +84,7 @@ svm_nested_npt_root_create(uint64_t max_address,
 void
 svm_nested_npt_root_destroy(struct svm_nested_npt_root *root)
 {
+	int error;
 
 	if (root == NULL)
 		return;
@@ -91,7 +92,9 @@ svm_nested_npt_root_destroy(struct svm_nested_npt_root *root)
 	 * vmspace_free() ends in vm_map_remove() of the whole map, which
 	 * would sleep forever on the system-wired aliases.
 	 */
-	(void)svm_nested_npt_root_unmap(root, 0, root->max_address);
+	error = svm_nested_npt_root_unmap(root, 0, root->max_address);
+	if (error != 0)
+		panic("%s: cannot unmap nested-NPT root: %d", __func__, error);
 	svm_npt_free(root->vmspace);
 	free(root, M_SVM_NESTED_NPT);
 }
