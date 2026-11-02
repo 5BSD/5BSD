@@ -26,3 +26,73 @@ _IOMMU_POST_INIT_CASES = ["msix_bar_does_not_overlap_modern_bar", "host_topology
  for case in _IOMMU_POST_INIT_CASES]
 test_suite(name = "virtio_iommu_post_init_tests", tests = [":" + case for case in _IOMMU_POST_INIT_CASES],
     visibility = ["//visibility:public"])
+# Make: CFLAGS.virtio_crypto_guest_test (-I. for the cryptodev_if.h stand-in, -I sys), CWARNFLAGS.
+cc_library(name = "virtio_crypto_guest_test_headers", hdrs = ["cryptodev_if.h"], includes = ["."])
+cc_binary(name = "virtio_crypto_guest_test", srcs = ["virtio_crypto_guest_test.c"],
+    deps = [":virtio_crypto_guest_test_headers", "//sys/dev/virtio/crypto:guest_test_inputs", "//lib/atf/libatf-c:atf_c"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC", "-Wno-unused-parameter", "-Wno-unused-but-set-variable",
+        "-Wno-sign-compare", "-Wno-unused-function"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_CRYPTO_GUEST_CASES = ["ring_full_request_completes", "ring_drained_before_erestart_recorded", "full_queue_uses_other_queue",
+    "partial_ring_parks_request", "page_sector_takes_page_segments", "geli_1mib_write_burst", "geli_1mib_read_burst",
+    "cipher_data_request_op_type"]
+[bsd_atf_test(name = case, case_name = case, body = ":virtio_crypto_guest_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _CRYPTO_GUEST_CASES]
+test_suite(name = "virtio_crypto_guest_tests", tests = [":" + case for case in _CRYPTO_GUEST_CASES],
+    visibility = ["//visibility:public"])
+# Make: CFLAGS.virtio_fs_backend_io_test / virtio_fs_connection_test (-I usr.sbin/bhyve), LIBADD pthread.
+cc_binary(name = "virtio_fs_backend_io_test", srcs = ["virtio_fs_backend_io_test.c"],
+    deps = ["//usr.sbin/bhyve:virtiofsd_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_FS_BACKEND_IO_CASES = ["api_errors_and_peer_close", "backend_connect_is_bounded_and_authenticated",
+    "backend_connect_supports_long_parent_path", "peer_authentication", "frame_round_trip_and_nonblocking",
+    "truncation_and_bad_frames", "descriptor_passing_is_rejected", "truncated_descriptors_are_closed",
+    "receive_outputs_must_not_alias", "back_to_back_frames_keep_boundaries",
+    "frames_larger_than_socket_buffer_are_reassembled", "full_length_without_eor_is_rejected",
+    "partial_frame_resumes_without_waiting", "late_receive_moves_before_expiring",
+    "late_flush_moves_before_expiring", "descriptors_in_a_continuation_fail_the_frame"]
+[bsd_atf_test(name = case, case_name = case, body = ":virtio_fs_backend_io_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _FS_BACKEND_IO_CASES]
+test_suite(name = "virtio_fs_backend_io_tests", tests = [":" + case for case in _FS_BACKEND_IO_CASES],
+    visibility = ["//visibility:public"])
+cc_binary(name = "virtio_fs_connection_test", srcs = ["virtio_fs_connection_test.c"],
+    deps = ["//usr.sbin/bhyve:virtio_fs_connection_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_FS_CONNECTION_CASES = ["round_trip_and_readiness", "partial_response_does_not_block_event_loop",
+    "slow_draining_send_does_not_block_event_loop", "late_callback_with_ready_peer_does_not_expire",
+    "stalled_partial_frame_expires", "protocol_failure_completes_pending",
+    "connect_path_is_authenticated_and_event_driven", "adopt_failure_preserves_caller_ownership",
+    "preactive_empty_reset_is_synchronous", "required_backend_features_are_enforced",
+    "quiesce_drains_with_admission_closed", "backend_state_freeze_and_thaw_are_event_driven",
+    "backend_freeze_failure_rolls_back_admission", "malformed_control_reply_fails_connection",
+    "backend_thaw_failure_retains_retryable_state", "destroy_withdraws_queue_before_completion",
+    "notification_is_negotiated_and_retried"]
+[bsd_atf_test(name = case, case_name = case, body = ":virtio_fs_connection_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _FS_CONNECTION_CASES]
+test_suite(name = "virtio_fs_connection_tests", tests = [":" + case for case in _FS_CONNECTION_CASES],
+    visibility = ["//visibility:public"])
+# Make: CFLAGS.block_if_test (-DWITHOUT_CAPSICUM, -I usr.sbin -I sys), CWARNFLAGS -Wno-error,
+# LDFLAGS --gc-sections --wrap=pwrite --wrap=pwritev.
+cc_binary(name = "block_if_test", srcs = ["block_if_test.c"],
+    deps = ["//usr.sbin/bhyve:block_if_test_inputs", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC", "-DWITHOUT_CAPSICUM", "-ffunction-sections", "-fdata-sections",
+        "-Wno-error", "-Wno-thread-safety-analysis"],
+    linkopts = ["-pie", "-Wl,--gc-sections", "-Wl,--wrap=pwrite", "-Wl,--wrap=pwritev"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_BLOCK_IF_CASES = ["config_numbers_are_bounded", "write_zeroes_file", "checkpoint_identity_contract",
+    "checkpoint_identity_rejects_invalid", "write_zeroes_errors", "read_write_reject_invalid_vectors",
+    "translated_write_retries_short_pwrite", "file_write_retries_short_pwritev",
+    "nvme_request_accepts_mdts_iovecs", "file_write_zero_progress_fails",
+    "translated_read_eof_makes_progress", "translated_write_zero_progress_fails",
+    "delete_uses_operation_range", "delete_rejects_invalid_range", "flush_is_scheduler_barrier",
+    "readonly_flush_is_noop", "paused_backend_accepts_only_stability_flush", "nested_quiesce_ownership",
+    "suspend_flush_failure_rolls_back", "suspend_timeout_rolls_back"]
+[bsd_atf_test(name = case, case_name = case, body = ":block_if_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _BLOCK_IF_CASES]
+test_suite(name = "block_if_tests", tests = [":" + case for case in _BLOCK_IF_CASES], visibility = ["//visibility:public"])
