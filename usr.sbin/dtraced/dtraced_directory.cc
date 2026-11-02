@@ -18953,7 +18953,8 @@ dir::drain_source_consumer_step(const durable_handoff &ticket)
 		int drain_error = drained ? 0 : errno;
 		consumer->release();
 		if (!drained) {
-			errno = drain_error;
+			/* EBUSY: a delivery awaits its ACK; nothing was sent. */
+			errno = drain_error == EBUSY ? EAGAIN : drain_error;
 			return (-1);
 		}
 		if (source_consumer_drain_receipt(ticket, proof, true) != 1)

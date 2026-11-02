@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <sys/procdesc.h>
 #include <unistd.h>
+#include <chrono>
+#include <future>
 #include <thread>
 #include <atomic>
 #include "dtraced_wire.h"
@@ -971,6 +973,24 @@ int main()
         }
         assert(dtraced_io_transfer(sockets[1], reply, sizeof(reply), true, deadline, &transferred) == 0);
     };
+    {
+        /* A delivery awaiting this collector's ACK holds its stream, and
+         * dtrace -E ACKs only after this daemon accepts its derived program
+         * on a worker.  The stop step must report pending, not wait. */
+        std::unique_lock delivery(consumer.output_mtx);
+        auto step = std::async(std::launch::async, [&] {
+            int result = host.stop_fresh_session_step(stop);
+            return std::make_pair(result, errno);
+        });
+        bool returned = step.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        delivery.unlock();
+        auto [result, error] = step.get();
+        assert(returned && result == -1 && error == EAGAIN);
+        char sent;	/* nothing reached the collector */
+        assert(recv(sockets[1], &sent, 1, MSG_DONTWAIT) == -1 &&
+            errno == EAGAIN && !consumer.retired.load());
+    }
     std::thread refused(respond, false);
     assert(host.stop_fresh_session_step(stop) == -1 && errno == EOPNOTSUPP);
     refused.join();
