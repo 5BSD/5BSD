@@ -54,3 +54,162 @@ bsd_source_headers(name = "x86_core_kernel_mp_x86_headers", hdrs = ["acpivar.h"]
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_tsc_headers", hdrs = ["acpi_hpet.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["acpiio.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_acad_headers", hdrs = ["acpiio.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_apei_headers", hdrs = ["acpivar.h", "apeivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_apei_bus_headers", hdrs = ["acpivar.h", "apeivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_battery_headers", hdrs = ["acpiio.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_button_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_cmbat_headers", hdrs = ["acpiio.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_cpu_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_ec_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_isab_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_lid_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_package_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_perf_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_powerres_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_quirk_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_resource_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_container_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_smbat_headers", hdrs = ["acpi_smbus.h", "acpiio.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_thermal_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_throttle_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_spmc_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_hpet_headers", hdrs = ["acpi_hpet.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_headers", hdrs = ["acpi_pcivar.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_link_headers", hdrs = ["acpi_pcibvar.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_headers", hdrs = ["acpi_pcibvar.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_acpi_headers", hdrs = ["acpi_pcibvar.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_pci_headers", hdrs = ["acpi_pcibvar.h", "acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pxm_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_timer_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+
+# Native ACPI core built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi", srcs = ["acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_headers", "//sys/dev/pci:acpica_core_kernel_acpi_headers", "//sys/isa:acpica_core_kernel_acpi_headers", "//sys/vm:acpica_core_kernel_acpi_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_acad", srcs = ["acpi_acad.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_acad_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_acad_headers", "//sys/isa:acpica_core_kernel_acpi_acad_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_apei", srcs = ["acpi_apei.c"],
+    deps = ["//sys/contrib/ck:acpica_core_kernel_acpi_apei_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_apei_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_apei_headers", "//sys/dev/pci:acpica_core_kernel_acpi_apei_headers", "//sys/vm:acpica_core_kernel_acpi_apei_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:apei_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/amd64/conf:acpica_core_kernel_opt_pci_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_apei_bus", srcs = ["acpi_apei_bus.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_apei_bus_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_apei_bus_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/dev/acpica:apei_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_battery", srcs = ["acpi_battery.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_battery_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_battery_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_button", srcs = ["acpi_button.c"],
+    deps = ["//sys/contrib/ck:acpica_core_kernel_acpi_button_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_button_headers", "//sys/dev/evdev:acpica_core_kernel_acpi_button_headers", "//sys/dev/kbd:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:acpica_core_kernel_opt_kbd_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_cmbat", srcs = ["acpi_cmbat.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_cmbat_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_cmbat_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_cpu", srcs = ["acpi_cpu.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_cpu_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_cpu_headers", "//sys/dev/pci:acpica_core_kernel_acpi_cpu_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_ec", srcs = ["acpi_ec.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_ec_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_ec_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_isab", srcs = ["acpi_isab.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_isab_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_isab_headers", "//sys/isa:acpica_core_kernel_acpi_isab_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_lid", srcs = ["acpi_lid.c"],
+    deps = ["//sys/contrib/ck:acpica_core_kernel_acpi_lid_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_lid_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_lid_headers", "//sys/dev/evdev:acpica_core_kernel_acpi_lid_headers", "//sys/dev/kbd:acpica_core_kernel_acpi_lid_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:acpica_core_kernel_opt_kbd_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_package", srcs = ["acpi_package.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_package_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_package_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_perf", srcs = ["acpi_perf.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_perf_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_perf_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_powerres", srcs = ["acpi_powerres.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_powerres_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_powerres_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_quirk", srcs = ["acpi_quirk.c"],
+    deps = [":quirk_table_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_quirk_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_quirk_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_resource", srcs = ["acpi_resource.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_resource_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_resource_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_container", srcs = ["acpi_container.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_container_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_container_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_smbat", srcs = ["acpi_smbat.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_smbat_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_smbat_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_thermal", srcs = ["acpi_thermal.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_thermal_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_thermal_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_throttle", srcs = ["acpi_throttle.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_throttle_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_throttle_headers", "//sys/dev/pci:acpica_core_kernel_acpi_throttle_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_spmc", srcs = ["acpi_spmc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_spmc_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_spmc_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_hpet", srcs = ["acpi_hpet.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_hpet_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_hpet_headers", "//sys/vm:acpica_core_kernel_acpi_hpet_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pci", srcs = ["acpi_pci.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pci_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pci_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pci_link", srcs = ["acpi_pci_link.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pci_link_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pci_link_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pci_link_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pcib", srcs = ["acpi_pcib.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pcib_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pcib_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pcib_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pcib_acpi", srcs = ["acpi_pcib_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pcib_acpi_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pcib_acpi_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pcib_acpi_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/amd64/conf:acpica_core_kernel_opt_pci_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pcib_pci", srcs = ["acpi_pcib_pci.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pcib_pci_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pcib_pci_headers", "//sys/dev/pci:acpica_core_kernel_acpi_pcib_pci_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_pxm", srcs = ["acpi_pxm.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_pxm_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_pxm_headers", "//sys/vm:acpica_core_kernel_acpi_pxm_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/amd64/conf:acpica_core_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_acpica_core_acpi_timer", srcs = ["acpi_timer.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_timer_headers", "//sys/dev/acpica:acpica_core_kernel_acpi_timer_headers", "//sys/dev/pci:acpica_core_kernel_acpi_timer_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# The maintained AWK writes this exact basename in its declared output directory.
+load("//tools/build/bazel:bsd_device_ids.bzl", "bsd_device_ids_header")
+bsd_device_ids_header(name = "quirk_table", src = "acpi_quirks",
+    generator = "//sys/tools:acpi_quirks2h.awk", header = "acpi_quirks.h",
+    mnemonic = "BSDAcpiQuirks")
+cc_library(name = "quirk_table_headers", hdrs = [":quirk_table"],
+    strip_include_prefix = "quirk_table.generated")

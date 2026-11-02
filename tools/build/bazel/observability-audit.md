@@ -9666,3 +9666,12 @@ Safe non-root CLI tests return before supplicant/driver initialization; no WLAN
 service is activated. Real association/EAP/security-event/audit delivery and
 shared hooks remain explicit runtime gates. No speculative probes were added.
 See WPA-SUPPLICANT-QUALIFICATION.md for immutable/compact evidence and limits.
+
+## ACPI platform built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan recognizes tracing/audit/CTR markers
+in acpi.c and acpi_ec.c, with none in 27 other selected sources. Existing source
+and compiled probe plumbing are preserved. Object/generator parity does not
+qualify firmware AML, EC, power/thermal events, interrupt routing, suspend/resume
+or live event delivery. Review shared hooks before adding hot-path events.
+See ACPICA-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.

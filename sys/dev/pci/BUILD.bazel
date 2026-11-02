@@ -56,4 +56,26 @@ bsd_source_headers(name = "x86_core_kernel_msi_headers", hdrs = ["pcivar.h"],
 # Native x86 core consumer of the existing PCI bridge interface producer.
 filegroup(name = "pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
 cc_library(name = "pcib_if_headers", hdrs = [":pcib_if_header_file"],
-    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/x86/x86:__pkg__"])
+    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_apei_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_cpu_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_throttle_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_headers", hdrs = ["pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_link_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_acpi_headers", hdrs = ["pcib_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_pci_headers", hdrs = ["pcib_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_timer_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])

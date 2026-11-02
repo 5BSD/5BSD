@@ -501,3 +501,15 @@ cc_library(name = "ddb_core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
     strip_include_prefix = "generic_options", visibility = ["//sys/ddb:__pkg__"])
 cc_library(name = "ddb_core_kernel_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
     strip_include_prefix = "generic_options", visibility = ["//sys/ddb:__pkg__"])
+
+# ACPI core built-in prerequisites.
+cc_library(name = "acpica_core_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
+cc_library(name = "acpica_core_kernel_opt_evdev_header", hdrs = [":opt_evdev"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
+cc_library(name = "acpica_core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
+cc_library(name = "acpica_core_kernel_opt_pci_header", hdrs = [":opt_pci"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])
+cc_library(name = "acpica_core_kernel_opt_vm_header", hdrs = [":opt_vm"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/acpica:__pkg__"])

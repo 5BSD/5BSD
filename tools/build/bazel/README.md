@@ -47490,3 +47490,8 @@ records opt-in format-5 compact logs through build-bsd, explicit log receipt
 bindings, configured inventory flag handling, 25 native regression methods and
 hash-verified upstream streaming conversion. JSON remains the default; full
 resource/cache/system qualification remains open.
+
+[ACPICA-CORE-KERNEL-QUALIFICATION.md](ACPICA-CORE-KERNEL-QUALIFICATION.md)
+records 29 ACPI platform built-ins, native quirk-table generation, exact code/CTF
+and declared input checks, upstream compact-log action provenance, symbolic
+relocation review and remaining firmware/runtime/system gates.

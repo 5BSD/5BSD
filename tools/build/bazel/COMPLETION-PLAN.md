@@ -110,6 +110,15 @@ JSON remains default. Compiler/link/generator coverage on subsequent component
 runs and controlled resource/cache comparisons remain required; this bounded
 integration does not close the full-system performance gate.
 
+The 29 ACPI platform built-ins now pass native code/CTF/input/relocation checks;
+see ACPICA-CORE-KERNEL-QUALIFICATION.md. The corrected graph declares the real
+maintained quirk-table AWK producer and preserves its output hash exactly.
+Upstream compact-log reconstruction binds actual compiler/CTF/generator records
+without expanded disk logs. Latest successful known-builtin analysis finds
+679 source matches, six weaker name matches and 1,781 unmatched among 2,466
+Make final products. Earlier counts remain snapshots; full kernel/world/package,
+cross-build, runtime and controlled resource/performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

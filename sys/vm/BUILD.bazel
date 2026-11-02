@@ -896,3 +896,13 @@ bsd_source_headers(name = "ddb_core_kernel_db_run_headers", hdrs = ["vm.h"],
     visibility = ["//sys/ddb:__pkg__"])
 bsd_source_headers(name = "ddb_core_kernel_db_watch_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h"],
     visibility = ["//sys/ddb:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["vm_param.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_apei_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_hpet_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pxm_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])

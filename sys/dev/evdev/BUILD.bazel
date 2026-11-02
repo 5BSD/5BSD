@@ -14,3 +14,9 @@ bsd_source_headers(name = "acpi_support_headers", hdrs = ["evdev.h", "input-even
 # Only the input ABI headers used by the userland bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ["input-event-codes.h", "input.h"],
     strip_include_prefix = "/sys", visibility = ["//:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_button_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_lid_headers", hdrs = ["evdev.h", "input-event-codes.h", "input.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
