@@ -27,14 +27,34 @@ fires the `BSDTime` DTrace provider's `clock-set` or `clock-adjust` probe.
 The gate claim refuses the clock privileges to every ambient process, root
 included, so ntpd(8) cannot use `clock_settime(2)` or `ntp_adjtime(2)`
 directly. rc.d/ntpd runs ntpd as the unprivileged `ntpd` user under
-mac_ntpd(4). mac_ntpd hands that uid to the gate, which then admits it for
+mac_ntpd(4). mac_ntpd hands that uid to the gate, which admits it for
 `PRIV_ADJTIME`, `PRIV_CLOCK_SETTIME` and `PRIV_NTP_ADJTIME` only, outside
-capability mode; mac_ntpd's own grant still decides the privilege check.
-Root, `PRIV_SETTIMEOFDAY` and every other uid stay behind the claim, and the
-gated `SYS_OP_SETTIME`/`SYS_OP_ADJTIME` operations still need the token.
-Setting `security.mac.ntpd.enabled=0` withdraws it. An ntpd running as root
-(when mac_ntpd is disabled or ntpd's options name files the ntpd user cannot
-write) is refused and logs `step-systime: Operation not permitted`.
+capability mode, and only in a process that runs an image pinned in the
+program-limited grant switchboard gave the ntpd unit
+(`/Capabilities/Config/switchboard/service-authority.ucl`, see
+[Lasting service grants](../compat/rc-and-service.md#lasting-service-grants)).
+The uid alone is not enough: a root shell can become the ntpd user with
+`su -m ntpd -c 'date ...'`, but holds no grant and is refused, as is any
+program not pinned in the grant, even run as `ntpd`. mac_ntpd's own grant
+still decides the privilege check. Root, `PRIV_SETTIMEOFDAY` and every other
+caller stay behind the claim, and the gated `SYS_OP_SETTIME`/`SYS_OP_ADJTIME`
+operations still need the token.
+
+The ntpd unit is adopted (rc_adopt.conf) and switchboard restarts it under
+the grant after `/etc/rc`, only when `ntpd_enable` is set. Its grant reaches
+no endpoint; it only identifies that ntpd. mac_ntpd must already be loaded:
+rc.d/ntpd loads it at boot, or set `mac_ntpd_load="YES"` in loader.conf. An
+ntpd started from a root shell with `service ntpd start` has no grant and
+cannot discipline the clock; use `switchboardctl restart ntpd`. After a base
+upgrade replaces `/usr/sbin/ntpd`, `su`, `limits`, `env` or `/bin/sh`, restart
+the unit the same way (or reboot) so the grant pins the new files.
+
+While the claim is held, `security.mac.ntpd.uid` cannot be changed and
+`security.mac.ntpd.enabled` can only be set to 0 (EPERM otherwise); set them
+as loader tunables. Setting `security.mac.ntpd.enabled=0` withdraws the
+delegate. An ntpd running as root (when mac_ntpd is disabled or ntpd's
+options name files the ntpd user cannot write) is refused and logs
+`step-systime: Operation not permitted`.
 
 ntpd and BSDTime clients both move the same clock; they do not coordinate.
 The planned rework of the time service should make BSDTime the single

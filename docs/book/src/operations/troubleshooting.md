@@ -320,8 +320,10 @@ sysextctl status linprocfs
 ```
 
 From a root login shell, `sysextctl load` uses the root-load endpoint,
-which loads a module only when it is a file in `/boot/kernel` that an
-installed 5BSD base package recorded, with an unchanged checksum:
+which loads a module only when it, and every module it depends on, is a file
+in the running kernel's `/boot/kernel` that an installed 5BSD base package
+recorded, with an unchanged checksum, and none of them is a protected module
+(security policies, tracing, ZFS, packet filters, vmm):
 
 ```sh
 sysextctl load linprocfs
@@ -331,9 +333,11 @@ Each refusal names its reason (exit 77, `EX_NOPERM`): `not a file of an
 installed 5BSD base package` (copied in by hand, or from a ports package),
 `the file does not match the checksum its package recorded` (reinstall the
 package that owns it: `pkg which /boot/kernel/NAME.ko`, then `pkg install -f`),
-`no regular module file of that name in /boot/kernel` (modules under
-`/boot/modules` are not root-loadable; they need an allow-list entry and a
-grant), `denied by an administrator override` (`sysextctl reset NAME` from a
+`no regular module file of that name in the running kernel's directory`
+(modules under `/boot/modules`, and modules that need one, are not
+root-loadable; they need an allow-list entry and a grant; after installkernel
+or a kernel package upgrade, reboot first), `protected module` (use
+loader.conf(5) or rc.conf(5)), `denied by an administrator override` (`sysextctl reset NAME` from a
 session with ADMIN rights), or `root loads are not configured`
 (`root_load_repository` in BSDExtension's `bsdextension.ucl`). The same
 decision, with the broker's detail, is in `sysextctl status NAME` and

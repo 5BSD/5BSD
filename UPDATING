@@ -27,6 +27,31 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261102:
+	Root loads ("sysextctl load NAME" from a root login shell) now
+	resolve the module's dependencies before anything is loaded and
+	load each verified dependency by path first; a dependency outside
+	the running kernel's directory, unpackaged, modified, denied or of
+	the wrong version refuses the load, and a file the kernel loads on
+	its own is unloaded again.  Security policies (mac_*), tracing
+	providers, ZFS/opensolaris, pf/ipfw and vmm are refused for root
+	loads as they are for root unloads ("protected module"); load them
+	through loader.conf or rc.conf.  BSDExtension now receives /boot and
+	uses the directory the running kernel was booted from (kernel.old
+	after booting it), only while that directory's kernel file has the
+	running kernel's build-id: after installkernel or a kernel package
+	upgrade, driver and root loads wait for the reboot.
+	kern.module_path is isolated by the capability plane (bsdsysctl.ucl),
+	so sysctl and kldconfig(8) cannot change it while the plane runs.
+
+	ntpd is now adopted by switchboard and runs under a program-limited
+	lasting grant (service-authority.ucl); mac_ntpd's clock delegate
+	admits the ntpd user only while it runs a pinned image of that
+	grant, and security.mac.ntpd.uid cannot be changed while the plane
+	holds the clock.  Restart ntpd with "switchboardctl restart ntpd",
+	not "service ntpd restart".  Units with a lasting grant (devd,
+	ntpd) are started only when enabled in rc.conf.
+
 20261101:
 	Root can load a kernel module of the base system from a login shell
 	again: "sysextctl load NAME" from a root login shell (effective UID
