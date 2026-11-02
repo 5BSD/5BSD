@@ -45,6 +45,7 @@ def pam_module(name, srcs, provider = None, deps = [], dynamic_deps = [], manual
     module_installation(name = "install_manifest", module = name, manuals = manuals, package = package, manual_sources = manual_sources)
     bsd_install_archive(
         name = "install_archive",
+        visibility = ["//lib/libpam/modules:__pkg__"],
         manifests = [":install_manifest"],
         directories = {d: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=" + package, "dbg"]}) for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
         mtree_specs = {

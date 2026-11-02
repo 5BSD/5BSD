@@ -2,6 +2,8 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
 load("//lib/libpam/libpam:compile_policy.bzl", "pam_warnings")
+_TESTS_COMPAT = select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]})
+_KERBEROS_TESTS_COMPAT = select({"//lib/libpam:kerberos_tests_selected": [], "//conditions:default": ["@platforms//:incompatible"]})
 _TEST_FLAGS = ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + pam_warnings(6)
 _TEST_DEFINES = ["PIC", "OPENPAM_STATIC_MODULES", "LIB_MAJ=6", "HAVE_DLFUNC=1", "HAVE_FDLOPEN=1", "HAVE_STRLCAT=1", "HAVE_STRLCPY=1", "OPENPAM_DEBUG"]
 
@@ -14,6 +16,7 @@ cc_binary(name = "basic_dispatch_test", srcs = ["basic_dispatch_test.c"],
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
     test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small") for case in ["permit", "deny", "required_deny"]]
 test_suite(name = "basic_dispatch_tests", tests = [":native_dispatch_" + case for case in ["permit", "deny", "required_deny"]], visibility = ["//visibility:public"])
 
@@ -28,6 +31,7 @@ test_suite(name = "basic_dispatch_tests", tests = [":native_dispatch_" + case fo
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/libutil:util_shared", "//lib/atf/libatf-c:atf_c_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:ypclnt_shared"], "//conditions:default": []}),
     test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for name, case in [("password_hash", "password_hashes"), ("account_resolution", "account_resolution")]]
 test_suite(name = "unix_tests", tests = [":native_password_hash", ":native_account_resolution"], visibility = ["//visibility:public"])
@@ -43,6 +47,7 @@ cc_binary(name = "kerberos_config_pam_test", srcs = ["kerberos_config_pam_test.c
         "//krb5/lib/krb5:krb5_shared", "//krb5/lib/crypto:k5crypto_shared", "//krb5/util/et:com_err_shared", "//krb5/util/support:krb5support_shared", "//secure/lib/libcrypto:crypto_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
     test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _KERBEROS_TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small") for module in ["pam_ksu", "pam_krb5"]]
 test_suite(name = "kerberos_config_tests", tests = [":native_pam_ksu_config", ":native_pam_krb5_config"], visibility = ["//visibility:public"])
 
@@ -75,6 +80,7 @@ _RESOLUTION_CASES = [
     config_files = {"//lib/libpam/modules/pam_deny:pam_deny": "pam_module"},
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    target_compatible_with = _TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for case in _RESOLUTION_CASES]
 test_suite(name = "module_resolution_tests", tests = [":native_resolution_" + case for case in _RESOLUTION_CASES], visibility = ["//visibility:public"])
@@ -103,3 +109,5 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
     epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+filegroup(name = "programs", srcs = [":" + name for name in _PROGRAMS], visibility = ["//lib/libpam:__pkg__"])

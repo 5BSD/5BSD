@@ -9869,3 +9869,14 @@ A bounded source-bound scan finds no matching call-shaped tracing/audit markers 
 ## SIMD crypto built-ins (2026-11-02)
 
 The bounded source-bound scan finds no matching call-shaped tracing/audit markers in five converted crypto files. This proves neither absent shared hooks nor runtime coverage. See SIMD-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## PAM family (2026-11-02)
+
+Original pamchain instrumentation remains in the shared54-source compile path.
+Default linked provider attributes, four probe records, six ordinary and six
+enabled sites match fresh Make at identical linked addresses. Complete DOF
+section review resolves only actual FNV path-key strings and consequent string
+indices/length/load boundary; provenance is exact. Safe tests disable DOF
+registration before startup. These checks do not qualify live probe delivery,
+loader registration, privileged accounting or authentication behavior. See
+PAM-FAMILY-QUALIFICATION.md and retained shared-dof-audit-r3 evidence.

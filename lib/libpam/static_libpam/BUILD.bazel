@@ -62,6 +62,7 @@ cc_import(
 )
 cc_test(
     name = "registry_test",
+    visibility = ["//lib/libpam:__pkg__"],
     srcs = ["registry_test.c"],
     deps = [
         ":registry_pam_archive",
@@ -91,6 +92,6 @@ cc_test(
     linkstatic = True,
     env = {"DTRACE_DOF_INIT_DISABLE": "1"},
     copts = ["-std=gnu17", "-Wall", "-Wextra", "-Werror"],
-    target_compatible_with = _PLATFORM,
+    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
     size = "small",
 )

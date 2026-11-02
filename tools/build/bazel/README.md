@@ -47612,3 +47612,7 @@ Configured suite compatibility and strict BEP exclusion controls are recorded in
 [CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md](CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md).
 
 [SIMD-CRYPTO-KERNEL-QUALIFICATION.md](SIMD-CRYPTO-KERNEL-QUALIFICATION.md) records five native SIMD crypto objects, explicit selected-SDK compiler headers, exact code/CTF/runtime sections and checked inputs, with unchanged prior compiler commands/output paths. Full-system/runtime/performance gates remain open.
+
+Native PAM family composition, corrected shared-core compile/install policy,
+15 safe wrappers and explicit guest/package limits are recorded in
+[PAM-FAMILY-QUALIFICATION.md](PAM-FAMILY-QUALIFICATION.md).
