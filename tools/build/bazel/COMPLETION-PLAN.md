@@ -282,3 +282,7 @@ WPA-FAMILY-QUALIFICATION.md records default family composition, 37 products, 33 
 ### Selected CSV plugin gap closed (2026-11-02)
 
 LIBXO-CSV-QUALIFICATION.md qualifies the actual csv.enc producer and six installation records after parent-export comparison: one original source, exact object code/constants/relocations, strict shared ELF and five runtime methods. Installed-path discovery, whole-libxo tests/composition and final packages remain open. Continue the actual configured world action/install queue; usr.sbin/apm is a selected program with no native producer in the fresh inventory and requires source/parent-context review before conversion. Presence counts are not build coverage.
+
+### APM selected leaf and next static PAM product (2026-11-02)
+
+APM-PROGRAM-QUALIFICATION.md records native source/ELF/install qualification of the selected x86 APM leaf; whole-world aggregation must retain its parent MK_APM switch. Next close lib/libpam/static_libpam, the actual missing /usr/lib/libpam.a product: compile the real core with OPENPAM_STATIC_MODULES, retain all option-selected module archives and registration partial-link order, preserve DTrace/DOF and original install metadata. Existing shared-core/module targets alone do not establish this static product. Keep device runtime, full PAM authentication, pkg/world and performance gates explicit.

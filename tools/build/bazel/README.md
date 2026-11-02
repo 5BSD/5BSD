@@ -47516,3 +47516,5 @@ forced-include policy correction, exact code/CTF/input checks and remaining gate
 237 native filesystem/compatibility/crypto built-ins, ordered overlay and forced
 include inputs, unchanged shared-rule defaults, exact code/CTF and bounded string
 symbol/relocation qualification, with remaining filesystem/system gates.
+
+[APM-PROGRAM-QUALIFICATION.md](APM-PROGRAM-QUALIFICATION.md) records closure of the selected APM producer/install gap, exact native code/flags/inputs, strict ELF, three safe methods and separate power/device/architecture gates.
