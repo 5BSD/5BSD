@@ -399,3 +399,7 @@ configurations/architectures and whole-world/pkgbase gates.
 ## Peripheral-device checkpoint (2026-11-02)
 
 90 additional amd64 GENERIC objects pass native compilation, exact machine code/CTF and compiler/input/relocation checks. Reconciliation r29 leaves 187 missing Make link products, plus six weaker matches. See PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Platform-support checkpoint (2026-11-02)
+
+56 platform built-ins pass object/CTF/compiler/input/relocation checks; the native ACPI assembly-to-binary/header chain matches Make. Reconciliation r30 leaves 131 missing link products and six weaker matches. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

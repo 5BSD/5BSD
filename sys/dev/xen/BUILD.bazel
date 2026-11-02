@@ -84,3 +84,9 @@ amd64_generic_kernel_objects(name = "generic_virtualization_gntdev", srcs = ["gn
 amd64_generic_kernel_objects(name = "generic_virtualization_debug", srcs = ["debug/debug.c"],
     deps = ["//sys/contrib/xen:virtualization_kernel_xen-acpi_headers", "//sys/xen:virtualization_kernel_xen_console_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_ddb_header", "//sys/amd64/conf:virtualization_kernel_opt_stack_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native platform support built-ins.
+bsd_source_headers(name = "platform_support_kernel_xen_arch_intr_headers", hdrs = ["bus/intr-internal.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_pv_headers", hdrs = ["timer/timer.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])

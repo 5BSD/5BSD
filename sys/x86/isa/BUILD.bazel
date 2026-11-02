@@ -10,3 +10,26 @@ bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["icu.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["icu.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC platform support built-ins.
+amd64_generic_kernel_objects(name = "generic_platform_support_atrtc", srcs = ["atrtc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_amd_cmd_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/isa:platform_support_kernel_atrtc_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_clock_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header", "//sys/amd64/conf:platform_support_kernel_opt_isa_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_clock", srcs = ["clock.c"],
+    deps = ["//sys/dev/ic:platform_support_kernel_clock_headers", "//sys/isa:platform_support_kernel_atrtc_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_clock_header", "//sys/amd64/conf:platform_support_kernel_opt_isa_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_isa", srcs = ["isa.c"],
+    deps = ["//sys/isa:platform_support_kernel_isa_common_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_isa_dma", srcs = ["isa_dma.c"],
+    deps = ["//sys/dev/ic:platform_support_kernel_isa_dma_headers", "//sys/isa:platform_support_kernel_isa_dma_headers", "//sys/vm:platform_support_kernel_isa_dma_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_nmi", srcs = ["nmi.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_orm", srcs = ["orm.c"],
+    deps = ["//sys/isa:platform_support_kernel_orm_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

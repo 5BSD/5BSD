@@ -740,7 +740,7 @@ amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uip
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 cc_library(name = "generic_assym_header", hdrs = [":generic_assym"],
-    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__"])
+    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__"])
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["subr_syscall.c"],
@@ -827,3 +827,15 @@ cc_library(name = "peripheral_devices_kernel_device_if_headers", hdrs = [":perip
 
 filegroup(name = "peripheral_devices_kernel_serdev_if_file", srcs = [":serdev_if"], output_group = "header")
 cc_library(name = "peripheral_devices_kernel_serdev_if_headers", hdrs = [":peripheral_devices_kernel_serdev_if_file"], strip_include_prefix = "serdev_if.generated", visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+filegroup(name = "platform_support_kernel_bus_if_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_bus_if_headers", hdrs = [":platform_support_kernel_bus_if_file"], strip_include_prefix = "bus_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "platform_support_kernel_clock_if_file", srcs = [":clock_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_clock_if_headers", hdrs = [":platform_support_kernel_clock_if_file"], strip_include_prefix = "clock_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "platform_support_kernel_cpufreq_if_file", srcs = [":cpufreq_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_cpufreq_if_headers", hdrs = [":platform_support_kernel_cpufreq_if_file"], strip_include_prefix = "cpufreq_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "platform_support_kernel_device_if_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_device_if_headers", hdrs = [":platform_support_kernel_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])

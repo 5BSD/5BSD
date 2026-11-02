@@ -259,3 +259,19 @@ amd64_generic_kernel_objects(name = "generic_peripheral_devices_pcib_support", s
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_vga_pci", srcs = ["vga_pci.c"],
     deps = ["//sys/compat/x86bios:peripheral_devices_kernel_vga_pci_headers", "//sys/dev/pci:peripheral_devices_kernel_ichsmb_pci_headers", "//sys/vm:peripheral_devices_kernel_fbd_headers", "//sys/kern:peripheral_devices_kernel_bus_if_headers", "//sys/kern:peripheral_devices_kernel_device_if_headers", "//sys/dev/pci:peripheral_devices_kernel_pci_if_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Physical prerequisites for native platform support built-ins.
+bsd_source_headers(name = "platform_support_kernel_amd_cmd_headers", hdrs = ["pcireg.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_amd_ctx_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_pci_bus_headers", hdrs = ["pcib_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_hvm_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "platform_support_kernel_pci_if_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_pci_if_headers", hdrs = [":platform_support_kernel_pci_if_file"], strip_include_prefix = "pci_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+filegroup(name = "platform_support_kernel_pcib_if_file", srcs = [":pcib_if"], output_group = "header")
+cc_library(name = "platform_support_kernel_pcib_if_headers", hdrs = [":platform_support_kernel_pcib_if_file"], strip_include_prefix = "pcib_if.generated", visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])

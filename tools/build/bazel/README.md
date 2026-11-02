@@ -47592,3 +47592,5 @@ source-owned ATF process environments through RunEnvironmentInfo: two actual
 constructor-time checks and eleven reserved/malformed-key analysis tests.
 
 [PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md](PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md) records 90 additional native peripheral-device built-ins with exact machine code/CTF and checked compiler inputs/relocations; full-system and runtime gates remain open.
+
+[PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md](PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md) records 56 more native platform built-ins and the source-derived ACPI wake-payload generator chain, with exact machine code/CTF and checked inputs/relocations. Runtime and full-system gates remain open.

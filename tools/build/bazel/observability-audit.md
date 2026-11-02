@@ -9835,3 +9835,7 @@ The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 o
 ## Peripheral-device built-ins (2026-11-02)
 
 The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 9 of 90 converted files. This is neither runtime coverage nor proof of missing shared hooks. See PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Platform-support built-ins (2026-11-02)
+
+A bounded source-hash-bound scan finds call-shaped tracing/CTR/audit markers in 0 of 56 files. This neither proves absent shared instrumentation nor live probe coverage. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md and retained observability.json. Existing hooks remain.
