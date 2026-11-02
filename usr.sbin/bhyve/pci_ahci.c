@@ -2864,6 +2864,8 @@ open_fail:
 		for (p = 0; p < sc->ports; p++) {
 			if (sc->port[p].bctx != NULL)
 				blockif_close(sc->port[p].bctx);
+			free(sc->port[p].ioreq);
+			free(sc->port[p].ioiov);
 		}
 		free(sc);
 	}
