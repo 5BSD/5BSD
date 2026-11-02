@@ -32,11 +32,12 @@ devd {
 # ntpd: clock discipline.  BSDTime claims the clock gate; mac_ntpd(4) delegates
 # the clock privileges to the ntpd user only in a process that runs one of
 # these pinned images under this grant.  rc.d/ntpd runs ntpd as user ntpd
-# through limits(1), su(1) and sh; ntpd needs no endpoint.  mac_ntpd must
-# already be loaded (rc.d/ntpd loads it at boot when ntpd_enable is set, or
-# mac_ntpd_load="YES" in loader.conf).
+# through sh, limits(1) and daemon(8) -u, not su(1): su -m runs root's login
+# shell (zsh), which is not pinned here, and the grant ends at that exec.
+# ntpd needs no endpoint.  mac_ntpd must already be loaded (rc.d/ntpd loads
+# it at boot when ntpd_enable is set, or mac_ntpd_load="YES" in loader.conf).
 ntpd {
     endpoints = [];
-    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/usr/bin/su",
-        "/usr/sbin/ntpd"];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits",
+        "/usr/sbin/daemon", "/usr/sbin/ntpd"];
 }

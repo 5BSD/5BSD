@@ -183,7 +183,7 @@ ATF_TC_BODY(service_empty_endpoints, tc)
 
 	(void)tc;
 	ATF_REQUIRE(parse_services("ntpd { endpoints=[]; "
-	    "images=[\"/usr/bin/su\",\"/usr/sbin/ntpd\"]; }", s, 2,
+	    "images=[\"/usr/sbin/daemon\",\"/usr/sbin/ntpd\"]; }", s, 2,
 	    &count) == 0);
 	ATF_REQUIRE_EQ(count, 1);
 	ATF_CHECK_STREQ(s[0].label, "ntpd");
@@ -340,6 +340,23 @@ ATF_TC_BODY(service_packaged_policy, tc)
 	ATF_REQUIRE_MSG(i < count, "ntpd has no lasting grant");
 	ATF_CHECK_EQ(s[i].scope.count, 0);
 	ATF_CHECK_STREQ(s[i].images[s[i].nimages - 1], "/usr/sbin/ntpd");
+	/*
+	 * rc.d/ntpd becomes the ntpd user with daemon(8) -u.  su(1) -m would
+	 * run root's login shell, which is not pinned, so it must not be the
+	 * path the grant expects (and is no longer needed in it).
+	 */
+	{
+		bool daemon = false, su = false;
+
+		for (unsigned j = 0; j < s[i].nimages; j++) {
+			if (strcmp(s[i].images[j], "/usr/sbin/daemon") == 0)
+				daemon = true;
+			if (strcmp(s[i].images[j], "/usr/bin/su") == 0)
+				su = true;
+		}
+		ATF_CHECK_MSG(daemon, "ntpd grant does not pin /usr/sbin/daemon");
+		ATF_CHECK_MSG(!su, "ntpd grant pins /usr/bin/su");
+	}
 }
 
 static int

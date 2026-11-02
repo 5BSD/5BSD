@@ -60,8 +60,8 @@ devd {
 }
 ntpd {
     endpoints = [];
-    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/usr/bin/su",
-        "/usr/sbin/ntpd"];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits",
+        "/usr/sbin/daemon", "/usr/sbin/ntpd"];
 }
 ```
 
@@ -93,7 +93,7 @@ uses it to tell the ntpd switchboard started from any other process running
 as the ntpd user (see [ntpd and the clock gate](../providers/time.md#ntpd-and-the-clock-gate)).
 
 Each launch opens and pins the image files anew. A base upgrade that replaces
-one of them (`/bin/sh`, `env`, `limits`, `su`, `devd`, `sysextctl`, `ntpd`)
+one of them (`/bin/sh`, `env`, `limits`, `daemon`, `devd`, `sysextctl`, `ntpd`)
 does not restart the unit: a process started under the old grant loses it at
 its next exec of that path, and devd's actions then fail with "cannot reach
 SystemExtension" until the unit restarts. Restart it with `switchboardctl

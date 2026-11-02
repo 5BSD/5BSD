@@ -111,8 +111,14 @@ ntpd_precmd()
 	# Otherwise, figure out what to do about the driftfile option.  If set
 	# by the admin, we don't add the option.  If the file exists in the old
 	# default location we use that, else we use the new default location.
+	#
+	# 5BSD: become the ntpd user with daemon(8) -u, which sets the user
+	# context and executes ntpd itself, rather than rc.subr's _user (su -m),
+	# which runs root's login shell in between.  switchboard's ntpd grant
+	# pins sh, env, limits, daemon and ntpd only, so a zsh (or other) login
+	# shell would end the grant and mac_ntpd(4) would refuse the clock.
 	if can_run_nonroot; then
-		_user="ntpd"
+		_prepend="${_prepend:+${_prepend} }/usr/sbin/daemon -u ntpd"
 		driftopt="-f ${_ntp_default_driftfile}"
 	elif grep -q "^[ \t]*driftfile" "${ntpd_config}" ||
 	     [ -n "${rc_flags}" ] &&

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
-_SCRIPTS = ["firstboot_integrity_test", "rc_subr_test", "safe_eval_test", "svcj_test", "sysext_startup_test", "hostid_test", "root_integrity_test", "sshd_startup_test", "syslogd_startup_test", "osrelease_startup_test", "motd_startup_test"]
+_SCRIPTS = ["firstboot_integrity_test", "rc_subr_test", "safe_eval_test", "svcj_test", "sysext_startup_test", "hostid_test", "root_integrity_test", "sshd_startup_test", "syslogd_startup_test", "osrelease_startup_test", "motd_startup_test", "ntpd_startup_test"]
 [bsd_script_wrapper(name = n, body = n + ".sh", interpreter = "/usr/libexec/atf-sh",
     cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"],
     redirect = "@bsd_sdk//toolchain:stdout_redirect") for n in _SCRIPTS]
@@ -86,3 +86,16 @@ load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
     runner = "//tools/build/bazel:atf_runner",
     size = "small",
 ) for case in ["prepare_failure", "list_read_failure", "default_and_chroot", "explicit_paths"]]
+
+[bsd_atf_test(
+    name = "ntpd_" + case,
+    case_name = case,
+    body = "ntpd_startup_test.sh",
+    config_files = {"//libexec/rc/rc.d:ntpd": "rc_script"},
+    data = ["//libexec/rtld-elf:rtld_binary"],
+    subr = "//libexec/atf/atf-sh:shell_library",
+    runtime_bin = ["//bin/chmod:chmod", "//usr.bin/cmp:cmp", "//bin/cp:cp", "//bin/test:test", "//usr.bin/env:env", "//usr.bin/mktemp:mktemp", "//usr.bin/tr:tr", "//bin/mkdir:mkdir", "//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//bin/cat:cat", "//bin/rm:rm", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff"],
+    runtime_lib = ["//lib/libutil:util_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libregex:regex_shared"],
+    runner = "//tools/build/bazel:atf_runner",
+    size = "small",
+) for case in ["nonroot_uses_daemon", "root_unchanged", "no_su_in_script"]]

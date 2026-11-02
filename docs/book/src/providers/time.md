@@ -42,11 +42,14 @@ operations still need the token.
 
 The ntpd unit is adopted (rc_adopt.conf) and switchboard restarts it under
 the grant after `/etc/rc`, only when `ntpd_enable` is set. Its grant reaches
-no endpoint; it only identifies that ntpd. mac_ntpd must already be loaded:
+no endpoint; it only identifies that ntpd. rc.d/ntpd becomes the ntpd user
+with `daemon -u ntpd` (daemon(8) sets the user context and executes ntpd
+itself), not with `su -m`, which runs root's login shell (`/bin/zsh`) and
+would end the grant before ntpd starts. mac_ntpd must already be loaded:
 rc.d/ntpd loads it at boot, or set `mac_ntpd_load="YES"` in loader.conf. An
 ntpd started from a root shell with `service ntpd start` has no grant and
 cannot discipline the clock; use `switchboardctl restart ntpd`. After a base
-upgrade replaces `/usr/sbin/ntpd`, `su`, `limits`, `env` or `/bin/sh`, restart
+upgrade replaces `/usr/sbin/ntpd`, `daemon`, `limits`, `env` or `/bin/sh`, restart
 the unit the same way (or reboot) so the grant pins the new files.
 
 While the claim is held, `security.mac.ntpd.uid` cannot be changed and

@@ -23,6 +23,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <pwd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -138,29 +139,55 @@ ATF_TC_BODY(sysctl_cannot_widen, tc)
 	    sizeof(uid)) == 0);
 }
 
-static bool
+static pid_t
 ntpd_running(uid_t uid)
 {
 	struct kinfo_proc *kp;
 	size_t len = 0, i;
 	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_UID, (int)uid };
-	bool found = false;
+	pid_t found = 0;
 
 	if (sysctl(mib, 4, NULL, &len, NULL, 0) == -1 || len == 0)
-		return (false);
+		return (0);
 	len += len / 4;
 	if ((kp = malloc(len)) == NULL)
-		return (false);
+		return (0);
 	if (sysctl(mib, 4, kp, &len, NULL, 0) == 0)
-		for (i = 0; i < len / sizeof(*kp) && !found; i++)
-			found = strcmp(kp[i].ki_comm, "ntpd") == 0;
+		for (i = 0; i < len / sizeof(*kp) && found == 0; i++)
+			if (strcmp(kp[i].ki_comm, "ntpd") == 0)
+				found = kp[i].ki_pid;
 	free(kp);
 	return (found);
 }
 
 /*
+ * Clock refusals ntpd logged ("ntpd[PID]: ... Operation not permitted"):
+ * ntpd sets up the kernel loop (ntp_adjtime) at startup and logs a refusal
+ * at LOG_ERR, which syslogd writes to /var/log/messages.
+ */
+static int
+ntpd_refusals(pid_t pid)
+{
+	char line[1024], tag[32];
+	FILE *f;
+	int n = 0;
+
+	if ((f = fopen("/var/log/messages", "r")) == NULL)
+		return (-1);
+	(void)snprintf(tag, sizeof(tag), "ntpd[%d]:", (int)pid);
+	while (fgets(line, sizeof(line), f) != NULL)
+		if (strstr(line, tag) != NULL &&
+		    strstr(line, "Operation not permitted") != NULL)
+			n++;
+	(void)fclose(f);
+	return (n);
+}
+
+/*
  * The ntpd switchboard started holds the grant: it enables the kernel
- * phase-locked loop (ntp_adjtime MOD_STATUS, PRIV_NTP_ADJTIME) at startup.
+ * phase-locked loop (ntp_adjtime MOD_STATUS, PRIV_NTP_ADJTIME) at startup,
+ * and logs no refusal.  STA_PLL alone does not prove it: an ntpd /etc/rc
+ * started before BSDTime claimed the clock may have set it.
  */
 ATF_TC(granted_ntpd_disciplines);
 ATF_TC_HEAD(granted_ntpd_disciplines, tc)
@@ -172,10 +199,16 @@ ATF_TC_HEAD(granted_ntpd_disciplines, tc)
 ATF_TC_BODY(granted_ntpd_disciplines, tc)
 {
 	struct timex tx;
+	pid_t pid;
+	int refusals;
 
 	require_plane();
-	if (!ntpd_running(ntpd_uid()))
+	if ((pid = ntpd_running(ntpd_uid())) == 0)
 		atf_tc_skip("ntpd is not running as the ntpd user");
+	refusals = ntpd_refusals(pid);
+	ATF_CHECK_MSG(refusals == 0, "the running ntpd (pid %d) logged %d "
+	    "clock refusal(s) in /var/log/messages: it holds no grant",
+	    (int)pid, refusals);
 	memset(&tx, 0, sizeof(tx));
 	ATF_REQUIRE(ntp_adjtime(&tx) != -1);
 	ATF_CHECK_MSG((tx.status & STA_PLL) != 0,
