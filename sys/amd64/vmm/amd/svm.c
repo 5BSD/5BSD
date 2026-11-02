@@ -600,9 +600,9 @@ vmcb_init(struct svm_softc *sc, struct svm_vcpu *vcpu, uint64_t iopm_base_pa,
 	 * handle every one of them.
 	 */
 	svm_enable_intercept(vcpu, VMCB_CTRL1_INTCPT,
-	    SVM_L0_CTRL1_BASE_INTERCEPTS);
+	    SVM_NESTED_L0_CTRL1_BASE);
 	svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT,
-	    SVM_L0_CTRL2_BASE_INTERCEPTS);
+	    SVM_NESTED_L0_CTRL2_BASE);
 	if (vcpu_trap_wbinvd(vcpu->vcpu)) {
 		svm_enable_intercept(vcpu, VMCB_CTRL2_INTCPT,
 		    VMCB_INTCPT_WBINVD);
