@@ -9827,3 +9827,7 @@ See STATIC-PAM-QUALIFICATION.md for exact compiler, alias/site and runtime scope
 ## Network stack and PF built-ins (2026-11-02)
 
 The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 27 of 102 converted files. This is neither runtime coverage nor proof of missing shared hooks. See NETWORK-POLICY-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Kernel codec/crypto built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 94 converted files. This is neither runtime coverage nor proof of missing shared hooks. See CODECS-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.

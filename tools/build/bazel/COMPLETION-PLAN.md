@@ -391,3 +391,7 @@ PAM-POLICY-QUALIFICATION.md closes the selected pam.d file/archive producer:
 and AT/FTP-off profiles. Retain full PAM aggregation, explicit directory ownership
 consumption by final package composition, installed authentication tests, other
 configurations/architectures and whole-world/pkgbase gates.
+
+## Kernel codec/crypto checkpoint (2026-11-02)
+
+73 additional native Kernel codec/crypto built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See CODECS-CRYPTO-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.

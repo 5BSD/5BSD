@@ -74,3 +74,61 @@ bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["sha1.h"],
 # Physical prerequisites for native network policy built-ins.
 bsd_source_headers(name = "network_policy_kernel_ipsec_pcb_headers", hdrs = ["sha1.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_blake2b-ref_headers", hdrs = ["blake2/blake2_kfreebsd.h", "blake2/config.h", "blake2/stddef.h", "blake2/stdint.h", "blake2/stdio.h", "blake2/string.h"],
+    includes = ["blake2"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_blake2-sw_headers", hdrs = ["blake2/blake2_kfreebsd.h", "blake2/stddef.h", "blake2/stdint.h", "sha1.h"],
+    includes = ["blake2"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_chacha20_poly1305_headers", hdrs = ["chacha20_poly1305.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_curve25519_headers", hdrs = ["curve25519.h", "libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_sha1_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_ed25519_ref10_headers", hdrs = ["libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h", "libsodium/stdlib.h", "libsodium/string.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_onetimeauth_poly1305_headers", hdrs = ["libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h", "libsodium/stdio.h", "libsodium/stdlib.h", "libsodium/string.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_scalarmult_curve25519_headers", hdrs = ["libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_aesni_headers", hdrs = ["aesni/aesni.h", "aesni/sha_sse.h", "sha1.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_blake2-sw", srcs = ["blake2/blake2-sw.c"],
+    deps = ["//sys/contrib/libb2:codecs_crypto_kernel_blake2-sw_headers", "//sys/crypto:codecs_crypto_kernel_blake2-sw_headers", "//sys/crypto/rijndael:codecs_crypto_kernel_blake2-sw_headers", "//sys/crypto/sha2:codecs_crypto_kernel_blake2-sw_headers", "//sys/opencrypto:codecs_crypto_kernel_blake2-sw_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_chacha20_poly1305", srcs = ["chacha20_poly1305.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_chacha20_poly1305_headers", "//sys/crypto/camellia:codecs_crypto_kernel_camellia_headers", "//sys/crypto/rijndael:codecs_crypto_kernel_blake2-sw_headers", "//sys/opencrypto:codecs_crypto_kernel_chacha-sw_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_curve25519", srcs = ["curve25519.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_curve25519_headers", "//sys/crypto:codecs_crypto_kernel_curve25519_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_md5c", srcs = ["md5c.c"],
+    deps = [], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_sha1", srcs = ["sha1.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_sha1_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_randombytes", srcs = ["libsodium/randombytes.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_randombytes_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_utils", srcs = ["libsodium/utils.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_utils_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_aesni", srcs = ["aesni/aesni.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_aesni_headers", "//sys/crypto/rijndael:codecs_crypto_kernel_blake2-sw_headers", "//sys/crypto/sha2:codecs_crypto_kernel_aesni_headers", "//sys/opencrypto:codecs_crypto_kernel_aesni_headers", "//sys/vm:codecs_crypto_kernel_aesni_headers", "//sys/kern:codecs_crypto_kernel_bus_if_headers", "//sys/opencrypto:codecs_crypto_kernel_cryptodev_if_headers", "//sys/kern:codecs_crypto_kernel_device_if_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_aeskeys_amd64", srcs = ["aesni/aeskeys_amd64.S"],
+    deps = [], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-x", "assembler-with-cpp", "-DLOCORE"])

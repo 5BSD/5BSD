@@ -47584,3 +47584,5 @@ composition, other configurations/architectures and system runtime remain open.
 policy installation: 15 default/12 AT-and-FTP-off unchanged payloads, 29 unique
 Make-matching file/directory records, and preserved config/package ownership.
 Authentication, family/world composition and final package production remain open.
+
+[CODECS-CRYPTO-KERNEL-QUALIFICATION.md](CODECS-CRYPTO-KERNEL-QUALIFICATION.md) records 73 additional native Kernel codec/crypto built-ins, original interface generators and source-owned port headers, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.

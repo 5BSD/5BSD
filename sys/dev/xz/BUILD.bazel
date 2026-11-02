@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_mod", srcs = ["xz_mod.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_mod_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])

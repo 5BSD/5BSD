@@ -14,3 +14,38 @@ cc_library(
     includes = ["../.."],
     visibility = ["//visibility:public"],
 )
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_xz_mod_headers", hdrs = ["freebsd/xz_malloc.h", "linux/include/linux/xz.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_xz_crc32_headers", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_private.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_xz_dec_lzma2_headers", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_lzma2.h", "linux/lib/xz/xz_private.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_xz_dec_stream_headers", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_private.h", "linux/lib/xz/xz_stream.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_crc32", srcs = ["linux/lib/xz/xz_crc32.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_crc32_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_crc64", srcs = ["linux/lib/xz/xz_crc64.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_crc32_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_dec_bcj", srcs = ["linux/lib/xz/xz_dec_bcj.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_crc32_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_dec_lzma2", srcs = ["linux/lib/xz/xz_dec_lzma2.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_dec_lzma2_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_xz_dec_stream", srcs = ["linux/lib/xz/xz_dec_stream.c"],
+    deps = ["//sys/contrib/xz-embedded:codecs_crypto_kernel_xz_dec_stream_headers", "//sys/contrib/xz-embedded:codecs_crypto_kernel_port_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DXZ_USE_CRC64"])
+
+# Maintained kernel port header layout shared by the decoder and adapter.
+bsd_source_headers(name = "codecs_crypto_kernel_port_headers", hdrs = glob(["freebsd/*.h", "linux/include/linux/*.h", "linux/lib/xz/*.h"]), includes = ["freebsd", "linux/lib/xz", "linux/include/linux"], visibility = ["//sys/contrib/xz-embedded:__pkg__", "//sys/dev/xz:__pkg__"])
