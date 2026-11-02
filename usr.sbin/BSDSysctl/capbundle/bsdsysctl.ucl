@@ -36,9 +36,15 @@ user = "capability";
 # of holding SYS_GATE_SYSCTL, bounded by the per-label sysctl.conf); it governs
 # only which tunables are protected FROM other writers.  Extend it to bring more
 # tunables under sole-broker protection.
+# kern.module_path: the directories the kernel linker searches for a module
+# named without a path, and for every MODULE_DEPEND a load needs.  The loader
+# sets it; isolated, a root shell cannot add a directory (sysctl, kldconfig(8))
+# that a load through the system-extension broker would then search
+# (BSDExtension(8): root loads load verified files by path, and this keeps the
+# kernel's own fallback search within the loader's directories too).
 capabilities {
 	system = ["sysctl"];
-	isolate = ["kern.maxfiles"];
+	isolate = ["kern.maxfiles", "kern.module_path"];
 }
 
 limits { nofile = 1024; nproc = 128; core = 0; }
