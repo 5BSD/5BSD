@@ -11,7 +11,7 @@ if not out.is_relative_to('/usr/obj'):
 out.mkdir(parents=True, exist_ok=True)
 source = (root / 'cddl/contrib/opensolaris/cmd/dtrace/dtrace.c').read_text()
 start = source.index('static int\nidentified_derived_parent_matches(')
-end = source.index('\nstatic int\ndtraced_connection_lost(', start)
+end = source.index('\nstatic int\nreconnect_dtraced(', start)
 (out / 'consumer-derived-replay.inc').write_text(source[start:end])
 subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-Wno-unknown-pragmas',
     '-UNDEBUG',

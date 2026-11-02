@@ -1497,6 +1497,29 @@ dtraced_connection_lost(int error)
 	    error == ENOTCONN);
 }
 
+/*
+ * A derived program that dtraced did not accept is kept and offered again
+ * when the parent delivery is replayed on a new connection.  A refusal that
+ * persists must not spin through reconnects: back off between attempts and
+ * give up after DERIVED_SEND_ATTEMPTS consecutive failures.
+ */
+#define	DERIVED_SEND_ATTEMPTS		6
+#define	DERIVED_SEND_BACKOFF		250000U		/* usec, doubled */
+#define	DERIVED_SEND_BACKOFF_MAX	4000000U
+
+static void
+derived_send_failed(int *failures, int error)
+{
+	useconds_t delay;
+
+	if (++*failures >= DERIVED_SEND_ATTEMPTS)
+		fatal("dtraced did not accept the derived program after %d "
+		    "attempts: %s\n", *failures, strerror(error));
+	delay = DERIVED_SEND_BACKOFF << (*failures - 1);
+	(void)usleep(delay < DERIVED_SEND_BACKOFF_MAX ? delay :
+	    DERIVED_SEND_BACKOFF_MAX);
+}
+
 static int
 reconnect_dtraced(dtd_arg_t *connection, int *rx, int *wx)
 {
@@ -1565,6 +1588,7 @@ listen_dtraced(void *arg)
 	size_t lentowrite;
 	int found;
 	int derived_sent;
+	int derived_failures = 0;
 	ssize_t r;
 	dtraced_hdr_t header;
 	uint8_t ingress_digest[SHA256_DIGEST_LENGTH];
@@ -1731,9 +1755,13 @@ listen_dtraced(void *arg)
 				free(elf_base);
 				elf_base = NULL;
 				dt_bench_destroy(bench);
-				if (replay < 0)
+				if (replay < 0) {
 					fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 					    strerror(replay_error));
+					derived_send_failed(&derived_failures,
+					    replay_error);
+				} else
+					derived_failures = 0;
 				ack_identified_delivery(dtd_arg, &rx_sockfd,
 				    &wx_sockfd, &header, replay < 0 ?
 				    DTRACED_CONSUMER_ACK_FAILURE :
@@ -1841,9 +1869,13 @@ listen_dtraced(void *arg)
 				dt_bench_destroy(bench);
 				close(fd);
 				(void) tmp_unlink(template);
-				if (replay < 0)
+				if (replay < 0) {
 					fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 					    strerror(replay_error));
+					derived_send_failed(&derived_failures,
+					    replay_error);
+				} else
+					derived_failures = 0;
 				ack_identified_delivery(dtd_arg, &rx_sockfd,
 				    &wx_sockfd, &header,
 				    replay < 0 ? 0 : replay == 1 ?
@@ -1918,9 +1950,13 @@ listen_dtraced(void *arg)
 			 * "rcvpgp" @ "ELF parsing - end" -- destroy
 			 */
 			dt_bench_destroy(bench);
-			if (replay < 0)
+			if (replay < 0) {
 				fprintf(stderr, "dtrace: failed to replay derived ELF: %s\n",
 				    strerror(replay_error));
+				derived_send_failed(&derived_failures,
+				    replay_error);
+			} else
+				derived_failures = 0;
 			ack_identified_delivery(dtd_arg, &rx_sockfd,
 			    &wx_sockfd, &header,
 			    replay < 0 ? 0 : replay == 1 ?
@@ -2124,6 +2160,7 @@ listen_dtraced(void *arg)
 						dt_list_append(&g_pgplist, newpgpl);
 					pthread_mutex_unlock(&g_pgplistmtx);
 					dt_bench_destroy(bench);
+					derived_send_failed(&derived_failures, err);
 					if (reconnect_dtraced(dtd_arg, &rx_sockfd,
 					    &wx_sockfd) == 0)
 						continue;
@@ -2133,6 +2170,7 @@ listen_dtraced(void *arg)
 			}
 			/* The identified send received daemon spool acceptance. */
 			derived_sent = header.elf.delivery_id != 0;
+			derived_failures = 0;
 
 			/*
 			 * "rcvpgp" -- snapshot "Virtual program creation - sent to dtraced"
