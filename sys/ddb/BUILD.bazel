@@ -153,3 +153,9 @@ bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["db_lex.h", "dd
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["db_sym.h", "ddb.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Wireless built-in prerequisites.
+bsd_source_headers(name = "wlan_kernel_ieee80211_ddb_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net80211:__pkg__"])

@@ -119,3 +119,7 @@ bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["mac_framework.h
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Wireless built-in prerequisites.
+bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net80211:__pkg__"])

@@ -21,3 +21,11 @@ amd64_generic_module_objects(name = "wlan_module", srcs = ["rijndael-alg-fst.c",
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["rijndael-api-fst.h", "rijndael.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# Wireless built-in prerequisites.
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_ccmp_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcm_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/net80211:__pkg__"])

@@ -47438,3 +47438,7 @@ existing interface-provider reuse, and remaining whole-system gates.
 See [MII-KERNEL-QUALIFICATION.md](MII-KERNEL-QUALIFICATION.md) for the next
 36 native amd64 GENERIC MII built-ins: original text/CTF, actual input and
 relocation checks, reused device/interface generators and hardware/runtime gates.
+
+[WIRELESS-KERNEL-QUALIFICATION.md](WIRELESS-KERNEL-QUALIFICATION.md) records
+37 native amd64 GENERIC wireless built-ins, exact code/CTF and input checks,
+five source-specific warning-policy corrections and remaining runtime gates.

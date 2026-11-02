@@ -43,6 +43,13 @@ matches and 1,948 unmatched products. These counts describe analysis, not full
 compiled coverage. Kernel aggregation, cross-build, runtime and performance
 requirements remain open.
 
+Thirty-seven wireless built-ins now pass native code/CTF, input and relocation
+checks after five actual per-source warning exceptions were corrected; see
+WIRELESS-KERNEL-QUALIFICATION.md. Latest known-builtin configured analysis finds
+549 source matches among 2,466 Make final link products, six weaker name matches
+and 1,911 unmatched products. Earlier counts above are retained snapshots.
+These remain analysis counts; full compile/link/runtime/performance gates apply.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

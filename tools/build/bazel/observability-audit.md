@@ -9565,3 +9565,13 @@ IPv6 and IPv4 source-marker counts remain 12/6/14 after the same narrow check.
 Review shared bus/network hooks before proposing new hot-path events.
 No PHY attach, negotiation or live hardware tracing is qualified; see
 MII-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## Wireless built-ins (2026-11-02)
+
+The 37-source wireless cohort preserves existing code and compiled probe
+plumbing. The bounded call-shaped scan finds recognized tracing/audit/CTR
+markers in ieee80211_proto, ieee80211_scan and ieee80211_sta; 34 sources have
+none. Device-match and protocol-state constants are excluded. Review shared
+coverage and measured overhead before adding events. No live association,
+scanning, cipher, AP/mesh, roaming or hardware behavior is qualified; see
+WIRELESS-KERNEL-QUALIFICATION.md for evidence and remaining gates.
