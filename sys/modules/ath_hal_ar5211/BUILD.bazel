@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Preserve original Make export policy and complete object order.
+amd64_generic_module(module = "ath_hal_ar5211", objects = ["//sys/dev/ath:ath_hal_ar5211_ah_osdep_ar5211_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_attach_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_beacon_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_interrupts_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_misc_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_phy_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_recv_module_object_files", "//sys/dev/ath:ath_hal_ar5211_ar5211_reset_module_object_files"],
+    object_order = ["ah_osdep_ar5211.o", "ar5211_attach.o", "ar5211_beacon.o", "ar5211_interrupts.o", "ar5211_keycache.o", "ar5211_misc.o", "ar5211_phy.o", "ar5211_power.o", "ar5211_recv.o", "ar5211_reset.o", "ar5211_xmit.o"], export_all = False)

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical device I/O prerequisites; identical contexts share providers.
+bsd_source_headers(name = "device_io_kernel_atkbd_headers", hdrs = ["atkbdcreg.h", "atkbdreg.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_atkbdc_headers", hdrs = ["atkbdcreg.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_atkbdc_isa_headers", hdrs = ["atkbdc_subr.h", "atkbdcreg.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_psm_headers", hdrs = ["atkbdcreg.h", "psm.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC device I/O built-ins.
+amd64_generic_kernel_objects(name = "generic_device_io_atkbd", srcs = ["atkbd.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/atkbdc:device_io_kernel_atkbd_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/amd64/conf:device_io_kernel_opt_atkbd_header", "//sys/amd64/conf:device_io_kernel_opt_evdev_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_atkbd_atkbdc", srcs = ["atkbd_atkbdc.c"],
+    deps = ["//sys/dev/atkbdc:device_io_kernel_atkbd_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/amd64/conf:device_io_kernel_opt_evdev_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_atkbdc", srcs = ["atkbdc.c"],
+    deps = ["//sys/dev/atkbdc:device_io_kernel_atkbdc_headers", "//sys/isa:device_io_kernel_atkbdc_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_atkbdc_isa", srcs = ["atkbdc_isa.c"],
+    deps = ["//sys/dev/atkbdc:device_io_kernel_atkbdc_isa_headers", "//sys/isa:device_io_kernel_atkbdc_isa_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/isa:device_io_isa_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_atkbdc_subr", srcs = ["atkbdc_subr.c"],
+    deps = ["//sys/dev/atkbdc:device_io_kernel_atkbdc_isa_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_psm", srcs = ["psm.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/atkbdc:device_io_kernel_psm_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/isa:device_io_kernel_psm_headers", "//sys/amd64/conf:device_io_kernel_opt_isa_header", "//sys/amd64/conf:device_io_kernel_opt_psm_header", "//sys/amd64/conf:device_io_kernel_opt_evdev_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/isa:device_io_isa_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

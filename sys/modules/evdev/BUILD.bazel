@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "evdev", objects = ["//sys/dev/evdev:evdev_cdev_module_object_files", "//sys/dev/evdev:evdev_evdev_mt_module_object_files", "//sys/dev/evdev:evdev_evdev_utils_module_object_files"],
+    object_order = ["cdev.o", "evdev.o", "evdev_mt.o", "evdev_utils.o"], export_all = True)

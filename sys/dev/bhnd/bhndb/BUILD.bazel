@@ -2,3 +2,87 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["bhndb_pcireg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["bhndb.h", "bhndb_hwdata.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["bhndb.h", "bhndb_hwdata.h", "bhndb_private.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["bhndb.h", "bhndb_private.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_4", hdrs = ["bhndb.h", "bhndb_hwdata.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_5", hdrs = ["bhndb.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_6", hdrs = ["bhndb.h", "bhndb_pcireg.h", "bhndb_pcivar.h", "bhndb_private.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_7", hdrs = ["bhndb.h", "bhndb_pcireg.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_8", hdrs = ["bhndb.h", "bhndb_pcireg.h", "bhndb_pcivar.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_9", hdrs = ["bhndb.h", "bhndb_hwdata.h", "bhndb_pci_hwdata.h", "bhndb_pcivar.h", "bhndbvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "bhndb_bus_if_module_header", srcs = [":bhndb_bus_if"], output_group = "header")
+cc_library(name = "bhndb_bus_if_headers", hdrs = [":bhndb_bus_if_module_header"], strip_include_prefix = "bhndb_bus_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+filegroup(name = "bhndb_if_module_header", srcs = [":bhndb_if"], output_group = "header")
+cc_library(name = "bhndb_if_headers", hdrs = [":bhndb_if_module_header"], strip_include_prefix = "bhndb_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+filegroup(name = "bhndb_bus_if_module_source", srcs = [":bhndb_bus_if"], output_group = "source")
+
+filegroup(name = "bhndb_if_module_source", srcs = [":bhndb_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "bhndb_bhndb_module", srcs = ["bhndb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_11", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_0", "//sys/dev/bhnd/bhndb:broadcom_module_context_2", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_bhndb_subr_module", srcs = ["bhndb_subr.c"],
+    deps = ["//sys/dev/bhnd/bhndb:broadcom_module_context_3", "//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_bhndb_hwdata_module", srcs = ["bhndb_hwdata.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_12", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/bhndb:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_bhnd_bhndb_module", srcs = ["bhnd_bhndb.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/bhndb:broadcom_module_context_5", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc/pwrctl:bhnd_pwrctl_hostb_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_bhndb_bus_if_module", srcs = [":bhndb_bus_if_module_source"],
+    deps = ["//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhndb_bus_if_module_source)=bhndb_bus_if.c", "-fdebug-prefix-map=$(execpath :bhndb_bus_if_module_source)=bhndb_bus_if.c"])
+
+amd64_generic_module_objects(name = "bhndb_bhndb_if_module", srcs = [":bhndb_if_module_source"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/bhndb:broadcom_module_context_5", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhndb_if_module_source)=bhndb_if.c", "-fdebug-prefix-map=$(execpath :bhndb_if_module_source)=bhndb_if.c"])
+
+amd64_generic_module_objects(name = "bhndb_pci_bhndb_pci_module", srcs = ["bhndb_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd:broadcom_module_context_13", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/bhndb:broadcom_module_context_6", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd:bhnd_erom_if_headers", "//sys/dev/bhnd/cores/chipc/pwrctl:bhnd_pwrctl_hostb_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_pci_bhndb_pci_hwdata_module", srcs = ["bhndb_pci_hwdata.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd:broadcom_module_context_14", "//sys/dev/bhnd/bhndb:broadcom_module_context_7", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhndb_pci_bhndb_pci_sprom_module", srcs = ["bhndb_pci_sprom.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd:broadcom_module_context_15", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd/bhndb:broadcom_module_context_8", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

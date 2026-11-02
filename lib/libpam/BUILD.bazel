@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+config_setting(name = "kerberos_tests_selected", flag_values = {
+    "//tools/build/bazel/config:tests": "true", "//tools/build/bazel/config:kerberos": "true",
+}, visibility = ["//lib/libpam:__subpackages__"])
+
+# Actual maintained Make SUBDIR order: libpam, modules, pam.d, static_libpam,
+# then tests when MK_TESTS is enabled. Producer edges own build dependencies.
+bsd_install_archive_set(name = "installation_archives", archives = [
+    "//lib/libpam/libpam:install_archive",
+    "//lib/libpam/modules:installation_archives",
+    "//lib/libpam/pam.d:install_archive",
+    "//lib/libpam/static_libpam:install_archive",
+] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libpam/tests:install_archive"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+filegroup(name = "all_products", srcs = [
+    "//lib/libpam/libpam:pam_shared", "//lib/libpam/modules:all_products",
+    "//lib/libpam/pam.d:install_manifest", "//lib/libpam/static_libpam:pam_archive",
+] + select({"//tools/build/bazel/config:tests_enabled": ["//lib/libpam/tests:programs"], "//conditions:default": []}),
+    visibility = ["//visibility:public"])
+# Safe supplementary/ATF tests; original installed-policy/root cases retain
+# their separate documented disposable-guest execution gates.
+test_suite(name = "safe_tests", tests = [
+    "//lib/libpam/tests:module_resolution_tests", "//lib/libpam/tests:basic_dispatch_tests",
+    "//lib/libpam/tests:unix_tests", "//lib/libpam/tests:kerberos_config_tests",
+    "//lib/libpam/static_libpam:registry_test",
+], visibility = ["//visibility:public"])

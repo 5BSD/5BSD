@@ -22,3 +22,17 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/vm:kernel_headers",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_virtio_blk_headers", hdrs = ["virtio_blk.h", "virtio_blk_capacity.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC virtualization built-ins.
+amd64_generic_kernel_objects(name = "generic_virtualization_virtio_blk", srcs = ["virtio_blk.c"],
+    deps = ["//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/dev/virtio/block:virtualization_kernel_virtio_blk_headers", "//sys/geom:virtualization_kernel_virtio_blk_headers", "//sys/net:virtualization_kernel_virtio_blk_headers", "//sys/netinet:virtualization_kernel_virtio_blk_headers", "//sys/netinet6:virtualization_kernel_virtio_blk_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

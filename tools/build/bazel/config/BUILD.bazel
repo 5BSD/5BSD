@@ -399,6 +399,7 @@ config_setting(name = "clang_full_enabled", flag_values = {":clang_full": "true"
 
 bool_flag(name = "lldb", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "lldb_enabled", flag_values = {":lldb": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "lldb_tests_enabled", flag_values = {":lldb": "true", ":tests": "true"}, visibility = ["//visibility:public"])
 
 string_flag(name = "llvm_host_triple", build_setting_default = "", visibility = ["//visibility:public"])
 
@@ -526,3 +527,19 @@ bool_flag(name = "wpa_supplicant_eapol", build_setting_default = True, visibilit
 config_setting(name = "wpa_supplicant_eapol_enabled", flag_values = {":wpa_supplicant_eapol": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "inet6", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "inet6_enabled", flag_values = {":inet6": "true"}, visibility = ["//visibility:public"])
+
+# Static PAM selection follows modules.inc independently of backend availability.
+config_setting(name = "pam_kerberos_selected", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "pam_openssh_selected", flag_values = {":openssh": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "pam_radius_selected", flag_values = {":radius_support": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "ftp", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "ftp_enabled", flag_values = {":ftp": "true"}, visibility = ["//visibility:public"])
+
+# Base kernel KODIR is distinct from standalone ports/module KMODDIR.
+string_flag(name = "kernel_base_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])
+
+# Mirrors ATH_RATE for loadable Atheros rate control; only one may be selected.
+string_flag(name = "ath_rate_algorithm", build_setting_default = "sample", values = ["sample", "onoe", "amrr"], visibility = ["//visibility:public"])
+config_setting(name = "ath_rate_onoe", flag_values = {":ath_rate_algorithm": "onoe"}, visibility = ["//visibility:public"])
+config_setting(name = "ath_rate_amrr", flag_values = {":ath_rate_algorithm": "amrr"}, visibility = ["//visibility:public"])

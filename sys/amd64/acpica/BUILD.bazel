@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC platform support built-ins.
+amd64_generic_kernel_objects(name = "generic_platform_support_acpi_machdep", srcs = ["acpi_machdep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_machdep_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/vm:platform_support_kernel_xen_common_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_acpi_wakeup", srcs = ["acpi_wakeup.c"],
+    deps = [":generic_acpi_resume_headers", "//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_apm_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/vm:platform_support_kernel_acpi_wakeup_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_generate.bzl", "bsd_generate")
+load("//tools/build/bazel:bsd_script_output.bzl", "bsd_script_output")
+
+# files.amd64: the resume trampoline is a binary payload, not a kernel link object.
+amd64_generic_kernel_objects(
+    name = "generic_acpi_wakecode", srcs = ["acpi_wakecode.S"],
+    deps = ["//sys/kern:generic_assym_header", "//sys/dev/ic:acpi_wakecode_headers"],
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, convert_ctf = False,
+)
+bsd_generate(
+    name = "generic_acpi_wakecode_binary", out = "generic_wake/acpi_wakecode.bin",
+    interpreter = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    arguments = ["-S", "-O", "binary", "$(location :generic_acpi_wakecode_object_files)", "$(OUT)"],
+    data = [":generic_acpi_wakecode_object_files"],
+    path_tools = ["@bsd_sdk//toolchain:objcopy_inputs"], tool_dir = "",
+)
+bsd_generate(
+    name = "generic_acpi_wakecode_header", out = "generic_wake/acpi_wakecode.h",
+    interpreter = "//usr.bin/file2c:file2c", arguments = ["-sx", "static char wakecode[] = {", "};"],
+    stdin = ":generic_acpi_wakecode_binary", redirect_stdout = True,
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    tool_dir = "",
+)
+bsd_script_output(
+    name = "generic_acpi_wakedata_header", output = "generic_wake/acpi_wakedata.h",
+    src = ":generic_acpi_wakecode_object_files", input_mode = "argument", script = "wake-symbols.sh",
+    shell = "@bsd_sdk//toolchain:sh", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    path_tools = {"@bsd_sdk//toolchain:bin/llvm-nm": "nm"},
+    runtime = ["@bsd_sdk//toolchain:sh_runtime", "@bsd_sdk//toolchain:llvm-nm_runtime"],
+    runtime_libraries = ["@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+)
+cc_library(name = "generic_acpi_resume_headers",
+    hdrs = [":generic_acpi_wakecode_header", ":generic_acpi_wakedata_header"],
+    strip_include_prefix = "generic_wake")

@@ -52,39 +52,52 @@ def platform_arguments(config, target_arch):
         if target_arch != 'amd64':
             raise ValueError('cross userland SDK not yet qualified; select target-kind kernel')
         return ['--platforms=' + native, '--host_platform=' + native]
-    if config['tests']:
-        raise ValueError('kernel target profile builds artifacts only; runnable tests need a qualified target harness')
     name = {'amd64': 'amd64', 'aarch64': 'arm64', 'riscv64': 'riscv64'}[target_arch]
     package = '//tools/build/bazel/kernel_toolchain:'
     return ['--platforms=' + package + name, '--host_platform=' + native,
             '--extra_toolchains=' + package + name + '_registered']
 
 
-def test_inventory_command(argv, targets, tests):
+def test_inventory_command(argv, targets, tests, host_artifacts_only=False):
     """Ask the configured graph to expand requested tests/suites, preserving settings."""
     command = list(argv[:-len(targets)])
     command[command.index('test')] = 'cquery'
     command = [a for a in command if not a.startswith((
         '--build_event_json_file=', '--execution_log_json_file=', '--execution_log_compact_file=',
         '--noexecution_log_sort', '--output_groups='))]
-    return command + ['--output=starlark', '--starlark:expr=json.encode(str(target.label))',
+    fields = '"label":str(target.label),"compatible":not any([key.endswith("IncompatiblePlatformProvider") for key in providers(target)])'
+    if host_artifacts_only:
+        fields += ',"host_artifact":any([key.endswith("BsdHostArtifactTestInfo") for key in providers(target)])'
+    return command + ['--output=starlark', '--starlark:expr=json.encode({' + fields + '})',
                       'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))']
 
 
-def parse_test_inventory(text):
-    labels = set()
+def parse_test_inventory(text, host_artifacts_only=False):
+    active, incompatible, seen = set(), set(), set()
+    fields = {'label', 'compatible'} | ({'host_artifact'} if host_artifacts_only else set())
     for line in text.splitlines():
-        label = json.loads(line)
-        if not isinstance(label, str):
-            raise ValueError('configured test label must be a string')
+        record = json.loads(line)
+        if (not isinstance(record, dict) or set(record) != fields or
+                not isinstance(record['label'], str) or type(record['compatible']) is not bool or
+                (host_artifacts_only and type(record['host_artifact']) is not bool)):
+            raise ValueError('configured test requires an explicit label and compatibility boolean')
+        if host_artifacts_only and record['compatible'] and not record['host_artifact']:
+            raise ValueError('kernel profiles require explicitly declared host artifact tests: ' + record['label'])
+        label = record['label']
         if label.startswith('@@//'):
             label = label[2:]
-        if not label.startswith('//') or ':' not in label or label in labels:
+        if not label.startswith('//') or ':' not in label or label in seen:
             raise ValueError('invalid or duplicate configured test: ' + label)
-        labels.add(label)
-    if not labels:
-        raise ValueError('requested tests expand to no configured tests')
-    return sorted(labels)
+        seen.add(label)
+        (active if record['compatible'] else incompatible).add(label)
+    if not active:
+        raise ValueError('requested tests expand to no compatible configured tests')
+    return sorted(active), sorted(incompatible)
+
+
+def validate_selected_tests(expected, selected):
+    if set(expected) != set(selected):
+        raise ValueError('selected test targets differ from the explicit requested test inventory')
 
 
 def test_results(events, expected):
@@ -198,16 +211,9 @@ def _qualify(config, args, state):
               '--execution_log_'+log_format+'_file='+str(log_path),'--noexecution_log_sort',
               *['--distdir='+str(p) for p in distdirs],*settings,*config['targets']]
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
-        start=time.monotonic()
-        with (out/'bazel.stdout').open('w') as stdout,(out/'bazel.stderr').open('w') as stderr:
-            result=subprocess.run(['/usr/bin/time','-l',*argv],cwd=src,
-                env=env,stdout=stdout,stderr=stderr)
-        commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
-        (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
-        if result.returncode:raise RuntimeError('native source graph failed; see bazel.stderr')
-        expected = []
+        expected, incompatible = [], []
         if config['tests']:
-            query = test_inventory_command(argv, config['targets'], config['tests'])
+            query = test_inventory_command(argv, config['targets'], config['tests'], host_artifacts_only=config.get('target-kind') == 'kernel')
             start = time.monotonic()
             with (out/'test-inventory.stdout').open('w') as stdout, (out/'test-inventory.stderr').open('w') as stderr:
                 result = subprocess.run(query, cwd=src, env=env, stdout=stdout, stderr=stderr)
@@ -215,13 +221,33 @@ def _qualify(config, args, state):
             (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
             if result.returncode:
                 raise RuntimeError('configured test inventory failed; see test-inventory.stderr')
-            expected = parse_test_inventory((out/'test-inventory.stdout').read_text())
-        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected),indent=2)+'\n')
+            expected, incompatible = parse_test_inventory((out/'test-inventory.stdout').read_text(), host_artifacts_only=config.get('target-kind') == 'kernel')
+            if config.get('target-kind') == 'kernel':
+                # bazel test executes test rules in targets even if the caller
+                # omitted them from tests. Validate that whole selection first.
+                query = test_inventory_command(argv, config['targets'], config['targets'], host_artifacts_only=True)
+                with (out/'selected-test-inventory.stdout').open('w') as stdout, (out/'selected-test-inventory.stderr').open('w') as stderr:
+                    result = subprocess.run(query, cwd=src, env=env, stdout=stdout, stderr=stderr)
+                commands.append(dict(argv=query,exit_status=result.returncode))
+                (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+                if result.returncode:
+                    raise RuntimeError('selected target test inventory failed; see selected-test-inventory.stderr')
+                selected_tests, excluded = parse_test_inventory((out/'selected-test-inventory.stdout').read_text(), host_artifacts_only=True)
+                validate_selected_tests(expected, selected_tests)
+                incompatible = sorted(set(incompatible) | set(excluded))
+        start=time.monotonic()
+        with (out/'bazel.stdout').open('w') as stdout,(out/'bazel.stderr').open('w') as stderr:
+            result=subprocess.run(['/usr/bin/time','-l',*argv],cwd=src,
+                env=env,stdout=stdout,stderr=stderr)
+        commands.append(dict(argv=argv,exit_status=result.returncode,elapsed_seconds=time.monotonic()-start))
+        (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+        if result.returncode:raise RuntimeError('native source graph failed; see bazel.stderr')
+        (out/'test-inventory.json').write_text(json.dumps(dict(requested=config['tests'],expanded=expected,incompatible=incompatible,selected_inventory_sha256=digest(out/'selected-test-inventory.stdout') if (out/'selected-test-inventory.stdout').exists() else None),indent=2)+'\n')
         with (out/'events.json').open() as stream:
             tests = test_results((json.loads(line) for line in stream), expected)
         with (out/'events.json').open() as stream:
             reports = test_reports.snapshot((json.loads(line) for line in stream), out/'test-reports', expected)
-        artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts')
+        artifacts = bep_artifacts.snapshot(out/'events.json', out/'artifacts', incompatible=incompatible)
         for name,value in bindings.items():
             if digest(Path(name))!=value:raise ValueError('qualification input changed: '+name)
         if bsd_toolchain.verify_repository_cache(selected['repository-cache']) != (cache_digest, cache_entries):
@@ -230,7 +256,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if config.get('target-kind') == 'kernel' else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

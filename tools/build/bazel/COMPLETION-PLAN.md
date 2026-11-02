@@ -5,6 +5,107 @@ checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
 remains supported for ports and third-party software. BIP remains out of scope.
 
+## Latest kernel checkpoint (2026-11-02)
+
+Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
+objects match code/allocated data/CTF, and the linked full/runtime kernels match
+55 allocated payloads plus validated build-ID metadata, 96,147 loader symbols
+and merged CTF. The comparison found and fixed the initial helper DSO build-path
+DT_NEEDED defect; old artifacts fail the new test. See
+[FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
+Native kernel installation now also matches original Make staging in default,
+alternate and colocated-debug layouts; see
+[KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
+Next kernel work is pkgbase integration and module/configuration/architecture
+qualification, followed by VM/runtime and performance gates. Full world and
+bootstrap/publication remain open; Make stays production/default.
+
+The package driver now preserves first-class directory layout records, including
+empty directories, alongside optional mtree ownership metadata. Its registered
+real-pkg/BSD-tar Bazel regression passes three valid layouts and three rejection
+cases. Kernel/GDB component packages also preserve the captured payloads; this
+does not close complete kernel packaging. See
+[PACKAGE-DIRECTORY-QUALIFICATION.md](PACKAGE-DIRECTORY-QUALIFICATION.md).
+
+
+Two further hardware modules, amd_ecc_inject and amdsbwd, now pass native plain
+and CTF/debug artifact/install comparisons against corrected original Make
+controls. See [HARDWARE-MODULE-GAP-QUALIFICATION.md](HARDWARE-MODULE-GAP-QUALIFICATION.md)
+for the export-policy correction, debug-definedness mismatch and fresh SDK
+qualification after a changed host tar input. Other module coverage remains open.
+
+
+Nine further hardware modules now pass native plain and CTF/debug artifact and
+installation comparisons: AAC/AACRAID and their Linux adapters, Alder Lake/AMD
+GPIO, Apple BCE, Areca and Apple SMC. The batch covers 19 source files and 2,799
+Make dependency occurrences; see
+[NINE-HARDWARE-MODULES-QUALIFICATION.md](NINE-HARDWARE-MODULES-QUALIFICATION.md).
+
+
+Ten Atheros loadable modules now pass native default plain/CTF-debug comparison,
+including the complete 138-object default inventory and both alternative rate
+algorithms. All twelve plain binaries are byte-identical to Make; CTF/debug
+runtime sections and 36 install records agree. Actual compiler/input and ordered
+link audits pass. Source corrections and runtime limitations are recorded in
+[ATH-MODULES-QUALIFICATION.md](ATH-MODULES-QUALIFICATION.md).
+
+The next twelve-module Broadcom group has original Make source facts captured.
+Its two native NVRAM header producers now match original Make output bodies with
+declared AWK/map/runtime inputs; module compilation remains open. See
+[BHND-NVRAM-GENERATOR-QUALIFICATION.md](BHND-NVRAM-GENERATOR-QUALIFICATION.md).
+
+Twelve Broadcom bus/wireless modules now pass native 75-object compile/input and
+ordered-link audits, corrected Make plain/CTF-debug comparisons and 36 install
+records. Static import review found four local-only shared provider policies;
+explicit exports and positive/negative artifact tests remove fallback reliance.
+GPIO providers and runtime/module loading remain open. See
+[BROADCOM-MODULES-QUALIFICATION.md](BROADCOM-MODULES-QUALIFICATION.md).
+
+Six GPIO modules now pass ten actual compiler/input and six ordered-link audits,
+plain/CTF-debug comparisons and eighteen install records. Both profiles pass three
+provider tests, including explicit Broadcom-to-GPIO edges. Two ordinary Make
+filename differences require separately audited compiler-policy controls; the
+untouched baselines and a rejected first control remain recorded. SPI providers,
+full loading and runtime/performance gates remain open. See
+[GPIO-MODULES-QUALIFICATION.md](GPIO-MODULES-QUALIFICATION.md).
+
+At the GPIO checkpoint, the 729-leaf amd64 selection had 284 local BUILD files
+and 445 leaves without one; these were source-coverage counts only.
+
+Six SPI controller/bus/flash/HID modules now pass eleven actual compiler/input
+and six ordered-link audits, untouched Make plain/CTF-debug comparisons and
+eighteen install records. Both profiles pass four provider tests. The qualified
+kernel plus twenty-four Broadcom/GPIO/SPI modules now have providers for every
+strong import with no hidden supplied providers; loading/runtime remain open.
+See [SPI-MODULES-QUALIFICATION.md](SPI-MODULES-QUALIFICATION.md).
+
+At the SPI checkpoint, the 729-leaf amd64 selection had 290 local BUILD files
+and 439 leaves without one; these were source-coverage counts only.
+
+Twenty-four HID/evdev modules now pass 28 actual compiler/input and 24 ordered-link
+audits, Make plain/CTF-debug comparisons and 72 install records. An original hgame
+policy localized three public callbacks used by three controller modules; explicit
+exports and positive/negative provider tests remove reliance on local-symbol fallback. Static strong-import
+coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime and
+hardware behavior remain open. See
+[HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
+without one. These are source-coverage counts, not qualified builds.
+
+Module export tests enforce explicit ELF bindings; the source loader defaults permit
+local-symbol lookup for compatibility. Earlier claims that local-only findings
+necessarily caused default load failures are withdrawn. Explicit exports remain;
+actual VM loading under both settings is still required. See
+[MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
+
+Earlier component checkpoints below are retained historical evidence.
+
+Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local
+BUILD files (244 direct audited macros and one separate ZFS description). This
+is discovery, not build qualification; see
+[MODULE-SELECTION-QUALIFICATION.md](MODULE-SELECTION-QUALIFICATION.md).
+
 ## Current resumption (2026-11-02)
 
 The user resumed after the committed kernel-upgrade checkpoint a28f294501e.
@@ -215,6 +316,20 @@ products, leaving 766 unmatched. See FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md.
 Complete kernel/world/modules, other architectures, runtime and performance gates
 remain open.
 
+## Device I/O checkpoint (2026-11-02)
+
+98 native amd64 GENERIC USB/input/audio/console objects pass exact code/CTF,
+actual compiler/input and nondebug relocation checks. Native audio/teken tables
+use original scripts; sound preset overrides pass through normal format-5 inputs.
+Existing AWK default actions remain exact. Unchanged outputs are reused with only
+workspace-status execution (ten BEP local cache hits in the two-target closure);
+restoring previous preset configurations re-executes because no persistent disk
+action cache is configured. Retain that failed expectation and add/qualify managed
+persistent action-cache support before full-system cache/performance claims.
+Known graph: 1,792 source matches plus six name-only matches among 2,466 products,
+leaving 668 unmatched. See DEVICE-IO-KERNEL-QUALIFICATION.md. Full kernel/world,
+modules, other architectures, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
@@ -342,3 +457,184 @@ LIBXO-CSV-QUALIFICATION.md qualifies the actual csv.enc producer and six install
 ### APM selected leaf and next static PAM product (2026-11-02)
 
 APM-PROGRAM-QUALIFICATION.md records native source/ELF/install qualification of the selected x86 APM leaf; whole-world aggregation must retain its parent MK_APM switch. Next close lib/libpam/static_libpam, the actual missing /usr/lib/libpam.a product: compile the real core with OPENPAM_STATIC_MODULES, retain all option-selected module archives and registration partial-link order, preserve DTrace/DOF and original install metadata. Existing shared-core/module targets alone do not establish this static product. Keep device runtime, full PAM authentication, pkg/world and performance gates explicit.
+
+## Virtualization built-in checkpoint (2026-11-02)
+
+60 Hyper-V, Xen and VirtIO built-ins compile through the maintained frontend with exact code/CTF and checked inputs/policies/relocations. See VIRTUALIZATION-KERNEL-QUALIFICATION.md. Full kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+## Storage-controller checkpoint (2026-11-02)
+
+62 additional native storage-controller built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md. Full kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+## Ethernet built-in checkpoint (2026-11-02)
+
+73 additional native Ethernet built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See ETHERNET-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+### Combined static PAM selected product (2026-11-02)
+
+STATIC-PAM-QUALIFICATION.md closes the missing native `/usr/lib/libpam.a` producer:
+54 original core sources, original selected module registration/partial-link order,
+DTrace metadata/sites, compiler/input/relocation checks, default/reduced install
+records and two fully static registry-only native tests (24/20 modules). Keep
+full PAM aggregation/pam.d, installed original authentication/login/SSH tests,
+other LOCALBASE/options/architectures and whole-world/pkgbase/runtime gates open.
+Next reconcile the actual configured userland action/install queue from the
+2,127-directory Make survey; source BUILD presence alone is not coverage.
+
+## Network stack and PF built-in checkpoint (2026-11-02)
+
+73 additional native Network stack and PF built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See NETWORK-POLICY-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+### PAM policy installation (2026-11-02)
+
+PAM-POLICY-QUALIFICATION.md closes the selected pam.d file/archive producer:
+27 exact original payloads and 29 unique Make-matching records across default
+and AT/FTP-off profiles. Retain full PAM aggregation, explicit directory ownership
+consumption by final package composition, installed authentication tests, other
+configurations/architectures and whole-world/pkgbase gates.
+
+## Kernel codec/crypto checkpoint (2026-11-02)
+
+73 additional native Kernel codec/crypto built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See CODECS-CRYPTO-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+## Peripheral-device checkpoint (2026-11-02)
+
+90 additional amd64 GENERIC objects pass native compilation, exact machine code/CTF and compiler/input/relocation checks. Reconciliation r29 leaves 187 missing Make link products, plus six weaker matches. See PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Platform-support checkpoint (2026-11-02)
+
+56 platform built-ins pass object/CTF/compiler/input/relocation checks; the native ACPI assembly-to-binary/header chain matches Make. Reconciliation r30 leaves 131 missing link products and six weaker matches. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Monitoring/device checkpoint (2026-11-02)
+
+52 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks. Reconciliation r31 leaves 79 missing link products and six weaker matches. See MONITORING-DEVICES-KERNEL-QUALIFICATION.md. Full linking, generators/tracing remainder, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+### Original PAM test inventory (2026-11-02)
+
+PAM-TESTS-QUALIFICATION.md closes the three missing original program producers
+and seven-program installation inventory. Nineteen exact object-policy/payload
+checks, seven ordered ELF contracts, twenty install records and fourteen safe
+wrapper results pass. Retain nine installed-path policy cases plus one root
+accounting case for disposable-guest execution, then PAM aggregate reconciliation
+and full world/pkgbase gates. No source assertions or requirements were disabled.
+
+## DTrace built-in checkpoint (2026-11-02)
+
+15 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks after fixing real parent-header namespace and late Solaris utility ordering. Reconciliation r33 leaves 64 missing link products and six weaker matches. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, generated products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Generated-interface checkpoint (2026-11-02)
+
+49 KOBJ interface objects and 98 generated C/header bodies pass independent Make comparisons through the maintained frontend. Reconciliation r34 leaves 15 missing link products, 53 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 49 of those generated matches. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, remaining generators/custom products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Generated RPC checkpoint (2026-11-02)
+
+Four RPC generated objects pass exact machine-code/CTF/runtime-section/compiler/input/relocation checks; six generator products match Make byte-for-byte. Reconciliation r35 leaves 11 missing products, 57 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 53 generated matches. See RPC-BUILTINS-KERNEL-QUALIFICATION.md. Complete linking, custom identities, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## SIMD crypto checkpoint (2026-11-02)
+
+Five optimized SIMD crypto objects pass native code/CTF/runtime-section/compiler/input/relocation comparisons; 276 external SDK header occurrences match Make. Existing 2,284 configured groups retain identical compiler commands/output paths; five debug targets select O0. Reconciliation r36 leaves six missing products and conservative generated/name-only classifications, with separate artifact/source proofs retained. See SIMD-CRYPTO-KERNEL-QUALIFICATION.md. Full linking, remaining identities, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## PAM family checkpoint (2026-11-02)
+
+PAM-FAMILY-QUALIFICATION.md records default28/reduced23 component archive sets,
+108 actual shared compiler recipes with 3756 fresh Make input bindings, both
+linked ELF/DOF contracts and 65 install records per configuration. Default15 safe
+wrappers pass; KERBEROS-off13 pass with two explicit exclusions. Preserve original
+nine installed-policy and one privileged accounting guest gates, final pkgbase
+composition, inherited world selection and full-system/runtime/bootstrap gates.
+
+## Custom-named kernel checkpoint (2026-11-02)
+
+Four radix/OpenZFS SHA objects pass code/CTF/compiler/input/relocation checks, including one complete hash-bound filename spelling difference. Three declared symlink aliases preserve actual final-link names and bytes. Reconciliation r38 binds 2,405 physical-source identities, leaves 57 generated-name matches (53 independently qualified), two weak object identities and two missing producer chains (VDSO and force-dynamic). See CUSTOM-NAMES-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Refreshed final-producer checkpoint (2026-11-02)
+
+After merge 7056e69713f, refreshed SDK/config inventories and a complete independent Make amd64 GENERIC reference pass. The native force-dynamic helper and existing VDSO yield six original products exactly matching fresh Make. Current query r45/reconciliation r39 accounts for all 2,462 selected amd64 products with no missing producer in this audit, retaining two weak object identities and four unqualified generated identities. The prior VDSO missing classification was a query-selection gap, now corrected. See FINAL-PRODUCERS-KERNEL-QUALIFICATION.md. Complete native kernel linking/post-processing/install, modules, other architectures, world, packaging, bootstrap, runtime and performance remain open.
+
+## DWATCH and post-merge world checkpoint (2026-11-02)
+
+DWATCH-QUALIFICATION.md records native default 133 / EXAMPLES-off 131 installation
+records, 259 exact installed-path payloads and 198 actual hardlink checks. One
+actual syntax case parses 30 original inputs; the second configuration explicitly
+reuses the byte-identical cached result. Live tracing/world/package gates remain.
+Fresh Make recursion selects 2,128 directories, adding sbin/mount_virtiofs; this is
+not compiled coverage. External merge 7056e69713f changes existing userland
+sources/tests (including capability/runtime libraries, kldload/mount,
+BSDExtension/base-accounts/bhyve/switchboard/dtraced) and adds requalification
+obligations. Earlier receipts remain historical; no SDK receipt was rebound.
+
+## Generated core checkpoint (2026-11-02)
+
+Five generated built-ins and clock calibration pass source/compiler/prerequisite/code/CTF/runtime-section and 5,091 strict relocation comparisons. The initial successful build with missing debug/CTF was explicitly rejected; typed shared policy now supplies them. Config/version references use identical declared inputs without normalizing payloads. Clock declares selected-SDK SSP availability and opt-only O3. Query r47/reconciliation r40 leaves no missing or weak object-name identities in the 2,462-product configured inventory; 53 generated-name matches retain separate KOBJ/RPC proofs. See GENERATED-CORE-KERNEL-QUALIFICATION.md. Next: complete native kernel aggregation/link/order/post-processing/install and per-object debug/CTF validation. Modules, other configurations/architectures, world, packages, bootstrap, runtime and performance remain open.
+
+## LLDB generation milestone (2026-11-02)
+
+The root-selected four-source TableGen producer and 19 library headers pass
+native/Make output, eight actual compiler-policy, 5,882 prerequisite-hash and
+789 relocation checks. The original bootstrap stddef wrapper is now declared.
+Host-static Make versus declared-native dynamic execution is explicit; this is
+not installed LLDB completion. The 756-source private shared library now passes
+actual compiler/input/archive-order checks, exact allocated object and linked DSO
+sections against a complete declared filename-policy Make control, five install
+records and one safe API wrapper. See LLDB-LIBRARY-QUALIFICATION.md for the
+untouched baseline differences and historical SDK binding. Next: two CLI option
+headers, programs, debugger runtime/package context and ancestor MK_LLDB selection.
+See LLDB-GENERATORS-QUALIFICATION.md; original ordinary-leaf and strict input
+failures are retained. No host installation or debugger activation occurred.
+
+## Parser-owned kernel input inventory (2026-11-02)
+
+`config -J` now exports the resolved ordered input table; native config exposes
+it as an explicit manifest without Make discovery. All 12 architecture/option
+cases match independent Make OBJS exactly; custom prefix/no-obj/JSON escaping,
+unchanged ordinary outputs, deterministic writes, failed writes and shortcut
+rejection pass using both Make-built and captured native config. Three native
+architecture manifests exactly match Make. See
+KERNEL-CONFIG-INVENTORY-QUALIFICATION.md. Next remains native aggregate coverage
+validation/link/post-processing/install; no full kernel/world completion claim.
+
+## Native kernel aggregation guard (2026-11-02)
+
+All 2,285 public native object groups expose exactly the 2,462 default selected
+link products. An explicit migrated catalog and ordered File provider reject
+missing/ambiguous/surplus products; parser metadata validation passes all four
+ZSTDIO/NFS_ROOT selections. Bazel host rejection tests pass separately from
+kernel artifact profiles. See KERNEL-AGGREGATE-GUARD-QUALIFICATION.md. The final
+linker must consume the validation marker and ordered Files; full kernel link,
+post-processing/install and wider system gates remain unfinished.
+
+## Complete amd64 GENERIC native link milestone (2026-11-02)
+
+The complete 2,462-product native kernel compiles/links through the maintained
+frontend; CTF merge and runtime/debug split also pass. Actual link order/flags
+match Make, recorded inputs are hash-bound, all allocated sections survive
+postprocessing, and original Make postprocessing of identical native inputs is
+byte-exact. The initial missing socket audit-header dependency was fixed locally.
+See FULL-KERNEL-LINK-QUALIFICATION.md. This is not complete independently compiled
+Make-kernel parity, installation or boot/runtime acceptance. Those gates plus
+modules, other configurations/architectures, world, packages, bootstrap and
+performance remain open; Make stays production/default.
+
+## LLDB CLI milestone (2026-11-02)
+
+The original one/five-source programs, two generated option headers, native
+shared dependency closure, safe loader/pre-initialization tests and ten
+installation records now pass. Direct compiler objects preserve original Make
+link order. Every allocated object/program section matches independent explicit
+filename-policy Make controls; original baselines/rejected archive links remain.
+LLDB-CLI-QUALIFICATION.md records actual input, link, SDK and scoped cache proof.
+Next: family aggregate and inherited MK_LLDB selection/package ownership;
+debugger execution, upstream suite, cross/static variants and full world stay open.
+
+## LLDB family milestone (2026-11-02)
+
+The native debugger subset now composes three independently qualified components
+with original order and separate installation contexts: fifteen records, three
+safe wrappers and exact prior immutable payload hashes. Existing LLDB/tests
+selection supports a zero-payload disabled family and rejects an explicitly
+requested all-incompatible suite. Four original Make parent controls pass; fresh
+recursive world inventory observes 2,128 directories, not compilation coverage.
+See LLDB-FAMILY-QUALIFICATION.md. Next: reconcile actual selected product/action
+and aggregate coverage. sbin/mount_virtiofs already has a native graph and
+October 26 component evidence; later recursive selection is not a missing-native
+proof. Full world/bootstrap/package ownership and debugger execution remain open.

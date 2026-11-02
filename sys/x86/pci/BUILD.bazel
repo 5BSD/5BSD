@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native platform support built-ins.
+bsd_source_headers(name = "platform_support_kernel_pci_early_quirks_headers", hdrs = ["pci_early_quirks.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC platform support built-ins.
+amd64_generic_kernel_objects(name = "generic_platform_support_pci_bus", srcs = ["pci_bus.c"],
+    deps = ["//sys/dev/pci:platform_support_kernel_pci_bus_headers", "//sys/isa:platform_support_kernel_orm_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/isa:platform_support_kernel_isa_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_cpu_header", "//sys/dev/pci:platform_support_kernel_pci_if_headers", "//sys/dev/pci:platform_support_kernel_pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_qpi", srcs = ["qpi.c"],
+    deps = ["//sys/dev/pci:platform_support_kernel_pci_bus_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/dev/pci:platform_support_kernel_pci_if_headers", "//sys/dev/pci:platform_support_kernel_pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_pci_early_quirks", srcs = ["pci_early_quirks.c"],
+    deps = ["//sys/dev/pci:platform_support_kernel_amd_ctx_headers", "//sys/vm:platform_support_kernel_pci_early_quirks_headers", "//sys/x86/pci:platform_support_kernel_pci_early_quirks_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/dev/pci:platform_support_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

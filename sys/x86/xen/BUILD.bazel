@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC platform support built-ins.
+amd64_generic_kernel_objects(name = "generic_platform_support_hvm", srcs = ["hvm.c"],
+    deps = ["//sys/contrib/xen:platform_support_kernel_hvm_headers", "//sys/dev/pci:platform_support_kernel_hvm_headers", "//sys/vm:platform_support_kernel_isa_dma_headers", "//sys/xen:platform_support_kernel_hvm_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/dev/pci:platform_support_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_xen_apic", srcs = ["xen_apic.c"],
+    deps = ["//sys/contrib/xen:platform_support_kernel_xen_apic_headers", "//sys/vm:platform_support_kernel_xen_common_headers", "//sys/xen:platform_support_kernel_xen_apic_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_xen_arch_intr", srcs = ["xen_arch_intr.c"],
+    deps = ["//sys/contrib/ck:platform_support_kernel_netgdb_headers", "//sys/contrib/xen:platform_support_kernel_xen_arch_intr_headers", "//sys/dev/xen:platform_support_kernel_xen_arch_intr_headers", "//sys/xen:platform_support_kernel_xen_arch_intr_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_pv", srcs = ["pv.c"],
+    deps = ["//sys/contrib/xen:platform_support_kernel_pv_headers", "//sys/ddb:platform_support_kernel_gdb_cons_headers", "//sys/dev/xen:platform_support_kernel_pv_headers", "//sys/isa:platform_support_kernel_pv_headers", "//sys/vm:platform_support_kernel_pv_headers", "//sys/xen:platform_support_kernel_pv_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_ddb_header", "//sys/amd64/conf:platform_support_kernel_opt_kstack_pages_header", "//sys/xen/xenbus:platform_support_kernel_xenbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

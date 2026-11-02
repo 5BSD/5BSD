@@ -1,6 +1,6 @@
 # Bazel migration: DTrace and security-audit review log
 
-Last updated: 2026-10-26. This is an open review ledger, not a coverage certificate.
+Last updated: 2026-11-02. This is an open review ledger, not a coverage certificate.
 
 ## Review required for each migrated component
 
@@ -9781,3 +9781,317 @@ precedence. Production instrumentation is unchanged. Live probes, RPC/TLS/auth,
 NFS locking/recovery and local filesystem consistency/error behavior remain gates.
 Evidence: /usr/obj/usr/src/bazel-kernel-filesystems-rpc-review-r1-20261102/observability.json;
 see FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md for exact scope and limitations.
+
+## Device I/O built-in batch (2026-11-02)
+
+Among 98 selected USB/input/audio/console sources, bounded call-shaped markers occur
+in five files: HID bus, PCM channel and USB device/hub/transfer paths. Other files
+do not prove missing shared hooks. Production probes are unchanged. Controller/
+device attach, hotplug/error recovery, audio rates/formats/mixing and console/input
+behavior require runtime/device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-device-io-review-r1-20261102/observability.json;
+see DEVICE-IO-KERNEL-QUALIFICATION.md for scope and remaining gates.
+
+## PAM module compiler/link policy correction (2026-11-02)
+
+The 24 default selected modules retain 19 module-specific provider declarations.
+The five without their own provider are pam_capability, pam_echo, pam_krb5,
+pam_passwdqc and pam_xdg; shared PAM dispatch instrumentation still exists.
+This is an audit follow-up, not proof that every such module needs a new probe.
+Provider definitions and production C are unchanged. Exact 94 object code
+comparisons, source-proven path-key alias/site evidence and installation metadata
+do not establish live probe firing or authentication/audit behavior. Those gates
+remain open; see PAM-MODULE-POLICY-QUALIFICATION.md.
+
+## Virtualization built-ins (2026-11-02)
+
+The bounded source-bound scan of 60 converted Hyper-V, Xen and VirtIO files finds call-shaped tracing/CTR/audit markers in eight. It does not establish runtime probe coverage or missing hooks in the others. See VIRTUALIZATION-KERNEL-QUALIFICATION.md and the retained observability.json; existing instrumentation remains.
+
+## Storage-controller built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in five of 62 converted controller files. This is neither runtime coverage nor proof of missing shared hooks. See STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Ethernet built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 73 converted files. This is neither runtime coverage nor proof of missing shared hooks. See ETHERNET-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Combined static PAM product (2026-11-02)
+
+The baseline archive retains 20 providers (core plus 19 modules), 56 probe records,
+100 ordinary and six enabled sites, with actual function/DOF relocation bindings.
+Five selected modules still lack their own provider, as recorded above. The two
+fully static registry tests opt out of original drti helper loading and invoke no
+PAM handlers; they do not qualify authentication/audit paths or live probe firing.
+See STATIC-PAM-QUALIFICATION.md for exact compiler, alias/site and runtime scope.
+
+## Network stack and PF built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 27 of 102 converted files. This is neither runtime coverage nor proof of missing shared hooks. See NETWORK-POLICY-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Kernel codec/crypto built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 94 converted files. This is neither runtime coverage nor proof of missing shared hooks. See CODECS-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Peripheral-device built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 9 of 90 converted files. This is neither runtime coverage nor proof of missing shared hooks. See PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Platform-support built-ins (2026-11-02)
+
+A bounded source-hash-bound scan finds call-shaped tracing/CTR/audit markers in 0 of 56 files. This neither proves absent shared instrumentation nor live probe coverage. See PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md and retained observability.json. Existing hooks remain.
+
+## Monitoring/device built-ins (2026-11-02)
+
+A bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 52 converted files. These include tracing implementations whose indirect hooks require runtime qualification; marker absence proves no instrumentation gap. See MONITORING-DEVICES-KERNEL-QUALIFICATION.md and observability.json. Existing source instrumentation remains.
+
+### Original PAM tests (2026-11-02)
+
+Seven original test program producers now preserve Make source/flag selection,
+including embedded lastlog test code without the production-only WITH_DTRACE
+flag. Production PAM module/provider sources are unchanged. Fourteen safe
+wrapper runs explicitly disable DOF registration before startup through the
+standard Bazel environment provider; this is a runtime test input, not removal
+of probes from production binaries. PAM-TESTS-QUALIFICATION.md retains the ten
+unexecuted installed-path/root cases and full instrumentation/runtime gates.
+
+## DTrace built-ins (2026-11-02)
+
+A bounded source-bound scan finds call-shaped tracing/audit markers in 4 of 15 converted files. Indirect provider machinery requires live qualification; this scan proves neither delivery nor an instrumentation gap. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Production probes remain.
+
+## Generated KOBJ interfaces (2026-11-02)
+
+The bounded source-bound scan finds no matching call-shaped tracing/audit markers in 49 original schemas. This proves neither absent shared/indirect instrumentation nor runtime behavior. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md and retained observability.json. Original schemas/generator remain.
+
+## Generated kernel RPC protocols (2026-11-02)
+
+A bounded source-bound scan finds no matching call-shaped tracing/audit markers in the two original RPC schemas. This neither proves absent shared hooks nor runtime behavior. See RPC-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Original schemas/generator/instrumentation remain.
+
+## SIMD crypto built-ins (2026-11-02)
+
+The bounded source-bound scan finds no matching call-shaped tracing/audit markers in five converted crypto files. This proves neither absent shared hooks nor runtime coverage. See SIMD-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## PAM family (2026-11-02)
+
+Original pamchain instrumentation remains in the shared54-source compile path.
+Default linked provider attributes, four probe records, six ordinary and six
+enabled sites match fresh Make at identical linked addresses. Complete DOF
+section review resolves only actual FNV path-key strings and consequent string
+indices/length/load boundary; provenance is exact. Safe tests disable DOF
+registration before startup. These checks do not qualify live probe delivery,
+loader registration, privileged accounting or authentication behavior. See
+PAM-FAMILY-QUALIFICATION.md and retained shared-dof-audit-r3 evidence.
+
+## Custom-named radix/SHA built-ins (2026-11-02)
+
+A bounded scan finds no matching call-shaped tracing/audit markers in four converted radix/SHA files. This proves neither absent shared hooks nor runtime coverage. See CUSTOM-NAMES-KERNEL-QUALIFICATION.md and retained observability.json; production sources and instrumentation remain unchanged.
+
+## Final helper and refreshed VDSO (2026-11-02)
+
+The force-dynamic source is empty by the original Make recipe; it adds no runtime instrumentation. Existing VDSO assembly and CFI/unwind bytes remain unchanged and its products match fresh Make completely. Live signal delivery and shared tracing/audit coverage remain separate runtime gates. See FINAL-PRODUCERS-KERNEL-QUALIFICATION.md.
+
+## DWATCH scripts and profiles (2026-11-02)
+
+All original tracing script/profile/template bytes and 99 hardlink alias semantics
+match original Make installations in both tested configurations. This preserves
+embedded DTrace pragmas, providers and probe patterns. The new syntax-only test
+uses native sh -n with constructor-time DOF opt-out; it never evaluates DWATCH
+or activates tracing. Actual event delivery, D compilation and privilege/runtime
+behavior remain unqualified. See DWATCH-QUALIFICATION.md for immutable evidence.
+
+## Generated core and clock calibration (2026-11-02)
+
+The bounded scan records 333 call-shaped tracing/audit markers in generated vnode code and two clock timestamp enter/exit wrappers. All five generated source bodies match independent same-policy Make output; six object machine-code/CTF/runtime sections and strict relocations match. This preserves existing hooks without establishing live tracing or audit completeness. See GENERATED-CORE-KERNEL-QUALIFICATION.md and retained observability.json.
+
+## LLDB generator inputs (2026-11-02)
+
+Four original TableGen C++ sources and all .td inputs remain unchanged. Nineteen
+generated library headers equal original Make output; code and 789 allocated
+relocations match with hash-bound diagnostic filenames. The safe producer
+checks never attach/launch a debugging target or activate tracing. This does
+not establish liblldb/LLDB debugger or tracing behavior; those remain open.
+See LLDB-GENERATORS-QUALIFICATION.md for actual and cached execution bindings.
+
+## config inventory API (2026-11-02)
+
+The new config -J parser inventory is build metadata, with no kernel C/assembly,
+DTrace probe or runtime audit changes. Tests exercise success and failure paths
+using Make-built and native config; native linker/runtime observability remains
+an open full-system gate. See KERNEL-CONFIG-INVENTORY-QUALIFICATION.md.
+
+## Kernel aggregate input guard (2026-11-02)
+
+The new catalog/provider/validation action changes build metadata only. No
+runtime kernel source, probes or audit calls changed. Source-level marker/code
+qualification remains in the per-object evidence; live kernel observability
+awaits a linked and booted native kernel.
+
+## Complete native kernel link (2026-11-02)
+
+The full selected amd64 GENERIC link and CTF/debug pipeline now execute, retaining
+all allocated sections across postprocessing. The socket fix adds a declared
+audit header dependency only; source/probe/audit bodies are unchanged and its
+text/CTF exactly match Make. ELF kernel symbols/debug CRC are checked. DTrace
+probe and audit behavior still require boot/runtime qualification; a successful
+link is not evidence of those live behaviors.
+
+## Complete controlled kernel artifact parity (2026-11-02)
+
+All 2,462 compiled object machine-code, allocated data and CTF payloads now match
+the independent same-policy Make control. Corrected linked runtime sections,
+loader symbols and merged CTF match as well, with only independently validated
+build-ID contents separate. This carries existing compiled probe/audit code
+through the build; it is not live DTrace/audit behavior qualification. The fix
+changes linker input spelling only, with no C/assembly runtime-source edits.
+See FULL-KERNEL-PARITY-QUALIFICATION.md for the real DT_NEEDED defect found and
+rejected initial artifacts.
+
+
+### AMD ECC injection and watchdog modules (2026-11-02)
+
+Native amd_ecc_inject/amdsbwd preserve the original sources and exact CTF;
+plain files and configured debug artifact/install contracts match Make. The
+scoped source scan found no dedicated SDT or explicit security-audit hooks.
+This does not establish a defect: generic kernel/FBT/syscall coverage needs
+runtime review. Follow up on authorization and audit coverage for privileged
+ECC injection sysctl writes, and tracing/audit of watchdog arm/disarm/timeout
+transitions. These operations were not exercised during build qualification;
+ECC hardware actions and watchdog arming are not safe host build tests. Hardware
+or supported isolated-VM evidence is still required for operational claims.
+See HARDWARE-MODULE-GAP-QUALIFICATION.md for compiled scope and retained evidence.
+
+
+### AAC/GPIO/Apple hardware module batch (2026-11-02)
+
+Native aac/aac_linux/aacraid/aacraid_linux, adlngpio, amdgpio, apple_bce,
+arcmsr and asmc preserve all 19 original C sources. Plain artifacts are exact;
+CTF/debug runtime and installation contracts match Make. The scoped source scan
+found no dedicated SDT or explicit audit hooks in these files; generic kernel,
+FBT, CAM, USB and syscall coverage still requires operational evidence. Review
+privileged storage-management/Linux ioctl audit coverage, GPIO configuration,
+BCE queue/USB bridge failures and SMC fan-control writes. Absence of a local
+probe is not by itself a defect. Loading, hardware control and probe/audit
+runtime delivery were not exercised in this build qualification. See
+NINE-HARDWARE-MODULES-QUALIFICATION.md for evidence and remaining hardware gates.
+
+
+### Atheros loadable module family (2026-11-02)
+
+The ten default modules and Onoe/AMRR alternatives retain 140 original C sources,
+including the separately documented source correctness fixes. A scoped call-shaped
+scan of SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR-family calls found three CTR calls in
+if_ath.c; no local matches in the other 139 sources do not prove missing generic
+FBT/framework coverage. Follow up on load-time HAL/rate-control symbol dependency
+closure, device attach/detach, calibration, association/authentication, rate-control
+transitions, Tx/Rx, power management and failure recovery. Privileged wireless
+configuration and diagnostics need tracing/audit delivery review. Build parity
+is established; radio operation and probe/audit runtime delivery are not.
+See ATH-MODULES-QUALIFICATION.md for exact compiled scope and source fixes.
+
+## Private LLDB library (2026-11-02)
+
+All 756 actual native PIC compiler records match original Make policy and
+690,249 consumed-file hashes. The original physical-filename payload differences
+remain retained; a complete independent original-Make compiler filename-policy
+control proves all 756 allocated object sections and all allocated linked DSO
+sections byte-exact without observer rewriting. Archive member SHA/order, 59
+consumed generated headers, five install records and actual split-debug CRC pass.
+One safe API wrapper verifies native LLDB/Clang/LLVM loading and pure data APIs
+with DOF initialization disabled before startup; debugger initialization, process
+attach/launch, live tracing and the upstream suite remain untested. This is the
+default amd64 shared configuration, not full LLDB/world completion. See
+LLDB-LIBRARY-QUALIFICATION.md for immutable receipts, actual link/input bindings,
+retained failed controls and SDK scope. Existing frontend APIs/manual remain
+applicable; no new build-bsd interface was introduced.
+
+
+### Broadcom bus/wireless module family (2026-11-02)
+
+The twelve modules preserve 66 physical C sources and 9 generated interfaces; the
+bounded call-shaped scan found no dedicated SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR
+calls. Generic FBT/bus/WLAN/framework coverage remains to be exercised. Review
+privileged GPIO/NVRAM/SPROM access, bus resource/power/clock changes, bridge
+attach/detach, failures, wireless authentication and data paths. Module-source
+export fixes restore 28 shared symbols required by five consumers; full loading
+still needs external GPIO providers. No live radio, device control or probe/audit
+delivery was exercised. See BROADCOM-MODULES-QUALIFICATION.md for exact scope.
+
+
+### GPIO module family (2026-11-02)
+
+Eight physical C sources and two KOBJ schemas now pass native artifact/input
+qualification. The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan
+has 0 local matches; raw source hashes/lines are retained in the GPIO review.
+This does not establish generic FBT/framework coverage. Review GPIO ioctl pin
+ownership and privileged configuration, ACPI event callbacks, IIC/SPI transfer
+failures and attach/detach/resource lifetime through real module/hardware tests.
+The combined Broadcom/GPIO ELF tests restore the known GPIO provider boundary;
+SPI providers and live probe/audit delivery remain open. See
+GPIO-MODULES-QUALIFICATION.md for exact accepted and rejected control evidence.
+
+
+### SPI controller/bus/flash/HID module family (2026-11-02)
+
+Ten physical C sources and one KOBJ schema pass native artifact/input qualification.
+The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan has 0 local
+matches; source hashes and matched lines are retained with the SPI review. Generic
+FBT/framework coverage and live probe/audit delivery remain unqualified. Review
+transfer and pin ownership, DMA/interrupt completion, flash writes, ACPI/HID events,
+error/timeout recovery, and attach/detach/resource lifetime on actual devices.
+Static strong-import/provider closure now passes for the native kernel and the
+twenty-four Broadcom/GPIO/SPI modules; this does not prove loader/runtime behavior.
+See SPI-MODULES-QUALIFICATION.md for accepted evidence and remaining gates.
+
+## LLDB CLI qualification (2026-11-02)
+
+Two native Python wrappers pass three pre-initialization command paths each,
+with loader-only checks of actual native LLDB/Clang/LLVM dependencies and DOF
+disabled before startup. No attach/launch/listen or live tracing. Six actual
+compiler actions bind 5,162 original Make inputs; four final direct-object links
+preserve original order. Both programs match all allocated payloads of explicit
+independent Make controls, and ten install records/debug CRCs pass. Ordinary
+filename and lazy-archive failures are retained. See LLDB-CLI-QUALIFICATION.md;
+these checks do not qualify debugger runtime or the upstream test suite.
+
+
+### HID/evdev module family (2026-11-02)
+
+Twenty-seven physical C sources and one KOBJ schema pass native artifact/input
+qualification. The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan
+has 7 local matches; raw source hashes/lines are retained with the HID review.
+Generic FBT/framework and live probe/audit delivery remain unqualified. Review
+evdev read/write/ioctl/mmap/revoke/grab permission and ownership, input injection,
+HID report parsing, game-controller callbacks, hotplug and detach/resource lifetime.
+Three public hgame callbacks now retain global exports required by four references
+from three explicitly dependent controller modules; actual positive/negative ELF
+tests cover the original defect. Static kernel-plus-48-module strong-import coverage
+passes, while actual device/event/loader behavior remains open. See
+HID-MODULES-QUALIFICATION.md for exact accepted and old rejected policy evidence.
+
+
+The HID checkpoint also checks existing instrumentation rather than only scanning
+for absence: hidbus has four report start/done DTrace call sites; vhid defines the
+Bluetooth report-injection SDT probe. Actual compiled SDT provider/probe/argument/
+tracepoint sections and relocations match original Make exactly for both modules.
+Runtime registration and event delivery remain unqualified. The raw contracts are
+retained in the HID review's compiled-probe-preservation.json.
+
+## LLDB family composition (2026-11-02)
+
+Three native safe wrappers pass together: library API/data checks and both
+pre-initialization CLI checks, actual private DSO loader paths, DOF disabled
+before startup. No attach/launch/listen. Three component archives retain all
+fifteen Make records and exact accepted payloads; LLDB-off has zero products
+and an explicitly requested disabled suite fails before execution. Original
+Make parent-option controls and recursive selection are separately recorded
+in LLDB-FAMILY-QUALIFICATION.md; no full debugger/world runtime claim.
+
+
+### Module export versus loader compatibility correction (2026-11-02)
+
+Local-only provider findings are explicit ELF export-contract findings, not proof
+of default load failure: source defaults allow local symbols in module lookup.
+Explicit Broadcom/hgame public exports remain, but their static negative fixtures
+do not emulate that runtime compatibility behavior. VM tests must record both
+leak_locals settings and qualify default/disabled lookup, dependency metadata,
+built-in providers, load/unload, probe registration and live event delivery.
+No kernel policy or host sysctl changed. See MODULE-LOADER-EXPORT-CONTRACT.md.

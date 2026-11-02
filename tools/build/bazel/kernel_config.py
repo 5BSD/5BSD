@@ -9,7 +9,8 @@ program, config, anchor, output = [Path(p).absolute() for p in sys.argv[1:5]]
 identity = Path(sys.argv[5]).absolute()
 debug = sys.argv[6] == '1'
 overrides = Path(sys.argv[7]).absolute()
-libraries = [Path(p).absolute() for p in sys.argv[8:]]
+manifest = Path(sys.argv[8]).absolute()
+libraries = [Path(p).absolute() for p in sys.argv[9:]]
 env = dict(os.environ)
 if libraries:
     env['LD_LIBRARY_PATH'] = ':'.join(dict.fromkeys(str(p.parent) for p in libraries))
@@ -19,7 +20,7 @@ source_root = anchor.parent.parent
 # Keep the original parser and include resolution. A declared override list
 # controls both native config and Bazel source selection.
 active_config = overrides if overrides.read_text() else config
-command = [str(program)] + (['-g'] if debug else [])
+command = [str(program), '-J'] + (['-g'] if debug else [])
 command += ['-d', str(output), '-s', os.path.relpath(source_root, output), str(active_config)]
 subprocess.run(command, cwd=config.parent, env=env, check=True)
 
@@ -27,3 +28,6 @@ subprocess.run(command, cwd=config.parent, env=env, check=True)
 result = subprocess.run([str(program), '-i', '-s', str(source_root), str(active_config)],
                         cwd=config.parent, env=env, check=True, capture_output=True)
 identity.write_bytes(result.stdout)
+
+# Forward the parser-owned inventory as an explicit artifact, not a tree lookup.
+manifest.write_bytes((output / "kernel-inputs.json").read_bytes())

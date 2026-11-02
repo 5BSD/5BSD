@@ -4,7 +4,7 @@ exports_files(["COPYRIGHT"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.
-cc_library(name = "bhyve_engine_headers", hdrs = ["sys/amd64/vmm/io/vhpet.h", "sys/amd64/vmm/io/vioapic.h", "//sys/dev/e1000:e1000_defines.h", "//sys/dev/e1000:e1000_regs.h", "//sys/dev/ic:ns16550.h", "sys/dev/io/iodev.h"],
+cc_library(name = "bhyve_engine_headers", hdrs = ["sys/amd64/vmm/io/vhpet.h", "sys/amd64/vmm/io/vioapic.h", "//sys/dev/e1000:e1000_defines.h", "//sys/dev/e1000:e1000_regs.h", "//sys/dev/ic:ns16550.h", "//sys/dev/io:iodev.h"],
     deps = ["//sys/contrib/dev/acpica/include:user_headers", "//sys/dev/evdev:bhyve_engine_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 cc_library(name = "bhyve_e1000_headers", hdrs = ['//sys/dev/e1000:e1000_defines.h', '//sys/dev/e1000:e1000_regs.h'], strip_include_prefix = '/sys/dev/e1000', visibility = ["//usr.sbin/bhyve:__pkg__"])
@@ -25,10 +25,10 @@ cc_library(name = "dcons_user_headers", hdrs = ["sys/dev/dcons/dcons.h"], strip_
 
 cc_library(name = "mlx_user_headers", hdrs = ["sys/dev/mlx/mlxio.h", "sys/dev/mlx/mlxreg.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlxcontrol:__pkg__"])
 
-cc_library(name = "mpt_user_headers", hdrs = ["sys/dev/mpt/mpilib/mpi_type.h", "sys/dev/mpt/mpilib/mpi.h", "sys/dev/mpt/mpilib/mpi_cnfg.h", "sys/dev/mpt/mpilib/mpi_raid.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mptutil:__pkg__"])
+cc_library(name = "mpt_user_headers", hdrs = ["//sys/dev/mpt:mpilib/mpi_type.h", "//sys/dev/mpt:mpilib/mpi.h", "//sys/dev/mpt:mpilib/mpi_cnfg.h", "//sys/dev/mpt:mpilib/mpi_raid.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mptutil:__pkg__"])
 
-cc_library(name = "mps_user_headers", hdrs = ["sys/dev/mps/mpi/mpi2_type.h", "sys/dev/mps/mpi/mpi2.h", "sys/dev/mps/mpi/mpi2_cnfg.h", "sys/dev/mps/mpi/mpi2_raid.h", "sys/dev/mps/mpi/mpi2_ioc.h", "sys/dev/mps/mpi/mpi2_init.h", "sys/dev/mps/mpi/mpi2_tool.h", "sys/dev/mps/mpi/mpi2_sas.h", "sys/dev/mpr/mpi/mpi2_type.h", "sys/dev/mpr/mpi/mpi2.h", "sys/dev/mpr/mpi/mpi2_cnfg.h", "sys/dev/mpr/mpi/mpi2_sas.h", "sys/dev/mps/mps_ioctl.h", "sys/dev/mpr/mpr_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mpsutil:__pkg__"])
+cc_library(name = "mps_user_headers", hdrs = ["//sys/dev/mps:mpi/mpi2_type.h", "//sys/dev/mps:mpi/mpi2.h", "//sys/dev/mps:mpi/mpi2_cnfg.h", "//sys/dev/mps:mpi/mpi2_raid.h", "//sys/dev/mps:mpi/mpi2_ioc.h", "//sys/dev/mps:mpi/mpi2_init.h", "//sys/dev/mps:mpi/mpi2_tool.h", "//sys/dev/mps:mpi/mpi2_sas.h", "//sys/dev/mpr:mpi/mpi2_type.h", "//sys/dev/mpr:mpi/mpi2.h", "//sys/dev/mpr:mpi/mpi2_cnfg.h", "//sys/dev/mpr:mpi/mpi2_sas.h", "//sys/dev/mps:mps_ioctl.h", "//sys/dev/mpr:mpr_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mpsutil:__pkg__"])
 
-cc_library(name = "mfi_user_headers", hdrs = ["sys/dev/mfi/mfireg.h", "sys/dev/mfi/mfi_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mfiutil:__pkg__"])
+cc_library(name = "mfi_user_headers", hdrs = ["//sys/dev/mfi:mfireg.h", "//sys/dev/mfi:mfi_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mfiutil:__pkg__"])
 
-cc_library(name = "hyperv_utility_headers", hdrs = ["sys/dev/hyperv/utilities/hv_kvp.h", "sys/dev/hyperv/utilities/hv_utilreg.h", "sys/dev/hyperv/utilities/hv_snapshot.h"], strip_include_prefix = "/sys/dev/hyperv/utilities", visibility = ["//usr.sbin/hyperv:__subpackages__"])
+cc_library(name = "hyperv_utility_headers", hdrs = ["//sys/dev/hyperv:utilities/hv_kvp.h", "//sys/dev/hyperv:utilities/hv_utilreg.h", "//sys/dev/hyperv:utilities/hv_snapshot.h"], strip_include_prefix = "/sys/dev/hyperv/utilities", visibility = ["//usr.sbin/hyperv:__subpackages__"])

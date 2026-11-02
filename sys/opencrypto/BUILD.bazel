@@ -182,3 +182,39 @@ bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_offload_headers", hdrs = ["_cry
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_en_hw_tls_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_ipsec_pcb_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_keysock_headers", hdrs = ["_cryptodev.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_blake2-sw_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "gfmult.h", "gmac.h", "rmd160.h", "xform_auth.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_chacha-sw_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "xform_enc.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_aesni_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "gfmult.h", "gmac.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+filegroup(name = "codecs_crypto_kernel_cryptodev_if_file", srcs = [":cryptodev_if"], output_group = "header")
+cc_library(name = "codecs_crypto_kernel_cryptodev_if_headers", hdrs = [":codecs_crypto_kernel_cryptodev_if_file"], strip_include_prefix = "cryptodev_if.generated", visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+# Physical prerequisites for native generated KOBJ interface built-ins.
+bsd_source_headers(name = "kobj_builtins_physical_cryptodev_if_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+filegroup(name = "kobj_builtins_kernel_cryptodev_if_file", srcs = [":cryptodev_if"], output_group = "header")
+cc_library(name = "kobj_builtins_kernel_cryptodev_if_headers", hdrs = [":kobj_builtins_kernel_cryptodev_if_file"], strip_include_prefix = "cryptodev_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+# Native amd64 GENERIC generated KOBJ interface built-ins.
+filegroup(name = "builtin_cryptodev_if_source", srcs = [":cryptodev_if"], output_group = "source")
+amd64_generic_kernel_objects(name = "generic_kobj_builtins_cryptodev_if", srcs = [":builtin_cryptodev_if_source"],
+    deps = ["//sys/opencrypto:kobj_builtins_physical_cryptodev_if_headers", "//sys/opencrypto:kobj_builtins_kernel_cryptodev_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native SIMD crypto built-ins.
+bsd_source_headers(name = "simd_crypto_kernel_aesni_ghash_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
+    visibility = ["//sys/crypto:__pkg__"])
+bsd_source_headers(name = "simd_crypto_kernel_aesni_wrap_headers", hdrs = ["_cryptodev.h", "cryptodev.h", "gfmult.h", "gmac.h"],
+    visibility = ["//sys/crypto:__pkg__"])

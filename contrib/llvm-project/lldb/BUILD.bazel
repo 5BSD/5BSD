@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Original upstream TableGen sources; generated LLDB headers are owned by liblldb.
+exports_files([
+    "utils/TableGen/LLDBOptionDefEmitter.cpp",
+    "utils/TableGen/LLDBPropertyDefEmitter.cpp",
+    "utils/TableGen/LLDBTableGen.cpp",
+    "utils/TableGen/LLDBTableGenUtils.cpp",
+], visibility = ["//usr.bin/clang/lldb-tblgen:__pkg__"])
+cc_library(
+    name = "tablegen_headers",
+    hdrs = ["utils/TableGen/LLDBTableGenBackends.h", "utils/TableGen/LLDBTableGenUtils.h"],
+    visibility = ["//usr.bin/clang/lldb-tblgen:__pkg__"],
+)
+exports_files(["include/lldb/Core/PropertiesBase.td"] + glob(["source/**/*.td"]), visibility = ["//lib/clang/liblldb:__pkg__"])
+
+load("//lib/clang/liblldb:sources.bzl", "LLDB_SOURCES")
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+exports_files(["source/" + source for source in LLDB_SOURCES if source != "LLDBWrapLua.cpp"],
+              visibility = ["//lib/clang/liblldb:__pkg__"])
+bsd_source_headers(
+    name = "headers",
+    hdrs = glob(["include/lldb/**/*.h", "include/lldb/**/*.def",
+                 "source/**/*.h", "source/**/*.def"]) + ["bindings/lua/lua-swigsafecast.swig"],
+    includes = ["include", "source"],
+    deps = ["//lib/clang/include:lldb_headers"],
+    visibility = ["//lib/clang/liblldb:__pkg__", "//usr.bin/clang/lldb:__pkg__", "//usr.bin/clang/lldb-server:__pkg__"],
+)
+
+# Original driver/server translation units and their consumed local headers.
+exports_files([
+    "tools/driver/Driver.cpp", "tools/driver/Options.td",
+    "tools/lldb-server/LLDBServerUtilities.cpp", "tools/lldb-server/SystemInitializerLLGS.cpp",
+    "tools/lldb-server/lldb-gdbserver.cpp", "tools/lldb-server/lldb-platform.cpp",
+    "tools/lldb-server/lldb-server.cpp", "tools/lldb-server/LLGSOptions.td",
+], visibility = ["//usr.bin/clang/lldb:__pkg__", "//usr.bin/clang/lldb-server:__pkg__"])
+bsd_source_headers(name = "driver_headers",
+    hdrs = ["tools/driver/Driver.h", "tools/driver/Platform.h"],
+    visibility = ["//usr.bin/clang/lldb:__pkg__"])
+bsd_source_headers(name = "lldb-server_headers",
+    hdrs = ["tools/lldb-server/LLDBServerUtilities.h", "tools/lldb-server/SystemInitializerLLGS.h"],
+    visibility = ["//usr.bin/clang/lldb-server:__pkg__"])

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native platform support built-ins.
+bsd_source_headers(name = "platform_support_kernel_est_headers", hdrs = ["hwpstate_intel_internal.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_hwpstate_amd_headers", hdrs = ["hwpstate_common.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+bsd_source_headers(name = "platform_support_kernel_hwpstate_intel_headers", hdrs = ["hwpstate_common.h", "hwpstate_intel_internal.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC platform support built-ins.
+amd64_generic_kernel_objects(name = "generic_platform_support_est", srcs = ["est.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_apm_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/x86/cpufreq:platform_support_kernel_est_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_hwpstate_amd", srcs = ["hwpstate_amd.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_apm_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/x86/cpufreq:platform_support_kernel_hwpstate_amd_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_hwpstate_common", srcs = ["hwpstate_common.c"],
+    deps = ["//sys/x86/cpufreq:platform_support_kernel_hwpstate_amd_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_hwpstate_intel", srcs = ["hwpstate_intel.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_apm_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/x86/cpufreq:platform_support_kernel_hwpstate_intel_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_p4tcc", srcs = ["p4tcc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:platform_support_kernel_acpi_apm_headers", "//sys/dev/acpica:platform_support_kernel_srat_headers", "//sys/dev/acpica:platform_support_kernel_acpi_if_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers", "//sys/amd64/conf:platform_support_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_platform_support_powernow", srcs = ["powernow.c"],
+    deps = ["//sys/vm:platform_support_kernel_xen_common_headers", "//sys/kern:platform_support_kernel_bus_if_headers", "//sys/kern:platform_support_kernel_cpufreq_if_headers", "//sys/kern:platform_support_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

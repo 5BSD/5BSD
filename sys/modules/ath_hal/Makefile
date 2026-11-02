@@ -41,9 +41,9 @@ SRCS+=	device_if.h bus_if.h pci_if.h opt_inet.h opt_ath.h opt_ah.h opt_wlan.h
 CFLAGS+=  -I. -I${SRCTOP}/sys/dev/ath -I${SRCTOP}/sys/dev/ath/ath_hal
 CFLAGS+=  -I. -I${SRCTOP}/sys/contrib/dev/ath/ath_hal/
 
-.include <bsd.kmod.mk>
-
 EXPORT_SYMS=	YES
+
+.include <bsd.kmod.mk>
 
 CWARNFLAGS.ah_regdomain.c=	${NO_WSHIFT_COUNT_NEGATIVE} ${NO_WSHIFT_COUNT_OVERFLOW}
 CWARNFLAGS+=	${NO_WUNUSED_BUT_SET_VARIABLE}

@@ -21,3 +21,7 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["vmm_param.h", "vmm_st
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["vmm_dirty_log_request.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])

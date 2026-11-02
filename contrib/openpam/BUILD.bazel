@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//lib/libpam/libpam:sources.bzl", "PAM_SOURCES")
-exports_files([s.split(":", 1)[1] for s in PAM_SOURCES], visibility = ["//lib/libpam/libpam:__pkg__"])
+_TEST_FRAGMENTS = ["lib/libpam/" + name for name in [
+    "openpam_dynamic.c", "openpam_load.c", "openpam_static.c",
+    "openpam_check_owner_perms.c", "openpam_configure.c", "pam_start.c",
+]]
+exports_files([s.split(":", 1)[1] for s in PAM_SOURCES if s.split(":", 1)[1] not in _TEST_FRAGMENTS],
+    visibility = ["//lib/libpam/libpam:__pkg__", "//lib/libpam/static_libpam:__pkg__"])
+exports_files(_TEST_FRAGMENTS,
+    visibility = ["//lib/libpam/libpam:__pkg__", "//lib/libpam/static_libpam:__pkg__", "//lib/libpam/tests:__pkg__"])
 cc_library(name = "headers", hdrs = glob(["include/security/*.h"]), includes = ["include"], visibility = ["//visibility:public"])
-cc_library(name = "private_headers", hdrs = glob(["lib/libpam/*.h"]), includes = ["lib/libpam"], visibility = ["//lib/libpam/libpam:__pkg__"])
+cc_library(name = "private_headers", hdrs = glob(["lib/libpam/*.h"]), includes = ["lib/libpam"], visibility = ["//lib/libpam/libpam:__pkg__", "//lib/libpam/static_libpam:__pkg__", "//lib/libpam/tests:__pkg__"])
 
 load("//lib/libpam/libpam:installation_data.bzl", "PAM_HEADERS", "PAM_MANUALS")
 exports_files(["include/" + h for h in PAM_HEADERS] + ["doc/man/" + m for m in PAM_MANUALS + ["pam.conf.5"]], visibility = ["//lib/libpam/libpam:__pkg__"])

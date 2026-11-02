@@ -2,3 +2,64 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["chipcreg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["chipc.h", "chipc_private.h", "chipcreg.h", "chipcvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["chipc.h", "chipc_private.h", "chipcvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["chipc_gpiovar.h", "chipcreg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_4", hdrs = ["chipc.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_5", hdrs = ["chipc.h", "chipcvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_6", hdrs = ["chipc.h", "chipcreg.h", "chipcvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_7", hdrs = ["chipc.h", "chipcreg.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "bhnd_chipc_if_module_header", srcs = [":bhnd_chipc_if"], output_group = "header")
+cc_library(name = "bhnd_chipc_if_headers", hdrs = [":bhnd_chipc_if_module_header"], strip_include_prefix = "bhnd_chipc_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+filegroup(name = "bhnd_chipc_if_module_source", srcs = [":bhnd_chipc_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "bhnd_chipc_module", srcs = ["chipc.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_1", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_chipc_subr_module", srcs = ["chipc_subr.c"],
+    deps = ["//sys/dev/bhnd/cores/chipc:broadcom_module_context_2", "//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_chipc_gpio_module", srcs = ["chipc_gpio.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_3", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_sprom_chipc_module", srcs = ["bhnd_sprom_chipc.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_pmu_chipc_module", srcs = ["bhnd_pmu_chipc.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd/cores/pmu:broadcom_module_context_1", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_5", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_chipc_if_module", srcs = [":bhnd_chipc_if_module_source"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhnd_chipc_if_module_source)=bhnd_chipc_if.c", "-fdebug-prefix-map=$(execpath :bhnd_chipc_if_module_source)=bhnd_chipc_if.c"])

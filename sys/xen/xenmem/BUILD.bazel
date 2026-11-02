@@ -2,3 +2,20 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "virtualization_kernel_xenmem_if_file", srcs = [":xenmem_if"], output_group = "header")
+cc_library(name = "virtualization_kernel_xenmem_if_headers", hdrs = [":virtualization_kernel_xenmem_if_file"], strip_include_prefix = "xenmem_if.generated", visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+filegroup(name = "kobj_builtins_kernel_xenmem_if_file", srcs = [":xenmem_if"], output_group = "header")
+cc_library(name = "kobj_builtins_kernel_xenmem_if_headers", hdrs = [":kobj_builtins_kernel_xenmem_if_file"], strip_include_prefix = "xenmem_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC generated KOBJ interface built-ins.
+filegroup(name = "builtin_xenmem_if_source", srcs = [":xenmem_if"], output_group = "source")
+amd64_generic_kernel_objects(name = "generic_kobj_builtins_xenmem_if", srcs = [":builtin_xenmem_if_source"],
+    deps = ["//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/xen/xenmem:kobj_builtins_kernel_xenmem_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

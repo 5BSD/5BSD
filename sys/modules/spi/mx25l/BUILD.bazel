@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "mx25l", objects = ["//sys/dev/flash:mx25l_mx25l_module_object_files"],
+    object_order = ["mx25l.o"], export_all = False)

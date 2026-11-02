@@ -2,3 +2,142 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_device_ids.bzl", "bsd_device_ids_header")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The original kmod recipe generates these from the versioned NVRAM map.
+# Native AWK, its runtime and the input map are declared execution inputs.
+bsd_device_ids_header(name = "nvram_map_header", src = "nvram_map",
+    generator = "//sys/dev/bhnd/tools:nvram_map_gen.awk",
+    header = "bhnd_nvram_map.h", arguments = ["-h"], mnemonic = "BSDBhndNvramHeader",
+    visibility = ["//visibility:public"])
+bsd_device_ids_header(name = "nvram_map_data_header", src = "nvram_map",
+    generator = "//sys/dev/bhnd/tools:nvram_map_gen.awk",
+    header = "bhnd_nvram_map_data.h", arguments = ["-d"], mnemonic = "BSDBhndNvramData",
+    visibility = ["//visibility:public"])
+cc_library(name = "nvram_map_headers", hdrs = [":nvram_map_header"],
+    strip_include_prefix = "nvram_map_header.generated", visibility = ["//visibility:public"])
+cc_library(name = "nvram_map_data_headers", hdrs = [":nvram_map_data_header"],
+    strip_include_prefix = "nvram_map_data_header.generated", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["bhnd_nvram.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/cores/pmu:__pkg__", "//sys/dev/bhnd/nvram:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_store.h", "bhnd_nvram_value.h", "bhnd_spromvar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc/pwrctl:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_data_bcmreg.h", "bhnd_nvram_data_bcmvar.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_4", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_data_bcmvar.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_5", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_data_bcmreg.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_6", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_data_spromvar.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_7", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_data_tlvreg.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_8", hdrs = ["bhnd_nvram.h", "bhnd_nvram_io.h", "bhnd_nvram_iovar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_9", hdrs = ["bhnd_nvram.h", "bhnd_nvram_io.h", "bhnd_nvram_iovar.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_10", hdrs = ["bhnd_nvram.h", "bhnd_nvram_plist.h", "bhnd_nvram_plistvar.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_11", hdrs = ["bhnd_nvram.h", "bhnd_nvram_data.h", "bhnd_nvram_datavar.h", "bhnd_nvram_io.h", "bhnd_nvram_plist.h", "bhnd_nvram_private.h", "bhnd_nvram_store.h", "bhnd_nvram_storevar.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_12", hdrs = ["bhnd_nvram.h", "bhnd_nvram_io.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_13", hdrs = ["bhnd_nvram.h", "bhnd_nvram_private.h", "bhnd_nvram_value.h", "bhnd_nvram_valuevar.h"], includes = [],
+    visibility = ["//sys/dev/bhnd/nvram:__pkg__"])
+
+filegroup(name = "bhnd_nvram_if_module_header", srcs = [":bhnd_nvram_if"], output_group = "header")
+cc_library(name = "bhnd_nvram_if_headers", hdrs = [":bhnd_nvram_if_module_header"], strip_include_prefix = "bhnd_nvram_if.generated", visibility = ["//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bhnd/nvram:__pkg__", "//sys/dev/bhnd:__pkg__"])
+
+filegroup(name = "bhnd_nvram_if_module_source", srcs = [":bhnd_nvram_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_module", srcs = ["bhnd_nvram_data.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_2", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_bcm_module", srcs = ["bhnd_nvram_data_bcm.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_3", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_bcmraw_module", srcs = ["bhnd_nvram_data_bcmraw.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_4", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_btxt_module", srcs = ["bhnd_nvram_data_btxt.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_5", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_sprom_module", srcs = ["bhnd_nvram_data_sprom.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_6", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_sprom_subr_module", srcs = ["bhnd_nvram_data_sprom_subr.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_6", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_data_tlv_module", srcs = ["bhnd_nvram_data_tlv.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_7", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_io_module", srcs = ["bhnd_nvram_io.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_8", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_iobuf_module", srcs = ["bhnd_nvram_iobuf.c", "bhnd_nvram_ioptr.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_9", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_iores_module", srcs = ["bhnd_nvram_iores.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_9", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_plist_module", srcs = ["bhnd_nvram_plist.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_store_module", srcs = ["bhnd_nvram_store.c", "bhnd_nvram_store_subr.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_11", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_subr_module", srcs = ["bhnd_nvram_subr.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_12", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:nvram_map_data_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_value_module", srcs = ["bhnd_nvram_value.c", "bhnd_nvram_value_prf.c", "bhnd_nvram_value_subr.c"],
+    deps = ["//sys/dev/bhnd/nvram:broadcom_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_value_fmts_module", srcs = ["bhnd_nvram_value_fmts.c"],
+    deps = ["//sys/net:ath_kernel_ah_osdep_headers", "//sys/dev/bhnd/nvram:broadcom_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_sprom_module", srcs = ["bhnd_sprom.c"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_1", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bhnd_bhnd_nvram_if_module", srcs = [":bhnd_nvram_if_module_source"],
+    deps = ["//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:bhnd_nvram_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :bhnd_nvram_if_module_source)=bhnd_nvram_if.c", "-fdebug-prefix-map=$(execpath :bhnd_nvram_if_module_source)=bhnd_nvram_if.c"])

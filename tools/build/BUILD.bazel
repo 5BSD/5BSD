@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Original tools/build/Makefile installs this wrapper in the bootstrap include tree.
+bsd_source_headers(
+    name = "bootstrap_stddef_headers",
+    hdrs = ["stddef.h"],
+    includes = ["."],
+    visibility = ["//usr.bin/clang/lldb-tblgen:__pkg__"],
+)

@@ -21,3 +21,70 @@ bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["netmap_kern.h", "
 # Physical native Intel NIC built-in prerequisites.
 bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],
     visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_if_vtnet_headers", hdrs = ["if_vtnet_netmap.h", "netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_if_re_headers", hdrs = ["if_re_netmap.h", "netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_if_ptnet_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h", "netmap_mem2.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_bdg_headers", hdrs = ["netmap_bdg.h", "netmap_kern.h", "netmap_mbq.h", "netmap_mem2.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_legacy_headers", hdrs = ["netmap_bdg.h", "netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_mbq_headers", hdrs = ["netmap_mbq.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_offloadings_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_if_ptnet", srcs = ["if_ptnet.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/dev/pci:monitoring_devices_kernel_if_ptnet_headers", "//sys/dev/virtio/network:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_if_ptnet_headers", "//sys/netinet:monitoring_devices_kernel_if_ptnet_headers", "//sys/netinet6:monitoring_devices_kernel_if_ptnet_headers", "//sys/vm:monitoring_devices_kernel_if_ptnet_headers", "//sys/kern:monitoring_devices_kernel_bus_if_headers", "//sys/kern:monitoring_devices_kernel_device_if_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_inet_header", "//sys/amd64/conf:monitoring_devices_kernel_opt_inet6_header", "//sys/dev/pci:monitoring_devices_kernel_pci_if_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap", srcs = ["netmap.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_bdg", srcs = ["netmap_bdg.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_netmap_bdg_headers", "//sys/net:monitoring_devices_kernel_netmap_bdg_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_freebsd", srcs = ["netmap_freebsd.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/netinet:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/netinet6:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/vm:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/amd64/conf:monitoring_devices_kernel_opt_inet_header", "//sys/amd64/conf:monitoring_devices_kernel_opt_inet6_header"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_generic", srcs = ["netmap_generic.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_generic_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_kloop", srcs = ["netmap_kloop.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_kloop_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_legacy", srcs = ["netmap_legacy.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_netmap_legacy_headers", "//sys/net:monitoring_devices_kernel_netmap_legacy_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_mbq", srcs = ["netmap_mbq.c"],
+    deps = ["//sys/dev/netmap:monitoring_devices_kernel_netmap_mbq_headers", "//sys/vm:monitoring_devices_kernel_netmap_mbq_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_mem2", srcs = ["netmap_mem2.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_kloop_headers", "//sys/vm:monitoring_devices_kernel_if_ptnet_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_monitor", srcs = ["netmap_monitor.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_kloop_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_null", srcs = ["netmap_null.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_kloop_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_offloadings", srcs = ["netmap_offloadings.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_netmap_offloadings_headers", "//sys/net:monitoring_devices_kernel_netmap_offloadings_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_pipe", srcs = ["netmap_pipe.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_if_ptnet_headers", "//sys/net:monitoring_devices_kernel_netmap_kloop_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_netmap_vale", srcs = ["netmap_vale.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/dev/netmap:monitoring_devices_kernel_netmap_bdg_headers", "//sys/net:monitoring_devices_kernel_netmap_bdg_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

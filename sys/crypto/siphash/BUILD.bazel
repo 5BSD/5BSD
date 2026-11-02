@@ -18,3 +18,26 @@ bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["siphash.h"],
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["siphash.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_pf_headers", hdrs = ["siphash.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_siphash_headers", hdrs = ["siphash.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_siphash", srcs = ["siphash.c"],
+    deps = ["//sys/crypto/siphash:codecs_crypto_kernel_siphash_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_siphash_test", srcs = ["siphash_test.c"],
+    deps = ["//sys/crypto/siphash:codecs_crypto_kernel_siphash_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["siphash.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

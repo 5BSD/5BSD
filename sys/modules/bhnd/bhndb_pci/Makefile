@@ -10,4 +10,7 @@ SRCS+=	bhnd_pwrctl_hostb_if.h
 
 SRCS+=	device_if.h bus_if.h pci_if.h
 
+# Dependent bus/bridge modules use this module's shared implementation.
+EXPORT_SYMS=	YES
+
 .include <bsd.kmod.mk>

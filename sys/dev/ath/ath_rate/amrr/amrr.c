@@ -54,6 +54,7 @@
 #include <sys/sysctl.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/errno.h>
 
@@ -66,6 +67,7 @@
 #include <net/if.h>
 #include <net/if_media.h>
 #include <net/if_arp.h>
+#include <net/ethernet.h>
 
 #include <net80211/ieee80211_var.h>
 
@@ -114,8 +116,8 @@ ath_rate_findrate(struct ath_softc *sc, struct ath_node *an,
 		*txrate = amn->amn_tx_rate0sp;
 	else
 		*txrate = amn->amn_tx_rate0;
-	maxdur = -1;
-	maxpktlen = -1;
+	*maxdur = -1;
+	*maxpktlen = -1;
 }
 
 /*
@@ -429,7 +431,7 @@ ath_rate_ctl(void *arg, struct ieee80211_node *ni)
 	}
 }
 
-static int
+int
 ath_rate_fetch_node_stats(struct ath_softc *sc, struct ath_node *an,
     struct ath_rateioctl *re)
 {

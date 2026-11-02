@@ -9,3 +9,22 @@ cc_library(
 )
 
 exports_files(['skein.h', 'skein_port.h', 'skein_freebsd.h', 'skein_iv.h'], visibility = ["//lib/libmd:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_skein_headers", hdrs = ["skein.h", "skein_freebsd.h", "skein_iv.h", "skein_port.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_skein_block_headers", hdrs = ["skein.h", "skein_freebsd.h", "skein_port.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_skein", srcs = ["skein.c"],
+    deps = ["//sys/crypto/skein:codecs_crypto_kernel_skein_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_skein_block", srcs = ["skein_block.c"],
+    deps = ["//sys/crypto/skein:codecs_crypto_kernel_skein_block_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])

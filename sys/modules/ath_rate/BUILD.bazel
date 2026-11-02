@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Preserve original Make export policy and complete object order.
+amd64_generic_module(module = "ath_rate", objects = select({"//tools/build/bazel/config:ath_rate_onoe": ["//sys/dev/ath:ath_rate_if_ath_rate_module_object_files", "//sys/dev/ath:ath_rate_onoe_module_object_files"], "//tools/build/bazel/config:ath_rate_amrr": ["//sys/dev/ath:ath_rate_if_ath_rate_module_object_files", "//sys/dev/ath:ath_rate_amrr_module_object_files"], "//conditions:default": ["//sys/dev/ath:ath_rate_if_ath_rate_module_object_files", "//sys/dev/ath:ath_rate_sample_module_object_files"]}),
+    object_order = select({"//tools/build/bazel/config:ath_rate_onoe": ["if_ath_rate.o", "onoe.o"], "//tools/build/bazel/config:ath_rate_amrr": ["if_ath_rate.o", "amrr.o"], "//conditions:default": ["if_ath_rate.o", "sample.o"]}), export_all = False)

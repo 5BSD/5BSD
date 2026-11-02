@@ -574,3 +574,467 @@ amd64_generic_kernel_objects(name = "generic_ath_sample", srcs = ["ath_rate/samp
 amd64_generic_kernel_objects(name = "generic_ath_dfs_null", srcs = ["ath_dfs/null/dfs_null.c"],
     deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_dfs_null_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+bsd_source_headers(name = "ath_module_context_0", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_1", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_debug.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_2", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9003/ar9300_devid.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_3", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ah_regdomain.h", "ath_hal/ah_regdomain/ah_rd_ctry.h", "ath_hal/ah_regdomain/ah_rd_domains.h", "ath_hal/ah_regdomain/ah_rd_freqbands.h", "ath_hal/ah_regdomain/ah_rd_regenum.h", "ath_hal/ah_regdomain/ah_rd_regmap.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_4", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v1.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_5", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_6", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_7", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_8", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_55", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_9287.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_63", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_ioctl.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_rx_edma.h", "if_ath_spectral.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_ath_tx_edma.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_65", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_66", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_debug.h", "if_ath_keycache.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_67", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_sysctl.h", "if_ath_tx.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_68", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_misc.h", "if_ath_tx.h", "if_ath_tx_ht.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_69", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_tx.h", "if_ath_tx_ht.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_70", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_led.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_71", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_72", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_73", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_misc.h", "if_ath_tx.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_74", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_rx_edma.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_75", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_ath_tx_edma.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_76", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_misc.h", "if_ath_spectral.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_77", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_78", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_ath_debug.h", "if_ath_descdma.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_79", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_debug.h", "if_ath_lna_div.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_80", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_btcoex.h", "if_ath_debug.h", "if_ath_ioctl.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_spectral.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_81", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_82", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_pci_devlist.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_83", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_rate/sample/sample.h", "ath_rate/sample/tx_schedules.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_84", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_rate/onoe/onoe.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+bsd_source_headers(name = "ath_module_context_85", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_rate/amrr/amrr.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"], includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_ath_if_ath_drv_module", srcs = ["if_ath_drv.c"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_dfs_if_ath_dfs_module", srcs = ["if_ath_dfs.c"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_dfs_dfs_null_module", srcs = ["ath_dfs/null/dfs_null.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_osdep_module", srcs = ["ah_osdep.c"],
+    deps = ["//sys/net:ath_kernel_ah_osdep_headers", "//sys/dev/ath:ath_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_module", srcs = ["ath_hal/ah.c"],
+    deps = ["//sys/dev/ath:ath_module_context_2", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_regdomain_module", srcs = ["ath_hal/ah_regdomain.c"],
+    deps = ["//sys/dev/ath:ath_module_context_3", "//sys/net80211:ath_kernel_ah_regdomain_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable", "-Wno-shift-count-negative", "-Wno-shift-count-overflow"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_eeprom_v1_module", srcs = ["ath_hal/ah_eeprom_v1.c"],
+    deps = ["//sys/dev/ath:ath_module_context_4", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_eeprom_v3_module", srcs = ["ath_hal/ah_eeprom_v3.c"],
+    deps = ["//sys/dev/ath:ath_module_context_5", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_eeprom_v14_module", srcs = ["ath_hal/ah_eeprom_v14.c"],
+    deps = ["//sys/dev/ath:ath_module_context_6", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ah_eeprom_v4k_module", srcs = ["ath_hal/ah_eeprom_v4k.c"],
+    deps = ["//sys/dev/ath:ath_module_context_7", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ah_osdep_ar5210_module", srcs = ["ah_osdep_ar5210.c"],
+    deps = ["//sys/dev/ath:ath_module_context_8", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_attach_module", srcs = ["ath_hal/ar5210/ar5210_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_beacon_module", srcs = ["ath_hal/ar5210/ar5210_beacon.c", "ath_hal/ar5210/ar5210_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_interrupts_module", srcs = ["ath_hal/ar5210/ar5210_interrupts.c", "ath_hal/ar5210/ar5210_keycache.c", "ath_hal/ar5210/ar5210_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_misc_module", srcs = ["ath_hal/ar5210/ar5210_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_phy_module", srcs = ["ath_hal/ar5210/ar5210_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_reset_module", srcs = ["ath_hal/ar5210/ar5210_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5210_ar5210_xmit_module", srcs = ["ath_hal/ar5210/ar5210_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ah_osdep_ar5211_module", srcs = ["ah_osdep_ar5211.c"],
+    deps = ["//sys/dev/ath:ath_module_context_8", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_attach_module", srcs = ["ath_hal/ar5211/ar5211_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_beacon_module", srcs = ["ath_hal/ar5211/ar5211_beacon.c", "ath_hal/ar5211/ar5211_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_interrupts_module", srcs = ["ath_hal/ar5211/ar5211_interrupts.c", "ath_hal/ar5211/ar5211_keycache.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_misc_module", srcs = ["ath_hal/ar5211/ar5211_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_phy_module", srcs = ["ath_hal/ar5211/ar5211_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_recv_module", srcs = ["ath_hal/ar5211/ar5211_recv.c", "ath_hal/ar5211/ar5211_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5211_ar5211_reset_module", srcs = ["ath_hal/ar5211/ar5211_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ah_osdep_ar5212_module", srcs = ["ah_osdep_ar5212.c"],
+    deps = ["//sys/dev/ath:ath_module_context_8", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_ani_module", srcs = ["ath_hal/ar5212/ar5212_ani.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_attach_module", srcs = ["ath_hal/ar5212/ar5212_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_beacon_module", srcs = ["ath_hal/ar5212/ar5212_beacon.c", "ath_hal/ar5212/ar5212_keycache.c", "ath_hal/ar5212/ar5212_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_eeprom_module", srcs = ["ath_hal/ar5212/ar5212_eeprom.c", "ath_hal/ar5212/ar5212_gpio.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_eeprom_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_interrupts_module", srcs = ["ath_hal/ar5212/ar5212_interrupts.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_misc_module", srcs = ["ath_hal/ar5212/ar5212_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_phy_module", srcs = ["ath_hal/ar5212/ar5212_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_recv_module", srcs = ["ath_hal/ar5212/ar5212_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_reset_module", srcs = ["ath_hal/ar5212/ar5212_reset.c", "ath_hal/ar5212/ar5212_rfgain.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5212_xmit_module", srcs = ["ath_hal/ar5212/ar5212_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5212_ar5111_module", srcs = ["ath_hal/ar5212/ar5111.c", "ath_hal/ar5212/ar5112.c", "ath_hal/ar5212/ar2413.c", "ath_hal/ar5212/ar2425.c", "ath_hal/ar5212/ar5413.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ah_osdep_ar5416_module", srcs = ["ah_osdep_ar5416.c"],
+    deps = ["//sys/dev/ath:ath_module_context_8", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_ani_module", srcs = ["ath_hal/ar5416/ar5416_ani.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_attach_module", srcs = ["ath_hal/ar5416/ar5416_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_beacon_module", srcs = ["ath_hal/ar5416/ar5416_beacon.c", "ath_hal/ar5416/ar2133.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_btcoex_module", srcs = ["ath_hal/ar5416/ar5416_btcoex.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_btcoex_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_cal_module", srcs = ["ath_hal/ar5416/ar5416_cal.c", "ath_hal/ar5416/ar5416_cal_iq.c", "ath_hal/ar5416/ar5416_cal_adcgain.c", "ath_hal/ar5416/ar5416_cal_adcdc.c", "ath_hal/ar5416/ar5416_eeprom.c", "ath_hal/ar5416/ar5416_gpio.c", "ath_hal/ar5416/ar5416_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_interrupts_module", srcs = ["ath_hal/ar5416/ar5416_interrupts.c", "ath_hal/ar5416/ar5416_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_keycache_module", srcs = ["ath_hal/ar5416/ar5416_keycache.c", "ath_hal/ar5416/ar5416_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_keycache_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_misc_module", srcs = ["ath_hal/ar5416/ar5416_misc.c", "ath_hal/ar5416/ar5416_radar.c", "ath_hal/ar5416/ar5416_spectral.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_recv_module", srcs = ["ath_hal/ar5416/ar5416_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar5416_xmit_module", srcs = ["ath_hal/ar5416/ar5416_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9160_attach_module", srcs = ["ath_hal/ar9001/ar9160_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9160_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9280_module", srcs = ["ath_hal/ar9002/ar9280.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9280_attach_module", srcs = ["ath_hal/ar9002/ar9280_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9280_olc_module", srcs = ["ath_hal/ar9002/ar9280_olc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_olc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_module", srcs = ["ath_hal/ar9002/ar9285.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_reset_module", srcs = ["ath_hal/ar9002/ar9285_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_attach_module", srcs = ["ath_hal/ar9002/ar9285_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_cal_module", srcs = ["ath_hal/ar9002/ar9285_cal.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_phy_module", srcs = ["ath_hal/ar9002/ar9285_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_diversity_module", srcs = ["ath_hal/ar9002/ar9285_diversity.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_diversity_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9285_btcoex_module", srcs = ["ath_hal/ar9002/ar9285_btcoex.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_btcoex_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ah_eeprom_9287_module", srcs = ["ath_hal/ah_eeprom_9287.c"],
+    deps = ["//sys/dev/ath:ath_module_context_55", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9287_module", srcs = ["ath_hal/ar9002/ar9287.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9287_reset_module", srcs = ["ath_hal/ar9002/ar9287_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9287_attach_module", srcs = ["ath_hal/ar9002/ar9287_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9287_cal_module", srcs = ["ath_hal/ar9002/ar9287_cal.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar5416_ar9287_olc_module", srcs = ["ath_hal/ar9002/ar9287_olc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_olc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ah_osdep_ar9300_module", srcs = ["ah_osdep_ar9300.c"],
+    deps = ["//sys/dev/ath:ath_module_context_8", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_module", srcs = ["if_ath.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_63", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable", "-Wno-error=sometimes-uninitialized"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_alq_module", srcs = ["if_ath_alq.c"],
+    deps = ["//sys/dev/ath:ath_kernel_if_ath_alq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_debug_module", srcs = ["if_ath_debug.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_debug_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ath:ath_module_context_65", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_keycache_module", srcs = ["if_ath_keycache.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_66", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_sysctl_module", srcs = ["if_ath_sysctl.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_67", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_tx_module", srcs = ["if_ath_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_68", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_tx_ht_module", srcs = ["if_ath_tx_ht.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_debug_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ath:ath_module_context_69", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_led_module", srcs = ["if_ath_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_70", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_rx_module", srcs = ["if_ath_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_71", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_tdma_module", srcs = ["if_ath_tdma.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_72", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_beacon_module", srcs = ["if_ath_beacon.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_73", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_rx_edma_module", srcs = ["if_ath_rx_edma.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_74", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_tx_edma_module", srcs = ["if_ath_tx_edma.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_75", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_spectral_module", srcs = ["if_ath_spectral.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_76", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_btcoex_module", srcs = ["if_ath_btcoex.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_77", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_btcoex_mci_module", srcs = ["if_ath_btcoex_mci.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_78", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_lna_div_module", srcs = ["if_ath_lna_div.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_79", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_ioctl_module", srcs = ["if_ath_ioctl.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_80", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_descdma_module", srcs = ["if_ath_descdma.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_81", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_main_if_ath_pci_module", srcs = ["if_ath_pci.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_pci_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/ath:ath_module_context_82", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_rate_if_ath_rate_module", srcs = ["if_ath_rate.c"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_rate_sample_module", srcs = ["ath_rate/sample/sample.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/ath:ath_module_context_83", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_rate_onoe_module", srcs = ["ath_rate/onoe/onoe.c"],
+    deps = ["//sys/net:ath_module_context_5", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ath:ath_module_context_84", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_rate_amrr_module", srcs = ["ath_rate/amrr/amrr.c"],
+    deps = ["//sys/net:ath_module_context_5", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ath:ath_module_context_85", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])

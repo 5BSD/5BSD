@@ -1,0 +1,126 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_exports")
+
+# Actual native module artifacts; this test does not invoke or import Make.
+_MODULES = {
+    "bhnd": "//sys/modules/bhnd:generic_module",
+    "bcma": "//sys/modules/bhnd/bcma:generic_module",
+    "bcma_bhndb": "//sys/modules/bhnd/bcma_bhndb:generic_module",
+    "bhndb": "//sys/modules/bhnd/bhndb:generic_module",
+    "bhndb_pci": "//sys/modules/bhnd/bhndb_pci:generic_module",
+    "bhnd_pci": "//sys/modules/bhnd/cores/bhnd_pci:generic_module",
+    "bhnd_pci_hostb": "//sys/modules/bhnd/cores/bhnd_pci_hostb:generic_module",
+    "bhnd_pcib": "//sys/modules/bhnd/cores/bhnd_pcib:generic_module",
+    "siba": "//sys/modules/bhnd/siba:generic_module",
+    "siba_bhndb": "//sys/modules/bhnd/siba_bhndb:generic_module",
+    "if_bwi": "//sys/modules/bwi:generic_module",
+    "if_bwn": "//sys/modules/bwn:generic_module",
+}
+bsd_host_artifact_test(name = "broadcom_known_providers_test", src = "check.py",
+    data = _MODULES.values(),
+    args = [arg for name, target in _MODULES.items() for arg in ["--module", name + "=$(location " + target + ")"]])
+
+# Reproduce the old export policy on the real provider artifact. The consumer
+# must still expose its unresolved references to the newly local definitions.
+bsd_module_exports(name = "localized_bcma", src = "//sys/modules/bhnd/bcma:generic_full",
+    output = "negative/bcma.local.ko", exports = [],
+    nm = "@bsd_sdk//toolchain:bin/llvm-nm", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    tool_inputs = ["@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:objcopy_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_host_artifact_test(name = "localized_provider_rejected_test", src = "check.py",
+    data = [":localized_bcma", "//sys/modules/bhnd/bcma_bhndb:generic_module"],
+    args = ["--expect-localized", "--module", "bcma=$(location :localized_bcma)",
+        "--module", "bcma_bhndb=$(location //sys/modules/bhnd/bcma_bhndb:generic_module)"])
+
+# Exercise the GPIO boundary used by Broadcom consumers as well as GPIO clients.
+_GPIO_MODULES = {
+    "gpioaei": "//sys/modules/gpio/gpioaei:generic_module",
+    "gpiobus": "//sys/modules/gpio/gpiobus:generic_module",
+    "gpioiic": "//sys/modules/gpio/gpioiic:generic_module",
+    "gpioled": "//sys/modules/gpio/gpioled:generic_module",
+    "gpiospi": "//sys/modules/gpio/gpiospi:generic_module",
+    "gpioths": "//sys/modules/gpio/gpioths:generic_module",
+}
+_BROADCOM_GPIO_MODULES = dict(_MODULES.items() + _GPIO_MODULES.items())
+bsd_host_artifact_test(name = "broadcom_gpio_providers_test", src = "check.py",
+    data = _BROADCOM_GPIO_MODULES.values(),
+    args = [arg for name, target in _BROADCOM_GPIO_MODULES.items()
+            for arg in ["--module", name + "=$(location " + target + ")"]] + [
+        "--require-edge", "bhnd", "gpiobus", "gpiobus_add_bus",
+        "--require-edge", "if_bwn", "gpiobus", "gpio_pin_config_32_desc",
+    ])
+
+_SPI_MODULES = {
+    "intelspi": "//sys/modules/intelspi:generic_module",
+    "at45d": "//sys/modules/spi/at45d:generic_module",
+    "atopcase": "//sys/modules/spi/atopcase:generic_module",
+    "mx25l": "//sys/modules/spi/mx25l:generic_module",
+    "spibus": "//sys/modules/spi/spibus:generic_module",
+    "spigen": "//sys/modules/spigen:generic_module",
+}
+_BROADCOM_GPIO_SPI_MODULES = dict(_BROADCOM_GPIO_MODULES.items() + _SPI_MODULES.items())
+bsd_host_artifact_test(name = "broadcom_gpio_spi_providers_test", src = "check.py",
+    data = _BROADCOM_GPIO_SPI_MODULES.values(),
+    args = [arg for name, target in _BROADCOM_GPIO_SPI_MODULES.items()
+            for arg in ["--module", name + "=$(location " + target + ")"]] + [
+        "--require-edge", "bhnd", "gpiobus", "gpiobus_add_bus",
+        "--require-edge", "if_bwn", "gpiobus", "gpio_pin_config_32_desc",
+        "--require-edge", "gpiospi", "spibus", "spibus_driver",
+        "--require-edge", "gpiospi", "spibus", "spibus_transfer_desc",
+    ])
+
+_HID_MODULES = {
+    "evdev": "//sys/modules/evdev:generic_module",
+    "appleir": "//sys/modules/hid/appleir:generic_module",
+    "bcm5974": "//sys/modules/hid/bcm5974:generic_module",
+    "hconf": "//sys/modules/hid/hconf:generic_module",
+    "hcons": "//sys/modules/hid/hcons:generic_module",
+    "hgame": "//sys/modules/hid/hgame:generic_module",
+    "hid": "//sys/modules/hid/hid:generic_module",
+    "hidbus": "//sys/modules/hid/hidbus:generic_module",
+    "hidmap": "//sys/modules/hid/hidmap:generic_module",
+    "hidquirk": "//sys/modules/hid/hidquirk:generic_module",
+    "hidraw": "//sys/modules/hid/hidraw:generic_module",
+    "hidwacom": "//sys/modules/hid/hidwacom:generic_module",
+    "hkbd": "//sys/modules/hid/hkbd:generic_module",
+    "hms": "//sys/modules/hid/hms:generic_module",
+    "hmt": "//sys/modules/hid/hmt:generic_module",
+    "hpen": "//sys/modules/hid/hpen:generic_module",
+    "hrfkill": "//sys/modules/hid/hrfkill:generic_module",
+    "hsctrl": "//sys/modules/hid/hsctrl:generic_module",
+    "ietp": "//sys/modules/hid/ietp:generic_module",
+    "ps4dshock": "//sys/modules/hid/ps4dshock:generic_module",
+    "ps5dsense": "//sys/modules/hid/ps5dsense:generic_module",
+    "u2f": "//sys/modules/hid/u2f:generic_module",
+    "vhid": "//sys/modules/hid/vhid:generic_module",
+    "xb360gp": "//sys/modules/hid/xb360gp:generic_module"
+}
+bsd_host_artifact_test(name = "hid_known_providers_test", src = "check.py",
+    data = _HID_MODULES.values(),
+    args = [arg for name, target in _HID_MODULES.items()
+            for arg in ["--module", name + "=$(location " + target + ")"]] + [
+        "--require-edge", "ps4dshock", "hgame", "hgame_hat_switch_cb",
+        "--require-edge", "ps5dsense", "hgame", "hgame_hat_switch_cb",
+        "--require-edge", "xb360gp", "hgame", "hgame_dpad_cb",
+        "--require-edge", "xb360gp", "hgame", "hgame_final_cb",
+    ])
+
+bsd_module_exports(name = "localized_hgame", src = "//sys/modules/hid/hgame:generic_full",
+    output = "negative/hgame.local.ko", exports = [],
+    nm = "@bsd_sdk//toolchain:bin/llvm-nm", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    tool_inputs = ["@bsd_sdk//toolchain:llvm-nm_runtime", "@bsd_sdk//toolchain:objcopy_inputs"],
+    redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    libraries = ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_host_artifact_test(name = "localized_hgame_rejected_test", src = "check.py",
+    data = [":localized_hgame", "//sys/modules/hid/ps4dshock:generic_module",
+            "//sys/modules/hid/ps5dsense:generic_module", "//sys/modules/hid/xb360gp:generic_module"],
+    args = ["--expect-localized", "--module", "hgame=$(location :localized_hgame)",
+        "--module", "ps4dshock=$(location //sys/modules/hid/ps4dshock:generic_module)",
+        "--module", "ps5dsense=$(location //sys/modules/hid/ps5dsense:generic_module)",
+        "--module", "xb360gp=$(location //sys/modules/hid/xb360gp:generic_module)"])

@@ -34,3 +34,19 @@ cross_cddl_module_objects(arch = "riscv", srcs = ["fbt.c", "riscv/fbt_isa.c"], d
     header_overrides = [":module_search_headers"], leading_headers = [":riscv_module_search_headers"])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_generic_module_ctf",
     object_names = ["fbt.o", "fbt_isa.o"], visibility = ["//sys/modules/dtrace/fbt:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_fbt_headers", hdrs = ["fbt.h", "x86/fbt_isa.h"],
+    includes = ["x86", "."],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC DTrace built-in built-ins.
+amd64_generic_kernel_objects(name = "generic_dtrace_builtins_fbt", srcs = ["fbt.c"],
+    deps = ["//sys/cddl/contrib/opensolaris:dtrace_builtins_kernel_dtmalloc_headers", "//sys/cddl/compat/opensolaris:dtrace_builtins_kernel_dtrace_headers", "//sys/compat/linuxkpi/common/include/linux:dtrace_builtins_kernel_opensolaris_headers", "//sys/vm:dtrace_builtins_kernel_opensolaris_headers"], early_deps = ["//sys/cddl/dev/fbt:dtrace_builtins_kernel_fbt_headers", "//sys/contrib/openzfs:dtrace_builtins_kernel_profile_headers", "//sys/modules/zfs:dtrace_builtins_kernel_opensolaris_headers"],
+    pre_copts = ["-DBUILDING_DTRACE", "-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_dtrace_builtins_fbt_isa", srcs = ["x86/fbt_isa.c"],
+    deps = ["//sys/cddl/contrib/opensolaris:dtrace_builtins_kernel_dtmalloc_headers", "//sys/cddl/compat/opensolaris:dtrace_builtins_kernel_dtrace_headers", "//sys/compat/linuxkpi/common/include/linux:dtrace_builtins_kernel_opensolaris_headers", "//sys/vm:dtrace_builtins_kernel_opensolaris_headers"], early_deps = ["//sys/cddl/dev/fbt:dtrace_builtins_kernel_fbt_headers", "//sys/contrib/openzfs:dtrace_builtins_kernel_sdt_headers", "//sys/modules/zfs:dtrace_builtins_kernel_opensolaris_headers"],
+    pre_copts = ["-DBUILDING_DTRACE", "-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))

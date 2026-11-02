@@ -1,2 +1,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["module.bzl", "installation.bzl"], visibility = ["//lib/libpam/modules:__subpackages__"])
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load(":selection.bzl", "pam_module_targets")
+exports_files(["selection.bzl"], visibility = ["//lib/libpam:__subpackages__"])
+filegroup(name = "shared_modules", srcs = pam_module_targets("shared"), visibility = ["//lib/libpam:__pkg__"])
+filegroup(name = "static_archives", srcs = pam_module_targets("static_archive"), visibility = ["//lib/libpam:__pkg__"])
+filegroup(name = "all_products", srcs = [":shared_modules", ":static_archives"], visibility = ["//lib/libpam:__pkg__"])
+# Retain each component's directory/package context rather than flatten it.
+bsd_install_archive_set(name = "installation_archives", archives = pam_module_targets("install_archive"), visibility = ["//lib/libpam:__pkg__"])

@@ -93,6 +93,8 @@ def main():
         if (len(identity) != 4 or identity[:3] != [str(objtop), 'amd64', 'amd64'] or
                 shlex.split(identity[3]) != environment.cc):
             raise ValueError('component define changed baseline SDK/target/compiler identity')
+    if args.make_meta:
+        install_reference_options.validate_metadata_component(environment.query)
     # Feature overrides can legitimately add/remove Makefile includes. Freeze
     # the selected configuration before building, retaining baseline hashes too.
     selected_closure = environment.capture_closure()

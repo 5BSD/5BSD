@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//cddl/usr.sbin/dwatch:installation.bzl", "dwatch_archive")
+exports_files(["profile_template"], visibility = ["//cddl/usr.sbin/dwatch:__pkg__"])
+filegroup(name = "examples", srcs = ["profile_template"], visibility = ["//cddl/usr.sbin/dwatch:__pkg__"])
+bsd_install_file(name = "template_file", src = "profile_template", destination = "/usr/share/examples/dwatch/profile_template",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=dwatch"])
+bsd_install_manifest(name = "install_manifest", entries = [":template_file"])
+dwatch_archive(name = "install_archive", manifests = [":install_manifest"], directories = ["/usr/share/examples/dwatch"])

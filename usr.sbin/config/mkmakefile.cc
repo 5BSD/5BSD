@@ -181,6 +181,94 @@ makefile(void)
 	moveifchanged("Makefile.new", "Makefile");
 }
 
+/* Emit the parser's resolved selection, not a parse of generated Make syntax. */
+static void
+json_string(FILE *fp, const char *value)
+{
+	const unsigned char *cp;
+
+	if (value == NULL) {
+		fputs("null", fp);
+		return;
+	}
+	putc('"', fp);
+	for (cp = (const unsigned char *)value; *cp != '\0'; cp++) {
+		switch (*cp) {
+		case '"':
+			fputs("\\\"", fp);
+			break;
+		case '\\':
+			fputs("\\\\", fp);
+			break;
+		default:
+			if (*cp < 0x20)
+				fprintf(fp, "\\u%04x", (unsigned int)*cp);
+			else
+				putc(*cp, fp);
+		}
+	}
+	putc('"', fp);
+}
+
+void
+kernel_input_manifest(void)
+{
+	struct file_list *tp;
+	FILE *fp;
+	bool first;
+
+	fp = fopen(path("kernel-inputs.json.new"), "w");
+	if (fp == NULL)
+		err(1, "%s", path("kernel-inputs.json.new"));
+	fputs("{\"format\":1,\"kernel_identity\":", fp);
+	json_string(fp, ident);
+	fputs(",\"machine\":", fp);
+	json_string(fp, machinename);
+	fputs(",\"machine_arch\":", fp);
+	json_string(fp, machinearch);
+	fputs(",\"inputs\":[\n", fp);
+	first = true;
+	STAILQ_FOREACH(tp, &ftab, f_next) {
+		std::string object;
+
+		if (!first)
+			fputs(",\n", fp);
+		first = false;
+		fputs("{\"source\":", fp);
+		json_string(fp, tp->f_fn);
+		fputs(",\"origin\":", fp);
+		if (strcmp(tp->f_srcprefix, "$S/") == 0)
+			json_string(fp, "kernel");
+		else if (*tp->f_srcprefix == '\0')
+			json_string(fp, "generated");
+		else
+			errx(1, "unsupported source prefix in kernel input inventory");
+		fputs(",\"object\":", fp);
+		if ((tp->f_flags & NO_OBJ) != 0)
+			json_string(fp, NULL);
+		else {
+			object = tail(tp->f_fn);
+			if (object.empty())
+				errx(1, "empty source basename in kernel input inventory");
+			object.back() = 'o';
+			object.insert(0, tp->f_objprefix);
+			json_string(fp, object.c_str());
+		}
+		fprintf(fp, ",\"flags\":%u,\"compile_with\":",
+		    (unsigned int)tp->f_flags);
+		json_string(fp, tp->f_compilewith);
+		fputs(",\"depends\":", fp);
+		json_string(fp, tp->f_depends);
+		putc('}', fp);
+	}
+	fputs("\n]}\n", fp);
+	if (ferror(fp))
+		errx(1, "cannot write kernel input inventory");
+	if (fclose(fp) == EOF)
+		err(1, "cannot close kernel input inventory");
+	moveifchanged("kernel-inputs.json.new", "kernel-inputs.json");
+}
+
 static void
 sanitize_envline(char *result, const char *src)
 {

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Original kernel-install GDB_FILES selection.
+exports_files(["acttrace.py", "freebsd.py", "pcpu.py", "selftest.py", "vnet.py"],
+    visibility = ["//sys/amd64/conf:__pkg__"])

@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_if_igc_headers", hdrs = ["if_igc.h", "igc_api.h", "igc_base.h", "igc_defines.h", "igc_hw.h", "igc_i225.h", "igc_mac.h", "igc_nvm.h", "igc_osdep.h", "igc_phy.h", "igc_regs.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_igc_api_headers", hdrs = ["igc_api.h", "igc_base.h", "igc_defines.h", "igc_hw.h", "igc_i225.h", "igc_mac.h", "igc_nvm.h", "igc_osdep.h", "igc_phy.h", "igc_regs.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_igc_base_headers", hdrs = ["igc_base.h", "igc_defines.h", "igc_hw.h", "igc_i225.h", "igc_mac.h", "igc_nvm.h", "igc_osdep.h", "igc_phy.h", "igc_regs.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC Ethernet built-ins.
+amd64_generic_kernel_objects(name = "generic_ethernet_if_igc", srcs = ["if_igc.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/ddb:ethernet_kernel_if_igc_headers", "//sys/dev/igc:ethernet_kernel_if_igc_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_if_igc_headers", "//sys/netinet:ethernet_kernel_if_igc_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/net:ethernet_kernel_ifdi_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_ddb_header", "//sys/amd64/conf:ethernet_kernel_opt_device_polling_header", "//sys/amd64/conf:ethernet_kernel_opt_inet_header", "//sys/amd64/conf:ethernet_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_rss_header", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_api", srcs = ["igc_api.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_api_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_base", srcs = ["igc_base.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_base_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_i225", srcs = ["igc_i225.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_api_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_mac", srcs = ["igc_mac.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_api_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_nvm", srcs = ["igc_nvm.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_api_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_phy", srcs = ["igc_phy.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/igc:ethernet_kernel_igc_api_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_igc_api_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_igc_txrx", srcs = ["igc_txrx.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/ddb:ethernet_kernel_if_igc_headers", "//sys/dev/igc:ethernet_kernel_if_igc_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_if_igc_headers", "//sys/netinet:ethernet_kernel_if_igc_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/net:ethernet_kernel_ifdi_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_ddb_header", "//sys/amd64/conf:ethernet_kernel_opt_device_polling_header", "//sys/amd64/conf:ethernet_kernel_opt_inet_header", "//sys/amd64/conf:ethernet_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_rss_header", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

@@ -4,3 +4,18 @@ exports_files(["inet_nat64.c", "in4_cksum.c"], visibility = ["//sys/netpfil/open
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "tcpdump_headers", hdrs = ["ip_ether.h", "ip_ipsp.h"], visibility = ["//usr.sbin/tcpdump/tcpdump:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Preserve the original built-in PF warning vector, distinct from module policy.
+_NETWORK_POLICY_VENDOR_WARNING_FLAGS = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-missing-prototypes", "-Wno-strict-prototypes", "-Wno-format", "-Wno-incompatible-pointer-types-discards-qualifiers", "-Wno-cast-qual", "-Wno-unused-but-set-variable", "-Wno-pointer-sign", "-Wno-sign-compare", "-Wno-address-of-packed-member", "-Wno-constant-conversion"]
+
+# Native amd64 GENERIC network policy built-ins.
+amd64_generic_kernel_objects(name = "generic_network_policy_inet_nat64", srcs = ["inet_nat64.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/crypto/sha2:network_policy_kernel_pf_headers", "//sys/crypto/siphash:network_policy_kernel_pf_headers", "//sys/net:network_policy_kernel_pf_headers", "//sys/netinet:network_policy_kernel_pf_ruleset_headers", "//sys/netinet/cc:network_policy_kernel_netlink_sock_diag_headers", "//sys/netinet6:network_policy_kernel_pf_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = _NETWORK_POLICY_VENDOR_WARNING_FLAGS, early_deps = ["//sys/netpfil/openbsd-pf:compatibility_headers"], copts = ["-DOPENBSD_PF", "-include", "sys/netpfil/openbsd-pf/openbsd_compat.h"])
+amd64_generic_kernel_objects(name = "generic_network_policy_in4_cksum", srcs = ["in4_cksum.c"],
+    deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//sys/crypto/sha2:network_policy_kernel_pf_headers", "//sys/crypto/siphash:network_policy_kernel_pf_headers", "//sys/net:network_policy_kernel_pf_headers", "//sys/netinet:network_policy_kernel_pf_ruleset_headers", "//sys/netinet/cc:network_policy_kernel_netlink_sock_diag_headers", "//sys/netinet6:network_policy_kernel_pf_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
+    warning_flags = _NETWORK_POLICY_VENDOR_WARNING_FLAGS, early_deps = ["//sys/netpfil/openbsd-pf:compatibility_headers"], copts = ["-DOPENBSD_PF", "-include", "sys/netpfil/openbsd-pf/openbsd_compat.h"])

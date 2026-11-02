@@ -62,3 +62,18 @@ bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["audit.h"],
 # Native filesystem/RPC physical prerequisites; identical contexts share providers.
 bsd_source_headers(name = "filesystems_rpc_kernel_ffs_alloc_headers", hdrs = ["audit.h"],
     visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_nfs_nfssvc_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_audit_dtrace_headers", hdrs = ["audit.h", "audit_private.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC monitoring device built-ins.
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_audit_dtrace", srcs = ["audit_dtrace.c"],
+    deps = ["//sys/compat/linuxkpi/common/include/linux:monitoring_devices_kernel_audit_dtrace_headers", "//sys/security/audit:monitoring_devices_kernel_audit_dtrace_headers", "//sys/vm:monitoring_devices_kernel_audit_dtrace_headers", "//sys/cddl/contrib/opensolaris:monitoring_devices_kernel_audit_dtrace_headers", "//sys/cddl/compat/opensolaris:monitoring_devices_kernel_audit_dtrace_headers"], early_deps = ["//sys/contrib/openzfs:monitoring_devices_kernel_audit_dtrace_headers", "//sys/modules/zfs:monitoring_devices_kernel_audit_dtrace_headers"],
+    pre_copts = ["-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_monitoring_devices_audit_ret", srcs = ["audit_ret.c"],
+    deps = ["//sys/contrib/ck:monitoring_devices_kernel_hwpmc_logging_headers", "//sys/net:monitoring_devices_kernel_audit_ret_headers", "//sys/netinet:monitoring_devices_kernel_audit_ret_headers", "//sys/netinet6:monitoring_devices_kernel_netmap_freebsd_headers", "//sys/security/audit:monitoring_devices_kernel_audit_dtrace_headers", "//sys/vm:monitoring_devices_kernel_hwt_record_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

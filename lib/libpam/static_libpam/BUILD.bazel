@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_import", "cc_test")
+load("//lib/libpam/libpam:sources.bzl", "PAM_SOURCES")
+load("//lib/libpam/libpam:compile_policy.bzl", "pam_warnings")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_object")
+load("//tools/build/bazel:bsd_relocatable_link.bzl", "bsd_relocatable_link")
+load("//tools/build/bazel:bsd_dtrace.bzl", "bsd_dtrace_cc_objects")
+load(":selection.bzl", "pam_static_module_archives", "pam_static_module_names")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_TRACE = "//tools/build/bazel/config:dtrace_enabled"
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_MODULES = pam_static_module_archives()
+
+_DEFINES = ['LOCALBASE=\\"/usr/local\\"', "LIB_MAJ=6", "OPENPAM_DEBUG", "HAVE_DLFUNC=1", "HAVE_FDLOPEN=1", "HAVE_FPURGE=1", "HAVE_STRLCAT=1", "HAVE_STRLCPY=1", "OPENPAM_STATIC_MODULES"] + select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []})
+
+cc_library(name = "registration_source", srcs = ["//contrib/openpam:lib/libpam/openpam_static.c"],
+    deps = ["//contrib/openpam:headers"], implementation_deps = ["//contrib/openpam:private_headers"],
+    local_defines = _DEFINES, copts = ["-pipe", "-fno-common", "-std=gnu17", "-Wno-format-zero-length"] + pam_warnings(6),
+    linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_component_object(name = "registration_object", group = ":registration_source", out = "openpam_static.o")
+bsd_relocatable_link(name = "registration", objects = [":registration_object"], archives = _MODULES,
+    output = "openpam_static_modules.o", linkopts = ["-znow", "-zrelro", "--whole-archive"],
+    linker = "@bsd_sdk//toolchain:bin/ld.lld", runtime = ["@bsd_sdk//toolchain:ld.lld_runtime"])
+cc_import(name = "registered_modules", objects = [":registration"])
+cc_library(name = "objects", srcs = PAM_SOURCES,
+    deps = ["//contrib/openpam:headers"],
+    implementation_deps = ["//contrib/openpam:private_headers"] + select({_TRACE: ["//lib/libpam/libpam:provider_headers"], "//conditions:default": []}),
+    local_defines = _DEFINES,
+    copts = ["-pipe", "-fno-common", "-std=gnu17", "-Wno-format-zero-length"] + pam_warnings(6), linkstatic = True, target_compatible_with = _PLATFORM)
+bsd_dtrace_cc_objects(name = "traced_objects", library = ":objects", provider = "//lib/libpam/libpam:provider",
+    provider_object = "pamchain_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = group, srcs = [":traced_objects"], output_group = group) for group in ["regular_objects", "regular_provider"]]
+cc_import(name = "provider_link", objects = [":regular_provider"])
+cc_import(name = "traced", objects = [":regular_objects"])
+bsd_component_archive(name = "pam_archive",
+    groups = select({_TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects"]}) + [":registered_modules"],
+    visibility = ["//visibility:public"])
+
+bsd_install_file(name = "archive_file", src = ":pam_archive", destination = "/usr/lib/libpam.a",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=pam", "dev"])
+bsd_install_manifest(name = "install_manifest", entries = [":archive_file"], visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+# The registry consumer imports the complete archive under test. Import tacplus's
+# actual archive separately because its ordinary API also depends on shared PAM.
+# No second PAM implementation is linked and no unresolved symbols are ignored.
+cc_import(
+    name = "registry_pam_archive",
+    static_library = ":pam_archive",
+    testonly = True,
+)
+cc_import(
+    name = "registry_tacplus_archive",
+    static_library = "//lib/libtacplus:static_archive",
+    deps = ["//lib/libmd:md_link"],
+    testonly = True,
+)
+cc_test(
+    name = "registry_test",
+    visibility = ["//lib/libpam:__pkg__"],
+    srcs = ["registry_test.c"],
+    deps = [
+        ":registry_pam_archive",
+        ":registry_tacplus_archive",
+        "//contrib/openpam:headers",
+        "//lib/libcrypt:crypt",
+        "//lib/libmd:md_link",
+        "//lib/libutil:util",
+        "//lib/libservice:service",
+    ] + select({
+        "//tools/build/bazel/config:pam_radius_selected": ["//lib/libradius:radius"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:pam_kerberos_selected": ["//krb5/lib/krb5:krb5", "//krb5/util/et:com_err"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:pam_openssh_selected": ["//secure/lib/libssh:ssh"],
+        "//conditions:default": [],
+    }) + select({
+        "//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:ypclnt"],
+        "//conditions:default": [],
+    }),
+    args = pam_static_module_names(),
+    # Fully static execution has no host DSO/rtld dependency. The original drti
+    # opt-out prevents helper loading before main; no authentication is invoked.
+    features = ["fully_static_link"],
+    linkstatic = True,
+    env = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    copts = ["-std=gnu17", "-Wall", "-Wextra", "-Werror"],
+    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    size = "small",
+)

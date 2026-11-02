@@ -53,7 +53,7 @@ cc_library(name = "storage_module_headers", hdrs = ["in6.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["in6.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/flash:__pkg__"])
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["in6.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
@@ -540,3 +540,77 @@ bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs 
     visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
 bsd_source_headers(name = "filesystems_rpc_kernel_nlm_advlock_headers", hdrs = ["in6.h"],
     visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+# Physical device I/O prerequisites; identical contexts share providers.
+bsd_source_headers(name = "device_io_kernel_umass_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_if_ure_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_if_vtnet_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_virtio_blk_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_aac_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_if_alc_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+# Physical prerequisites for native network policy built-ins.
+bsd_source_headers(name = "network_policy_kernel_nhgrp_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_nhop_headers", hdrs = ["in6.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_fib_algo_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_route_ctl_headers", hdrs = ["in6.h", "in6_var.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_route_helpers_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_route_rtentry_headers", hdrs = ["in6.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_netlink_sock_diag_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_neigh_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+bsd_source_headers(name = "network_policy_kernel_pf_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+
+# Physical prerequisites for native peripheral device built-ins.
+bsd_source_headers(name = "peripheral_devices_kernel_if_iwn_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+bsd_source_headers(name = "peripheral_devices_kernel_mlxfw_fsm_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h"],
+    visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+bsd_source_headers(name = "peripheral_devices_kernel_if_vmx_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+# Physical prerequisites for native platform support built-ins.
+bsd_source_headers(name = "platform_support_kernel_netgdb_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
+
+# Physical prerequisites for native monitoring device built-ins.
+bsd_source_headers(name = "monitoring_devices_kernel_if_ptnet_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+bsd_source_headers(name = "monitoring_devices_kernel_netmap_freebsd_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/hwpmc:__pkg__", "//sys/dev/hwt:__pkg__", "//sys/dev/netmap:__pkg__", "//sys/nfs:__pkg__", "//sys/security/audit:__pkg__", "//sys/security/mac_ntpd:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+# Physical prerequisites for native generated KOBJ interface built-ins.
+bsd_source_headers(name = "kobj_builtins_physical_nvme_if_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+# Physical prerequisites for native generated RPC built-ins.
+bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/rpc:__pkg__"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

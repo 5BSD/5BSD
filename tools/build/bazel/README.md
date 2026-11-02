@@ -3,6 +3,102 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+## Latest kernel checkpoint (2026-11-02)
+
+Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
+objects match code/allocated data/CTF, and the linked full/runtime kernels match
+55 allocated payloads plus validated build-ID metadata, 96,147 loader symbols
+and merged CTF. The comparison found and fixed the initial helper DSO build-path
+DT_NEEDED defect; old artifacts fail the new test. See
+[FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
+Native kernel installation now also matches original Make staging in default,
+alternate and colocated-debug layouts; see
+[KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
+Next kernel work is pkgbase integration and module/configuration/architecture
+qualification, followed by VM/runtime and performance gates. Full world and
+bootstrap/publication remain open; Make stays production/default.
+
+The package driver now preserves first-class directory layout records, including
+empty directories, alongside optional mtree ownership metadata. Its registered
+real-pkg/BSD-tar Bazel regression passes three valid layouts and three rejection
+cases. Kernel/GDB component packages also preserve the captured payloads; this
+does not close complete kernel packaging. See
+[PACKAGE-DIRECTORY-QUALIFICATION.md](PACKAGE-DIRECTORY-QUALIFICATION.md).
+
+
+Two further hardware modules, amd_ecc_inject and amdsbwd, now pass native plain
+and CTF/debug artifact/install comparisons against corrected original Make
+controls. See [HARDWARE-MODULE-GAP-QUALIFICATION.md](HARDWARE-MODULE-GAP-QUALIFICATION.md)
+for the export-policy correction, debug-definedness mismatch and fresh SDK
+qualification after a changed host tar input. Other module coverage remains open.
+
+
+Nine further hardware modules now pass native plain and CTF/debug artifact and
+installation comparisons: AAC/AACRAID and their Linux adapters, Alder Lake/AMD
+GPIO, Apple BCE, Areca and Apple SMC. The batch covers 19 source files and 2,799
+Make dependency occurrences; see
+[NINE-HARDWARE-MODULES-QUALIFICATION.md](NINE-HARDWARE-MODULES-QUALIFICATION.md).
+
+
+Ten Atheros loadable modules now pass native default plain/CTF-debug comparison,
+including the complete 138-object default inventory and both alternative rate
+algorithms. All twelve plain binaries are byte-identical to Make; CTF/debug
+runtime sections and 36 install records agree. Actual compiler/input and ordered
+link audits pass. Source corrections and runtime limitations are recorded in
+[ATH-MODULES-QUALIFICATION.md](ATH-MODULES-QUALIFICATION.md).
+
+The next twelve-module Broadcom group has original Make source facts captured.
+Its two native NVRAM header producers now match original Make output bodies with
+declared AWK/map/runtime inputs; module compilation remains open. See
+[BHND-NVRAM-GENERATOR-QUALIFICATION.md](BHND-NVRAM-GENERATOR-QUALIFICATION.md).
+
+Twelve Broadcom bus/wireless modules now pass native 75-object compile/input and
+ordered-link audits, corrected Make plain/CTF-debug comparisons and 36 install
+records. Static import review found four local-only shared provider policies;
+explicit exports and positive/negative artifact tests remove fallback reliance.
+GPIO providers and runtime/module loading remain open. See
+[BROADCOM-MODULES-QUALIFICATION.md](BROADCOM-MODULES-QUALIFICATION.md).
+
+Six GPIO modules now pass ten actual compiler/input and six ordered-link audits,
+plain/CTF-debug comparisons and eighteen install records. Both profiles pass three
+provider tests, including explicit Broadcom-to-GPIO edges. Two ordinary Make
+filename differences require separately audited compiler-policy controls; the
+untouched baselines and a rejected first control remain recorded. SPI providers,
+full loading and runtime/performance gates remain open. See
+[GPIO-MODULES-QUALIFICATION.md](GPIO-MODULES-QUALIFICATION.md).
+
+At the GPIO checkpoint, the 729-leaf amd64 selection had 284 local BUILD files
+and 445 leaves without one; these were source-coverage counts only.
+
+Six SPI controller/bus/flash/HID modules now pass eleven actual compiler/input
+and six ordered-link audits, untouched Make plain/CTF-debug comparisons and
+eighteen install records. Both profiles pass four provider tests. The qualified
+kernel plus twenty-four Broadcom/GPIO/SPI modules now have providers for every
+strong import with no hidden supplied providers; loading/runtime remain open.
+See [SPI-MODULES-QUALIFICATION.md](SPI-MODULES-QUALIFICATION.md).
+
+At the SPI checkpoint, the 729-leaf amd64 selection had 290 local BUILD files
+and 439 leaves without one; these were source-coverage counts only.
+
+Twenty-four HID/evdev modules now pass 28 actual compiler/input and 24 ordered-link
+audits, Make plain/CTF-debug comparisons and 72 install records. An original hgame
+policy localized three public callbacks used by three controller modules; explicit
+exports and positive/negative provider tests remove reliance on local-symbol fallback. Static strong-import
+coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime and
+hardware behavior remain open. See
+[HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
+without one. These are source-coverage counts, not qualified builds.
+
+Module export tests enforce explicit ELF bindings; the source loader defaults permit
+local-symbol lookup for compatibility. Earlier claims that local-only findings
+necessarily caused default load failures are withdrawn. Explicit exports remain;
+actual VM loading under both settings is still required. See
+[MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
+
+Earlier component checkpoints below are retained historical evidence.
+
 The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have
 native ordinary/PIE source ownership, declared OpenSSL/EAPOL/IPv6 selections and
 installation metadata. Five profiles pass 25 immutable ELF comparisons and 35
@@ -47549,3 +47645,146 @@ records 101 native filesystem/RPC objects, native RPC header dependencies,
 NFS tracing compatibility precedence and strict compiler/input/code/relocation
 checks. 100 CTF byte matches and one unchanged-production-verifier semantic match
 are distinguished explicitly; complete system/runtime gates remain open.
+
+[DEVICE-IO-KERNEL-QUALIFICATION.md](DEVICE-IO-KERNEL-QUALIFICATION.md) records 98
+native USB/input/audio/console objects, source-owned AWK tables and configurable
+sound presets, exact default generator contracts and object/input/relocation proof.
+Unchanged local cache hits are distinguished from retained cross-variant misses;
+persistent action-cache, system/runtime and performance gates remain open.
+
+[DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md](DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md) records explicit object metadata/symbol/site inspection, 19 native test methods, real-object negative controls, proven path-key differences and remaining PAM/runtime gates.
+
+[PAM-MODULE-POLICY-QUALIFICATION.md](PAM-MODULE-POLICY-QUALIFICATION.md) records
+24 default PAM module compiler/link-order corrections, 94 exact code comparisons,
+strict ordered dependency contracts, actual Make/compiler input provenance and
+145 scoped install records. Combined static PAM, authentication, reduced options
+and full relocation/runtime qualification remain open.
+
+### Virtualization built-in kernel checkpoint (2026-11-02)
+
+[VIRTUALIZATION-KERNEL-QUALIFICATION.md](VIRTUALIZATION-KERNEL-QUALIFICATION.md) records 60 native Hyper-V, Xen and VirtIO built-ins, exact machine code/CTF and compiler-input/relocation checks, plus remaining runtime/system gates.
+
+[STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md](STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md) records 62 native storage-controller built-ins, preserved per-source warning policies, exact code/CTF and checked inputs/relocations, with runtime/system gates still open.
+
+[ETHERNET-KERNEL-QUALIFICATION.md](ETHERNET-KERNEL-QUALIFICATION.md) records 73 additional native Ethernet built-ins, original option/interface/MII generators, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[STATIC-PAM-QUALIFICATION.md](STATIC-PAM-QUALIFICATION.md) records the native
+combined `/usr/lib/libpam.a` product: ordered original modules, preserved DTrace,
+compiler/input/relocation proof, reduced options, install metadata and two fully
+static registry tests covering 24/20 modules. Authentication, full PAM/world/pkgbase
+composition, other configurations/architectures and system runtime remain open.
+
+[NETWORK-POLICY-KERNEL-QUALIFICATION.md](NETWORK-POLICY-KERNEL-QUALIFICATION.md) records 73 additional native Network stack and PF built-ins, original option/interface/USB generators, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[PAM-POLICY-QUALIFICATION.md](PAM-POLICY-QUALIFICATION.md) records native PAM
+policy installation: 15 default/12 AT-and-FTP-off unchanged payloads, 29 unique
+Make-matching file/directory records, and preserved config/package ownership.
+Authentication, family/world composition and final package production remain open.
+
+[CODECS-CRYPTO-KERNEL-QUALIFICATION.md](CODECS-CRYPTO-KERNEL-QUALIFICATION.md) records 73 additional native Kernel codec/crypto built-ins, original interface generators and source-owned port headers, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[ATF-ENVIRONMENT-QUALIFICATION.md](ATF-ENVIRONMENT-QUALIFICATION.md) records
+source-owned ATF process environments through RunEnvironmentInfo: two actual
+constructor-time checks and eleven reserved/malformed-key analysis tests.
+
+[PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md](PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md) records 90 additional native peripheral-device built-ins with exact machine code/CTF and checked compiler inputs/relocations; full-system and runtime gates remain open.
+
+[PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md](PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md) records 56 more native platform built-ins and the source-derived ACPI wake-payload generator chain, with exact machine code/CTF and checked inputs/relocations. Runtime and full-system gates remain open.
+
+[MONITORING-DEVICES-KERNEL-QUALIFICATION.md](MONITORING-DEVICES-KERNEL-QUALIFICATION.md) records 52 more native kernel objects covering ACPI OS services, hardware monitoring/tracing, netmap and service/audit support. Exact code/CTF and compiler/input/relocation checks pass; runtime/full-system gates remain open.
+
+[PAM-TESTS-QUALIFICATION.md](PAM-TESTS-QUALIFICATION.md) records all seven original
+PAM test program/install producers, exact Make compiler/ELF/install contracts and
+fourteen safe wrapper passes. Ten original installed-path/root cases remain
+disposable-guest gates; full PAM/world/pkgbase completion is not claimed.
+
+[DTRACE-BUILTINS-KERNEL-QUALIFICATION.md](DTRACE-BUILTINS-KERNEL-QUALIFICATION.md) records 15 native DTrace/Solaris built-ins, checked macros/header precedence and exact machine code/CTF/input/relocation evidence. Live tracing and full-system gates remain open.
+
+[KOBJ-BUILTINS-KERNEL-QUALIFICATION.md](KOBJ-BUILTINS-KERNEL-QUALIFICATION.md) records 49 native generated-interface objects and 98 original-generator C/header comparisons. Machine code/CTF/runtime sections and compiler inputs match Make; full-system/runtime gates remain open.
+
+[RPC-BUILTINS-KERNEL-QUALIFICATION.md](RPC-BUILTINS-KERNEL-QUALIFICATION.md) records four native generated RPC kernel objects and six byte-identical source/header comparisons, preserving original warning policy. Full-system/runtime gates remain open.
+
+Configured suite compatibility and strict BEP exclusion controls are recorded in
+[CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md](CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md).
+
+[SIMD-CRYPTO-KERNEL-QUALIFICATION.md](SIMD-CRYPTO-KERNEL-QUALIFICATION.md) records five native SIMD crypto objects, explicit selected-SDK compiler headers, exact code/CTF/runtime sections and checked inputs, with unchanged prior compiler commands/output paths. Full-system/runtime/performance gates remain open.
+
+Native PAM family composition, corrected shared-core compile/install policy,
+15 safe wrappers and explicit guest/package limits are recorded in
+[PAM-FAMILY-QUALIFICATION.md](PAM-FAMILY-QUALIFICATION.md).
+
+[CUSTOM-NAMES-KERNEL-QUALIFICATION.md](CUSTOM-NAMES-KERNEL-QUALIFICATION.md) records four native radix/OpenZFS SHA objects, three declared final-link aliases, code/CTF/input/relocation checks, and alias-aware inventory reconciliation. Full-system gates remain open.
+
+[FINAL-PRODUCERS-KERNEL-QUALIFICATION.md](FINAL-PRODUCERS-KERNEL-QUALIFICATION.md) records the native final-link helper, refreshed VDSO/Make/SDK evidence and corrected special-producer accounting. Zero missing inventory products does not establish a complete native kernel or system build.
+
+Native DWATCH literal scripts, profiles, 99 hardlink aliases and EXAMPLES selection
+pass original Make installation and safe syntax checks; see
+[DWATCH-QUALIFICATION.md](DWATCH-QUALIFICATION.md) for actual/cache distinctions
+and tracing/world/package limits.
+
+[GENERATED-CORE-KERNEL-QUALIFICATION.md](GENERATED-CORE-KERNEL-QUALIFICATION.md) records the generated-object debug/CTF repair, clock SDK prerequisites, independent same-policy Make references and strict six-object parity. Complete native kernel linking and system gates remain open.
+
+Native LLDB TableGen produces 19 original headers with exact Make output, four
+compiler-code matches and explicit bootstrap/runtime limits; see
+[LLDB-GENERATORS-QUALIFICATION.md](LLDB-GENERATORS-QUALIFICATION.md). The native
+756-source private library, actual compiler/input/archive order, all allocated
+object/DSO sections against an explicit Make filename-policy control, five
+installation records and one safe API wrapper now pass; see
+[LLDB-LIBRARY-QUALIFICATION.md](LLDB-LIBRARY-QUALIFICATION.md). Original filename
+differences and historical SDK bindings are retained. CLI programs, debugger
+process operations, other configurations and final package/world gates remain open.
+
+## Parser-owned kernel input inventory (2026-11-02)
+
+`config -J` now exports the resolved ordered input table; native config exposes
+it as an explicit manifest without Make discovery. All 12 architecture/option
+cases match independent Make OBJS exactly; custom prefix/no-obj/JSON escaping,
+unchanged ordinary outputs, deterministic writes, failed writes and shortcut
+rejection pass using both Make-built and captured native config. Three native
+architecture manifests exactly match Make. See
+KERNEL-CONFIG-INVENTORY-QUALIFICATION.md. Next remains native aggregate coverage
+validation/link/post-processing/install; no full kernel/world completion claim.
+
+## Native kernel aggregation guard (2026-11-02)
+
+All 2,285 public native object groups expose exactly the 2,462 default selected
+link products. An explicit migrated catalog and ordered File provider reject
+missing/ambiguous/surplus products; parser metadata validation passes all four
+ZSTDIO/NFS_ROOT selections. Bazel host rejection tests pass separately from
+kernel artifact profiles. See KERNEL-AGGREGATE-GUARD-QUALIFICATION.md. The final
+linker must consume the validation marker and ordered Files; full kernel link,
+post-processing/install and wider system gates remain unfinished.
+
+## Complete amd64 GENERIC native link milestone (2026-11-02)
+
+The complete 2,462-product native kernel compiles/links through the maintained
+frontend; CTF merge and runtime/debug split also pass. Actual link order/flags
+match Make, recorded inputs are hash-bound, all allocated sections survive
+postprocessing, and original Make postprocessing of identical native inputs is
+byte-exact. The initial missing socket audit-header dependency was fixed locally.
+See FULL-KERNEL-LINK-QUALIFICATION.md. This is not complete independently compiled
+Make-kernel parity, installation or boot/runtime acceptance. Those gates plus
+modules, other configurations/architectures, world, packages, bootstrap and
+performance remain open; Make stays production/default.
+
+## LLDB command line programs (2026-11-02)
+
+Native amd64 lldb/lldb-server now pass original six-source compiler/input
+checks, two original TableGen outputs, both safe pre-initialization wrappers
+and ten Make installation records. Direct original object linking fixes the
+rejected lazy-archive candidate; all six objects and both linked programs have
+exact allocated payloads against explicit independent Make filename-policy
+controls. Ordered ELF dependencies and actual native DSO loader paths pass.
+See [LLDB-CLI-QUALIFICATION.md](LLDB-CLI-QUALIFICATION.md) for retained ordinary
+baselines, precise cache evidence and open debugger/family/package/world gates.
+
+## Selected LLDB family (2026-11-02)
+
+`//lib/clang:debugger_products`, `debugger_installation_archives` and
+`debugger_safe_tests` now compose the qualified library and two programs. Three
+safe native wrappers pass; all three products and nine archive/context payloads
+match immutable component captures, preserving fifteen Make records separately.
+LLDB-off selects no payloads and explicitly requesting its disabled tests is
+rejected before execution. Original parent controls and fresh recursive Make
+inventory are documented in [LLDB-FAMILY-QUALIFICATION.md](LLDB-FAMILY-QUALIFICATION.md).
+World observations total 2,128 directories; they are not compiled coverage.

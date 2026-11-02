@@ -5,3 +5,188 @@ cc_library(name = "vhid_header", hdrs = ["vhid.h"], strip_include_prefix = "/sys
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical device I/O prerequisites; identical contexts share providers.
+bsd_source_headers(name = "device_io_kernel_hconf_headers", hdrs = ["hconf.h", "hid.h", "hidbus.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hcons_headers", hdrs = ["hid.h", "hidbus.h", "hidmap.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hid_headers", hdrs = ["hid.h", "hidquirk.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__", "//sys/dev/atopcase:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hidbus_headers", hdrs = ["hid.h", "hidbus.h", "hidquirk.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hkbd_headers", hdrs = ["hid.h", "hidbus.h", "hidquirk.h", "hidrdesc.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hms_headers", hdrs = ["hid.h", "hidbus.h", "hidmap.h", "hidquirk.h", "hidrdesc.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_hmt_headers", hdrs = ["hconf.h", "hid.h", "hidbus.h", "hidquirk.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+bsd_source_headers(name = "device_io_kernel_uaudio_headers", hdrs = ["hid.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+filegroup(name = "device_io_hid_if_header_file", srcs = [":hid_if"], output_group = "header")
+cc_library(name = "device_io_hid_if_headers", hdrs = [":device_io_hid_if_header_file"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC device I/O built-ins.
+amd64_generic_kernel_objects(name = "generic_device_io_hconf", srcs = ["hconf.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_hconf_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hcons", srcs = ["hcons.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hid", srcs = ["hid.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_hid_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/hid:device_io_hid_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hidbus", srcs = ["hidbus.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_cdev_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/hid:device_io_hid_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hidmap", srcs = ["hidmap.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hidquirk", srcs = ["hidquirk.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/usb:device_io_id_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hkbd", srcs = ["hkbd.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hkbd_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:device_io_kernel_opt_kbd_header", "//sys/amd64/conf:device_io_kernel_opt_hkbd_header", "//sys/amd64/conf:device_io_kernel_opt_evdev_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/usb:device_io_id_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hms", srcs = ["hms.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hms_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hmt", srcs = ["hmt.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hmt_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_device_io_hsctrl", srcs = ["hsctrl.c"],
+    deps = ["//sys/contrib/ck:device_io_kernel_hcons_headers", "//sys/dev/evdev:device_io_kernel_hcons_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/dev/kbd:device_io_kernel_cdev_headers", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/amd64/conf:device_io_kernel_opt_kbd_header"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native generated KOBJ interface built-ins.
+bsd_source_headers(name = "kobj_builtins_physical_hid_if_headers", hdrs = ["hid.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+filegroup(name = "kobj_builtins_kernel_hid_if_file", srcs = [":hid_if"], output_group = "header")
+cc_library(name = "kobj_builtins_kernel_hid_if_headers", hdrs = [":kobj_builtins_kernel_hid_if_file"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+# Native amd64 GENERIC generated KOBJ interface built-ins.
+filegroup(name = "builtin_hid_if_source", srcs = [":hid_if"], output_group = "source")
+amd64_generic_kernel_objects(name = "generic_kobj_builtins_hid_if", srcs = [":builtin_hid_if_source"],
+    deps = ["//sys/dev/hid:kobj_builtins_physical_hid_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/hid:kobj_builtins_kernel_hid_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "hid_if_module_header", srcs = [":hid_if"], output_group = "header")
+cc_library(name = "hid_if_headers", hdrs = [":hid_if_module_header"], strip_include_prefix = "hid_if.generated", visibility = ["//sys/dev/atopcase:__pkg__", "//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_0", hdrs = ["hid.h", "hidbus.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_4", hdrs = ["hgame.h", "hid.h", "hidbus.h", "hidmap.h", "hidquirk.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_7", hdrs = ["hid.h", "hidbus.h", "hidraw.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_11", hdrs = ["hid.h", "hidbus.h", "hidmap.h", "hidrdesc.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_12", hdrs = ["hid.h", "hidbus.h", "vhid.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "hid_module_context_13", hdrs = ["hgame.h", "hid.h", "hidbus.h", "hidmap.h", "hidquirk.h", "hidrdesc.h"], includes = [],
+    visibility = ["//sys/dev/hid:__pkg__"])
+
+filegroup(name = "hid_if_module_source", srcs = [":hid_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "appleir_appleir_module", srcs = ["appleir.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "bcm5974_bcm5974_module", srcs = ["bcm5974.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/dev/usb:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hconf_hconf_module", srcs = ["hconf.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_hconf_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hcons_hcons_module", srcs = ["hcons.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hgame_hgame_module", srcs = ["hgame.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hid_hid_module", srcs = ["hid.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_hid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hid_hid_if_module", srcs = [":hid_if_module_source"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :hid_if_module_source)=hid_if.c", "-fdebug-prefix-map=$(execpath :hid_if_module_source)=hid_if.c"])
+
+amd64_generic_module_objects(name = "hidbus_hidbus_module", srcs = ["hidbus.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hidmap_hidmap_module", srcs = ["hidmap.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hidquirk_hidquirk_module", srcs = ["hidquirk.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hidraw_hidraw_module", srcs = ["hidraw.c"],
+    deps = ["//sys/dev/hid:hid_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hidwacom_hidwacom_module", srcs = ["hidwacom.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hkbd_hkbd_module", srcs = ["hkbd.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/hid:device_io_kernel_hkbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:device_io_kernel_opt_hkbd_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hms_hms_module", srcs = ["hms.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hms_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hmt_hmt_module", srcs = ["hmt.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hmt_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hpen_hpen_module", srcs = ["hpen.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_11", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hrfkill_hrfkill_module", srcs = ["hrfkill.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "hsctrl_hsctrl_module", srcs = ["hsctrl.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:device_io_kernel_hcons_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ietp_ietp_module", srcs = ["ietp.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/iicbus:hid_module_context_0", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ps4dshock_ps4dshock_module", srcs = ["ps4dshock.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ps5dsense_ps5dsense_module", srcs = ["ps5dsense.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "u2f_u2f_module", srcs = ["u2f.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hidbus_headers", "//sys/dev/usb:hid_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_hid_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "vhid_vhid_module", srcs = ["vhid.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:hid_module_context_12", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "xb360gp_xb360gp_module", srcs = ["xb360gp.c"],
+    deps = ["//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/hid:hid_module_context_13", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

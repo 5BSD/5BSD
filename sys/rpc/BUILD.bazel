@@ -91,7 +91,7 @@ bsd_source_headers(name = "filesystems_rpc_kernel_xdr_headers", hdrs = ["netconf
 
 load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
 
-load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
 
 # Native amd64 GENERIC filesystem/RPC built-ins.
 amd64_generic_kernel_objects(name = "generic_filesystems_rpc_auth_none", srcs = ["auth_none.c"],
@@ -163,3 +163,21 @@ amd64_generic_kernel_objects(name = "generic_filesystems_rpc_rpctls_impl", srcs 
 amd64_generic_kernel_objects(name = "generic_filesystems_rpc_auth_tls", srcs = ["rpcsec_tls/auth_tls.c"],
     deps = ["//sys/rpc:filesystems_rpc_kernel_auth_tls_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native generated RPC built-ins.
+bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["auth.h", "clnt.h", "clnt_stat.h", "netconfig.h", "pmap_prot.h", "rpc.h", "rpc_msg.h", "rpcb_clnt.h", "svc.h", "svc_auth.h", "types.h", "xdr.h"],
+    visibility = ["//sys/rpc:__pkg__"])
+
+# Native amd64 GENERIC generated RPC built-ins.
+amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlscd_xdr", srcs = ["//sys/rpc:rpctlscd_xdr.c"],
+    deps = ["//sys/net:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet6:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:generated_rpc_headers"],
+    warning_flags = KERNEL_COMMON_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlscd_clnt", srcs = ["//sys/rpc:rpctlscd_clnt.c"],
+    deps = ["//sys/net:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet6:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:generated_rpc_headers"],
+    warning_flags = KERNEL_COMMON_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlssd_xdr", srcs = ["//sys/rpc:rpctlssd_xdr.c"],
+    deps = ["//sys/net:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet6:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:generated_rpc_headers"],
+    warning_flags = KERNEL_COMMON_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_rpc_builtins_rpctlssd_clnt", srcs = ["//sys/rpc:rpctlssd_clnt.c"],
+    deps = ["//sys/net:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/netinet6:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:rpc_builtins_kernel_rpctlscd_xdr_headers", "//sys/rpc:generated_rpc_headers"],
+    warning_flags = KERNEL_COMMON_WARNING_FLAGS)

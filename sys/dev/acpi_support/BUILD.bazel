@@ -46,3 +46,15 @@ amd64_generic_module_objects(name = "acpi_wmi_module", srcs = ["acpi_wmi.c"],
 
 amd64_generic_module_objects(name = "aibs_module", srcs = ["atk0110.c"],
     deps = ["//sys/bsm:acpi_support_headers", "//sys/contrib/ck:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpi_support_headers", "//sys/dev/acpica:acpi_support_headers", "//sys/dev/backlight:acpi_support_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/dev/led:acpi_support_headers", "//sys/isa:acpi_support_headers", "//sys/vm:acpi_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_ddb_header", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
+
+filegroup(name = "kobj_builtins_kernel_acpi_wmi_if_file", srcs = [":acpi_wmi_if"], output_group = "header")
+cc_library(name = "kobj_builtins_kernel_acpi_wmi_if_headers", hdrs = [":kobj_builtins_kernel_acpi_wmi_if_file"], strip_include_prefix = "acpi_wmi_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC generated KOBJ interface built-ins.
+filegroup(name = "builtin_acpi_wmi_if_source", srcs = [":acpi_wmi_if"], output_group = "source")
+amd64_generic_kernel_objects(name = "generic_kobj_builtins_acpi_wmi_if", srcs = [":builtin_acpi_wmi_if_source"],
+    deps = ["//sys/contrib/dev/acpica/include:kobj_builtins_physical_apei_if_headers", "//sys/dev/acpi_support:kobj_builtins_kernel_acpi_wmi_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/amd64/conf:kobj_builtins_kernel_opt_acpi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_phy_common.h", "if_bwn_phy_g.h", "if_bwn_phy_lp.h", "if_bwn_phy_n.h", "if_bwn_util.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["if_bwn_pcivar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_util.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_phy_common.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_4", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_phy_g.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_5", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_phy_common.h", "if_bwn_phy_lp.h", "if_bwn_util.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_6", hdrs = ["if_bwn_debug.h", "if_bwn_misc.h", "if_bwn_phy_n.h", "if_bwnreg.h", "if_bwnvar.h"], includes = [],
+    visibility = ["//sys/dev/bwn:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_module", srcs = ["if_bwn.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:mii_family_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_4", "//sys/dev/bhnd/cores/pmu:broadcom_module_context_0", "//sys/dev/bwn:broadcom_module_context_0", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_pci_module", srcs = ["if_bwn_pci.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bhnd/bhndb:broadcom_module_context_9", "//sys/dev/bhnd:broadcom_module_context_2", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bwn:broadcom_module_context_1", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_bus_if_headers", "//sys/dev/bhnd/bhndb:bhndb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_util_module", srcs = ["if_bwn_util.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bwn:broadcom_module_context_2", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_phy_common_module", srcs = ["if_bwn_phy_common.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/chipc:broadcom_module_context_4", "//sys/dev/bhnd/cores/pmu:broadcom_module_context_0", "//sys/dev/bwn:broadcom_module_context_3", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/cores/chipc:bhnd_chipc_if_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_phy_g_module", srcs = ["if_bwn_phy_g.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bwn:broadcom_module_context_4", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_phy_lp_module", srcs = ["if_bwn_phy_lp.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd/cores/pmu:broadcom_module_context_0", "//sys/dev/bwn:broadcom_module_context_5", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/dev/bhnd/nvram:nvram_map_headers", "//sys/dev/bhnd/cores/pmu:bhnd_pmu_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwn_if_bwn_phy_n_module", srcs = ["if_bwn_phy_n.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bwn:broadcom_module_context_6", "//sys/dev/bhnd:broadcom_module_context_4", "//sys/dev/bhnd/nvram:broadcom_module_context_0", "//sys/dev/bhnd:bhnd_bus_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwn_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

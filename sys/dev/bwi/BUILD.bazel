@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "broadcom_module_context_0", hdrs = ["bitops.h", "bwimac.h", "bwirf.h", "if_bwireg.h", "if_bwivar.h"], includes = [],
+    visibility = ["//sys/dev/bwi:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_1", hdrs = ["bitops.h", "if_bwireg.h", "if_bwivar.h"], includes = [],
+    visibility = ["//sys/dev/bwi:__pkg__"])
+
+bsd_source_headers(name = "broadcom_module_context_2", hdrs = ["bitops.h", "bwimac.h", "bwiphy.h", "bwirf.h", "if_bwireg.h", "if_bwivar.h"], includes = [],
+    visibility = ["//sys/dev/bwi:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_bwi_if_bwi_module", srcs = ["if_bwi.c"],
+    deps = ["//sys/net:ath_kernel_if_ath_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bwi:broadcom_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwi_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwi_if_bwi_pci_module", srcs = ["if_bwi_pci.c"],
+    deps = ["//sys/net:broadcom_module_context_2", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:broadcom_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/bwi:broadcom_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwi_bwimac_module", srcs = ["bwimac.c", "bwirf.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:broadcom_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bwi:broadcom_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:broadcom_module_opt_bwi_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_bwi_bwiphy_module", srcs = ["bwiphy.c"],
+    deps = ["//sys/net:broadcom_module_context_3", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:broadcom_module_context_1", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/bwi:broadcom_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

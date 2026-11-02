@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "u2f", objects = ["//sys/dev/hid:u2f_u2f_module_object_files"],
+    object_order = ["u2f.o"], export_all = False)

@@ -12,3 +12,24 @@ bsd_source_headers(name = "core_search_headers", hdrs = ["dis_tables.h", "regset
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
 
 bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["regset.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+# Physical prerequisites for native DTrace built-in built-ins.
+bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["regset.h"],
+    includes = ["."],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+bsd_source_headers(name = "dtrace_builtins_kernel_dis_tables_headers", hdrs = ["dis_tables.h"],
+    includes = ["."],
+    visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC DTrace built-in built-ins.
+amd64_generic_kernel_objects(name = "generic_dtrace_builtins_dis_tables", srcs = ["dis_tables.c"],
+    deps = ["//sys/cddl/dev/dtrace:dtrace_builtins_dis_tables_parent_headers", "//sys/cddl/dev/dtrace/x86:dtrace_builtins_kernel_dis_tables_headers", "//sys/compat/linuxkpi/common/include/linux:dtrace_builtins_kernel_opensolaris_headers"], early_deps = ["//sys/contrib/openzfs:dtrace_builtins_kernel_dis_tables_headers", "//sys/modules/zfs:dtrace_builtins_kernel_opensolaris_headers"],
+    pre_copts = ["-DBUILDING_DTRACE", "-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-DDIS_MEM", "-DSMP", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))
+amd64_generic_kernel_objects(name = "generic_dtrace_builtins_instr_size", srcs = ["instr_size.c"],
+    deps = ["//sys/cddl/dev/dtrace:dtrace_builtins_kernel_instr_size_headers", "//sys/cddl/dev/dtrace/x86:dtrace_builtins_kernel_dis_tables_headers", "//sys/compat/linuxkpi/common/include/linux:dtrace_builtins_kernel_opensolaris_headers", "//sys/vm:dtrace_builtins_kernel_opensolaris_headers"], early_deps = ["//sys/contrib/openzfs:dtrace_builtins_kernel_instr_size_headers", "//sys/modules/zfs:dtrace_builtins_kernel_opensolaris_headers"],
+    pre_copts = ["-DBUILDING_DTRACE", "-DFREEBSD_NAMECACHE", "-D_SYS_VMEM_H_", "-D__KERNEL", "-D__KERNEL__", "-DDIS_MEM", "-DSMP", "-nostdinc", "-include", "sys/modules/zfs/static_ccompile.h"], copts = ["-include", "sys/contrib/openzfs/include/os/freebsd/spl/sys/ccompile.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-duplicate-decl-specifier", "-Wno-missing-braces", "-Wno-missing-prototypes", "-Wno-parentheses", "-Wno-pointer-arith", "-Wno-strict-prototypes", "-Wno-switch", "-Wno-undef", "-Wno-uninitialized", "-Wno-unknown-pragmas", "-Wno-unused"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))
+
+exports_files(["dis_tables.h"], visibility = ["//sys/cddl/dev/dtrace:__pkg__"])

@@ -8,3 +8,29 @@ exports_files(["files"], visibility = ["//visibility:public"])
 exports_files(["ldscript.kmod.amd64", "kmod_syms.awk"])
 
 exports_files(["vdso_amd64.ldscript"], visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# The original final-link helper is an empty translation unit linked as a DSO.
+# Keep its producers declared: no Make subprocess or host startup libraries.
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+load("//tools/build/bazel:bsd_object_alias.bzl", "bsd_object_alias")
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_FLAGS", "AMD64_KERNEL_HEADER_DEPS", "AMD64_KERNEL_DEBUG_FLAGS")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_COMMON_WARNING_FLAGS")
+
+write_file(name = "generic_force_dynamic_source",
+    out = "generic_force_dynamic/force-dynamic-hack.c", content = [])
+cc_library(name = "generic_force_dynamic_objects", srcs = [":generic_force_dynamic_source"],
+    deps = AMD64_KERNEL_HEADER_DEPS,
+    copts = [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] +
+        ["-fno-common"] + KERNEL_COMMON_WARNING_FLAGS + AMD64_KERNEL_DEBUG_FLAGS,
+    local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_objects(name = "generic_force_dynamic_object_files", group = ":generic_force_dynamic_objects")
+cc_binary(name = "generic_force_dynamic_shared", srcs = [":generic_force_dynamic_object_files"],
+    linkshared = True, linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_object_alias(name = "generic_force_dynamic_link_object", src = ":generic_force_dynamic_shared",
+    output = "generic_link_objects/force-dynamic-hack.pico", visibility = ["//visibility:public"])
+
+exports_files(["ldscript.amd64", "debuginfo.ldscript"], visibility = ["//sys/amd64/conf:__pkg__"])

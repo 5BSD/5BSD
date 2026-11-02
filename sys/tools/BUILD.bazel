@@ -9,3 +9,5 @@ exports_files(["miidevs2h.awk"], visibility = ["//sys/dev/mii:__pkg__"])
 exports_files(["vdso_wrap.S"], visibility = ["//sys/amd64/amd64:__pkg__"])
 
 exports_files(["acpi_quirks2h.awk"], visibility = ["//sys/dev/acpica:__pkg__"])
+
+exports_files(["kernel-gdb.py"], visibility = ["//sys/amd64/conf:__pkg__"])

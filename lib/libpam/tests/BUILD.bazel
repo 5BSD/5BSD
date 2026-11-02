@@ -1,40 +1,113 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//lib/libpam/libpam:compile_policy.bzl", "pam_warnings")
+_TESTS_COMPAT = select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]})
+_KERBEROS_TESTS_COMPAT = select({"//lib/libpam:kerberos_tests_selected": [], "//conditions:default": ["@platforms//:incompatible"]})
+_TEST_FLAGS = ["-pipe", "-fno-common", "-fPIE", "-std=gnu17", "-Wno-format-zero-length"] + pam_warnings(6)
+_TEST_DEFINES = ["PIC", "OPENPAM_STATIC_MODULES", "LIB_MAJ=6", "HAVE_DLFUNC=1", "HAVE_FDLOPEN=1", "HAVE_STRLCAT=1", "HAVE_STRLCPY=1", "OPENPAM_DEBUG"]
+
 cc_binary(name = "basic_dispatch_test", srcs = ["basic_dispatch_test.c"],
-    deps = ["//lib/libpam/libpam:pam", "//lib/atf/libatf-c:atf_c"],
-    dynamic_deps = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared"],
-    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libpam/libpam:pam"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libpam/libpam:pam_shared"],
+    copts = _TEST_FLAGS, local_defines = _TEST_DEFINES, linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 [bsd_atf_test(name = "native_dispatch_" + case, case_name = case, interface = "program", body = ":basic_dispatch_test",
     config_files = {"//lib/libpam/modules/pam_deny:pam_deny": "deny_module", "//lib/libpam/modules/pam_permit:pam_permit": "permit_module"},
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small") for case in ["permit", "deny", "required_deny"]]
 test_suite(name = "basic_dispatch_tests", tests = [":native_dispatch_" + case for case in ["permit", "deny", "required_deny"]], visibility = ["//visibility:public"])
 
 [cc_binary(name = name + "_pam_test", srcs = [name + "_pam_test.c"],
-    deps = ["//lib/libpam/libpam:pam", "//lib/atf/libatf-c:atf_c"] + (["//lib/libcrypt:crypt"] if name == "password_hash" else []),
-    dynamic_deps = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared"] + (["//lib/libcrypt:crypt_shared"] if name == "password_hash" else []),
-    copts = ["-fPIE"], linkopts = ["-pie", "-Wl,--export-dynamic"],
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libpam/libpam:pam"] + (["//lib/libcrypt:crypt"] if name == "password_hash" else []),
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libpam/libpam:pam_shared"] + (["//lib/libcrypt:crypt_shared"] if name == "password_hash" else []),
+    copts = _TEST_FLAGS, local_defines = _TEST_DEFINES, linkopts = ["-pie", "-Wl,--export-dynamic"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
  for name in ["password_hash", "account_resolution"]]
 [bsd_atf_test(name = "native_" + name, case_name = case, interface = "program", body = ":" + name + "_pam_test",
     config_files = {"//lib/libpam/modules/pam_unix:pam_unix": "module"},
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/libcrypt:crypt_shared", "//lib/libmd:md_shared", "//lib/libutil:util_shared", "//lib/atf/libatf-c:atf_c_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"] + select({"//tools/build/bazel/config:nis_enabled": ["//lib/libypclnt:ypclnt_shared"], "//conditions:default": []}),
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small")
  for name, case in [("password_hash", "password_hashes"), ("account_resolution", "account_resolution")]]
 test_suite(name = "unix_tests", tests = [":native_password_hash", ":native_account_resolution"], visibility = ["//visibility:public"])
 
 # Load actual native Kerberos PAM modules with an invalid local configuration.
 cc_binary(name = "kerberos_config_pam_test", srcs = ["kerberos_config_pam_test.c"],
-    deps = ["//lib/libpam/libpam:pam", "//lib/atf/libatf-c:atf_c"],
-    dynamic_deps = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared"],
-    copts = ["-fPIE"], linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+    deps = ["//lib/atf/libatf-c:atf_c", "//lib/libpam/libpam:pam"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libpam/libpam:pam_shared"],
+    copts = _TEST_FLAGS, local_defines = _TEST_DEFINES, linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 [bsd_atf_test(name = "native_" + module + "_config", case_name = "malformed_config", interface = "program", body = ":kerberos_config_pam_test",
     config_files = {"//lib/libpam/modules/" + module + ":" + module: "module"},
     runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared",
         "//krb5/lib/krb5:krb5_shared", "//krb5/lib/crypto:k5crypto_shared", "//krb5/util/et:com_err_shared", "//krb5/util/support:krb5support_shared", "//secure/lib/libcrypto:crypto_shared",
         "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _KERBEROS_TESTS_COMPAT,
     runner = "//tools/build/bazel:atf_runner", size = "small") for module in ["pam_ksu", "pam_krb5"]]
 test_suite(name = "kerberos_config_tests", tests = [":native_pam_ksu_config", ":native_pam_krb5_config"], visibility = ["//visibility:public"])
+
+# Preserve the original test translation units, including production fragments.
+# Installed-path policy/accounting cases remain guest execution gates.
+[cc_binary(name = name, srcs = [name + ".c"] + fragments,
+    deps = ["//contrib/openpam:headers", "//contrib/openpam:private_headers",
+        "//lib/atf/libatf-c:atf_c", "//lib/libpam/libpam:pam"],
+    dynamic_deps = ["//lib/atf/libatf-c:atf_c_shared", "//lib/libpam/libpam:pam_shared"],
+    copts = _TEST_FLAGS, local_defines = _TEST_DEFINES, linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+ for name, fragments in [
+    ("module_resolution_test", ["//contrib/openpam:lib/libpam/" + name for name in [
+        "openpam_dynamic.c", "openpam_load.c", "openpam_static.c", "openpam_check_owner_perms.c"]]),
+    ("policy_include_test", ["//contrib/openpam:lib/libpam/" + name for name in [
+        "openpam_configure.c", "pam_start.c", "openpam_check_owner_perms.c"]]),
+    ("lastlog_session_test", ["//lib/libpam/modules/pam_lastlog:pam_lastlog.c",
+        "//lib/libpam/modules/pam_lastlog:pam_lastlog_probes.h"] + ["//contrib/openpam:lib/libpam/" + name for name in [
+        "openpam_static.c", "openpam_configure.c", "pam_start.c", "openpam_check_owner_perms.c"]]),
+]]
+_RESOLUTION_CASES = [
+    "static_fallback_only_for_absence", "search_path_overflow_is_not_absence",
+    "missing_candidate_falls_back", "unsafe_versioned_stops_search",
+    "unsafe_unversioned_stops_search", "malformed_module_stops_search",
+    "explicit_version_is_exact",
+]
+[bsd_atf_test(name = "native_resolution_" + case, case_name = case, interface = "program",
+    body = ":module_resolution_test",
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    config_files = {"//lib/libpam/modules/pam_deny:pam_deny": "pam_module"},
+    runtime_lib = ["//lib/libpam/libpam:pam_shared", "//lib/atf/libatf-c:atf_c_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+    target_compatible_with = _TESTS_COMPAT,
+    runner = "//tools/build/bazel:atf_runner", size = "small")
+ for case in _RESOLUTION_CASES]
+test_suite(name = "module_resolution_tests", tests = [":native_resolution_" + case for case in _RESOLUTION_CASES], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_PROGRAMS = ["kerberos_config_pam_test", "basic_dispatch_test", "module_resolution_test", "policy_include_test", "lastlog_session_test", "password_hash_pam_test", "account_resolution_pam_test"]
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = sorted(_PROGRAMS), interfaces = {name: "atf" for name in _PROGRAMS},
+    metadata = {
+        "kerberos_config_pam_test": json.encode({"required_configs": "module"}),
+        "basic_dispatch_test": json.encode({"required_configs": "permit_module deny_module"}),
+        "policy_include_test": json.encode({"timeout": "15"}),
+        "lastlog_session_test": json.encode({"required_user": "root", "timeout": "30"}),
+    })
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/lib/libpam/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=pam-tests"])
+[utility_installation(name = "install_" + name, program = name, manual = None,
+    package = "pam-tests", bindir = "/usr/tests/lib/libpam") for name in _PROGRAMS]
+bsd_install_manifest(name = "install_manifest", manifests = [":install_" + name for name in _PROGRAMS],
+    entries = [":install_kyuafile"], visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {"/usr/tests/lib/libpam": json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=pam-tests"]})} | {path: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=pam-tests", "dbg"]}) for path in [
+        "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libpam"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree",
+    epoch = 0, python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+
+filegroup(name = "programs", srcs = [":" + name for name in _PROGRAMS], visibility = ["//lib/libpam:__pkg__"])

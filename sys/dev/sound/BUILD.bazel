@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical device I/O prerequisites; identical contexts share providers.
+bsd_source_headers(name = "device_io_kernel_sound_headers", hdrs = ["sndstat.h"],
+    visibility = ["//sys/dev/usb/controller:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb/net:__pkg__", "//sys/dev/atkbdc:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/kbd:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/vt:__pkg__", "//sys/teken:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC device I/O built-ins.
+amd64_generic_kernel_objects(name = "generic_device_io_sndstat", srcs = ["sndstat.c"],
+    deps = ["//sys/dev/sound:device_io_kernel_sound_headers", "//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/sound/pcm:device_io_channel_if_headers", "//sys/dev/sound/pcm:device_io_feeder_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

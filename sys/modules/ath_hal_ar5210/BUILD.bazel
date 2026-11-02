@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Preserve original Make export policy and complete object order.
+amd64_generic_module(module = "ath_hal_ar5210", objects = ["//sys/dev/ath:ath_hal_ar5210_ah_osdep_ar5210_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_attach_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_beacon_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_interrupts_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_misc_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_phy_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_reset_module_object_files", "//sys/dev/ath:ath_hal_ar5210_ar5210_xmit_module_object_files"],
+    object_order = ["ah_osdep_ar5210.o", "ar5210_attach.o", "ar5210_beacon.o", "ar5210_interrupts.o", "ar5210_keycache.o", "ar5210_misc.o", "ar5210_phy.o", "ar5210_power.o", "ar5210_recv.o", "ar5210_reset.o", "ar5210_xmit.o"], export_all = False)

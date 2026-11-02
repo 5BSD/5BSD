@@ -39,3 +39,14 @@ def component_definitions(component, names, *, option_names=(), profile_names=()
             raise ValueError('component define collides with an option or captured profile: ' + name)
         result[name] = '1'
     return result
+
+
+def validate_metadata_component(query):
+    """Reject metadata mode where Make deliberately uses the source directory."""
+    states = query(['-V', '${NO_OBJ:Dyes:Uno}',
+                    '-V', '${NOOBJ:Dyes:Uno}']).splitlines()
+    if len(states) != 2 or any(value not in ('yes', 'no') for value in states):
+        raise ValueError('ambiguous Make NO_OBJ/NOOBJ metadata directory policy')
+    if 'yes' in states:
+        raise ValueError('--make-meta is unsafe for NO_OBJ/NOOBJ components; '
+                         'use ordinary reference mode to avoid source recipe logs')

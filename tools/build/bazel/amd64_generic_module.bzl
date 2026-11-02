@@ -13,9 +13,9 @@ _KERNEL_CTF = select({
 })
 
 
-def amd64_generic_module(module, objects, exports = [], export_all = False, package = "kernel"):
+def amd64_generic_module(module, objects, exports = [], export_all = False, package = "kernel", object_order = []):
     kernel_module_artifacts(module = module, objects = objects, exports = exports,
-        export_all = export_all, package = package,
+        export_all = export_all, package = package, object_order = object_order,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
 def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = []):

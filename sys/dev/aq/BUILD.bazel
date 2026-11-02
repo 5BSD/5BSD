@@ -13,3 +13,59 @@ amd64_generic_module_objects(name = "ethernet_module", srcs = ["aq_main.c", "aq_
     deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/aq:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:generic_opt_rss_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/net:ifdi_if_headers", "//sys/dev/mii:miibus_if_headers"])
 bsd_component_selected_objects(name = "ordered_module_objects", group = ":ethernet_module_ctf",
     object_names = ["aq_main.o", "aq_media.o", "aq_irq.o", "aq_ring.o", "aq_hw.o", "aq_hw_llh.o", "aq_fw.o", "aq_fw1x.o", "aq_fw2x.o", "aq2_fw.o", "aq_dbg.o"], visibility = ["//sys/modules/aq:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_aq_main_headers", hdrs = ["aq2_hw.h", "aq_common.h", "aq_dbg.h", "aq_device.h", "aq_fw.h", "aq_hw.h", "aq_hw_llh.h", "aq_ring.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_media_headers", hdrs = ["aq_common.h", "aq_dbg.h", "aq_device.h", "aq_fw.h", "aq_hw.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_irq_headers", hdrs = ["aq_common.h", "aq_dbg.h", "aq_device.h", "aq_fw.h", "aq_hw.h", "aq_hw_llh.h", "aq_ring.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_ring_headers", hdrs = ["aq_common.h", "aq_dbg.h", "aq_device.h", "aq_hw.h", "aq_hw_llh.h", "aq_ring.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_hw_headers", hdrs = ["aq2_hw.h", "aq_common.h", "aq_dbg.h", "aq_device.h", "aq_fw.h", "aq_hw.h", "aq_hw_llh.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_hw_llh_headers", hdrs = ["aq_common.h", "aq_hw.h", "aq_hw_llh.h", "aq_hw_llh_internal.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_fw_headers", hdrs = ["aq_common.h", "aq_dbg.h", "aq_device.h", "aq_fw.h", "aq_hw.h", "aq_hw_llh.h", "aq_hw_llh_internal.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_aq_dbg_headers", hdrs = ["aq_common.h", "aq_dbg.h", "aq_device.h", "aq_hw.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC Ethernet built-ins.
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_main", srcs = ["aq_main.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_main_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_aq_main_headers", "//sys/netinet:ethernet_kernel_aq_main_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/net:ethernet_kernel_ifdi_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_inet_header", "//sys/amd64/conf:ethernet_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_rss_header", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_media", srcs = ["aq_media.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_media_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_irq", srcs = ["aq_irq.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_irq_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_ring", srcs = ["aq_ring.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_ring_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/netinet:ethernet_kernel_aq_main_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_hw", srcs = ["aq_hw.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_hw_headers", "//sys/net:ethernet_kernel_aq_hw_headers", "//sys/netinet:ethernet_kernel_aq_main_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_hw_llh", srcs = ["aq_hw_llh.c"],
+    deps = ["//sys/dev/aq:ethernet_kernel_aq_hw_llh_headers", "//sys/net:ethernet_kernel_aq_hw_llh_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_fw", srcs = ["aq_fw.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_fw_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_fw1x", srcs = ["aq_fw1x.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_fw_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_fw2x", srcs = ["aq_fw2x.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_fw_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq2_fw", srcs = ["aq2_fw.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_hw_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ethernet_aq_dbg", srcs = ["aq_dbg.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/aq:ethernet_kernel_aq_dbg_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

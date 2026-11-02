@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "bhnd_pcib", objects = ["//sys/dev/bhnd:bhnd_pcib_bhnd_pcib_module_object_files", "//sys/dev/bhnd:bhnd_pcib_bhnd_pcie2b_module_object_files"],
+    object_order = ["bhnd_pcib.o", "bhnd_pcie2b.o"], export_all = False)

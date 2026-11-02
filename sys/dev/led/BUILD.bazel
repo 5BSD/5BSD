@@ -7,7 +7,7 @@ cc_library(name = "storage_module_headers", hdrs = ["led.h"],
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/gpio:__pkg__"])
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["led.h"], visibility = ["//sys/net:__pkg__"])
@@ -27,3 +27,19 @@ bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["led.h"],
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_geom_disk_headers", hdrs = ["led.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_ahciem_headers", hdrs = ["led.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+
+# Physical prerequisites for native peripheral device built-ins.
+bsd_source_headers(name = "peripheral_devices_kernel_led_headers", hdrs = ["led.h"],
+    visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+
+# Native amd64 GENERIC peripheral device built-ins.
+amd64_generic_kernel_objects(name = "generic_peripheral_devices_led", srcs = ["led.c"],
+    deps = ["//sys/dev/led:peripheral_devices_kernel_led_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])

@@ -2,3 +2,41 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "gpio_module_context_0", hdrs = ["spi.h", "spibusvar.h"], includes = [],
+    visibility = ["//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "spibus_if_module_header", srcs = [":spibus_if"], output_group = "header")
+cc_library(name = "spibus_if_headers", hdrs = [":spibus_if_module_header"], strip_include_prefix = "spibus_if.generated", visibility = ["//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__"])
+
+bsd_source_headers(name = "spi_module_context_1", hdrs = ["spi.h"], includes = [],
+    visibility = ["//sys/dev/flash:__pkg__", "//sys/dev/spibus:__pkg__"])
+
+bsd_source_headers(name = "spi_module_context_2", hdrs = ["spibusvar.h"], includes = [],
+    visibility = ["//sys/dev/spibus:__pkg__"])
+
+filegroup(name = "spibus_if_module_source", srcs = [":spibus_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "spibus_spibus_module", srcs = ["spibus.c"],
+    deps = ["//sys/dev/spibus:gpio_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "spibus_acpi_spibus_module", srcs = ["acpi_spibus.c"],
+    deps = ["//sys/contrib/dev/acpica/include:peripheral_devices_kernel_acpi_iicbus_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/spibus:spi_module_context_2", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "spibus_spibus_if_module", srcs = [":spibus_if_module_source"],
+    deps = ["//sys/dev/spibus:spi_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :spibus_if_module_source)=spibus_if.c", "-fdebug-prefix-map=$(execpath :spibus_if_module_source)=spibus_if.c"])
+
+amd64_generic_module_objects(name = "spigen_spigen_module", srcs = ["spigen.c"],
+    deps = ["//sys/vm:spi_module_context_1", "//sys/dev/spibus:gpio_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:spi_module_opt_spi_header", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "spi_module_context_0", hdrs = ["spi.h"], includes = [],
+    visibility = ["//sys/dev/intel:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "intelspi_spi_module", srcs = ["spi.c"],
+    deps = ["//sys/dev/spibus:gpio_module_context_0", "//sys/dev/intel:spi_module_context_0", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "intelspi_spi_acpi_module", srcs = ["spi_acpi.c"],
+    deps = ["//sys/dev/intel:spi_module_context_0", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "intelspi_spi_pci_module", srcs = ["spi_pci.c"],
+    deps = ["//sys/dev/intel:spi_module_context_0", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:lowlevel_kernel_opt_pci_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/spibus:spibus_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

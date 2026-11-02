@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["install_reference_options.py", "install-reference.py", "libmd_environment.py"],
+    data = ["install_reference_options.py", "install-reference.py", "libmd_environment.py", "//usr.bin/bmake:make"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.
@@ -174,3 +174,15 @@ bsd_python_test(
     src = "source-test-inventory-test.py",
     data = ["source_graph.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py"],
 )
+
+# Explicit ET_REL DOF inspection must bind real symbols and patched instructions.
+bsd_python_test(name = "dtrace_relocatable_inventory_test",
+    src = "dtrace-relocatable-inventory-test.py", data = ["dtrace-dof-inventory.py"])
+
+exports_files(["kernel_inventory_validate.py"])
+
+bsd_python_test(name = "kernel_inventory_validate_test",
+    src = "kernel-inventory-validate-test.py", data = ["kernel_inventory_validate.py"])
+
+load(":bsd_pkg_create_test.bzl", "bsd_pkg_create_test")
+bsd_pkg_create_test(name = "pkg_create_directories_test")

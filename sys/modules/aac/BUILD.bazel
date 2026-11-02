@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original EXPORT_SYMS=NO uses the empty export list.
+amd64_generic_module(module = "aac", objects = ["//sys/dev/aac:aac_module_object_files"])

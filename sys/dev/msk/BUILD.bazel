@@ -23,3 +23,15 @@ cross_generic_module_objects(arch = "riscv", name = "ethernet_module", srcs = ["
     deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/mii:pci_ethernet_headers", "//sys/dev/msk:pci_ethernet_headers", "//sys/dev/ofw:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_platform_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/dev/ofw:ofw_bus_if_headers"])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_ethernet_module_ctf",
     object_names = ["if_msk.o"], visibility = ["//sys/modules/msk:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_if_msk_headers", hdrs = ["if_mskreg.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC Ethernet built-ins.
+amd64_generic_kernel_objects(name = "generic_ethernet_if_msk", srcs = ["if_msk.c"],
+    deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/mii:ethernet_kernel_if_alc_headers", "//sys/dev/msk:ethernet_kernel_if_msk_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_if_bce_headers", "//sys/netinet:ethernet_kernel_if_msk_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/mii:ethernet_kernel_miibus_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_platform_header", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

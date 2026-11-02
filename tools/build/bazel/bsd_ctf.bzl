@@ -6,6 +6,7 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_cc//cc/common:cc_shared_library_hint_info.bzl", "CcSharedLibraryHintInfo")
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+load(":bsd_object_order.bzl", "ordered_objects")
 
 def _convert(ctx):
     if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
@@ -90,6 +91,7 @@ bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLi
 
 
 def _merge(ctx):
+    source_objects = ordered_objects(ctx.files.objects, ctx.attr.object_order)
     if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
         fail("choose either ctf_label or ctf_label_setting")
     out = ctx.actions.declare_file(ctx.attr.output)
@@ -99,13 +101,13 @@ def _merge(ctx):
     label = ctx.attr.ctf_label_setting[BuildSettingInfo].value if ctx.attr.ctf_label_setting else ctx.attr.ctf_label
     if not label:
         fail("an explicit CTF label is required")
-    if not ctx.files.objects:
+    if not source_objects:
         fail("CTF merge requires explicit converted object inputs")
     # ctfmerge sorts paths internally. Give inputs a common directory and
     # basename-first ordering independent of their originating Bazel package.
     # Symlinks retain declared dependencies without copying object contents.
     objects = []
-    for index, obj in enumerate(ctx.files.objects):
+    for index, obj in enumerate(source_objects):
         staged = ctx.actions.declare_file(ctx.label.name + "/merge_inputs/" + obj.basename + "/" + str(index) + "/" + obj.basename)
         ctx.actions.symlink(output = staged, target_file = obj)
         objects.append(staged)
@@ -123,6 +125,7 @@ def _merge(ctx):
 bsd_ctf_merge = rule(implementation = _merge, attrs = {
     "linked": attr.label(allow_single_file = True, mandatory = True),
     "objects": attr.label_list(allow_files = True, mandatory = True),
+    "object_order": attr.string_list(),
     "merger": attr.label(executable = True, cfg = "exec", mandatory = True),
     "copy_runner": attr.label(executable = True, cfg = "exec", mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),

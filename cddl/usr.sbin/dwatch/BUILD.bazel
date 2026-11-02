@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load(":installation.bzl", "dwatch_archive")
+exports_files(["installation.bzl"], visibility = ["//cddl/usr.sbin/dwatch:__subpackages__"])
+exports_files(["dwatch"])
+bsd_install_file(name = "script_file", src = "dwatch", destination = "/usr/sbin/dwatch",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=dwatch"])
+bsd_compress(name = "manual_compressed", src = "dwatch.1", output = "dwatch.1.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "manual_file", src = ":manual_compressed", destination = "/usr/share/man/man1/dwatch.1.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({"//tools/build/bazel/config:split_manpages_enabled": ["package=dwatch-man"], "//conditions:default": ["package=dwatch"]}))
+bsd_install_manifest(name = "install_manifest", entries = [":script_file", ":manual_file"], visibility = ["//visibility:public"])
+dwatch_archive(name = "script_install_archive", manifests = [":install_manifest"], directories = ["/usr/sbin"])
+_EXAMPLES = select({"//tools/build/bazel/config:examples_enabled": ["//cddl/usr.sbin/dwatch/examples:install_archive"], "//conditions:default": []})
+bsd_install_archive_set(name = "installation_archives", archives = [":script_install_archive", "//cddl/usr.sbin/dwatch/libexec:install_archive"] + _EXAMPLES, visibility = ["//visibility:public"])
+filegroup(name = "all_products", srcs = ["dwatch", ":manual_compressed", "//cddl/usr.sbin/dwatch/libexec:profiles"] + select({"//tools/build/bazel/config:examples_enabled": ["//cddl/usr.sbin/dwatch/examples:examples"], "//conditions:default": []}), visibility = ["//visibility:public"])
+# Syntax checking never evaluates the script/profile bodies or invokes DTrace.
+bsd_atf_test(name = "syntax_test", body = "syntax_test.sh", case_name = "syntax",
+    config_files = {"//bin/sh:sh": "shell", "@bsd_sdk//toolchain:execution-runtime/libexec/ld-elf.so.1": "loader", ":dwatch": "main", "//cddl/usr.sbin/dwatch/libexec:chmod": "profile_chmod", "//cddl/usr.sbin/dwatch/libexec:coredump": "profile_coredump", "//cddl/usr.sbin/dwatch/libexec:dtmalloc": "profile_dtmalloc", "//cddl/usr.sbin/dwatch/libexec:errno": "profile_errno", "//cddl/usr.sbin/dwatch/libexec:hang": "profile_hang", "//cddl/usr.sbin/dwatch/libexec:io": "profile_io", "//cddl/usr.sbin/dwatch/libexec:ip": "profile_ip", "//cddl/usr.sbin/dwatch/libexec:jail": "profile_jail", "//cddl/usr.sbin/dwatch/libexec:kill": "profile_kill", "//cddl/usr.sbin/dwatch/libexec:lock": "profile_lock", "//cddl/usr.sbin/dwatch/libexec:mib": "profile_mib", "//cddl/usr.sbin/dwatch/libexec:namei": "profile_namei", "//cddl/usr.sbin/dwatch/libexec:nanosleep": "profile_nanosleep", "//cddl/usr.sbin/dwatch/libexec:open": "profile_open", "//cddl/usr.sbin/dwatch/libexec:priv": "profile_priv", "//cddl/usr.sbin/dwatch/libexec:proc": "profile_proc", "//cddl/usr.sbin/dwatch/libexec:rw": "profile_rw", "//cddl/usr.sbin/dwatch/libexec:sched": "profile_sched", "//cddl/usr.sbin/dwatch/libexec:sendrecv": "profile_sendrecv", "//cddl/usr.sbin/dwatch/libexec:slow": "profile_slow", "//cddl/usr.sbin/dwatch/libexec:systop": "profile_systop", "//cddl/usr.sbin/dwatch/libexec:tcp": "profile_tcp", "//cddl/usr.sbin/dwatch/libexec:udp": "profile_udp", "//cddl/usr.sbin/dwatch/libexec:udplite": "profile_udplite", "//cddl/usr.sbin/dwatch/libexec:vop_create": "profile_vop_create", "//cddl/usr.sbin/dwatch/libexec:vop_readdir": "profile_vop_readdir", "//cddl/usr.sbin/dwatch/libexec:vop_rename": "profile_vop_rename", "//cddl/usr.sbin/dwatch/libexec:vop_symlink": "profile_vop_symlink", "//cddl/usr.sbin/dwatch/examples:profile_template": "template"},
+    runtime_bin = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check",
+        "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed",
+        "//usr.bin/diff:diff", "//bin/cat:cat", "//bin/rm:rm", "//bin/test:test"],
+    runtime_lib = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared",
+        "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+        "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libregex:regex_shared",
+        "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared",
+        "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7",
+        "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1"],
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    subr = "//libexec/atf/atf-sh:shell_library", runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])

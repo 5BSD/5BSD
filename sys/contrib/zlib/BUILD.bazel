@@ -23,3 +23,58 @@ bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["zc
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_spl_zlib_headers", hdrs = ["zconf.h", "zlib.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_bxe_headers", hdrs = ["zconf.h", "zlib.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+
+# Physical prerequisites for native codec and crypto built-ins.
+bsd_source_headers(name = "codecs_crypto_kernel_adler32_headers", hdrs = ["zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_compress_headers", hdrs = ["zconf.h", "zlib.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_crc32_headers", hdrs = ["crc32.h", "zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_deflate_headers", hdrs = ["deflate.h", "zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_inffast_headers", hdrs = ["inffast.h", "inflate.h", "inftrees.h", "zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_inftrees_headers", hdrs = ["inffixed.h", "inflate.h", "inftrees.h", "zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+bsd_source_headers(name = "codecs_crypto_kernel_trees_headers", hdrs = ["deflate.h", "trees.h", "zconf.h", "zlib.h", "zutil.h"],
+    visibility = ["//sys/contrib/ck:__pkg__", "//sys/contrib/libb2:__pkg__", "//sys/contrib/libnv:__pkg__", "//sys/contrib/libsodium:__pkg__", "//sys/contrib/xz-embedded:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/contrib/zstd:__pkg__", "//sys/crypto:__pkg__", "//sys/crypto/camellia:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto/siphash:__pkg__", "//sys/crypto/skein:__pkg__", "//sys/dev/random:__pkg__", "//sys/dev/xz:__pkg__", "//sys/dev/zlib:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC codec and crypto built-ins.
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_adler32", srcs = ["adler32.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_adler32_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_compress", srcs = ["compress.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_compress_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_crc32", srcs = ["crc32.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_crc32_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_deflate", srcs = ["deflate.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_deflate_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_inffast", srcs = ["inffast.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_inffast_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_inflate", srcs = ["inflate.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_inffast_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_inftrees", srcs = ["inftrees.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_inftrees_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_trees", srcs = ["trees.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_trees_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_uncompr", srcs = ["uncompr.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_compress_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+amd64_generic_kernel_objects(name = "generic_codecs_crypto_zutil", srcs = ["zutil.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_adler32_headers"], early_deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])

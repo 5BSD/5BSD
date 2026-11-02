@@ -1,0 +1,270 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+
+# Original liblldb Makefile's ordered generated-header inventory.
+bsd_tablegen(
+    name = 'CommandOptions.inc',
+    src = "//contrib/llvm-project/lldb:source/Commands/Options.td",
+    includes = ['//contrib/llvm-project/lldb:source/Commands/OptionsBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Commands"],
+    flags = ["-gen-lldb-option-defs"],
+    output = 'CommandOptions.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'CoreProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Core/CoreProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Core"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'CoreProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'CorePropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Core/CoreProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Core"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'CorePropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'InterpreterProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Interpreter/InterpreterProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Interpreter"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'InterpreterProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'InterpreterPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Interpreter/InterpreterProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Interpreter"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'InterpreterPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'JITLoaderGDBProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/JITLoader/GDB/JITLoaderGDBProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/JITLoader/GDB"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'JITLoaderGDBProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'JITLoaderGDBPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/JITLoader/GDB/JITLoaderGDBProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/JITLoader/GDB"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'JITLoaderGDBPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'LanguageCPlusPlusProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Language/CPlusPlus/LanguageCPlusPlusProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Language/CPlusPlus"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'LanguageCPlusPlusProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'LanguageCPlusPlusPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Language/CPlusPlus/LanguageCPlusPlusProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Language/CPlusPlus"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'LanguageCPlusPlusPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'PlatformQemuUserProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Platform/QemuUser/PlatformQemuUserProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Platform/QemuUser"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'PlatformQemuUserProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'PlatformQemuUserPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Platform/QemuUser/PlatformQemuUserProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Platform/QemuUser"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'PlatformQemuUserPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'ProcessGDBRemoteProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Process/gdb-remote/ProcessGDBRemoteProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Process/gdb-remote"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'ProcessGDBRemoteProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'ProcessGDBRemotePropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Process/gdb-remote/ProcessGDBRemoteProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Process/gdb-remote"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'ProcessGDBRemotePropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolFileDWARFProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolFile/DWARF/SymbolFileDWARFProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolFile/DWARF"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'SymbolFileDWARFProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolFileDWARFPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolFile/DWARF/SymbolFileDWARFProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolFile/DWARF"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'SymbolFileDWARFPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolLocatorDebuginfodProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolLocator/Debuginfod/SymbolLocatorDebuginfodProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolLocator/Debuginfod"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'SymbolLocatorDebuginfodProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolLocatorDebuginfodPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolLocator/Debuginfod/SymbolLocatorDebuginfodProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolLocator/Debuginfod"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'SymbolLocatorDebuginfodPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'TargetProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Target/TargetProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Target"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'TargetProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'TargetPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Target/TargetProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Target"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'TargetPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+filegroup(name = "generated_headers", srcs = [':CommandOptions.inc', ':CoreProperties.inc', ':CorePropertiesEnum.inc', ':InterpreterProperties.inc', ':InterpreterPropertiesEnum.inc', ':JITLoaderGDBProperties.inc', ':JITLoaderGDBPropertiesEnum.inc', ':LanguageCPlusPlusProperties.inc', ':LanguageCPlusPlusPropertiesEnum.inc', ':PlatformQemuUserProperties.inc', ':PlatformQemuUserPropertiesEnum.inc', ':ProcessGDBRemoteProperties.inc', ':ProcessGDBRemotePropertiesEnum.inc', ':SymbolFileDWARFProperties.inc', ':SymbolFileDWARFPropertiesEnum.inc', ':SymbolLocatorDebuginfodProperties.inc', ':SymbolLocatorDebuginfodPropertiesEnum.inc', ':TargetProperties.inc', ':TargetPropertiesEnum.inc'], visibility = ["//visibility:public"])
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library", "cc_test")
+load(":sources.bzl", "LLDB_SOURCES")
+load("//tools/build/bazel:bsd_llvm_targets.bzl", "bsd_llvm_targets")
+load("//tools/build/bazel:bsd_clang_defaults.bzl", "bsd_clang_defaults")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_sources", "bsd_component_objects")
+bsd_llvm_targets(name = "registered_targets")
+bsd_clang_defaults(name = "compiler_defaults")
+exports_files(["sources.bzl"], visibility = ["//contrib/llvm-project/lldb:__pkg__"])
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "generated_cpp_headers", hdrs = [":generated_headers"], strip_include_prefix = ".")
+_COPTS = ['-pipe', '-fno-common', '-Wno-format-zero-length', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments', '-Wno-c++20-extensions', '-Wno-c++23-lambda-attributes', '-Wno-nullability-completeness', '-std=c++17', '-nostdinc++', '-fno-exceptions', '-fno-rtti', '-fvisibility-inlines-hidden', '-ffunction-sections', '-fdata-sections']
+_COPTS += select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]})
+_DEFINES = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"]
+_DEFINES += select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]})
+_DEFINES += select({"//tools/build/bazel/config:clang_full_enabled": ["CLANG_ENABLE_STATIC_ANALYZER"], "//conditions:default": []})
+# Keep the checked-in SWIG output; no SWIG executable enters the base build.
+_SOURCES = [source if source == "LLDBWrapLua.cpp" else "//contrib/llvm-project/lldb:source/" + source for source in LLDB_SOURCES]
+cc_library(
+    name = "pic_objects",
+    srcs = _SOURCES,
+    deps = [":registered_targets", ":compiler_defaults", ":generated_cpp_headers",
+            "//contrib/llvm-project/lldb:headers", "//contrib/llvm-project/clang/include:headers",
+            "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/libcxx/include:headers",
+            "//lib/clang/libllvm:intrinsic_headers", "//lib/clang/libllvm:ir_generated_headers",
+            "//lib/clang/libllvm:directive_headers", "//lib/clang/libllvm:target_definition_headers",
+            "//usr.bin/clang/llvm-min-tblgen:value_type_headers", "//contrib/lua/src:headers"],
+    copts = _COPTS + ["-fpic", "-UPIC"],
+    local_defines = _DEFINES,
+    target_compatible_with = _PLATFORM,
+)
+bsd_component_archive(name = "pic_archive", groups = [":pic_objects"], pic = True)
+bsd_component_objects(name = "pic_compiler_outputs", group = ":pic_objects", pic = True)
+bsd_component_sources(name = "source_inventory", groups = [":pic_objects"], visibility = ["//visibility:public"])
+cc_import(name = "lldb", pic_static_library = ":pic_archive",
+    deps = ["//lib/clang/libclang:clang", "//lib/clang/libllvm:llvm", "//lib/libkvm:kvm",
+            "//lib/libc++:cxx", "//lib/msun:m"], visibility = ["//visibility:public"])
+cc_shared_library(name = "lldb_shared", deps = [":lldb"],
+    dynamic_deps = ["//lib/clang/libclang:clang_shared", "//lib/clang/libllvm:llvm_shared",
+                    "//lib/libkvm:kvm_shared", "//lib/libc++:cxx_shared",
+                    "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared"],
+    shared_lib_name = "libprivatelldb.so.21",
+    user_link_flags = ["-Wl,-soname,libprivatelldb.so.21", "-Wl,--gc-sections", "-Wl,-znow", "-Wl,-zrelro", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+
+load("//lib/clang:shared_installation.bzl", "compiler_shared_installation")
+compiler_shared_installation(name = "install_manifest", library = "lldb", major = 21, binary = ":lldb_shared", package = "lldb")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {p: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=lldb", "dbg"]}) for p in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/lib"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//visibility:public"])
+
+# Pure API/data checks; no debugger initialization, process attach or target launch.
+cc_test(name = "api_smoke_test", srcs = ["api_smoke_test.cpp"],
+    deps = [":lldb", "//contrib/llvm-project/lldb:headers", "//lib/libc:shared_link_interface",
+            "//lib/liblua:lua", "//lib/libedit:edit", "//lib/libexecinfo:execinfo",
+            "//lib/liblzma:lzma", "//lib/ncurses/ncurses:ncurses", "//lib/ncurses/panel:panel",
+            "//lib/ncurses/tinfo:tinfo", "//lib/libthr:thr", "//lib/libz:z", "//lib/libzstd:zstd"],
+    dynamic_deps = [":lldb_shared", "//lib/clang/libclang:clang_shared", "//lib/clang/libllvm:llvm_shared",
+                    "//lib/libkvm:kvm_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared",
+                    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+                    "//lib/libedit:edit_shared", "//lib/libexecinfo:execinfo_shared", "//lib/libelf:elf_shared",
+                    "//lib/liblzma:lzma_shared", "//lib/libmd:md_shared", "//lib/ncurses/ncurses:ncurses_shared",
+                    "//lib/ncurses/panel:panel_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libthr:thr_shared",
+                    "//lib/libz:z_shared", "//lib/libzstd:zstd_shared"],
+    data = [":lldb_shared", "//lib/clang/libclang:clang_shared", "//lib/clang/libllvm:llvm_shared"],
+    args = ["$(location :lldb_shared)", "$(location //lib/clang/libclang:clang_shared)", "$(location //lib/clang/libllvm:llvm_shared)"],
+    copts = ["-std=c++17", "-nostdinc++"], features = ["bsd_test_runtime_paths"],
+    env = {"DTRACE_DOF_INIT_DISABLE": "1"},
+    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:lldb_tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+    visibility = ["//visibility:public"])

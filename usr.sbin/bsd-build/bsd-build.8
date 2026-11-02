@@ -2482,6 +2482,19 @@ True selects mode 4555 and the schg file flag, matching Make's
 installation contract; false selects mode 0555 without that flag.
 This selects archive metadata and does not install or execute ksu.
 .Pp
+The string settings
+.Va //sys/tools/sound:feeder_eq_presets
+and
+.Va //sys/tools/sound:feeder_rate_presets
+correspond to Make's
+.Va FEEDER_EQ_PRESETS
+and
+.Va FEEDER_RATE_PRESETS .
+Empty strings retain the maintained audio generator defaults.
+Nonempty values are space-separated operands, with colons and commas preserved
+inside each operand; no shell expansion occurs.
+They configure native generated audio headers, not a running audio device.
+.Pp
 The optional build-settings object maps source target labels to JSON boolean,
 integer or string values for declared Bazel settings.
 Native command-line flags and composite values are not accepted in this object.
@@ -3898,7 +3911,8 @@ select kernel/module CTF conversion and separate debug-file generation for
 these amd64 GENERIC targets. Either setting enables DWARF during compilation;
 when both are disabled, Bazel's opt-mode debug flag is overridden. Their
 defaults are disabled and match the selected Make profile with MK_CTF=no and
-empty DEBUG_FLAGS. Another Make profile must supply matching values explicitly.
+DEBUG_FLAGS unset. Defining DEBUG_FLAGS to an empty value is a different Make
+profile because its definedness affects module stripping. Another Make profile must supply matching values explicitly.
 These settings do not infer arbitrary src.conf configuration. Setting changes
 preserve compiled payloads.
 Package assembly, complete module coverage and runtime qualification
@@ -3914,6 +3928,45 @@ Earlier SDKs still contain the corrupting transform and must be rebuilt;
 Make/Bazel CTF dump equality alone does not establish correct associations.
 Fuzzy name matching remains unsupported. This establishes static nullfs
 artifact qualification, not complete module, publication or runtime qualification.
+
+
+.Pp
+.Dq //sys/amd64/conf:install_manifest
+and its
+.Dq install_manifest_archive
+and
+.Dq install_manifest_metadata
+siblings describe and stage the base GENERIC kernel, separate debug file and
+GDB scripts. The format-5 string setting
+.Dq //tools/build/bazel/config:kernel_base_directory
+defaults to /boot/kernel, independently of the standalone module directory.
+The existing kernel_debug_directory prefix also applies here; an empty prefix
+places debug files beside the kernel. Empty base paths and directory traversal
+are rejected. The kernel_debug boolean omits debug files and scripts when false.
+Default, alternate and colocated-debug staging match original Make file
+inventories, scripts, ownership and modes with controlled kernel/debug checks.
+This does not qualify kernel package creation, combined module installation,
+arbitrary kernel names, host installation or VM boot.
+
+.Pp
+The format-5 string setting
+.Dq //tools/build/bazel/config:ath_rate_algorithm
+selects sample (default), onoe or amrr for the native amd64 GENERIC
+.Dq //sys/modules/ath_rate
+loadable module. Only one algorithm is compiled into that module.
+Unsupported values are rejected during analysis. This setting does not change
+built-in kernel rate selection or establish wireless runtime qualification.
+
+.Pp
+Kernel target profiles may run source-declared host artifact tests using the
+execution-configured Python interpreter. The configured test inventory, including
+suite members and every selected target, is checked before execution. The selected
+tests must match the explicit requested test inventory, and every compatible test
+must provide
+the explicit host artifact contract. Ordinary target tests remain rejected.
+These tests inspect kernel/module files without executing them and do not qualify
+kernel boot, module loading or cross-target runtime behavior. Receipts identify
+this test execution as host-artifacts. No new CLI option is required.
 
 .Ss Native LLVM component settings
 The format-5 build-settings keys
@@ -5185,7 +5238,64 @@ accepts
 .Fl Fl make-meta
 to record original Make recipes without filemon from the initial build.
 The option is disabled by default and accepts no arbitrary metadata-mode value.
+Components defining
+.Va NO_OBJ
+or
+.Va NOOBJ
+reject metadata mode before actions or output creation,
+including empty definitions.
+Use ordinary reference mode for these components to avoid source recipe logs.
 It does not introduce Make interpretation into production Bazel actions.
 See
 .Pa tools/build/bazel/MAKE-REFERENCE-METADATA-QUALIFICATION.md
 for controls and scope.
+.Pp
+The independent
+.Pa tools/build/bazel/dtrace-dof-inventory.py
+inspector accepts
+.Fl Fl relocatable-metadata
+for explicit amd64 object metadata and symbol-relative patched-site checks.
+Its default linked-image requirement is unchanged; this mode cannot claim
+linked load addresses or live probe firing.
+The existing format-5 target/test API runs its regression.
+See
+.Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
+for supported relocations, controls and runtime limits.
+.Pp
+The native
+.Pa //lib/libpam/pam.d:install_manifest
+and
+.Pa //lib/libpam/pam.d:install_archive
+targets preserve the original PAM policy payloads and installation metadata.
+Format-5 typed build settings
+.Pa //tools/build/bazel/config:at
+and
+.Pa //tools/build/bazel/config:ftp
+default to true and select the corresponding Make AT and FTP policy files.
+This uses the existing format-5 API; it does not install host authentication
+configuration or qualify final package creation.
+See
+.Pa tools/build/bazel/PAM-POLICY-QUALIFICATION.md
+for captured default and reduced configuration evidence and remaining gates.
+.Pp
+Native ATF rules accept a source-owned
+.Va test_environment
+string dictionary through the existing Bazel RunEnvironmentInfo provider.
+Values are present before runner and test process startup.
+Runner isolation and protocol variables, Bazel test/runfiles variables and the
+XML report destination are reserved; malformed names are rejected.
+The empty default retains existing behavior.
+No new frontend, signing or publication input is required.
+See
+.Pa tools/build/bazel/ATF-ENVIRONMENT-QUALIFICATION.md
+for constructor-time and analysis rejection evidence.
+.Pp
+Native format-5 test inventories record compatible and incompatible configured
+suite members separately.
+Every compatible member must pass and supply its captured XML report.
+An incompatible member is an explicit configuration exclusion, not a passing
+test or runtime skip; its actual BEP SKIPPED identity is retained.
+Unknown aborts and requests with no compatible tests fail qualification.
+See
+.Pa tools/build/bazel/CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md
+for native controls and remaining installed-path limits.

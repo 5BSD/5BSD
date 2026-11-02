@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_mps_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mps_table.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+bsd_source_headers(name = "storage_controllers_kernel_mps_config_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+bsd_source_headers(name = "storage_controllers_kernel_mps_mapping_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mps_mapping.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+bsd_source_headers(name = "storage_controllers_kernel_mps_pci_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_ioc.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+bsd_source_headers(name = "storage_controllers_kernel_mps_sas_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mps_sas.h", "mps_table.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+bsd_source_headers(name = "storage_controllers_kernel_mps_sas_lsi_headers", hdrs = ["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_raid.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h", "mps_sas.h", "mps_table.h", "mpsvar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC storage controller built-ins.
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps", srcs = ["mps.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mps_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/dev/pci:storage_controllers_kernel_mpr_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_config", srcs = ["mps_config.c"],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_config_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_mapping", srcs = ["mps_mapping.c"],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_mapping_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-error=sometimes-uninitialized"])
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_pci", srcs = ["mps_pci.c"],
+    deps = ["//sys/dev/mps:storage_controllers_kernel_mps_pci_headers", "//sys/dev/pci:storage_controllers_kernel_mpr_pci_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_sas", srcs = ["mps_sas.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_sas_headers", "//sys/dev/mmc:storage_controllers_kernel_aac_cam_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/dev/nvme:storage_controllers_kernel_aac_cam_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_ciss_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-error=unneeded-internal-declaration"])
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_sas_lsi", srcs = ["mps_sas_lsi.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_isp_freebsd_headers", "//sys/dev/mmc:storage_controllers_kernel_aac_cam_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_lsi_headers", "//sys/dev/nvme:storage_controllers_kernel_aac_cam_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_ciss_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_table", srcs = ["mps_table.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mps:storage_controllers_kernel_mps_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mps_user", srcs = ["mps_user.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mpr_headers", "//sys/dev/mmc:storage_controllers_kernel_aac_cam_headers", "//sys/dev/mps:storage_controllers_kernel_mps_sas_headers", "//sys/dev/nvme:storage_controllers_kernel_aac_cam_headers", "//sys/dev/pci:storage_controllers_kernel_aac_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_cam_header", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Existing userland header providers retain their target/include namespace.
+exports_files(["mpi/mpi2.h", "mpi/mpi2_cnfg.h", "mpi/mpi2_init.h", "mpi/mpi2_ioc.h", "mpi/mpi2_raid.h", "mpi/mpi2_sas.h", "mpi/mpi2_tool.h", "mpi/mpi2_type.h", "mps_ioctl.h"], visibility = ["//:__pkg__"])
