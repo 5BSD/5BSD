@@ -65,6 +65,9 @@ static char *romptr;	/* Pointer to userspace-mapped bootrom region. */
 static vm_paddr_t gpa_base;	/* GPA of low end of region. */
 static vm_paddr_t gpa_allocbot;	/* Low GPA of free region. */
 static vm_paddr_t gpa_alloctop;	/* High GPA, minus 1, of free region. */
+/* Allocations whose bytes are per-instance, not configuration identity. */
+static struct bootrom_range instance_ranges[BOOTROM_MAX_INSTANCE_RANGES];
+static size_t instance_range_count;
 
 #define CFI_BCS_WRITE_BYTE      0x10
 #define CFI_BCS_CLEAR_STATUS    0x50
@@ -134,7 +137,8 @@ int
 bootrom_alloc(struct vmctx *ctx, size_t len, int prot, int flags,
     char **region_out, uint64_t *gpa_out)
 {
-	static const int bootrom_valid_flags = BOOTROM_ALLOC_TOP;
+	static const int bootrom_valid_flags = BOOTROM_ALLOC_TOP |
+	    BOOTROM_ALLOC_INSTANCE;
 
 	vm_paddr_t gpa;
 	vm_ooffset_t segoff;
@@ -174,6 +178,11 @@ bootrom_alloc(struct vmctx *ctx, size_t len, int prot, int flags,
 		}
 	}
 
+	if ((flags & BOOTROM_ALLOC_INSTANCE) != 0 &&
+	    instance_range_count >= BOOTROM_MAX_INSTANCE_RANGES) {
+		warnx("Too many per-instance bootrom allocations");
+		return (ENOSPC);
+	}
 	segoff = gpa - gpa_base;
 	if (vm_mmap_memseg(ctx, gpa, VM_BOOTROM, segoff, len, prot) != 0) {
 		int serrno = errno;
@@ -185,11 +194,31 @@ bootrom_alloc(struct vmctx *ctx, size_t len, int prot, int flags,
 		gpa_alloctop = gpa - 1;
 	else
 		gpa_allocbot = gpa + len;
+	if ((flags & BOOTROM_ALLOC_INSTANCE) != 0) {
+		instance_ranges[instance_range_count].offset = segoff;
+		instance_ranges[instance_range_count].length = len;
+		instance_range_count++;
+	}
 
 	*region_out = romptr + segoff;
 	if (gpa_out != NULL)
 		*gpa_out = gpa;
 	return (0);
+}
+
+/*
+ * Report the VM_BOOTROM byte ranges whose contents are generated per VM
+ * instance.  Ranges are recorded in allocation order; consumers that compare
+ * ROM identity across separately started bhyve processes must not hash these
+ * bytes, though the ranges' placement remains part of the layout.
+ */
+size_t
+bootrom_instance_ranges(const struct bootrom_range **rangesp)
+{
+
+	if (rangesp != NULL)
+		*rangesp = instance_ranges;
+	return (instance_range_count);
 }
 
 int
