@@ -412,7 +412,8 @@ virtio_fs_queue_reset_one(struct virtio_fs_queue *queue, uint32_t queue_id,
 }
 
 int
-virtio_fs_queue_flush_one(struct virtio_fs_queue *queue, int fd)
+virtio_fs_queue_flush_one(struct virtio_fs_queue *queue,
+    struct virtio_fs_backend_stream *stream, int fd)
 {
 	struct virtio_fs_backend_header sent;
 	struct virtio_fs_queue_owner *owner;
@@ -423,7 +424,7 @@ virtio_fs_queue_flush_one(struct virtio_fs_queue *queue, int fd)
 		return (EINVAL);
 	owner = NULL;
 	pthread_mutex_lock(&queue->mutex);
-	error = virtio_fs_outbox_flush_one(queue->outbox, fd, &sent);
+	error = virtio_fs_outbox_flush_one(queue->outbox, stream, fd, &sent);
 	if (error == 0) {
 		if ((sent.flags & VIRTIO_FS_BACKEND_MSG_F_NOREPLY) != 0) {
 			error = virtio_fs_dispatch_noreply_sent_owned(

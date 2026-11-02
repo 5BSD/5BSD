@@ -40,14 +40,43 @@ struct vmx_nested_ept_root {
 static MALLOC_DEFINE(M_VMX_NESTED_EPT, "vmx_nested_ept",
     "VMX nested EPT02 roots");
 
+/*
+ * Remove the EPT02 aliases in [start, end).  vmx_nested_ept_root_populate()
+ * system-wires every alias so the hardware walk never meets a page the VM
+ * system has unmapped.  vm_map_delete() on a non-kernel map waits for system
+ * wirings to disappear and nothing else ever drops these, so a plain
+ * vm_map_remove() of a populated range sleeps forever in the vCPU thread.
+ * Drop the wiring first.  An alias that is not system-wired breaks the
+ * populate invariant; refuse it rather than sleep.
+ */
+static int
+nvmx_ept_unmap(struct vmx_nested_ept_root *root, vm_offset_t start,
+    vm_offset_t end)
+{
+	int rv;
+
+	rv = vm_map_unwire(&root->vmspace->vm_map, start, end,
+	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_HOLESOK);
+	if (rv == KERN_INVALID_ARGUMENT)
+		return (EPROTO);
+	if (rv != KERN_SUCCESS)
+		return (vm_mmap_to_errno(rv));
+	rv = vm_map_remove(&root->vmspace->vm_map, start, end);
+	return (rv == KERN_SUCCESS ? 0 : vm_mmap_to_errno(rv));
+}
+
 static void
 nvmx_ept_remove_partial(struct vmx_nested_ept_root *root, vm_offset_t start,
-    vm_offset_t end)
+    vm_offset_t end, bool wired)
 {
 	int error;
 
-	error = vm_map_remove(&root->vmspace->vm_map, start, end);
-	if (error != KERN_SUCCESS)
+	if (wired)
+		error = nvmx_ept_unmap(root, start, end);
+	else
+		error = vm_mmap_to_errno(vm_map_remove(&root->vmspace->vm_map,
+		    start, end));
+	if (error != 0)
 		panic("%s: cannot remove partial nested-EPT alias: %d", __func__,
 		    error);
 }
@@ -88,10 +117,19 @@ void
 vmx_nested_ept_root_destroy(void *arg __unused, void *value)
 {
 	struct vmx_nested_ept_root *root;
+	int error;
 
 	root = value;
 	if (root == NULL)
 		panic("%s: NULL root", __func__);
+	/*
+	 * vmspace_free() ends in vm_map_remove() of the whole map, which
+	 * would sleep forever on the system-wired aliases.
+	 */
+	error = nvmx_ept_unmap(root, vm_map_min(&root->vmspace->vm_map),
+	    vm_map_max(&root->vmspace->vm_map));
+	if (error != 0)
+		panic("%s: cannot unmap nested-EPT root: %d", __func__, error);
 	ept_invalidate_mappings(root->eptp);
 	ept_vmspace_free(root->vmspace);
 	free(root, M_VMX_NESTED_EPT);
@@ -106,11 +144,10 @@ vmx_nested_ept_root_invalidate(void *arg __unused, void *value)
 	root = value;
 	if (root == NULL)
 		panic("%s: NULL root", __func__);
-	error = vm_map_remove(&root->vmspace->vm_map,
-	    vm_map_min(&root->vmspace->vm_map),
+	error = nvmx_ept_unmap(root, vm_map_min(&root->vmspace->vm_map),
 	    vm_map_max(&root->vmspace->vm_map));
-	if (error != KERN_SUCCESS)
-		return (vm_mmap_to_errno(error));
+	if (error != 0)
+		return (error);
 	ept_invalidate_mappings(root->eptp);
 	return (0);
 }
@@ -216,10 +253,9 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 	 * existing alias.  Rebuild exactly this leaf from the current walk;
 	 * L1 remains responsible for issuing INVEPT after changing EPT12.
 	 */
-	error = vm_map_remove(&root->vmspace->vm_map, l2_gpa,
-	    l2_gpa + PAGE_SIZE);
-	if (error != KERN_SUCCESS)
-		return (vm_mmap_to_errno(error));
+	error = nvmx_ept_unmap(root, l2_gpa, l2_gpa + PAGE_SIZE);
+	if (error != 0)
+		return (error);
 	/*
 	 * The common amd64 pmap path assumes executable EPT mappings and uses
 	 * the host NX bit for non-executable VM mappings.  Enter a wired
@@ -234,14 +270,15 @@ vmx_nested_ept_root_populate(void *value, struct vcpu *vcpu,
 	error = vm_map_wire(&root->vmspace->vm_map, l2_gpa,
 	    l2_gpa + PAGE_SIZE, VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
 	if (error != KERN_SUCCESS) {
-		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE);
+		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE,
+		    false);
 		return (error == KERN_RESOURCE_SHORTAGE ? ENOMEM : EFAULT);
 	}
 	/* EPT12 cannot grant access that L0's source map withheld. */
 	error = pmap_ept_set_permissions(root->pmap, l2_gpa,
 	    permissions & effective_prot & PMAP_EPT_PERM_MASK);
 	if (error != 0) {
-		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE);
+		nvmx_ept_remove_partial(root, l2_gpa, l2_gpa + PAGE_SIZE, true);
 		return (error);
 	}
 	return (0);

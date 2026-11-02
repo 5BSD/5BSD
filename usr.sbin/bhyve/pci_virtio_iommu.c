@@ -837,8 +837,8 @@ pci_vtiommu_init(struct pci_devinst *pi, nvlist_t *nvl)
 	vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_IOMMU);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_BASEPERIPH);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_BASEPERIPH_IOMMU);
-	if (vi_intr_init(&sc->vsc_vs, VTIOMMU_NUM_QUEUES + 1,
-	    fbsdrun_virtio_msix()) != 0) {
+	/* MSI-X table in BAR 1: the 64-bit modern BAR 2 also takes BAR 3. */
+	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()) != 0) {
 		error = ENXIO;
 		goto fail;
 	}

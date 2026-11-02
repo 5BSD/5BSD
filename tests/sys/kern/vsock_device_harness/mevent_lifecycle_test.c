@@ -2,7 +2,9 @@
  * Lifecycle tests for bhyve's event callback ownership boundary.
  */
 #include <sys/types.h>
+#include <sys/socket.h>
 
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -227,6 +229,44 @@ ATF_TC_BODY(change_batch_larger_than_kevent_buffer_is_chunked, tc)
 	}
 }
 
+/*
+ * pci_virtio_console's socket backend registers a read and a write event on
+ * one connected socket and tears both down together: mevent_delete() of the
+ * write event, then mevent_delete_close() of the read event.  Both land in
+ * one change batch; closing the descriptor before the other EV_DELETE was
+ * applied made kevent() fail with EBADF and bhyve exit ("could not delete
+ * event: Bad file descriptor") when the host closed a console socket.
+ */
+ATF_TC_WITHOUT_HEAD(shared_fd_delete_and_close_delete_in_one_batch);
+ATF_TC_BODY(shared_fd_delete_and_close_delete_in_one_batch, tc)
+{
+	struct callback_state state;
+	struct kevent changes[MEVENT_MAX];
+	struct mevent *read_event, *write_event;
+	int sv[2];
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	state.reentrant_fd = -1;
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+	read_event = mevent_add(sv[0], EVF_READ, record_callback, &state);
+	ATF_REQUIRE(read_event != NULL);
+	write_event = mevent_add_disabled(sv[0], EVF_WRITE, record_callback,
+	    &state);
+	ATF_REQUIRE(write_event != NULL);
+	/* Install both registrations in the kernel queue. */
+	ATF_REQUIRE_EQ(mevent_build(changes), 0);
+
+	ATF_REQUIRE_EQ(mevent_delete(write_event), 0);
+	ATF_REQUIRE_EQ(mevent_delete_close(read_event), 0);
+	/* Before the fix this exited the process with EX_OSERR. */
+	ATF_CHECK_EQ(mevent_build(changes), 0);
+	errno = 0;
+	ATF_CHECK_EQ(fcntl(sv[0], F_GETFD), -1);
+	ATF_CHECK_EQ(errno, EBADF);
+	close(sv[1]);
+}
+
 ATF_TC_WITHOUT_HEAD(dispatch_wakeup_pipe_is_nonblocking);
 ATF_TC_BODY(dispatch_wakeup_pipe_is_nonblocking, tc)
 {
@@ -266,6 +306,7 @@ ATF_TP_ADD_TCS(tp)
 	    delete_close_sync_retires_callback_before_fd_close);
 	ATF_TP_ADD_TC(tp,
 	    change_batch_larger_than_kevent_buffer_is_chunked);
+	ATF_TP_ADD_TC(tp, shared_fd_delete_and_close_delete_in_one_batch);
 	ATF_TP_ADD_TC(tp, dispatch_wakeup_pipe_is_nonblocking);
 	return (atf_no_error());
 }

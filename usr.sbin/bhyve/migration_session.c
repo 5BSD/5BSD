@@ -3863,7 +3863,14 @@ prod_defunct(void *arg)
 
 	if (!src->retired)
 		errx(1, "migration source was not retired before RELEASE");
-	exit(BHYVE_EXIT_SUSPEND);
+	/*
+	 * The handoff is complete and this copy is gone.  End bhyve only once
+	 * the controller has its answer: exiting here, inside the IPC handler,
+	 * closed bhyvectl's connection unanswered (ENOTCONN) although the
+	 * migration had committed.  vm_do_migrate() finishes on the retired,
+	 * quarantined source without touching VM state.
+	 */
+	ipc_exit_after_reply(BHYVE_EXIT_SUSPEND);
 }
 
 /*

@@ -29,7 +29,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd November 1, 2026
+.Dd November 2, 2026
 .Dt DTRACED 8
 .Os
 .Sh NAME
@@ -137,6 +137,12 @@ terminal.
 .It Fl t Ar size
 Set the worker count, from 1 through 1024.
 The default is 1.
+An overlord runs as many more workers that only deliver programs to host
+consumers, one delivery per consumer at a time: such a delivery waits for
+the consumer to acknowledge it, and
+.Nm dtrace Fl E
+acknowledges only after this daemon has accepted the derived program it
+sends back, which needs a worker of its own.
 .It Fl v
 Display version information.
 .El

@@ -4,17 +4,21 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "virtio_fs_backend.h"
@@ -195,20 +199,161 @@ virtio_fs_backend_authenticate(int fd, uid_t expected_uid,
 	return (0);
 }
 
+/*
+ * Upper bound on the time between two pieces of a record that has started to
+ * move.  The peer is actively sending or receiving that record, so the gap is
+ * short in practice; on expiry the transport fails.
+ */
+#ifndef VIRTIO_FS_BACKEND_RECORD_TIMEOUT_MS
+#define	VIRTIO_FS_BACKEND_RECORD_TIMEOUT_MS	5000
+#endif
+
+static int
+virtio_fs_backend_deadline_set(struct timespec *deadline)
+{
+
+	if (clock_gettime(CLOCK_MONOTONIC, deadline) != 0)
+		return (errno);
+	deadline->tv_sec += VIRTIO_FS_BACKEND_RECORD_TIMEOUT_MS / 1000;
+	deadline->tv_nsec += (long)(VIRTIO_FS_BACKEND_RECORD_TIMEOUT_MS %
+	    1000) * 1000000L;
+	if (deadline->tv_nsec >= 1000000000L) {
+		deadline->tv_sec++;
+		deadline->tv_nsec -= 1000000000L;
+	}
+	return (0);
+}
+
+static bool
+virtio_fs_backend_deadline_passed(const struct timespec *deadline)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return (true);
+	return (timespeccmp(&now, deadline, >=));
+}
+
+/*
+ * Point "vectors" at bytes [done, total) of the frame laid out by "source".
+ */
+static int
+virtio_fs_backend_tail(struct iovec *vectors, const struct iovec *source,
+    int source_count, size_t done, size_t total)
+{
+	size_t limit, skip;
+	int count, i;
+
+	skip = done;
+	limit = total - done;
+	count = 0;
+	for (i = 0; i < source_count && limit > 0; i++) {
+		if (skip >= source[i].iov_len) {
+			skip -= source[i].iov_len;
+			continue;
+		}
+		vectors[count].iov_base = (char *)source[i].iov_base + skip;
+		vectors[count].iov_len = MIN(source[i].iov_len - skip, limit);
+		limit -= vectors[count].iov_len;
+		skip = 0;
+		count++;
+	}
+	return (count);
+}
+
+void
+virtio_fs_backend_stream_init(struct virtio_fs_backend_stream *stream)
+{
+
+	memset(stream, 0, sizeof(*stream));
+}
+
+void
+virtio_fs_backend_stream_fini(struct virtio_fs_backend_stream *stream)
+{
+
+	free(stream->send_tail);
+	virtio_fs_backend_stream_init(stream);
+}
+
+bool
+virtio_fs_backend_stream_sending(const struct virtio_fs_backend_stream *stream)
+{
+
+	return (stream->send_tail != NULL);
+}
+
+/*
+ * Report the earliest progress deadline of a partly transferred frame.
+ */
+bool
+virtio_fs_backend_stream_deadline(const struct virtio_fs_backend_stream *stream,
+    struct timespec *deadline)
+{
+
+	if (stream->send_tail != NULL && (stream->receive_done == 0 ||
+	    timespeccmp(&stream->send_deadline, &stream->receive_deadline, <)))
+		*deadline = stream->send_deadline;
+	else if (stream->receive_done != 0)
+		*deadline = stream->receive_deadline;
+	else
+		return (false);
+	return (true);
+}
+
 int
-virtio_fs_backend_send_frame(int fd,
-    const struct virtio_fs_backend_header *header, const void *payload)
+virtio_fs_backend_stream_flush(struct virtio_fs_backend_stream *stream, int fd)
+{
+	struct iovec vector;
+	struct msghdr message;
+	ssize_t sent;
+	int error;
+
+	if (stream->send_tail == NULL)
+		return (0);
+	if (virtio_fs_backend_deadline_passed(&stream->send_deadline))
+		return (ETIMEDOUT);
+	vector.iov_base = stream->send_tail + stream->send_done;
+	vector.iov_len = stream->send_len - stream->send_done;
+	memset(&message, 0, sizeof(message));
+	message.msg_iov = &vector;
+	message.msg_iovlen = 1;
+	do {
+		sent = sendmsg(fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL |
+		    MSG_EOR);
+	} while (sent < 0 && errno == EINTR);
+	if (sent < 0)
+		return (errno);
+	stream->send_done += (size_t)sent;
+	if (stream->send_done < stream->send_len) {
+		error = virtio_fs_backend_deadline_set(&stream->send_deadline);
+		return (error != 0 ? error : EAGAIN);
+	}
+	free(stream->send_tail);
+	stream->send_tail = NULL;
+	stream->send_done = 0;
+	stream->send_len = 0;
+	return (0);
+}
+
+int
+virtio_fs_backend_stream_send(struct virtio_fs_backend_stream *stream,
+    int fd, const struct virtio_fs_backend_header *header, const void *payload)
 {
 	struct iovec vectors[2];
 	struct msghdr message;
 	uint8_t wire[VIRTIO_FS_BACKEND_HEADER_SIZE];
-	size_t total;
+	uint8_t *tail;
+	size_t skip, total;
 	ssize_t sent;
-	int error;
+	int error, i;
 
-	if (header == NULL ||
+	if (stream == NULL || header == NULL ||
 	    (payload == NULL && header->payload_len != 0))
 		return (EINVAL);
+	error = virtio_fs_backend_stream_flush(stream, fd);
+	if (error != 0)
+		return (error);
 	error = virtio_fs_backend_header_encode(header, wire);
 	if (error != 0)
 		return (error);
@@ -220,19 +365,47 @@ virtio_fs_backend_send_frame(int fd,
 	message.msg_iov = vectors;
 	message.msg_iovlen = header->payload_len == 0 ? 1 : 2;
 	total = sizeof(wire) + header->payload_len;
+	/*
+	 * local(4) SOCK_SEQPACKET shares the stream implementation: a record
+	 * ends only where the sender passes MSG_EOR (without it consecutive
+	 * frames coalesce), and a record larger than the peer's free receive
+	 * space is accepted piecewise, so a nonblocking sendmsg() can return a
+	 * short count.  Mark every frame as one record; once any part of it is
+	 * queued the frame is committed, and its tail is kept for flush().
+	 */
 	do {
-		sent = sendmsg(fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL);
+		sent = sendmsg(fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL |
+		    MSG_EOR);
 	} while (sent < 0 && errno == EINTR);
 	if (sent < 0)
 		return (errno);
-	if ((size_t)sent != total)
-		return (EIO);
-	return (0);
+	if ((size_t)sent == total)
+		return (0);
+	stream->send_len = total - (size_t)sent;
+	stream->send_tail = malloc(stream->send_len);
+	if (stream->send_tail == NULL) {
+		stream->send_len = 0;
+		return (ENOMEM);
+	}
+	tail = stream->send_tail;
+	skip = (size_t)sent;
+	for (i = 0; i < (int)message.msg_iovlen; i++) {
+		if (skip >= vectors[i].iov_len) {
+			skip -= vectors[i].iov_len;
+			continue;
+		}
+		memcpy(tail, (const char *)vectors[i].iov_base + skip,
+		    vectors[i].iov_len - skip);
+		tail += vectors[i].iov_len - skip;
+		skip = 0;
+	}
+	stream->send_done = 0;
+	return (virtio_fs_backend_deadline_set(&stream->send_deadline));
 }
 
 int
-virtio_fs_backend_receive_frame(int fd,
-    struct virtio_fs_backend_header *header, void *payload,
+virtio_fs_backend_stream_receive(struct virtio_fs_backend_stream *stream,
+    int fd, struct virtio_fs_backend_header *header, void *payload,
     size_t payload_capacity, size_t *payload_len)
 {
 	union {
@@ -240,15 +413,13 @@ virtio_fs_backend_receive_frame(int fd,
 		unsigned char bytes[CMSG_SPACE(
 		    sizeof(int) * VFSB_CONTROL_FDS)];
 	} control_buffer;
-	struct virtio_fs_backend_header decoded;
-	uint8_t wire[VIRTIO_FS_BACKEND_HEADER_SIZE];
-	struct iovec vectors[2];
+	struct iovec source[2], vectors[2];
 	struct msghdr message;
-	size_t received_payload;
 	ssize_t received;
+	bool eor;
 	int error;
 
-	if (header == NULL || payload_len == NULL ||
+	if (stream == NULL || header == NULL || payload_len == NULL ||
 	    (payload == NULL && payload_capacity != 0) ||
 	    payload_capacity > VIRTIO_FS_BACKEND_MAX_FRAME)
 		return (EINVAL);
@@ -264,41 +435,222 @@ virtio_fs_backend_receive_frame(int fd,
 	    sizeof(*payload_len)))
 		return (EINVAL);
 	*payload_len = 0;
-	vectors[0].iov_base = wire;
-	vectors[0].iov_len = sizeof(wire);
-	vectors[1].iov_base = payload;
-	vectors[1].iov_len = payload_capacity;
+	source[0].iov_base = stream->receive_wire;
+	source[0].iov_len = sizeof(stream->receive_wire);
+	source[1].iov_base = payload;
+	source[1].iov_len = payload_capacity;
+	/*
+	 * Every piece gets a control buffer: without one the kernel silently
+	 * disposes of passed rights, and a frame carrying any is malformed.
+	 */
 	memset(&message, 0, sizeof(message));
 	memset(&control_buffer, 0, sizeof(control_buffer));
-	message.msg_iov = vectors;
-	message.msg_iovlen = payload_capacity == 0 ? 1 : 2;
 	message.msg_control = control_buffer.bytes;
 	message.msg_controllen = sizeof(control_buffer.bytes);
+	if (stream->receive_done == 0) {
+		message.msg_iov = source;
+		message.msg_iovlen = payload_capacity == 0 ? 1 : 2;
+	} else {
+		if (virtio_fs_backend_deadline_passed(
+		    &stream->receive_deadline)) {
+			error = ETIMEDOUT;
+			goto fail;
+		}
+		/*
+		 * Read exactly the rest of the header, then exactly the payload
+		 * it announces, so a receive never consumes a following frame.
+		 */
+		message.msg_iov = vectors;
+		message.msg_iovlen = virtio_fs_backend_tail(vectors, source,
+		    nitems(source), stream->receive_done,
+		    stream->receive_total != 0 ? stream->receive_total :
+		    sizeof(stream->receive_wire));
+	}
 	do {
-		received = recvmsg(fd, &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
+		received = recvmsg(fd, &message, MSG_DONTWAIT |
+		    MSG_CMSG_CLOEXEC);
 	} while (received < 0 && errno == EINTR);
-	if (received < 0)
-		return (errno);
-	if (received == 0)
-		return (ECONNRESET);
+	if (received < 0) {
+		error = errno;
+		if (error == EAGAIN || error == EWOULDBLOCK)
+			return (EAGAIN);
+		goto fail;
+	}
+	if (received == 0) {
+		error = ECONNRESET;
+		goto fail;
+	}
 	if (message.msg_controllen != 0)
 		virtio_fs_backend_discard_rights(&message);
-	if ((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
-		return (EMSGSIZE);
-	if (message.msg_controllen != 0)
-		return (EPROTO);
-	if ((size_t)received < sizeof(wire))
-		return (EPROTO);
-	error = virtio_fs_backend_header_decode(wire, sizeof(wire),
-	    &decoded);
+	if ((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0) {
+		error = EMSGSIZE;
+		goto fail;
+	}
+	if (message.msg_controllen != 0) {
+		error = EPROTO;
+		goto fail;
+	}
+	stream->receive_done += (size_t)received;
+	eor = (message.msg_flags & MSG_EOR) != 0;
+	if (stream->receive_total == 0 &&
+	    stream->receive_done >= sizeof(stream->receive_wire)) {
+		error = virtio_fs_backend_header_decode(stream->receive_wire,
+		    sizeof(stream->receive_wire), &stream->receive_header);
+		if (error != 0)
+			goto fail;
+		if (stream->receive_header.payload_len > payload_capacity) {
+			error = EMSGSIZE;
+			goto fail;
+		}
+		stream->receive_total = sizeof(stream->receive_wire) +
+		    stream->receive_header.payload_len;
+	}
+	/*
+	 * A frame ends exactly at the peer's MSG_EOR.  A record that ends
+	 * early, runs past the announced length, or reaches it without
+	 * MSG_EOR has lost frame synchronization.
+	 */
+	if (stream->receive_total != 0 &&
+	    (stream->receive_done > stream->receive_total ||
+	    (stream->receive_done == stream->receive_total && !eor))) {
+		error = EPROTO;
+		goto fail;
+	}
+	if (eor) {
+		if (stream->receive_done != stream->receive_total) {
+			error = EPROTO;
+			goto fail;
+		}
+		*header = stream->receive_header;
+		*payload_len = stream->receive_header.payload_len;
+		stream->receive_done = 0;
+		stream->receive_total = 0;
+		return (0);
+	}
+	error = virtio_fs_backend_deadline_set(&stream->receive_deadline);
 	if (error != 0)
-		return (error);
-	if (decoded.payload_len > payload_capacity)
-		return (EMSGSIZE);
-	received_payload = (size_t)received - sizeof(wire);
-	if (decoded.payload_len != received_payload)
-		return (EPROTO);
-	*header = decoded;
-	*payload_len = received_payload;
-	return (0);
+		goto fail;
+	return (EAGAIN);
+fail:
+	stream->receive_done = 0;
+	stream->receive_total = 0;
+	return (error);
+}
+
+static int
+virtio_fs_backend_wait(int fd, short events, const struct timespec *deadline)
+{
+	struct pollfd descriptor;
+	struct timespec now;
+	int remaining_ms, result;
+
+	for (;;) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+			return (errno);
+		if (timespeccmp(&now, deadline, >=))
+			return (ETIMEDOUT);
+		remaining_ms = (int)((deadline->tv_sec - now.tv_sec) * 1000 +
+		    (deadline->tv_nsec - now.tv_nsec) / 1000000L) + 1;
+		descriptor = (struct pollfd) {
+			.fd = fd,
+			.events = events,
+		};
+		result = poll(&descriptor, 1, remaining_ms);
+		if (result > 0)
+			return (0);
+		if (result < 0 && errno != EINTR)
+			return (errno);
+	}
+}
+
+int
+virtio_fs_backend_stream_drain(struct virtio_fs_backend_stream *stream, int fd)
+{
+	int error;
+
+	error = 0;
+	while (error == 0 && virtio_fs_backend_stream_sending(stream)) {
+		error = virtio_fs_backend_wait(fd, POLLOUT,
+		    &stream->send_deadline);
+		if (error == 0)
+			error = virtio_fs_backend_stream_flush(stream, fd);
+		if (error == EAGAIN)
+			error = 0;
+	}
+	return (error == ETIMEDOUT ? EIO : error);
+}
+
+int
+virtio_fs_backend_send_frame(int fd,
+    const struct virtio_fs_backend_header *header, const void *payload)
+{
+	struct virtio_fs_backend_stream stream;
+	int error;
+
+	virtio_fs_backend_stream_init(&stream);
+	error = virtio_fs_backend_stream_send(&stream, fd, header, payload);
+	if (error == 0)
+		error = virtio_fs_backend_stream_drain(&stream, fd);
+	virtio_fs_backend_stream_fini(&stream);
+	return (error);
+}
+
+int
+virtio_fs_backend_receive_frame(int fd,
+    struct virtio_fs_backend_header *header, void *payload,
+    size_t payload_capacity, size_t *payload_len)
+{
+	struct virtio_fs_backend_stream stream;
+	int error;
+
+	virtio_fs_backend_stream_init(&stream);
+	for (;;) {
+		error = virtio_fs_backend_stream_receive(&stream, fd, header,
+		    payload, payload_capacity, payload_len);
+		if (error != EAGAIN || stream.receive_done == 0)
+			break;
+		error = virtio_fs_backend_wait(fd, POLLIN,
+		    &stream.receive_deadline);
+		if (error != 0)
+			break;
+	}
+	virtio_fs_backend_stream_fini(&stream);
+	return (error == ETIMEDOUT ? EPROTO : error);
+}
+
+/*
+ * The kernel accepts a local SOCK_SEQPACKET record piecewise when it exceeds
+ * the sender's send buffer or the peer's free receive space (both default to
+ * net.local.seqpacket.recvspace, 64 KiB: less than one 64 KiB FUSE_READ reply
+ * plus headers).  The stream functions finish such records across readiness
+ * callbacks, but every piece costs a wakeup.  Grow both
+ * buffers toward one maximum-sized frame so ordinary traffic moves in one
+ * piece.  This is best effort: kern.ipc.maxsockbuf may refuse the full size,
+ * and the buffers are never shrunk.
+ */
+void
+virtio_fs_backend_size_buffers(int fd, uint32_t maximum_message)
+{
+	socklen_t length;
+	uint64_t target;
+	int current, option, size;
+	size_t i;
+	static const int options[] = { SO_RCVBUF, SO_SNDBUF };
+
+	if (fd < 0)
+		return;
+	target = (uint64_t)VIRTIO_FS_BACKEND_HEADER_SIZE + maximum_message;
+	if (target > INT_MAX)
+		target = INT_MAX;
+	for (i = 0; i < nitems(options); i++) {
+		option = options[i];
+		length = sizeof(current);
+		if (getsockopt(fd, SOL_SOCKET, option, &current, &length) != 0)
+			continue;
+		for (size = (int)target; size > current; size /= 2) {
+			if (setsockopt(fd, SOL_SOCKET, option, &size,
+			    sizeof(size)) == 0 || errno != ENOBUFS)
+				break;
+		}
+	}
 }

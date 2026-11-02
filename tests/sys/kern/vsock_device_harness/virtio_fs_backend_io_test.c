@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -410,6 +411,269 @@ ATF_TC_BODY(receive_outputs_must_not_alias, tc)
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 }
 
+/*
+ * local(4) SOCK_SEQPACKET shares the stream implementation: records end only
+ * at MSG_EOR, so frames sent without it coalesce in the receive buffer.
+ */
+ATF_TC_WITHOUT_HEAD(back_to_back_frames_keep_boundaries);
+ATF_TC_BODY(back_to_back_frames_keep_boundaries, tc)
+{
+	struct virtio_fs_backend_header received, sent;
+	uint8_t first[] = { 1, 2, 3, 4, 5 }, second[] = { 9, 8, 7, 6, 5, 4, 3 };
+	uint8_t output[64];
+	size_t output_len;
+	int sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(sizeof(first));
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[0], &sent, first),
+	    0);
+	sent = request_header(sizeof(second));
+	sent.request_id = 8;
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[0], &sent, second),
+	    0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), 0);
+	ATF_CHECK_EQ(received.request_id, 7);
+	ATF_CHECK_EQ(output_len, sizeof(first));
+	ATF_CHECK(memcmp(output, first, sizeof(first)) == 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), 0);
+	ATF_CHECK_EQ(received.request_id, 8);
+	ATF_CHECK_EQ(output_len, sizeof(second));
+	ATF_CHECK(memcmp(output, second, sizeof(second)) == 0);
+	ATF_CHECK_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), EAGAIN);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+struct large_sender {
+	int fd;
+	const uint8_t *payload;
+	uint32_t length;
+	int error;
+};
+
+static void *
+large_sender_main(void *argument)
+{
+	struct large_sender *sender = argument;
+	struct virtio_fs_backend_header header;
+	struct pollfd descriptor;
+
+	header = request_header(sender->length);
+	descriptor = (struct pollfd) { .fd = sender->fd, .events = POLLOUT };
+	do {
+		(void)poll(&descriptor, 1, 5000);
+		sender->error = virtio_fs_backend_send_frame(sender->fd, &header,
+		    sender->payload);
+	} while (sender->error == EAGAIN);
+	return (NULL);
+}
+
+/*
+ * A FUSE_READ reply for a 64 KiB block exceeds the default 64 KiB local
+ * socket buffers (net.local.seqpacket.recvspace), so the kernel moves it in
+ * pieces: a nonblocking sender sees a short count and the receiver can observe
+ * a partial record.  Both ends must finish the frame instead of failing.
+ */
+ATF_TC_WITHOUT_HEAD(frames_larger_than_socket_buffer_are_reassembled);
+ATF_TC_BODY(frames_larger_than_socket_buffer_are_reassembled, tc)
+{
+	static const uint32_t lengths[] = { 65552, 131088, 1048592 };
+	struct virtio_fs_backend_header received;
+	struct large_sender sender;
+	struct pollfd descriptor;
+	pthread_t thread;
+	uint8_t *input, *output;
+	size_t i, j, output_len;
+	int error, sockets[2];
+
+	input = malloc(lengths[nitems(lengths) - 1]);
+	output = malloc(lengths[nitems(lengths) - 1]);
+	ATF_REQUIRE(input != NULL && output != NULL);
+	for (j = 0; j < lengths[nitems(lengths) - 1]; j++)
+		input[j] = (uint8_t)(j * 131U + 7U);
+	for (i = 0; i < nitems(lengths); i++) {
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX,
+		    SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sockets), 0);
+		sender = (struct large_sender) {
+			.fd = sockets[0],
+			.payload = input,
+			.length = lengths[i],
+		};
+		ATF_REQUIRE_EQ(pthread_create(&thread, NULL, large_sender_main,
+		    &sender), 0);
+		do {
+			descriptor = (struct pollfd) {
+				.fd = sockets[1],
+				.events = POLLIN,
+			};
+			ATF_REQUIRE_EQ(poll(&descriptor, 1, 5000), 1);
+			error = virtio_fs_backend_receive_frame(sockets[1],
+			    &received, output, lengths[nitems(lengths) - 1],
+			    &output_len);
+		} while (error == EAGAIN);
+		ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+		ATF_CHECK_EQ(sender.error, 0);
+		ATF_CHECK_EQ(error, 0);
+		ATF_CHECK_EQ(output_len, lengths[i]);
+		ATF_CHECK(error != 0 || memcmp(output, input, lengths[i]) == 0);
+		ATF_REQUIRE_EQ(close(sockets[0]), 0);
+		ATF_REQUIRE_EQ(close(sockets[1]), 0);
+	}
+	free(output);
+	free(input);
+}
+
+/* An event-loop callback must return well inside this bound. */
+#define	PROMPT_MS	50
+
+static long
+elapsed_ms(const struct timespec *start)
+{
+	struct timespec now;
+
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &now), 0);
+	return ((now.tv_sec - start->tv_sec) * 1000 +
+	    (now.tv_nsec - start->tv_nsec) / 1000000);
+}
+
+/*
+ * A frame is complete only at the peer's MSG_EOR.  A record that reaches the
+ * announced length without it continues into what would be the next frame.
+ */
+ATF_TC_WITHOUT_HEAD(full_length_without_eor_is_rejected);
+ATF_TC_BODY(full_length_without_eor_is_rejected, tc)
+{
+	struct virtio_fs_backend_header received, sent;
+	uint8_t frame[40 + 5], output[16];
+	size_t output_len;
+	int sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(5);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&sent, frame), 0);
+	memset(frame + 40, 0x5a, 5);
+	ATF_REQUIRE_EQ(send(sockets[0], frame, sizeof(frame), 0),
+	    (ssize_t)sizeof(frame));
+	ATF_CHECK_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), EPROTO);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
+ * The stream functions return EAGAIN for a partly received frame instead of
+ * waiting for the rest, and resume where they stopped.
+ */
+ATF_TC_WITHOUT_HEAD(partial_frame_resumes_without_waiting);
+ATF_TC_BODY(partial_frame_resumes_without_waiting, tc)
+{
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header received, sent;
+	struct timespec deadline, start;
+	uint8_t frame[40 + 16], output[16];
+	size_t output_len;
+	int sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(16);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&sent, frame), 0);
+	for (size_t i = 0; i < 16; i++)
+		frame[40 + i] = (uint8_t)(i * 7 + 1);
+	virtio_fs_backend_stream_init(&stream);
+	ATF_CHECK(!virtio_fs_backend_stream_deadline(&stream, &deadline));
+
+	/* Half the header. */
+	ATF_REQUIRE_EQ(send(sockets[0], frame, 20, 0), 20);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+	ATF_CHECK(virtio_fs_backend_stream_deadline(&stream, &deadline));
+
+	/* The rest of the header and part of the payload. */
+	ATF_REQUIRE_EQ(send(sockets[0], frame + 20, 30, 0), 30);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+
+	ATF_REQUIRE_EQ(send(sockets[0], frame + 50, sizeof(frame) - 50,
+	    MSG_EOR), (ssize_t)(sizeof(frame) - 50));
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), 0);
+	ATF_CHECK_EQ(output_len, 16);
+	ATF_CHECK(memcmp(output, frame + 40, 16) == 0);
+	ATF_CHECK_EQ(received.request_id, sent.request_id);
+	ATF_CHECK(!virtio_fs_backend_stream_deadline(&stream, &deadline));
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/*
+ * Rights attached to a later piece of a frame fail it and are closed.  The
+ * kernel would dispose of them silently if the piece were read without a
+ * control buffer.
+ */
+ATF_TC_WITHOUT_HEAD(descriptors_in_a_continuation_fail_the_frame);
+ATF_TC_BODY(descriptors_in_a_continuation_fail_the_frame, tc)
+{
+	union {
+		struct cmsghdr alignment;
+		unsigned char bytes[CMSG_SPACE(sizeof(int))];
+	} control;
+	struct virtio_fs_backend_stream stream;
+	struct virtio_fs_backend_header received, sent;
+	uint8_t output[1], wire[40];
+	struct cmsghdr *cmsg;
+	struct iovec vector;
+	struct msghdr message;
+	unsigned int before;
+	size_t output_len;
+	int descriptor, sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	descriptor = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(descriptor >= 0);
+	sent = request_header(0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&sent, wire), 0);
+	ATF_REQUIRE_EQ(send(sockets[0], wire, 20, 0), 20);
+	virtio_fs_backend_stream_init(&stream);
+	ATF_REQUIRE_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EAGAIN);
+	vector.iov_base = wire + 20;
+	vector.iov_len = sizeof(wire) - 20;
+	memset(&control, 0, sizeof(control));
+	memset(&message, 0, sizeof(message));
+	message.msg_iov = &vector;
+	message.msg_iovlen = 1;
+	message.msg_control = control.bytes;
+	message.msg_controllen = sizeof(control.bytes);
+	cmsg = CMSG_FIRSTHDR(&message);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &descriptor, sizeof(descriptor));
+	ATF_REQUIRE_EQ(sendmsg(sockets[0], &message, MSG_EOR),
+	    (ssize_t)(sizeof(wire) - 20));
+	ATF_REQUIRE_EQ(close(descriptor), 0);
+	before = open_descriptor_count();
+	ATF_CHECK_EQ(virtio_fs_backend_stream_receive(&stream, sockets[1],
+	    &received, output, sizeof(output), &output_len), EPROTO);
+	ATF_CHECK_EQ(open_descriptor_count(), before);
+	virtio_fs_backend_stream_fini(&stream);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -422,5 +686,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, descriptor_passing_is_rejected);
 	ATF_TP_ADD_TC(tp, truncated_descriptors_are_closed);
 	ATF_TP_ADD_TC(tp, receive_outputs_must_not_alias);
+	ATF_TP_ADD_TC(tp, back_to_back_frames_keep_boundaries);
+	ATF_TP_ADD_TC(tp, frames_larger_than_socket_buffer_are_reassembled);
+	ATF_TP_ADD_TC(tp, full_length_without_eor_is_rejected);
+	ATF_TP_ADD_TC(tp, partial_frame_resumes_without_waiting);
+	ATF_TP_ADD_TC(tp, descriptors_in_a_continuation_fail_the_frame);
 	return (atf_no_error());
 }

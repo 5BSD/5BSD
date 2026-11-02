@@ -32,6 +32,7 @@
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <vm/vm_extern.h>
 #include <vm/vm_map.h>
 
 #include <sys/bus.h>
@@ -331,10 +332,62 @@ kb_run(void *vcpui, register_t rip, struct pmap *pmap __unused,
 		panic("khx_vmm: guest entered while not VCPU_RUNNING");
 	memset(vme, 0, sizeof(*vme));
 	vme->rip = rip;
-	vme->inst_length = 3;		/* vmcall/vmmcall */
+	/* vmcall/vmmcall; an internal exit carries no instruction. */
+	vme->inst_length = e->exitcode == VM_EXITCODE_VMM_INTERNAL ? 0 : 3;
 	vme->exitcode = e->exitcode;
 	vme->u.hypercall.paging = e->paging;
 	return (e->error);
+}
+
+/*
+ * The backend's frozen-vCPU handler (vmmops_handle_internal_exit) replaces
+ * a VM_EXITCODE_VMM_INTERNAL exit with khx_vmm_internal, as svm.c does for
+ * an L2 exit it resolved.
+ */
+struct vm_exit khx_vmm_internal;
+int khx_vmm_internal_error;
+long khx_vmm_internal_calls;
+
+static int
+kb_handle_internal_exit(void *vcpui)
+{
+	struct khx_vcpu *kv = vcpui;
+	struct vm_exit *vme = vm_exitinfo(kv->vcpu);
+
+	khx_vmm_internal_calls++;
+	if (vcpu_get_state(kv->vcpu, NULL) != VCPU_FROZEN)
+		panic("khx_vmm: internal exit while not VCPU_FROZEN");
+	if (khx_vmm_internal_error != 0)
+		return (khx_vmm_internal_error);
+	*vme = khx_vmm_internal;
+	return (0);
+}
+
+/* vm_handle_paging(): A/D emulation is EPT-only; vm_fault() is scripted. */
+int khx_vm_fault_rv;
+long khx_vm_faults;
+vm_map_t khx_vm_fault_map;
+vm_offset_t khx_vm_fault_va;
+int khx_vm_fault_type;
+
+int
+pmap_emulate_accessed_dirty(pmap_t pmap __unused, vm_offset_t va __unused,
+    int ftype __unused)
+{
+	return (-1);
+}
+
+int
+vm_fault(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
+    int fault_flags, vm_page_t *m_hold)
+{
+	if (fault_flags != VM_FAULT_NORMAL || m_hold != NULL)
+		panic("khx_vmm: unexpected vm_fault flags");
+	khx_vm_faults++;
+	khx_vm_fault_map = map;
+	khx_vm_fault_va = vaddr;
+	khx_vm_fault_type = fault_type;
+	return (khx_vm_fault_rv);
 }
 
 /* ---- privileged-instruction model (khx_vmm_cpu.h) ----------------------- */
@@ -418,6 +471,7 @@ const struct vmm_ops vmm_ops_intel = {
 	.modresume = kb_modsuspend,
 	.init = kb_init,
 	.run = kb_run,
+	.handle_internal_exit = kb_handle_internal_exit,
 	.cleanup = kb_cleanup,
 	.vcpu_init = kb_vcpu_init,
 	.vcpu_event_cleanup_check = kb_vcpu_event_cleanup,

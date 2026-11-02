@@ -296,6 +296,17 @@ mi_startup(void)
 
 #ifdef __amd64__
 	if (cpu_vendor_id == CPU_VENDOR_AMD && vm_guest == VM_GUEST_BHYVE) {
+		bool old_wp;
+
+		/*
+		 * The hypercall stubs live in kernel text, which the boot page
+		 * tables map read-only.  bhyveload starts the kernel with
+		 * CR0.WP clear, but UEFI firmware leaves it set (cpu_setregs()
+		 * sets it later in either case), so patching them without
+		 * lifting write protection faults under UEFI.  Nothing can
+		 * preempt thread0 here.
+		 */
+		old_wp = disable_wp();
 		if (hypercall_instr == NULL) {
 			SET_FOREACH(hypercall_instr, hypercall) {
 				if (hypercall_instr == NULL)
@@ -303,6 +314,7 @@ mi_startup(void)
 				(**hypercall_instr) ^= (0x18 << 16);
 			}
 		}
+		restore_wp(old_wp);
 	}
 #endif
 	/* Construct and sort sysinit list. */

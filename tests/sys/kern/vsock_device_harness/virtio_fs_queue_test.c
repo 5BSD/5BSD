@@ -23,6 +23,9 @@
 #include "virtio_fs_outbox.c"
 #include "virtio_fs_queue.c"
 
+/* Frames here are small: each one is sent whole. */
+static struct virtio_fs_backend_stream stream;
+
 #define	DOC_FUSE_IN_HEADER_SIZE		40U
 #define	DOC_FUSE_OUT_HEADER_SIZE	16U
 #define	DOC_FUSE_INIT_IN_SIZE		56U
@@ -254,7 +257,8 @@ ATF_TC_BODY(fragmented_async_round_trip, tc)
 	    0);
 	ATF_CHECK_EQ(virtio_fs_queue_pending(queue), 1);
 	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sockets), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(le32dec(backend_payload + 4), DOC_FUSE_INIT);
@@ -299,7 +303,8 @@ ATF_TC_BODY(hiprio_precedes_normal_and_retires_noreply, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit(queue,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x200), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	encode_response(response, 200);
@@ -319,7 +324,8 @@ ATF_TC_BODY(hiprio_precedes_normal_and_retires_noreply, tc)
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit(queue,
 	    VIRTIO_FS_QUEUE_HIPRIO, iov, 1, 1, 0, true, 0x202), 0);
 
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(le32dec(backend_payload + 4), DOC_FUSE_FORGET);
@@ -327,7 +333,8 @@ ATF_TC_BODY(hiprio_precedes_normal_and_retires_noreply, tc)
 	ATF_CHECK_EQ(completed.cookie[1], (uintptr_t)0x202);
 	ATF_CHECK_EQ(completed.used[1], 0);
 
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(le32dec(backend_payload + 4), DOC_FUSE_LOOKUP);
@@ -360,7 +367,8 @@ ATF_TC_BODY(saturation_is_transactional_and_reset_discards, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit(queue,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x300), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	encode_response(response, 300);
@@ -426,7 +434,8 @@ ATF_TC_BODY(disconnect_completes_owned_chains, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit(queue,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x400), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	encode_response(response, 400);
@@ -501,7 +510,8 @@ ATF_TC_BODY(selective_reset_preserves_other_queue, tc)
 	iov[1] = (struct iovec){ output1, sizeof(output1) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit_on(queue, 1,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x500), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	encode_response(response, 500);
@@ -522,7 +532,8 @@ ATF_TC_BODY(selective_reset_preserves_other_queue, tc)
 	ATF_REQUIRE_EQ(virtio_fs_queue_reset_one(queue, 1, &discarded), 0);
 	ATF_CHECK_EQ(discarded, 1);
 	ATF_CHECK_EQ(virtio_fs_queue_pending(queue), 1);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(le64dec(backend_payload + 8), 502);
@@ -530,7 +541,8 @@ ATF_TC_BODY(selective_reset_preserves_other_queue, tc)
 	    EINPROGRESS);
 	ATF_CHECK_EQ(discarded, 0);
 	ATF_CHECK_EQ(virtio_fs_queue_pending(queue), 1);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &reply, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(reply.type, VIRTIO_FS_BACKEND_CANCEL);
@@ -545,7 +557,8 @@ ATF_TC_BODY(selective_reset_preserves_other_queue, tc)
 	ATF_CHECK_EQ(discarded_chains.count, 2);
 	ATF_CHECK_EQ(discarded_chains.cookie[0], (uintptr_t)0x501);
 	ATF_CHECK_EQ(discarded_chains.cookie[1], (uintptr_t)0x502);
-	ATF_CHECK_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), ENOENT);
+	ATF_CHECK_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    ENOENT);
 	ATF_REQUIRE_EQ(close(sockets[0]), 0);
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 	virtio_fs_queue_destroy(queue);
@@ -575,7 +588,8 @@ ATF_TC_BODY(reset_ignores_bounded_late_response, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit_on(queue, 3,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x600), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_REQUIRE_EQ(virtio_fs_queue_reset(queue, &discarded), 0);
@@ -665,12 +679,14 @@ ATF_TC_BODY(reset_cancel_failure_never_publishes_used, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit_on(queue, 7,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x700), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_REQUIRE_EQ(virtio_fs_queue_reset_one(queue, 7, &discarded),
 	    EINPROGRESS);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &cancel, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(cancel.type, VIRTIO_FS_BACKEND_CANCEL);
@@ -714,7 +730,8 @@ ATF_TC_BODY(destroy_reclaims_sent_request, tc)
 	iov[1] = (struct iovec){ output, sizeof(output) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit_on(queue, 1,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x800), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	ATF_CHECK_EQ(virtio_fs_queue_pending(queue), 1);
@@ -768,7 +785,8 @@ ATF_TC_BODY(concurrent_selective_resets_keep_private_completions, tc)
 	iov[1] = (struct iovec){ output[0], sizeof(output[0]) };
 	ATF_REQUIRE_EQ(virtio_fs_queue_submit(queue,
 	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x899), 0);
-	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, sockets[0]), 0);
+	ATF_REQUIRE_EQ(virtio_fs_queue_flush_one(queue, &stream, sockets[0]),
+	    0);
 	receive_request(sockets[1], &inbound, backend_payload,
 	    sizeof(backend_payload));
 	encode_response(response, 899);

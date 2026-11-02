@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "virtio_fs_backend.h"
+#include "virtio_fs_backend_io.h"
 #include "virtio_fs_outbox.h"
 #include "virtiofsd_fuse.h"
 #include "virtiofsd_server.h"
@@ -677,6 +678,7 @@ out:
 int
 virtiofsd_server_flush_one(struct virtiofsd_server *server, int fd)
 {
+	struct virtio_fs_backend_stream stream;
 	struct virtio_fs_backend_header sent;
 	int error;
 
@@ -686,7 +688,13 @@ virtiofsd_server_flush_one(struct virtiofsd_server *server, int fd)
 	if (server->outbox == NULL) {
 		error = ENOENT;
 	} else {
-		error = virtio_fs_outbox_flush_one(server->outbox, fd, &sent);
+		/* The daemon waits for the tail of a frame sent in pieces. */
+		virtio_fs_backend_stream_init(&stream);
+		error = virtio_fs_outbox_flush_one(server->outbox, &stream, fd,
+		    &sent);
+		if (error == 0)
+			error = virtio_fs_backend_stream_drain(&stream, fd);
+		virtio_fs_backend_stream_fini(&stream);
 		if (error != 0 && error != EAGAIN && error != EWOULDBLOCK &&
 		    error != ENOENT && server->error == 0)
 			server->error = error;

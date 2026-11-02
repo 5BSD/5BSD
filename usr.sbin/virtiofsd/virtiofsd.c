@@ -127,16 +127,38 @@ sandbox_descriptors(int rootfd, int parentfd, int listener)
 
 	/*
 	 * Accepted sockets inherit a subset of listener rights.  Include peer
-	 * authentication, framed I/O, and poll/kqueue readiness explicitly.
+	 * authentication, framed I/O, socket-buffer sizing (which
+	 * client_prepare() drops again), and poll/kqueue readiness explicitly.
 	 */
 	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_GETPEERNAME,
-	    CAP_GETSOCKOPT, CAP_READ, CAP_WRITE, CAP_RECV, CAP_SEND);
+	    CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_READ, CAP_WRITE, CAP_RECV,
+	    CAP_SEND);
 	limit_rights(listener, &rights, "listener");
 
 	cap_rights_init(&rights, CAP_EVENT, CAP_READ);
 	limit_rights(signal_pipe[0], &rights, "signal read pipe");
 	cap_rights_init(&rights, CAP_WRITE);
 	limit_rights(signal_pipe[1], &rights, "signal write pipe");
+}
+
+/*
+ * local(4) sockets do not inherit a listener's buffer sizes: uipc_attach()
+ * reserves the protocol defaults for every new connection.  Size each accepted
+ * socket here, then drop the right to change socket options before any peer
+ * input is processed.
+ */
+static int
+client_prepare(int client, uint32_t maximum_message)
+{
+	cap_rights_t rights;
+
+	/* Let ordinary frames move as a single socket-buffer piece. */
+	virtio_fs_backend_size_buffers(client, maximum_message);
+	cap_rights_init(&rights, CAP_EVENT, CAP_GETPEERNAME, CAP_GETSOCKOPT,
+	    CAP_READ, CAP_WRITE, CAP_RECV, CAP_SEND);
+	if (cap_rights_limit(client, &rights) != 0)
+		return (errno);
+	return (0);
 }
 
 static void
@@ -491,9 +513,11 @@ main(int argc, char **argv)
 			error = errno;
 			break;
 		}
-		error = client_run(client, rootfd, expected_uid, expected_gid,
-		    nodes, handles, maximum_message, maximum_inflight,
-		    maximum_pending, workers);
+		error = client_prepare(client, maximum_message);
+		if (error == 0)
+			error = client_run(client, rootfd, expected_uid,
+			    expected_gid, nodes, handles, maximum_message,
+			    maximum_inflight, maximum_pending, workers);
 		(void)close(client);
 		if (error == ECANCELED)
 			break;

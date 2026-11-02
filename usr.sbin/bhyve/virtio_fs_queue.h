@@ -14,6 +14,7 @@
 #include "virtio_fs_backend.h"
 #include "virtio_fs_host.h"
 
+struct virtio_fs_backend_stream;
 struct virtio_fs_queue;
 
 typedef void (*virtio_fs_queue_complete_cb)(void *, uintptr_t, size_t);
@@ -35,7 +36,8 @@ int	virtio_fs_queue_submit(struct virtio_fs_queue *,
 int	virtio_fs_queue_submit_on(struct virtio_fs_queue *, uint32_t,
 	    enum virtio_fs_queue_class, const struct iovec *, size_t, size_t,
 	    size_t, bool, uintptr_t);
-int	virtio_fs_queue_flush_one(struct virtio_fs_queue *, int);
+int	virtio_fs_queue_flush_one(struct virtio_fs_queue *,
+	    struct virtio_fs_backend_stream *, int);
 int	virtio_fs_queue_receive(struct virtio_fs_queue *,
 	    const struct virtio_fs_backend_header *, const void *, size_t);
 int	virtio_fs_queue_fail(struct virtio_fs_queue *, size_t *);

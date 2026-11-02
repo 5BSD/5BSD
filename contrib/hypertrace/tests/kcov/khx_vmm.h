@@ -96,6 +96,17 @@ struct khx_exit {
 	struct vm_guest_paging paging;
 };
 void khx_vmm_script(const struct khx_exit *exits, int n);
+/* VM_EXITCODE_VMM_INTERNAL: the exit vmmops_handle_internal_exit leaves. */
+extern struct vm_exit khx_vmm_internal;
+extern int khx_vmm_internal_error;	/* forced handler result */
+extern long khx_vmm_internal_calls;
+/* vm_fault() of vm_handle_paging: result and last request. */
+struct vm_map;
+extern int khx_vm_fault_rv;
+extern long khx_vm_faults;
+extern struct vm_map *khx_vm_fault_map;
+extern vm_offset_t khx_vm_fault_va;
+extern int khx_vm_fault_type;
 
 /* vmm_dev.c environment. */
 extern int khx_vmm_priv_error;
