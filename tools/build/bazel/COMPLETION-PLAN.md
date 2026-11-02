@@ -187,6 +187,14 @@ plus six name-only matches among 2,466 final products, leaving 982 unmatched.
 See MLX-KERNEL-QUALIFICATION.md. Full-system/module, other-architecture,
 device/runtime and performance gates remain open.
 
+## Storage HBA checkpoint (2026-11-02)
+
+39 native amd64 GENERIC OCS FC/SmartPQI objects pass code/CTF, actual compiler
+policy/input and nondebug relocation checks. Known graph reconciliation now has
+1,517 source matches plus six name-only matches among 2,466 final products,
+leaving 943 unmatched. See STORAGE-HBA-KERNEL-QUALIFICATION.md. Full kernel link,
+modules, other architectures, storage runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

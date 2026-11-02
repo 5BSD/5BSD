@@ -47532,3 +47532,7 @@ Mellanox core/Ethernet/acceleration objects, ordered OFED/UAPI/LinuxKPI source
 contexts, exact code/CTF/policy/input proof and remaining device/system gates.
 
 [MAKE-REFERENCE-METADATA-QUALIFICATION.md](MAKE-REFERENCE-METADATA-QUALIFICATION.md) records the optional original-recipe Make oracle, default and DTrace reference controls, restricted CLI checks and qualification limits.
+
+[STORAGE-HBA-KERNEL-QUALIFICATION.md](STORAGE-HBA-KERNEL-QUALIFICATION.md) records
+39 native OCS FC/SmartPQI objects, exact code/CTF and compiler input/policy checks,
+strict nondebug relocation review and remaining storage/system gates.

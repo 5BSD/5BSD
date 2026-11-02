@@ -41,3 +41,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Native ISCI built-in physical prerequisites, with identical closures shared.
 bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["nvme.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical storage HBA prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["nvme.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])

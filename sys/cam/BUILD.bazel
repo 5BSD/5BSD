@@ -53,3 +53,9 @@ bsd_source_headers(name = "isci_kernel_isci_interrupt_headers", hdrs = ["ata/ata
     visibility = ["//sys/dev/isci:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_io_request_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical storage HBA prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+bsd_source_headers(name = "storage_hba_kernel_smartpqi_cam_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])

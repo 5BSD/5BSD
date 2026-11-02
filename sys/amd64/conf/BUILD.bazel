@@ -586,3 +586,7 @@ cc_library(name = "mlx_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
 cc_library(name = "mlx_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
+cc_library(name = "storage_hba_kernel_opt_cam_header", hdrs = [":opt_cam"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+cc_library(name = "storage_hba_kernel_opt_stack_header", hdrs = [":opt_stack"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])

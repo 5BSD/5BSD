@@ -133,3 +133,9 @@ cc_library(name = "mlx_pci_if_headers", hdrs = [":mlx_pci_if_header_file"],
 filegroup(name = "mlx_pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
 cc_library(name = "mlx_pci_iov_if_headers", hdrs = [":mlx_pci_iov_if_header_file"],
     strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Physical storage HBA prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+bsd_source_headers(name = "storage_hba_kernel_ocs_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])

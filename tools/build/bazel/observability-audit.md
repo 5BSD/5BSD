@@ -9752,3 +9752,12 @@ hooks. Production instrumentation is unchanged. Firmware/health/reset, queue and
 IPsec/TLS/SR-IOV/RDMA runtime behavior remain gates.
 Evidence: /usr/obj/usr/src/bazel-kernel-mlx-review-r1-20261102/observability.json;
 see MLX-KERNEL-QUALIFICATION.md for comparison scope and remaining device tests.
+
+## Storage HBA built-in batch (2026-11-02)
+
+The bounded call-shaped marker scan finds no matches in 39 OCS FC/SmartPQI files;
+this is not evidence of missing shared instrumentation. Production hooks remain
+unchanged. CAM/storage error, timeout/reset/recovery, DMA/queue/hotplug and multipath
+runtime behavior still needs relevant device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-storage-hba-review-r1-20261102/observability.json;
+see STORAGE-HBA-KERNEL-QUALIFICATION.md for scope and remaining gates.
