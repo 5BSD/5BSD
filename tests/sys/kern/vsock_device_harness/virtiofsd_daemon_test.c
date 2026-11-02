@@ -3,6 +3,7 @@
  */
 
 #include <sys/endian.h>
+#include <sys/procctl.h>
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -408,6 +409,163 @@ ATF_TC_BODY(foreground_daemon_is_sandboxed_event_driven_and_cleans, tc)
 	ATF_REQUIRE_EQ(rmdir(directory), 0);
 }
 
+/*
+ * A FUSE_READ reply for one 64 KiB buffer-cache block is 65552 bytes, i.e. a
+ * 65592-byte VFSB frame.  Local SOCK_SEQPACKET records are bounded by the
+ * receiver's socket buffer, whose default (net.local.seqpacket.recvspace) is
+ * 64 KiB, so with the daemon's default 16 MiB message limit the kernel used to
+ * accept the record piecewise: the daemon saw a short send (EIO) and bhyve a
+ * short record (EPROTO), failing every guest read of a file larger than about
+ * 64 KiB.  Drive the real daemon with its default limits and bhyve's offer,
+ * leaving this end's socket buffers at their defaults, and require large
+ * replies to arrive intact.
+ */
+static void
+large_round_trip(int fd, uint64_t request_id, const void *request,
+    size_t request_len, uint8_t *response, size_t capacity, size_t *len)
+{
+	struct virtio_fs_backend_header header;
+
+	header = (struct virtio_fs_backend_header) {
+		.version = 1,
+		.type = VIRTIO_FS_BACKEND_REQUEST,
+		.payload_len = (uint32_t)request_len,
+		.request_id = request_id,
+		.incarnation = 1,
+	};
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(fd, &header, request), 0);
+	wait_readable(fd);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(fd, &header, response,
+	    capacity, len), 0);
+	ATF_REQUIRE_EQ(header.type, VIRTIO_FS_BACKEND_RESPONSE);
+	ATF_REQUIRE_EQ(header.request_id, request_id);
+	ATF_REQUIRE_EQ(header.status, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(default_limits_carry_large_read_replies);
+ATF_TC_BODY(default_limits_carry_large_read_replies, tc)
+{
+	static const uint32_t sizes[] = { 4096, 65536, 131072 };
+	struct virtio_fs_backend_header header;
+	struct virtio_fs_backend_hello offer;
+	uint8_t hello[VIRTIO_FS_BACKEND_HELLO_SIZE];
+	bool connecting;
+	struct pollfd descriptor;
+	uint8_t fuse[80], *payload, *pattern;
+	char directory[32], socket_path[96];
+	char *arguments[] = {
+		__DECONST(char *, "virtiofsd"),
+		__DECONST(char *, "-r"), directory,
+		__DECONST(char *, "-s"), socket_path,
+		NULL,
+	};
+	size_t i, payload_len;
+	uint64_t file_handle, nodeid;
+	pid_t child;
+	int client, directory_fd, error, file_fd, status;
+
+	strcpy(directory, "/tmp/virtiofsd-large.XXXXXX");
+	ATF_REQUIRE(mkdtemp(directory) != NULL);
+	ATF_REQUIRE(snprintf(socket_path, sizeof(socket_path), "%s/socket",
+	    directory) > 0);
+	pattern = malloc(262144);
+	payload = malloc(1U << 20);
+	ATF_REQUIRE(pattern != NULL && payload != NULL);
+	for (i = 0; i < 262144; i++)
+		pattern[i] = (uint8_t)(i * 131U + 7U);
+	directory_fd = open(directory, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(directory_fd >= 0);
+	file_fd = openat(directory_fd, "p",
+	    O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+	ATF_REQUIRE(file_fd >= 0);
+	ATF_REQUIRE_EQ(write(file_fd, pattern, 262144), 262144);
+	ATF_REQUIRE_EQ(close(file_fd), 0);
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		int signal_number = SIGTERM;
+
+		/* Do not outlive an aborted test case. */
+		(void)procctl(P_PID, 0, PROC_PDEATHSIG_CTL, &signal_number);
+		_exit(virtiofsd_program_main(5, arguments));
+	}
+
+	/* bhyve's offer: 16 MiB messages, 64 MiB pending (pci_virtio_fs.c). */
+	offer = (struct virtio_fs_backend_hello) {
+		.minimum_version = 1,
+		.maximum_version = 1,
+		.features = VIRTIO_FS_BACKEND_F_CANCEL |
+		    VIRTIO_FS_BACKEND_F_FREEZE |
+		    VIRTIO_FS_BACKEND_F_STATE_TRANSFER,
+		.maximum_message = 16U * 1024U * 1024U,
+		.maximum_inflight = 4096,
+		.maximum_pending_bytes = 64U * 1024U * 1024U,
+	};
+	error = connect_daemon(socket_path, &client, &connecting);
+	ATF_REQUIRE_EQ(error, 0);
+	if (connecting) {
+		descriptor = (struct pollfd) { .fd = client, .events = POLLOUT };
+		ATF_REQUIRE_EQ(poll(&descriptor, 1, 5000), 1);
+		ATF_REQUIRE_EQ(virtio_fs_backend_connect_finish(client,
+		    geteuid(), getegid()), 0);
+	}
+	ATF_REQUIRE_EQ(virtio_fs_backend_hello_encode(&offer, hello), 0);
+	header = (struct virtio_fs_backend_header) {
+		.version = 1,
+		.type = VIRTIO_FS_BACKEND_HELLO,
+		.payload_len = sizeof(hello),
+		.request_id = 1,
+	};
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(client, &header, hello),
+	    0);
+	wait_readable(client);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(client, &header,
+	    payload, 1U << 20, &payload_len), 0);
+	ATF_REQUIRE_EQ(header.type, VIRTIO_FS_BACKEND_HELLO_REPLY);
+	ATF_REQUIRE_EQ(virtio_fs_backend_hello_decode(payload, payload_len,
+	    &offer), 0);
+	/* Nothing below the socket layer limits the frame to 64 KiB. */
+	ATF_REQUIRE(offer.maximum_message >= 131072U + 16U);
+
+	memset(fuse, 0, 56);
+	le32enc(fuse, 56);
+	le32enc(fuse + 4, VIRTIOFSD_FUSE_INIT);
+	le64enc(fuse + 8, 2);
+	le32enc(fuse + 40, 7);
+	le32enc(fuse + 44, 35);
+	le32enc(fuse + 48, 65536);
+	large_round_trip(client, 2, fuse, 56, payload, 1U << 20, &payload_len);
+	fuse_request(fuse, 42, DOC_FUSE_LOOKUP, 3, 1);
+	memcpy(fuse + 40, "p", 2);
+	large_round_trip(client, 3, fuse, 42, payload, 1U << 20, &payload_len);
+	nodeid = le64dec(payload + 16);
+	fuse_request(fuse, 48, DOC_FUSE_OPEN, 4, nodeid);
+	large_round_trip(client, 4, fuse, 48, payload, 1U << 20, &payload_len);
+	file_handle = le64dec(payload + 16);
+	for (i = 0; i < nitems(sizes); i++) {
+		fuse_request(fuse, 80, DOC_FUSE_READ, 5 + i, nodeid);
+		le64enc(fuse + 40, file_handle);
+		le64enc(fuse + 48, 4096);
+		le32enc(fuse + 56, sizes[i]);
+		large_round_trip(client, 5 + i, fuse, 80, payload, 1U << 20,
+		    &payload_len);
+		ATF_CHECK_EQ(payload_len, 16U + sizes[i]);
+		ATF_CHECK_EQ(le32dec(payload), 16U + sizes[i]);
+		ATF_CHECK_EQ(memcmp(payload + 16, pattern + 4096, sizes[i]), 0);
+	}
+
+	ATF_REQUIRE_EQ(kill(child, SIGTERM), 0);
+	ATF_REQUIRE_EQ(waitpid(child, &status, 0), child);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_EQ(close(client), 0);
+	ATF_REQUIRE_EQ(unlinkat(directory_fd, "p", 0), 0);
+	ATF_REQUIRE_EQ(close(directory_fd), 0);
+	ATF_REQUIRE_EQ(rmdir(directory), 0);
+	free(payload);
+	free(pattern);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -415,5 +573,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, silent_authenticated_client_times_out);
 	ATF_TP_ADD_TC(tp,
 	    foreground_daemon_is_sandboxed_event_driven_and_cleans);
+	ATF_TP_ADD_TC(tp, default_limits_carry_large_read_replies);
 	return (atf_no_error());
 }

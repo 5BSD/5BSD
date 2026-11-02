@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -410,6 +411,123 @@ ATF_TC_BODY(receive_outputs_must_not_alias, tc)
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
 }
 
+/*
+ * local(4) SOCK_SEQPACKET shares the stream implementation: records end only
+ * at MSG_EOR, so frames sent without it coalesce in the receive buffer.
+ */
+ATF_TC_WITHOUT_HEAD(back_to_back_frames_keep_boundaries);
+ATF_TC_BODY(back_to_back_frames_keep_boundaries, tc)
+{
+	struct virtio_fs_backend_header received, sent;
+	uint8_t first[] = { 1, 2, 3, 4, 5 }, second[] = { 9, 8, 7, 6, 5, 4, 3 };
+	uint8_t output[64];
+	size_t output_len;
+	int sockets[2];
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0,
+	    sockets), 0);
+	sent = request_header(sizeof(first));
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[0], &sent, first),
+	    0);
+	sent = request_header(sizeof(second));
+	sent.request_id = 8;
+	ATF_REQUIRE_EQ(virtio_fs_backend_send_frame(sockets[0], &sent, second),
+	    0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), 0);
+	ATF_CHECK_EQ(received.request_id, 7);
+	ATF_CHECK_EQ(output_len, sizeof(first));
+	ATF_CHECK(memcmp(output, first, sizeof(first)) == 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), 0);
+	ATF_CHECK_EQ(received.request_id, 8);
+	ATF_CHECK_EQ(output_len, sizeof(second));
+	ATF_CHECK(memcmp(output, second, sizeof(second)) == 0);
+	ATF_CHECK_EQ(virtio_fs_backend_receive_frame(sockets[1], &received,
+	    output, sizeof(output), &output_len), EAGAIN);
+	ATF_REQUIRE_EQ(close(sockets[0]), 0);
+	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+struct large_sender {
+	int fd;
+	const uint8_t *payload;
+	uint32_t length;
+	int error;
+};
+
+static void *
+large_sender_main(void *argument)
+{
+	struct large_sender *sender = argument;
+	struct virtio_fs_backend_header header;
+	struct pollfd descriptor;
+
+	header = request_header(sender->length);
+	descriptor = (struct pollfd) { .fd = sender->fd, .events = POLLOUT };
+	do {
+		(void)poll(&descriptor, 1, 5000);
+		sender->error = virtio_fs_backend_send_frame(sender->fd, &header,
+		    sender->payload);
+	} while (sender->error == EAGAIN);
+	return (NULL);
+}
+
+/*
+ * A FUSE_READ reply for a 64 KiB block exceeds the default 64 KiB local
+ * socket buffers (net.local.seqpacket.recvspace), so the kernel moves it in
+ * pieces: a nonblocking sender sees a short count and the receiver can observe
+ * a partial record.  Both ends must finish the frame instead of failing.
+ */
+ATF_TC_WITHOUT_HEAD(frames_larger_than_socket_buffer_are_reassembled);
+ATF_TC_BODY(frames_larger_than_socket_buffer_are_reassembled, tc)
+{
+	static const uint32_t lengths[] = { 65552, 131088, 1048592 };
+	struct virtio_fs_backend_header received;
+	struct large_sender sender;
+	struct pollfd descriptor;
+	pthread_t thread;
+	uint8_t *input, *output;
+	size_t i, j, output_len;
+	int error, sockets[2];
+
+	input = malloc(lengths[nitems(lengths) - 1]);
+	output = malloc(lengths[nitems(lengths) - 1]);
+	ATF_REQUIRE(input != NULL && output != NULL);
+	for (j = 0; j < lengths[nitems(lengths) - 1]; j++)
+		input[j] = (uint8_t)(j * 131U + 7U);
+	for (i = 0; i < nitems(lengths); i++) {
+		ATF_REQUIRE_EQ(socketpair(AF_UNIX,
+		    SOCK_SEQPACKET | SOCK_NONBLOCK, 0, sockets), 0);
+		sender = (struct large_sender) {
+			.fd = sockets[0],
+			.payload = input,
+			.length = lengths[i],
+		};
+		ATF_REQUIRE_EQ(pthread_create(&thread, NULL, large_sender_main,
+		    &sender), 0);
+		do {
+			descriptor = (struct pollfd) {
+				.fd = sockets[1],
+				.events = POLLIN,
+			};
+			ATF_REQUIRE_EQ(poll(&descriptor, 1, 5000), 1);
+			error = virtio_fs_backend_receive_frame(sockets[1],
+			    &received, output, lengths[nitems(lengths) - 1],
+			    &output_len);
+		} while (error == EAGAIN);
+		ATF_REQUIRE_EQ(pthread_join(thread, NULL), 0);
+		ATF_CHECK_EQ(sender.error, 0);
+		ATF_CHECK_EQ(error, 0);
+		ATF_CHECK_EQ(output_len, lengths[i]);
+		ATF_CHECK(error != 0 || memcmp(output, input, lengths[i]) == 0);
+		ATF_REQUIRE_EQ(close(sockets[0]), 0);
+		ATF_REQUIRE_EQ(close(sockets[1]), 0);
+	}
+	free(output);
+	free(input);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -422,5 +540,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, descriptor_passing_is_rejected);
 	ATF_TP_ADD_TC(tp, truncated_descriptors_are_closed);
 	ATF_TP_ADD_TC(tp, receive_outputs_must_not_alias);
+	ATF_TP_ADD_TC(tp, back_to_back_frames_keep_boundaries);
+	ATF_TP_ADD_TC(tp, frames_larger_than_socket_buffer_are_reassembled);
 	return (atf_no_error());
 }

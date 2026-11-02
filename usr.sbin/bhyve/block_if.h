@@ -49,6 +49,14 @@ struct vm_snapshot_meta;
  * pending requests that can be queued.
  */
 #define	BLOCKIF_IOV_MAX		128	/* not practical to be IOV_MAX */
+/*
+ * A frontend may extend br_iov[] with trailing storage in its own request
+ * structure: pci_nvme pads its request to NVME_MAX_IOVEC (513) entries so a
+ * full MDTS transfer of discontiguous guest pages fits.  blockif therefore
+ * accepts up to BLOCKIF_IOV_LIMIT entries (the preadv/pwritev bound, IOV_MAX);
+ * the frontend owns the storage beyond BLOCKIF_IOV_MAX.
+ */
+#define	BLOCKIF_IOV_LIMIT	1024	/* IOV_MAX */
 #define	BLOCKIF_RING_MAX	1024
 #define	BLOCKIF_CHECKPOINT_ID_MAX	255
 

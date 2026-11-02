@@ -3,6 +3,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/socket.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -55,6 +56,12 @@ virtio_fs_backend_client_fail(struct virtio_fs_backend_client *client,
 	if (error == 0)
 		error = EIO;
 	if (client->fd >= 0) {
+		/*
+		 * The device may hold a duplicate for readiness events;
+		 * shut the socket down so the backend sees the failure now
+		 * rather than at the next device reset.
+		 */
+		(void)shutdown(client->fd, SHUT_RDWR);
 		(void)close(client->fd);
 		client->fd = -1;
 	}
@@ -94,6 +101,8 @@ virtio_fs_backend_client_create(int fd, bool connecting, uid_t expected_uid,
 	}
 	virtio_fs_backend_session_init(&client->session);
 	client->offer = *offer;
+	/* Let ordinary responses arrive as a single socket-buffer piece. */
+	virtio_fs_backend_size_buffers(fd, offer->maximum_message);
 	client->expected_uid = expected_uid;
 	client->expected_gid = expected_gid;
 	client->fd = fd;

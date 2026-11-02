@@ -122,6 +122,8 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/virtio_gpu_2d_pci_test.c" \
 	"$here/virtio_iommu_config_test.c" \
 	"$here/virtio_iommu_pci_test.c" \
+	"$here/virtio_iommu_post_init_test.c" \
+	"$here/virtio_iommu_post_init_stubs.c" \
 	"$here/virtio_iommu_state_test.c" \
 	"$here/virtio_iommu_protocol_test.c" \
 	"$here/virtio_iommu_request_test.c" \
@@ -611,7 +613,8 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work" \
-	-o "$work/fs-backend-io-test" "$work/virtio_fs_backend_io_test.c"
+	-o "$work/fs-backend-io-test" "$work/virtio_fs_backend_io_test.c" \
+	-lpthread
 
 "$work/fs-backend-io-test"
 
@@ -763,6 +766,18 @@ EOF
 	"$work/virtio_iommu_pci_test.c" -lpthread
 
 "$work/iommu-pci-test"
+
+# Production VirtIO core + modern transport + virtio-iommu: BAR layout and
+# PCI post-init for the host -s virtio-iommu,virtio-blk transport=modern shape.
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-ffunction-sections -fdata-sections -DWITHOUT_CAPSICUM \
+	-I"$work/atfshim" -I"$srctop/usr.sbin" \
+	-I"$srctop/usr.sbin/bhyve" -I"$srctop/sys" -Wl,--gc-sections \
+	-o "$work/iommu-post-init-test" \
+	"$work/virtio_iommu_post_init_test.c" \
+	"$work/virtio_iommu_post_init_stubs.c" -lpthread
+
+"$work/iommu-post-init-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work" -I"$srctop/sys" \

@@ -195,6 +195,8 @@ struct virtio_crypto_config {
 #define	VTC_DATA_OFF_CIPHER_IV_LEN	24	/* le32 */
 #define	VTC_DATA_OFF_CIPHER_SRC_LEN	28	/* le32 */
 #define	VTC_DATA_OFF_CIPHER_DST_LEN	32	/* le32 */
+/* sym_data_req.op_type follows the 40-byte cipher/chain union. */
+#define	VTC_DATA_OFF_SYM_OP_TYPE	64	/* le32 op_type */
 
 /* hash_para / mac_para begin at offset 24. */
 #define	VTC_DATA_OFF_HASH_SRC_LEN	24	/* le32 */

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd August 1, 2026
+.Dd November 2, 2026
 .Dt VIRTIOFSD 8
 .Os
 .Sh NAME
@@ -30,6 +30,13 @@ owned socket, or signal-event delivery.
 All guest pathname operations are single-component, descriptor-relative
 lookups constrained beneath the pre-opened export.
 Peer credentials must match the configured user and group.
+Each VFSB frame is sent as one record terminated with
+.Dv MSG_EOR ;
+a frame larger than the free socket buffer space is completed in pieces and
+reassembled by the receiver, and each connection's socket buffers are grown
+toward the negotiated message size, within
+.Va kern.ipc.maxsockbuf ,
+so that ordinary frames move in one piece.
 .Pp
 The current implementation is deliberately read-only and non-DAX.
 It supports FUSE initialization, lookup, attribute and filesystem-statistics

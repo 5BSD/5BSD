@@ -34,6 +34,7 @@
 
 #define	VTRTC_FEATURES		(VIRTIO_F_RING_RESET | VIRTIO_RTC_F_ALARM)
 #define	VTRTC_REQUEST_TIMEOUT	(10 * SBT_1S)
+#define	VTRTC_POLL_DELAY_US	10
 #define	VTRTC_NSEC_PER_SEC	UINT64_C(1000000000)
 #define	VTRTC_MAX_REQUEST	(sizeof(struct virtio_rtc_req_set_alarm))
 #define	VTRTC_MAX_RESPONSE	(sizeof(struct virtio_rtc_resp_read_alarm))
@@ -503,6 +504,7 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 	struct sglist_seg segs[4];
 	sbintime_t deadline, remaining;
 	void *cookie;
+	uint64_t polled_us;
 	uint32_t used_len;
 	int error, readable;
 
@@ -548,6 +550,7 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 		goto complete;
 	virtqueue_notify(sc->requestq);
 	deadline = sbinuptime() + VTRTC_REQUEST_TIMEOUT;
+	polled_us = 0;
 
 	for (;;) {
 		cookie = virtqueue_dequeue(sc->requestq, &used_len);
@@ -559,10 +562,22 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 			    VTRTC_FLAG_DETACH) != 0 ? ENXIO : EIO;
 			goto reset;
 		}
-		if (virtqueue_enable_intr(sc->requestq) != 0)
+		if (cold) {
+			/*
+			 * attach_completed() reads the clock and clears the
+			 * alarm during autoconfiguration, before timers work;
+			 * a timed sleep would panic.  Poll the used ring for
+			 * the same bound until the system is up.
+			 */
+			if (polled_us < VTRTC_REQUEST_TIMEOUT / SBT_1US) {
+				DELAY(VTRTC_POLL_DELAY_US);
+				polled_us += VTRTC_POLL_DELAY_US;
+				continue;
+			}
+			error = EWOULDBLOCK;
+		} else if (virtqueue_enable_intr(sc->requestq) != 0)
 			continue;
-		remaining = deadline - sbinuptime();
-		if (remaining <= 0) {
+		else if ((remaining = deadline - sbinuptime()) <= 0) {
 			error = EWOULDBLOCK;
 		} else {
 			error = msleep_sbt(sc, &sc->mtx, 0, "vtrtcr",

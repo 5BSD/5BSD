@@ -837,8 +837,13 @@ pci_vtiommu_init(struct pci_devinst *pi, nvlist_t *nvl)
 	vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_IOMMU);
 	pci_set_cfgdata8(pi, PCIR_CLASS, PCIC_BASEPERIPH);
 	pci_set_cfgdata8(pi, PCIR_SUBCLASS, PCIS_BASEPERIPH_IOMMU);
-	if (vi_intr_init(&sc->vsc_vs, VTIOMMU_NUM_QUEUES + 1,
-	    fbsdrun_virtio_msix()) != 0) {
+	/*
+	 * vi_intr_init() takes the MSI-X table BAR index; it sizes the vector
+	 * table from the queue count itself.  Use BAR 1 like every other
+	 * VirtIO model: the modern transport below claims BAR 2 as a 64-bit
+	 * BAR, so BAR 3 is its upper half and cannot hold the MSI-X table.
+	 */
+	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()) != 0) {
 		error = ENXIO;
 		goto fail;
 	}
