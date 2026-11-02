@@ -8,6 +8,7 @@
 #include "config.h"
 
 #define BLOCKIF_IOV_MAX 128
+#define BLOCKIF_IOV_LIMIT 1024
 #define BLOCKIF_RING_MAX 1024
 #define BLOCKIF_CHECKPOINT_ID_MAX 255
 

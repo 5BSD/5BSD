@@ -592,6 +592,8 @@ SRCS.virtio_iommu_post_init_test=	virtio_iommu_post_init_test.c \
 CFLAGS.virtio_iommu_post_init_test+= -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -Wno-error=cast-align -I${SRCTOP}/usr.sbin \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+# virtio.c and virtio_pci_modern.c are included into the test translation unit.
+CWARNFLAGS.virtio_iommu_post_init_test.c+= -Wno-thread-safety-analysis
 CFLAGS.virtio_iommu_state_test+= -I${.CURDIR} -I${.OBJDIR} \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 CFLAGS.virtio_iommu_protocol_test+= -I${.CURDIR} -I${.OBJDIR} \
