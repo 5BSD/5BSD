@@ -111,9 +111,9 @@ result_text(int result, int error, char *buf, size_t len)
 		    "package)");
 	case SYSEXT_DECISION_NOT_KERNEL_DIR:
 		return ("refused: no regular module file of that name in the "
-		    "running kernel's directory (/boot/kernel), a dependency "
-		    "outside it, or that directory no longer holds the running "
-		    "kernel (reboot after a kernel upgrade)");
+		    "running kernel's directory (the one it was booted from), a "
+		    "dependency outside it, or that directory or /boot no longer "
+		    "holds the running kernel (reboot after a kernel upgrade)");
 	case SYSEXT_DECISION_UNLOADED:
 		return ("unloaded");
 	case SYSEXT_DECISION_NOT_ROOT_LOADED:
@@ -369,9 +369,16 @@ root_request(struct extensioncmp_session *session, int load, const char *name)
 	}
 	extensioncmp_session_close(session);
 	text = result_text(outcome.result, outcome.error, buf, sizeof(buf));
+	if (load && outcome.result == SYSEXT_DECISION_FAILED &&
+	    outcome.error == EEXIST)
+		text = "refused: a module it depends on is loaded from another "
+		    "file, whose version cannot be checked (the broker's log "
+		    "names it)";
 	if (!load && outcome.result == SYSEXT_DECISION_FAILED) {
-		(void)snprintf(buf, sizeof(buf), "unload failed: %s",
-		    strerror(outcome.error));
+		(void)snprintf(buf, sizeof(buf), "unload failed: %s%s",
+		    strerror(outcome.error), outcome.error == EBUSY ?
+		    " (still loaded: in use, or another module depends on it)" :
+		    "");
 		text = buf;
 	}
 	log_root_request(load ? "load" : "unload", name, text);

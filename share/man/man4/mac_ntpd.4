@@ -132,6 +132,46 @@ can only be set to 0
 set them as
 .Xr loader 8
 tunables instead.
+.Pp
+.Pa /etc/rc.d/ntpd
+warns at start when the capability plane is enabled and
+.Xr ntpd 8
+would be refused the clock: when it would run as root
+.Po
+.Va ntpd_user
+set, files named in
+.Va ntpd_flags
+or
+.Xr ntp.conf 5 ,
+or this policy disabled
+.Pc ,
+or when
+.Va ntpd_nice ,
+.Va ntpd_fib ,
+.Va ntpd_cpuset ,
+.Va ntpd_chroot ,
+.Va audit_user
+or
+.Va ntpd_prepend
+make
+.Xr rc.subr 8
+execute a program that the grant does not pin before
+.Xr ntpd 8 .
+It fails the start when no
+.Xr ntpd 8
+is running a few seconds later.
+.Pp
+The grant pins programs, not their input:
+root still controls
+.Xr ntp.conf 5 ,
+.Va ntpd_flags
+and
+.Va ntpd_program ,
+and so which servers the granted
+.Xr ntpd 8
+follows and how it disciplines the clock.
+This policy keeps other programs and root shells from setting the clock; it
+does not contain root.
 .Ss Runtime Configuration
 The following
 .Xr sysctl 8

@@ -55,9 +55,25 @@ the unit the same way (or reboot) so the grant pins the new files.
 While the claim is held, `security.mac.ntpd.uid` cannot be changed and
 `security.mac.ntpd.enabled` can only be set to 0 (EPERM otherwise); set them
 as loader tunables. Setting `security.mac.ntpd.enabled=0` withdraws the
-delegate. An ntpd running as root (when mac_ntpd is disabled or ntpd's
-options name files the ntpd user cannot write) is refused and logs
-`step-systime: Operation not permitted`.
+delegate. An ntpd running as root (when mac_ntpd is disabled, `ntpd_user` is
+set, or `ntpd_flags` or ntp.conf name files: `crypto`, `driftfile`, `keys`,
+`logfile`, `statsdir`) is refused and logs
+`step-systime: Operation not permitted`; rc.d/ntpd warns at start and names
+the setting. So does a setting that makes rc.subr run another program between
+the grant and ntpd (`ntpd_nice`, `ntpd_fib`, `ntpd_cpuset`, `ntpd_chroot`,
+`audit_user`, `ntpd_prepend`): that program is not pinned, the grant ends at
+its exec, and ntpd is refused. rc.d/ntpd waits up to 5 s for ntpd's pidfile
+and fails the start (`ntpd did not start`) when no ntpd is running, since
+daemon(8) detaches before ntpd starts.
+
+The grant pins programs, not their input. Root still controls what the
+granted ntpd does with the clock: `/etc/ntp.conf` (servers, `tinker`,
+`disable`), `ntpd_flags` and `ntpd_program` in rc.conf, and the leap-second
+file. A root that points ntpd at its own server, or names another program as
+`ntpd_program` (refused unless that file is pinned, but `/usr/sbin/ntpd` can
+be told to step anywhere), steers the clock within what ntpd will do. The
+grant keeps a root shell and programs other than the pinned ntpd from setting
+the clock directly; it is not containment of root.
 
 ntpd and BSDTime clients both move the same clock; they do not coordinate.
 The planned rework of the time service should make BSDTime the single

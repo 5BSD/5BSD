@@ -84,12 +84,13 @@ ATF_TESTS_C+=		rootload_test
 SRCS.rootload_test=	rootload_test.c bsdextension.c policy.c reclaim.c \
 	rootload.c kerneldir.c blake2b-ref.c ${KLDELF_SRCS}
 RLMODULES=		rltest_a rltest_d rldep rltest_n rlbase rltest_v \
-			rltest_x mac_rltest rltest_k
+			rltest_x mac_rltest rltest_k rlother
 RLMODULE_rltest_d=	-DDEP='"rldep"' -DDEPMIN=1 -DDEPMAX=1
 RLMODULE_rltest_n=	-DDEP='"rlbase"' -DDEPMIN=1 -DDEPMAX=1
 RLMODULE_rltest_v=	-DDEP='"rlbase"' -DDEPMIN=2 -DDEPMAX=2
 RLMODULE_rltest_x=	-DDEP='"mac_rltest"' -DDEPMIN=1 -DDEPMAX=1
 RLMODULE_rltest_k=	-DDEP='"kernel"' -DDEPMIN=1 -DDEPMAX=1 -DDEP2='"rlbase"'
+RLMODULE_rlother=	-DALSO='"rlbase"' -DALSO_VERSION=2
 .for m in ${RLMODULES}
 ${PACKAGE}FILES+=	${m}.ko
 CLEANFILES+=		${m}.ko

@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd November 1, 2026
+.Dd November 2, 2026
 .Dt SYSEXTCTL 8
 .Os
 .Sh NAME
@@ -147,9 +147,10 @@ Nothing else is unloaded: not a module that rc, devd or another client
 loaded or has asked for since, not a module compiled into the kernel, and
 never a protected module
 .Pq see Sx ROOT LOADS .
-The kernel still refuses a module that is in use or that another loaded
-module depends on
-.Pq Er EBUSY .
+The kernel still refuses a module that is in use, and keeps one that another
+loaded module depends on: both are reported as still loaded
+.Pq Er EBUSY ,
+and the module can be unloaded once nothing needs it.
 .It Cm allow Ar module
 Persist an administrator permission to load this module.
 Permission does not install, authenticate, or load module code.
@@ -215,14 +216,15 @@ from such a shell asks the broker, over
 .Dq system.SystemExtension.RootLoad ,
 to load
 .Ar module Ns Pa .ko
-from the running kernel's module directory, normally
+from the running kernel's module directory, the one it was booted from,
+normally
 .Pa /boot/kernel .
 It never loads a protected module: a security policy
 .Pq Pa mac_* ,
 a tracing provider
-.Pq DTrace, HyperTrace, kinst, fbt, sdt, systrace, fasttrap, profile ,
+.Pq DTrace and its providers, HyperTrace, kinst, hwpmc, ksyms ,
 ZFS and opensolaris, a packet filter
-.Pq Pa pf* , ipfw* ,
+.Pq pf, pflog, pfsync, pflow, ipfw and its modules, dummynet, ipl ,
 or vmm; the same modules
 .Cm unload
 refuses, refused with
@@ -247,6 +249,9 @@ or elsewhere are refused, and so is a module that needs one.
 The directory must still hold the running kernel: after
 .Cm installkernel
 or a kernel package upgrade, root loads wait for the reboot.
+So they do after
+.Pa /boot
+itself was renamed and replaced, or mounted over.
 .It
 The local package database
 .Pq Pa /var/db/pkg/local.sqlite
@@ -273,9 +278,16 @@ No administrator override denies it
 and it is not a protected module.
 .It
 It provides the module version the file that needs it declares.
+A dependency that is already loaded must be the kernel's own or the file the
+kernel directory's
+.Pa linker.hints
+names for the version range; a module of that name loaded from another file
+has a version the broker cannot check, and the load is refused.
 .It
-It did not change while it was checked and loaded, and the kernel loaded
-nothing else; otherwise everything the request loaded is unloaded again.
+It did not change while it was checked and loaded, the absolute path the
+kernel loaded still names it, and nothing else was loaded meanwhile;
+otherwise everything the request loaded is unloaded again, and nothing it did
+not load.
 .El
 .Pp
 Each refusal has its own message and exit status
@@ -286,6 +298,9 @@ kernel directory, a dependency outside it, or a kernel directory that no
 longer holds the running kernel; denied by an administrator override; root
 loads are not configured; the package database could not be read; a file
 changed or an unchecked file was loaded during the load; protected module.
+A dependency loaded from another file, whose version cannot be checked, is
+refused with
+.Dv EX_OSERR .
 A load the kernel itself fails exits with
 .Dv EX_OSERR .
 Every request, granted or refused, is kept in the broker's decision list

@@ -210,19 +210,29 @@ late_load_gate_body()
 atf_test_case late_load_broker_process cleanup
 late_load_broker_process_head()
 {
-	atf_set "descr" "load_kld finds a running broker with pgrep(1) itself"
+	atf_set "descr" "load_kld takes only user capability's BSDExtension for the broker"
 }
 late_load_broker_process_body()
 {
+	local expect
+
 	setup
-	# A process named BSDExtension, found by the real pgrep(1).  The
-	# host's own broker, if it runs, gives the same answer.
+	# A process named BSDExtension run by the test's user, seen by the
+	# real pgrep(1), is not the broker; the host's own broker, run as
+	# user capability, is.
+	[ "$(id -un)" = capability ] && atf_skip "runs as the broker's user"
 	cp /bin/sleep BSDExtension
 	./BSDExtension 60 >/dev/null 2>&1 &
 	echo $! > broker.pid
-	atf_check -s exit:0 -o empty -e inline:'broker load mac_ntpd\n' \
+	if pgrep -q -x -U capability BSDExtension; then
+		expect='broker load mac_ntpd\n'
+	else
+		expect='direct mac_ntpd\n'
+	fi
+	atf_check -s exit:0 -o empty -e inline:"${expect}" \
 	    sh -c '. ./seams.sh; unset -f pgrep;
-	    sysextctl() { echo "broker $*" >&2; }; load_kld mac_ntpd'
+	    sysextctl() { echo "broker $*" >&2; };
+	    kldload() { echo "direct $*" >&2; }; load_kld mac_ntpd'
 }
 late_load_broker_process_cleanup()
 {

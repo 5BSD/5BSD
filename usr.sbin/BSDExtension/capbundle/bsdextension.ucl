@@ -50,7 +50,9 @@ activation { boot = true; ipc = ["system.SystemExtension",
 # the device_drivers class (bsdextension.ucl)
 # and the module files root loads check.  /var/db/pkg: the package database
 # root loads consult (read in a forked child that holds only this directory).
-directories = ["/etc/bsdextension", "/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live", "/boot", "/var/db/pkg"];
+# /: limited to fstatat(2) at startup, to see which /boot and module file an
+# absolute path names as the kernel resolves it (a mount over /boot).
+directories = ["/etc/bsdextension", "/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live", "/boot", "/var/db/pkg", "/"];
 control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];

@@ -6,7 +6,8 @@
 # base account is taken to have been removed by the administrator and is
 # recorded, not recreated.  Add an entry with every new account in
 # etc/group or etc/master.passwd; remove entries once upgrades from the
-# release before theirs are no longer supported.
+# release before theirs are no longer supported.  The release column is
+# informational, for that pruning: base-accounts reads only kind and name.
 #
 # kind	name		release	origin
 group	vmm		16.0	# FreeBSD: unprivileged bhyve

@@ -18,6 +18,7 @@ fetch_cmd="ntpd_fetch_leapfile"
 needfetch_cmd="ntpd_needfetch_leapfile"
 resume_cmd="ntpd_resume"
 start_precmd="ntpd_precmd"
+start_postcmd="ntpd_poststart"
 
 _ntp_tmp_leapfile="/var/run/ntpd.leap-seconds.list"
 _ntp_default_dir="/var/db/ntp"
@@ -43,8 +44,12 @@ leapfile_is_disabled() {
 
 can_run_nonroot()
 {
+	# 5BSD: why ntpd stays root, for ntpd_precmd's warning.
+	_ntpd_root_why="mac_ntpd(4) or ${_ntp_default_dir} could not be set up"
+
 	# If the admin set what uid to use, we don't change it.
 	if [ -n "${ntpd_user}" ]; then
+		_ntpd_root_why="ntpd_user is set"
 		return 1
 	fi
 
@@ -54,13 +59,18 @@ can_run_nonroot()
 	    *-f* | *--driftfile* | *-i* | *--jaildir*   | \
 	    *-k* | *--keyfile*   | *-l* | *--logfile*   | \
 	    *-p* | *--pidfile*   | *-s* | *--statsdir* )
+		_ntpd_root_why="ntpd_flags names a file"
 		return 1;;
 	esac
 
 	# If the admin set any options in ntp.conf involving files,
 	# we may not be able to access them as user ntpd.
 	local fileopts="^[ \t]*crypto|^[ \t]*driftfile|^[ \t]*key|^[ \t]*logfile|^[ \t]*statsdir"
-	grep -E -q "${fileopts}" "${ntpd_config}" && return 1
+	if grep -E -q "${fileopts}" "${ntpd_config}"; then
+		_ntpd_root_why="${ntpd_config} names a file (crypto,"
+		_ntpd_root_why="${_ntpd_root_why} driftfile, keys, logfile or statsdir)"
+		return 1
+	fi
 
 	# Try to set up the MAC ntpd policy so ntpd can run with reduced
 	# privileges.  Detect whether MAC is compiled into the kernel, load
@@ -102,9 +112,39 @@ can_run_nonroot()
 	fi
 }
 
+# 5BSD: the capability plane holds the clock (capsule's loader knob, as in
+# rc.subr's load_kld).  mac_ntpd(4) then lets only user ntpd set it, started
+# under switchboard's ntpd grant, which pins sh, env, limits, daemon and ntpd.
+ntpd_clock_held()
+{
+	case "$(kenv -q capability_plane 2>/dev/null)" in
+	[Nn][Oo]|[Oo][Ff][Ff]|0)
+		return 1;;
+	esac
+	return 0
+}
+
+# rc.subr runs these programs between daemon(8) and ntpd, or before daemon(8):
+# an image the grant does not pin ends it, and the clock is refused.
+ntpd_check_grant_path()
+{
+	local _set
+
+	_set="${_nice:+ ntpd_nice (nice)}${_fib:+ ntpd_fib (setfib)}"
+	_set="${_set}${_cpusetcmd:+ ntpd_cpuset (cpuset)}"
+	_set="${_set}${_setauditcmd:+ audit_user (setaudit)}"
+	_set="${_set}${_chroot:+ ntpd_chroot (chroot)}"
+	_set="${_set}${_prepend:+ ntpd_prepend (${_prepend%% *})}"
+	if [ -n "${_set}" ]; then
+		warn "ntpd will be refused the clock: switchboard's grant" \
+		    "for ntpd does not pin what these settings run before it:" \
+		    "${_set# }.  Unset them."
+	fi
+}
+
 ntpd_precmd()
 {
-	local driftopt
+	local driftopt nonroot=false
 
 	# If we can run as a non-root user, switch uid to ntpd and use the
 	# new default location for the driftfile inside the ntpd-owned dir.
@@ -118,6 +158,8 @@ ntpd_precmd()
 	# pins sh, env, limits, daemon and ntpd only, so a zsh (or other) login
 	# shell would end the grant and mac_ntpd(4) would refuse the clock.
 	if can_run_nonroot; then
+		nonroot=true
+		ntpd_clock_held && ntpd_check_grant_path
 		_prepend="${_prepend:+${_prepend} }/usr/sbin/daemon -u ntpd"
 		driftopt="-f ${_ntp_default_driftfile}"
 	elif grep -q "^[ \t]*driftfile" "${ntpd_config}" ||
@@ -129,6 +171,11 @@ ntpd_precmd()
 		driftopt="-f ${_ntp_old_driftfile}"
 	else
 		driftopt="-f ${_ntp_default_driftfile}"
+	fi
+	if ! ${nonroot} && ntpd_clock_held; then
+		warn "ntpd runs as root (${_ntpd_root_why}): the capability" \
+		    "plane refuses the clock to root.  Remove that setting so" \
+		    "ntpd runs as user ntpd."
 	fi
 
 	# Set command_args based on the various config vars.
@@ -147,6 +194,21 @@ ntpd_precmd()
 	if [ ! -f "${ntp_db_leapfile}" ]; then
 		ntpd_fetch_leapfile
 	fi
+}
+
+# 5BSD: daemon(8) and ntpd itself detach before ntpd has set itself up, so
+# the start command succeeds whether or not ntpd runs.  Wait a little for the
+# pidfile and the ntpd it names; a start that left no ntpd fails.
+ntpd_poststart()
+{
+	local _i
+
+	for _i in 1 2 3 4 5 6 7 8 9 10; do
+		[ -n "$(check_pidfile "${pidfile}" "${command}")" ] && return 0
+		sleep 0.5
+	done
+	warn "${name} did not start; see /var/log/messages"
+	return 1
 }
 
 current_ntp_ts() {

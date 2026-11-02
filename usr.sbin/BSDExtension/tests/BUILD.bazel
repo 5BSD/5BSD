@@ -8,7 +8,8 @@ _RLMODULES = {"rltest_a": [], "rldep": [], "rlbase": [], "mac_rltest": [],
     "rltest_n": ['DEP="rlbase"', "DEPMIN=1", "DEPMAX=1"],
     "rltest_v": ['DEP="rlbase"', "DEPMIN=2", "DEPMAX=2"],
     "rltest_x": ['DEP="mac_rltest"', "DEPMIN=1", "DEPMAX=1"],
-    "rltest_k": ['DEP="kernel"', "DEPMIN=1", "DEPMAX=1", 'DEP2="rlbase"']}
+    "rltest_k": ['DEP="kernel"', "DEPMIN=1", "DEPMAX=1", 'DEP2="rlbase"'],
+    "rlother": ['ALSO="rlbase"', "ALSO_VERSION=2"]}
 [cc_binary(name = m + ".ko", srcs = ["rlmodule.c"],
     local_defines = ['MOD="%s"' % m, "VERSION=1"] + defines,
     copts = ["-O0", "-fno-common"], linkopts = ["-nostdlib", "-Wl,-r"], linkstatic = True)

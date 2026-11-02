@@ -10,6 +10,7 @@
  *   MOD, VERSION          the module's MODULE_VERSION;
  *   DEP, DEPMIN, DEPMAX   an optional MODULE_DEPEND;
  *   DEP2                  an optional second one (version 1).
+ *   ALSO, ALSO_VERSION    an optional second MODULE_VERSION.
  */
 
 #include <sys/param.h>
@@ -28,6 +29,10 @@ METADATA(md_version, MDT_VERSION, &version, MOD);
 #ifdef DEP
 static struct mod_depend depend = { DEPMIN, DEPMIN, DEPMAX };
 METADATA(md_depend, MDT_DEPEND, &depend, DEP);
+#endif
+#ifdef ALSO
+static struct mod_version also_version = { ALSO_VERSION };
+METADATA(md_also, MDT_VERSION, &also_version, ALSO);
 #endif
 #ifdef DEP2
 static struct mod_depend depend2 = { 1, 1, 1 };
