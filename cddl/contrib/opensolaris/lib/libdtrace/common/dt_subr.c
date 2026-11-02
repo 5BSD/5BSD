@@ -1674,7 +1674,15 @@ dtrace_send_elf_impl(dtrace_prog_t *pgp, int fromfd, int tofd,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (pgp != NULL &&
+	/*
+	 * A derived program continues its parent's source lineage.  Its own
+	 * srcident names the guest's linked program (hypertrace_link() gives
+	 * that a new identity), which dtraced knows by no source.
+	 */
+	if (parent != NULL)
+		memcpy(header.elf.source_id, parent->source_id,
+		    sizeof(header.elf.source_id));
+	else if (pgp != NULL &&
 	    dtrace_program_source_id(pgp, header.elf.source_id) != 0)
 		return (-1);
 	if (pgp != NULL && pgp->dp_vmid != 0 && strcmp(location, "outbound") == 0) {

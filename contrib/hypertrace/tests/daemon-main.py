@@ -1082,88 +1082,61 @@ live('base-program-routing', ['-d', '-D', '@ROOT@/state', '-t', '2'],
 
 
 def consumer_client():
-    """consumer-elf-path.c on libdtrace's own transport, extracted as
-    library-transport.py does."""
+    """consumer-elf-path.c linked with the libdtrace under test: DTRACE_LIB,
+    default the installed library; point it at the library built from this
+    tree (its headers must match)."""
     root = Path(__file__).resolve().parents[3]
-    lib = root / 'cddl/contrib/opensolaris/lib/libdtrace/common'
-    source = (lib / 'dt_subr.c').read_text()
-    a = source.index('static int\ndtraced_self_procdesc(')
-    b = source.index('\nint\ndtrace_oformat_configure', a)
-    c = source.index('int\ndtrace_program_source_id(', b)
-    d = source.index('\nint\ndtrace_program_compiled_digest(', c)
-    e = source.index('\nstatic int\ndtrace_send_elf_impl(', d)
-    f = source.index('\nvoid\ndtrace_enable_hypertrace', e)
-    (out / 'library-transport.inc').write_text(
-        source[a:b] + source[c:d] + source[e:f])
+    lib = Path(os.environ.get('DTRACE_LIB', '/lib/libdtrace.so.2')).resolve()
     client = out / 'consumer-elf-path'
-    subprocess.run(['cc', '-pthread', '-Wall', '-Wextra', '-Werror',
-                    '-Wno-unknown-pragmas', '-I' + str(out), '-I' + str(lib),
+    subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-Wno-unknown-pragmas',
+                    '-I' + str(root / 'cddl/contrib/opensolaris/lib/libdtrace/common'),
+                    '-I' + str(root / 'cddl/contrib/opensolaris/cmd/dtrace'),
                     '-I' + str(root / 'usr.sbin/dtraced'),
-                    '-I' + str(root / 'sys'), str(lib / 'dt_list.c'),
+                    '-I' + str(root / 'sys'),
                     str(Path(__file__).with_name('consumer-elf-path.c')),
-                    '-o', str(client), '-lcrypto'], check=True)
+                    lib, '-Wl,-rpath,' + str(lib.parent), '-o', str(client)],
+                   check=True)
     return client
 
 
 import threading
 
 
-def compiled_elf(path, program):
-    """A HyperTrace program as dtrace -E writes it: compiled with
-    libdtrace (DTRACE_LIB, default the installed library) and serialized
-    with dtrace_elf_create(), without the kernel (NODEV | NOSYS)."""
-    import ctypes as C
-    lib = C.CDLL(os.environ.get('DTRACE_LIB', '/lib/libdtrace.so.2'))
-    lib.dtrace_open.argtypes = [C.c_int, C.c_int, C.POINTER(C.c_int)]
-    lib.dtrace_open.restype = C.c_void_p
-    lib.dtrace_enable_hypertrace.argtypes = [C.c_void_p]
-    lib.dtrace_program_strcompile.argtypes = [C.c_void_p, C.c_char_p, C.c_int,
-                                              C.c_uint, C.c_int, C.c_void_p]
-    lib.dtrace_program_strcompile.restype = C.c_void_p
-    lib.dtrace_elf_create.argtypes = [C.c_void_p, C.c_void_p, C.c_int,
-                                      C.c_int, C.c_char_p, C.c_char_p]
-    lib.dtrace_close.argtypes = [C.c_void_p]
-    error = C.c_int()
-    hdl = lib.dtrace_open(3, 3, C.byref(error))	# VERSION 3; NODEV | NOSYS
-    assert hdl, ('dtrace_open', error.value)
-    try:
-        lib.dtrace_enable_hypertrace(hdl)
-        prog = lib.dtrace_program_strcompile(hdl, program, 4, 0x1004, 0, None)
-        assert prog, ('compile', program)	# NAME; NOLIBS | ZDEFS
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            message = C.create_string_buffer(512)
-            assert lib.dtrace_elf_create(hdl, prog, 1, fd, os.fsencode(path),
-                                         message) == 0, message.value
-        finally:
-            os.close(fd)
-    finally:
-        lib.dtrace_close(hdl)
-    return Path(path).read_bytes()
+def guest_link(base, n):
+    """The guest's dtrace -Y: the linked program and its upload's source."""
+    linked = out / ('consumer-elf-path.linked.%d' % n)
+    p = subprocess.run([str(CONSUMER_CLIENT), 'link', str(base), str(linked)],
+                       capture_output=True, text=True, timeout=60)
+    lines = p.stdout.split()
+    if p.returncode != 0 or len(lines) < 1:
+        raise RuntimeError('guest link failed: ' + p.stdout + p.stderr)
+    return linked.read_bytes(), bytes.fromhex(lines[-1])
 
 
 def consumer_elf_path(root, proc):
-    # dtrace -E end to end through the event loop and workers, in dtrace(1)'s
-    # order and with libdtrace's transport: the ELF-only receiver registers
-    # (HPI2), the compiled base program reaches the guest, each linked guest
-    # upload reaches the receiver, and the derived program it sends with
-    # dtrace_send_elf_derived() before its ACK is published to the guest.
-    # Regression: with the default single worker, the delivery to the
-    # receiver held the worker until the ACK, the derived upload found none,
-    # and dtrace -E timed out ("failed to dtrace_send_elf()").  Two queued
+    # dtrace -E end to end through the event loop and workers, with every
+    # program from the libdtrace under test: the ELF-only receiver registers
+    # (HPI2), the compiled base program reaches the guest, the guest links it
+    # as dtrace -Y does (new identity, base as source), each linked upload
+    # reaches the receiver, which derives the guest program from it as
+    # listen_dtraced() does and sends it with dtrace_send_elf_derived()
+    # before its ACK; the derived program is published to the guest.
+    # Regressions: with the default single worker, the delivery to the
+    # receiver held the worker until the ACK and the derived upload timed
+    # out; and the derived program named its own lineage (the linked
+    # program's identity) instead of its parent's source, which dtraced
+    # refused ("failed to dtrace_send_elf(): Protocol error").  Two queued
     # uploads model a glob target; the run uses the daemon's default -t.
     d = {'steps': []}
-    base = out / 'consumer-elf-path.base'
-    derived = out / 'consumer-elf-path.derived'
-    base_elf = compiled_elf(base, b'syscall::getpid:entry { @htmark1 = count(); }')
-    derived_elf = compiled_elf(derived, b'BEGIN { trace(1); }')
+    work = out / 'consumer-elf-path.work'
+    work.mkdir(exist_ok=True)
     writer = forwarder(root, 'guest-a', session=b'\x42', subs=2)	# ELFWRITE
     reader = forwarder(root, 'guest-a', session=b'\x42', subs=1)	# READDATA
     time.sleep(0.2)
     client = subprocess.Popen([str(CONSUMER_CLIENT),
-                               os.path.join(root, 'sub.sock'), str(base),
-                               str(derived), '2'], stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE, text=True)
+                               os.path.join(root, 'sub.sock'), str(work), '2'],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              text=True)
 
     def expect(*names):
         for name in names:
@@ -1182,26 +1155,35 @@ def consumer_elf_path(root, proc):
 
     try:
         writer.settimeout(15)
-        d['registered'] = expect('rx', 'registered', 'wx', 'base')
+        d['registered'] = expect('compiled', 'rx', 'registered', 'wx', 'base')
+        if not d['registered']:
+            return {'ok': False, **d}
         hdr, body = delivered(writer)
-        d['base_to_guest'] = body == base_elf
+        d['base_to_guest'] = body is not None and \
+            body == (work / 'base').read_bytes()
+        guest_base = out / 'consumer-elf-path.guest-base'
+        guest_base.write_bytes(body or b'')
         # bhyve acknowledges each delivery as it arrives
         received = []
         guest = threading.Thread(target=lambda: received.extend(
             delivered(writer)[1] for _ in range(2)), daemon=True)
         guest.start()
         d['guest_acks'] = []
-        for delivery in (801, 802):
+        d['guest_source'] = []
+        for n, delivery in enumerate((801, 802)):
+            linked, source = guest_link(guest_base, n)
+            d['guest_source'].append(source == hdr[40:56])
             guest_elf_frame(reader, delivery, bytes([delivery & 0xff]),
-                            hdr[40:56], 'guest-a',
-                            b'\x7fELF' + b'LINKED-guest-%d' % delivery * 8)
+                            source, 'guest-a', linked)
             d['guest_acks'].append(recv_exact(reader, 1).hex())
-        d['derived_sent'] = expect('ingress', 'derived', 'acked') and \
-            expect('ingress', 'derived', 'acked')
+        d['derived_sent'] = \
+            expect('ingress', 'parsed', 'vprog', 'derived', 'acked') and \
+            expect('ingress', 'parsed', 'vprog', 'derived', 'acked')
         guest.join(15)
-        d['derived_to_guest'] = [body is not None and
-                                 body.endswith(derived_elf)
-                                 for body in received]
+        d['derived_to_guest'] = [
+            body is not None and (work / ('derived.%d' % n)).exists() and
+            body.endswith((work / ('derived.%d' % n)).read_bytes())
+            for n, body in enumerate(received)]
         time.sleep(0.3)
         d['stats'] = stats(root)
     finally:
@@ -1214,6 +1196,7 @@ def consumer_elf_path(root, proc):
         writer.close()
         reader.close()
     ok = (d['registered'] and d['base_to_guest'] and
+          d['guest_source'] == [True, True] and
           d['guest_acks'] == ['01', '01'] and d['derived_sent'] and
           d['derived_to_guest'] == [True, True] and d['stats'] is not None and
           d['stats'][1] == 3 and d['client_status'] == 0)
