@@ -43,7 +43,18 @@ bsd_dtrace_cc_objects(name = "section_objects", library = ":objects", provider =
 cc_import(name = "section_traced", objects = [":section_regular_archive_objects"], pic_objects = [":section_pic_archive_objects"])
 cc_library(name = "util", deps = [":headers"] + select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced"], "//conditions:default": [":objects"]}),
     linkstatic = True, target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
-bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":traced", ":provider_link"], "//conditions:default": [":objects"]}),
+# Original Make archive has a separate provider without a synthetic static anchor.
+# The unanchored native spec is shared with the explicit experimental composition.
+bsd_dtrace_cc_objects(name = "archive_objects", library = ":objects", provider = ":section_provider",
+    provider_object = "logincap_provider", copy_runner = "//tools/build/bazel:dtrace_copy_runner")
+[filegroup(name = "archive_" + group, srcs = [":archive_objects"], output_group = group)
+ for group in ["regular_objects", "pic_objects", "regular_provider", "pic_provider"]]
+cc_import(name = "archive_provider_link", objects = [":archive_regular_provider"], pic_objects = [":archive_pic_provider"])
+cc_import(name = "archive_traced", objects = [":archive_regular_objects"], pic_objects = [":archive_pic_objects"])
+# Explicit static Make order leaves ordinary compilation/shared link order intact.
+_MAKE_STATIC_ORDER = ['_secure_path.o', 'cpuset.o', 'expand_number.o', 'flopen.o', 'fparseln.o', 'ftime.o', 'getlocalbase.o', 'gr_util.o', 'hexdump.o', 'humanize_number.o', 'kinfo_getfile.o', 'kinfo_getallproc.o', 'kinfo_getproc.o', 'kinfo_getvmmap.o', 'kinfo_getvmobject.o', 'kld.o', 'login_auth.o', 'login_cap.o', 'login_class.o', 'login_crypt.o', 'login_ok.o', 'login_times.o', 'login_tty.o', 'mntopts.o', 'pidfile.o', 'property.o', 'pty.o', 'pw_scan.o', 'pw_util.o', 'quotafile.o', 'realhostname.o', 'stub.o', 'trimdomain.o', 'uucplock.o', 'logincap_provider.o']
+bsd_component_archive(name = "static_archive", groups = select({_SECTION_TRACE: [":section_traced"], _TRACE: [":archive_traced", ":archive_provider_link"], "//conditions:default": [":objects"]}),
+    object_order = select({_SECTION_TRACE: [], _TRACE: [n[:-2] + ".nopic.o" for n in _MAKE_STATIC_ORDER], "//conditions:default": []}),
     target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
 bsd_configured_version_map(
     name = "version_map",
@@ -93,3 +104,10 @@ bsd_install_archive(
 
 # Original rescue replacement compilation; own source files remain here.
 exports_files(["login_class.c", "logincap_probes.h"], visibility = ["//rescue/librescue:__pkg__"])
+
+# Inspect the original traced archive contract; experimental/untraced modes
+# retain distinct composition and their separate qualification obligations.
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+bsd_python_test(name = "static_archive_contract_test", src = "static-archive-contract-test.py",
+    data = [":static_archive", "static-archive-contract.json", "Makefile", "logincap_provider.d"],
+    target_compatible_with = _PLATFORM + select({_SECTION_TRACE: ["@platforms//:incompatible"], _TRACE: [], "//conditions:default": ["@platforms//:incompatible"]}))

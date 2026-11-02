@@ -1178,3 +1178,15 @@ artifact/input result was changed; correction diagnostics retain old behavior.
 BUILD presence is 690/729 (39 remain), not full qualification. No helper/runtime/
 Make/frontend/signing/publication policy change; full architecture/world/kernel/
 packages/bootstrap/runtime/performance gates remain open and Make stays default.
+
+### Independent libutil static archive gate (November 2, 2026)
+
+[Qualification](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md): fresh original Make
+35-member archive/order/provider contract, 34 exact C allocated payloads and
+35 exact nondebug relocation sections; all nine DOF sections and actual probe
+site accounted for with independently verified path keys. Actual archive action
+order and all member hashes bound; eight maintained contract methods pass.
+Default DSO/rescue and explicit experimental archive/DSO regression bytes match.
+Keep default CcInfo anchored-provider static-consumer semantics as the next
+independent gate; full DSO/installed tests, untraced modes, full rescue/packages
+and runtime/performance remain open. Existing format-5 workflow only; Make default.

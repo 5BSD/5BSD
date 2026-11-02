@@ -5353,3 +5353,15 @@ and
 .Pa /rescue/rm
 for cross-filesystem helper execution.
 Those installed paths require separate qualification.
+.Pp
+The default traced
+.Cm //lib/libutil:static_archive
+target preserves original Make member order and its separate DTrace provider.
+.Cm //lib/libutil:static_archive_contract_test
+inspects that archive using the declared SDK interpreter and independent source
+contract; it executes no target objects.
+Request this test only for the default traced archive composition.
+The experimental section-associated composition remains a separate explicit
+build setting.
+This archive check does not establish default CcInfo static-consumer extraction,
+full DSO payload, installation or complete library parity.

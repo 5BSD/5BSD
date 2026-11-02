@@ -48180,3 +48180,11 @@ filename controls retain ordinary assertion-path differences explicitly. Origina
 generated Make on identical accepted inputs reproduces the entire static ELF.
 Fixed /rescue/cp and /rescue/rm execution for cross-filesystem mv remains an
 installed-path gate; full rescue/library/install/pkgbase parity remains open.
+
+The [default traced libutil archive](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
+now preserves original Make's 35-member order and separate unanchored provider.
+All 34 C members match original allocated sections; all 35 nondebug relocation
+sections match. Complete provider encoding/site differences are accounted for
+with verified path keys. Eight contract methods pass; default DSO/rescue and
+explicit experimental archive/DSO remain byte-identical to accepted captures.
+Default CcInfo static-consumer extraction and full DSO/install parity remain open.

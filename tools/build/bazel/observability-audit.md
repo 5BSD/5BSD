@@ -10456,3 +10456,15 @@ payloads and relocations. No probes were added. No hardware/RDMA/TLS/storage
 offload runtime, live events, audit completeness or instrumentation-absence
 claim is established. Raw bindings: bazel-chelsio-modules-review-r1-20261102/
 observability-review.json.
+
+## libutil original static provider (November 2, 2026)
+
+[LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md](LIBUTIL-STATIC-ARCHIVE-QUALIFICATION.md)
+records the separate original logincap provider in the default component archive.
+The setusercontext schema/argument mapping and actual ET_REL function/NOP site
+at offset 560 pass the unchanged maintained checker. All nine DOF section
+payloads/descriptors are accounted for with verified FNV path keys and checked
+string/alignment extents. No probes were removed or added; synthetic static
+anchor removal applies to this component archive only. Existing default CcInfo
+provider semantics, activation/registration, event delivery and audit coverage
+remain separate gates. Raw hash bindings and inventories are retained.
