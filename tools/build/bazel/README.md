@@ -47627,3 +47627,8 @@ pass original Make installation and safe syntax checks; see
 and tracing/world/package limits.
 
 [GENERATED-CORE-KERNEL-QUALIFICATION.md](GENERATED-CORE-KERNEL-QUALIFICATION.md) records the generated-object debug/CTF repair, clock SDK prerequisites, independent same-policy Make references and strict six-object parity. Complete native kernel linking and system gates remain open.
+
+Native LLDB TableGen produces 19 original headers with exact Make output, four
+compiler-code matches and explicit bootstrap/runtime limits; see
+[LLDB-GENERATORS-QUALIFICATION.md](LLDB-GENERATORS-QUALIFICATION.md). The private
+library, CLI programs and installed debugger remain open.

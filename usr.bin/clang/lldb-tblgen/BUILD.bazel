@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_llvm_targets.bzl", "bsd_llvm_targets")
+load("//tools/build/bazel:bsd_clang_defaults.bzl", "bsd_clang_defaults")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_sources")
+bsd_llvm_targets(name = "registered_targets")
+bsd_clang_defaults(name = "compiler_defaults")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "objects", srcs = ["//contrib/llvm-project/lldb:utils/TableGen/" + source for source in ["LLDBOptionDefEmitter.cpp", "LLDBPropertyDefEmitter.cpp", "LLDBTableGen.cpp", "LLDBTableGenUtils.cpp"]],
+    deps = [":registered_targets", ":compiler_defaults", "//contrib/llvm-project/llvm/include:headers", "//contrib/llvm-project/lldb:tablegen_headers", "//contrib/llvm-project/libcxx/include:headers", "//tools/build:bootstrap_stddef_headers"],
+    copts = ['-pipe', '-fno-common', '-Wno-format-zero-length', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Qunused-arguments', '-Wno-c++20-extensions', '-Wno-c++23-lambda-attributes', '-Wno-nullability-completeness'] + ["-std=c++17", "-nostdinc++", "-fno-exceptions", "-fno-rtti", "-fvisibility-inlines-hidden", "-ffunction-sections", "-fdata-sections"] + select({"//tools/build/bazel/config:llvm_full_debuginfo_enabled": ["-g"], "//conditions:default": ["-gline-tables-only"]}),
+    local_defines = ["__STDC_CONSTANT_MACROS", "__STDC_FORMAT_MACROS", "__STDC_LIMIT_MACROS", "HAVE_VCS_VERSION_INC"] + select({"//tools/build/bazel/config:llvm_assertions_enabled": [], "//conditions:default": ["NDEBUG"]}),
+    features = ["-bsd_ssp"], target_compatible_with = _PLATFORM)
+# Build-time tool: the root Make graph selects its llvmminimal bootstrap form.
+# Its declared native runtime differs from Make's host-static bootstrap runtime.
+cc_binary(
+    name = "bootstrap",
+    deps = [":objects", "//contrib/llvm-project/llvm/lib:llvmminimal",
+            "//lib/libc:shared_link_interface", "//lib/libc++:cxx", "//lib/libcxxrt:cxxrt",
+            "//lib/libexecinfo:execinfo", "//lib/ncurses/tinfo:tinfo", "//lib/libthr:thr"],
+    dynamic_deps = ["//lib/libc:c_shared", "//lib/libsys:sys_shared",
+                    "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared",
+                    "//lib/libexecinfo:execinfo_shared", "//lib/libelf:elf_shared",
+                    "//lib/ncurses/tinfo:tinfo_shared", "//lib/libthr:thr_shared"],
+    features = ["bsd_test_runtime_paths"],
+    linkopts = ["-Wl,--gc-sections"],
+    target_compatible_with = _PLATFORM,
+    visibility = ["//visibility:public"],
+)
+bsd_component_sources(name = "source_inventory", groups = [":objects"], visibility = ["//visibility:public"])

@@ -465,3 +465,14 @@ obligations. Earlier receipts remain historical; no SDK receipt was rebound.
 ## Generated core checkpoint (2026-11-02)
 
 Five generated built-ins and clock calibration pass source/compiler/prerequisite/code/CTF/runtime-section and 5,091 strict relocation comparisons. The initial successful build with missing debug/CTF was explicitly rejected; typed shared policy now supplies them. Config/version references use identical declared inputs without normalizing payloads. Clock declares selected-SDK SSP availability and opt-only O3. Query r47/reconciliation r40 leaves no missing or weak object-name identities in the 2,462-product configured inventory; 53 generated-name matches retain separate KOBJ/RPC proofs. See GENERATED-CORE-KERNEL-QUALIFICATION.md. Next: complete native kernel aggregation/link/order/post-processing/install and per-object debug/CTF validation. Modules, other configurations/architectures, world, packages, bootstrap, runtime and performance remain open.
+
+## LLDB generation milestone (2026-11-02)
+
+The root-selected four-source TableGen producer and 19 library headers pass
+native/Make output, eight actual compiler-policy, 5,882 prerequisite-hash and
+789 relocation checks. The original bootstrap stddef wrapper is now declared.
+Host-static Make versus declared-native dynamic execution is explicit; this is
+not installed LLDB completion. Next: 756-source private liblldb, two CLI option
+headers, programs, tests/install/package context and ancestor MK_LLDB selection.
+See LLDB-GENERATORS-QUALIFICATION.md; original ordinary-leaf and strict input
+failures are retained. No host installation or debugger activation occurred.

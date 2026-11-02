@@ -1,0 +1,195 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_tablegen.bzl", "bsd_tablegen")
+
+# Original liblldb Makefile's ordered generated-header inventory.
+bsd_tablegen(
+    name = 'CommandOptions.inc',
+    src = "//contrib/llvm-project/lldb:source/Commands/Options.td",
+    includes = ['//contrib/llvm-project/lldb:source/Commands/OptionsBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Commands"],
+    flags = ["-gen-lldb-option-defs"],
+    output = 'CommandOptions.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'CoreProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Core/CoreProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Core"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'CoreProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'CorePropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Core/CoreProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Core"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'CorePropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'InterpreterProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Interpreter/InterpreterProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Interpreter"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'InterpreterProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'InterpreterPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Interpreter/InterpreterProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Interpreter"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'InterpreterPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'JITLoaderGDBProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/JITLoader/GDB/JITLoaderGDBProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/JITLoader/GDB"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'JITLoaderGDBProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'JITLoaderGDBPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/JITLoader/GDB/JITLoaderGDBProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/JITLoader/GDB"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'JITLoaderGDBPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'LanguageCPlusPlusProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Language/CPlusPlus/LanguageCPlusPlusProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Language/CPlusPlus"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'LanguageCPlusPlusProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'LanguageCPlusPlusPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Language/CPlusPlus/LanguageCPlusPlusProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Language/CPlusPlus"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'LanguageCPlusPlusPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'PlatformQemuUserProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Platform/QemuUser/PlatformQemuUserProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Platform/QemuUser"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'PlatformQemuUserProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'PlatformQemuUserPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Platform/QemuUser/PlatformQemuUserProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Platform/QemuUser"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'PlatformQemuUserPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'ProcessGDBRemoteProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Process/gdb-remote/ProcessGDBRemoteProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Process/gdb-remote"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'ProcessGDBRemoteProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'ProcessGDBRemotePropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/Process/gdb-remote/ProcessGDBRemoteProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/Process/gdb-remote"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'ProcessGDBRemotePropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolFileDWARFProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolFile/DWARF/SymbolFileDWARFProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolFile/DWARF"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'SymbolFileDWARFProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolFileDWARFPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolFile/DWARF/SymbolFileDWARFProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolFile/DWARF"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'SymbolFileDWARFPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolLocatorDebuginfodProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolLocator/Debuginfod/SymbolLocatorDebuginfodProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolLocator/Debuginfod"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'SymbolLocatorDebuginfodProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'SymbolLocatorDebuginfodPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Plugins/SymbolLocator/Debuginfod/SymbolLocatorDebuginfodProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Plugins/SymbolLocator/Debuginfod"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'SymbolLocatorDebuginfodPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'TargetProperties.inc',
+    src = "//contrib/llvm-project/lldb:source/Target/TargetProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Target"],
+    flags = ["-gen-lldb-property-defs"],
+    output = 'TargetProperties.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+bsd_tablegen(
+    name = 'TargetPropertiesEnum.inc',
+    src = "//contrib/llvm-project/lldb:source/Target/TargetProperties.td",
+    includes = ['//contrib/llvm-project/lldb:include/lldb/Core/PropertiesBase.td'],
+    include_dirs = ["contrib/llvm-project/lldb/source/Target"],
+    flags = ["-gen-lldb-property-enum-defs"],
+    output = 'TargetPropertiesEnum.inc',
+    tool = "//usr.bin/clang/lldb-tblgen:bootstrap",
+)
+
+filegroup(name = "generated_headers", srcs = [':CommandOptions.inc', ':CoreProperties.inc', ':CorePropertiesEnum.inc', ':InterpreterProperties.inc', ':InterpreterPropertiesEnum.inc', ':JITLoaderGDBProperties.inc', ':JITLoaderGDBPropertiesEnum.inc', ':LanguageCPlusPlusProperties.inc', ':LanguageCPlusPlusPropertiesEnum.inc', ':PlatformQemuUserProperties.inc', ':PlatformQemuUserPropertiesEnum.inc', ':ProcessGDBRemoteProperties.inc', ':ProcessGDBRemotePropertiesEnum.inc', ':SymbolFileDWARFProperties.inc', ':SymbolFileDWARFPropertiesEnum.inc', ':SymbolLocatorDebuginfodProperties.inc', ':SymbolLocatorDebuginfodPropertiesEnum.inc', ':TargetProperties.inc', ':TargetPropertiesEnum.inc'], visibility = ["//visibility:public"])

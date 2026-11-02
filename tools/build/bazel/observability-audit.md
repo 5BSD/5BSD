@@ -9901,3 +9901,12 @@ behavior remain unqualified. See DWATCH-QUALIFICATION.md for immutable evidence.
 ## Generated core and clock calibration (2026-11-02)
 
 The bounded scan records 333 call-shaped tracing/audit markers in generated vnode code and two clock timestamp enter/exit wrappers. All five generated source bodies match independent same-policy Make output; six object machine-code/CTF/runtime sections and strict relocations match. This preserves existing hooks without establishing live tracing or audit completeness. See GENERATED-CORE-KERNEL-QUALIFICATION.md and retained observability.json.
+
+## LLDB generator inputs (2026-11-02)
+
+Four original TableGen C++ sources and all .td inputs remain unchanged. Nineteen
+generated library headers equal original Make output; code and 789 allocated
+relocations match with hash-bound diagnostic filenames. The safe producer
+checks never attach/launch a debugging target or activate tracing. This does
+not establish liblldb/LLDB debugger or tracing behavior; those remain open.
+See LLDB-GENERATORS-QUALIFICATION.md for actual and cached execution bindings.
