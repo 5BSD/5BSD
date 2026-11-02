@@ -9810,3 +9810,7 @@ The bounded source-bound scan of 60 converted Hyper-V, Xen and VirtIO files find
 ## Storage-controller built-ins (2026-11-02)
 
 The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in five of 62 converted controller files. This is neither runtime coverage nor proof of missing shared hooks. See STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Ethernet built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 73 converted files. This is neither runtime coverage nor proof of missing shared hooks. See ETHERNET-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.

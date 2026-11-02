@@ -335,3 +335,9 @@ bsd_source_headers(name = "device_io_kernel_usb_debug_headers", hdrs = ["db_sym.
 # Physical prerequisites for native virtualization built-ins.
 bsd_source_headers(name = "virtualization_kernel_xen_intr_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_if_igc_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+bsd_source_headers(name = "ethernet_kernel_bxe_debug_headers", hdrs = ["db_lex.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])

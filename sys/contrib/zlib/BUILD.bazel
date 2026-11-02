@@ -23,3 +23,7 @@ bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["zc
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_spl_zlib_headers", hdrs = ["zconf.h", "zlib.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical prerequisites for native Ethernet built-ins.
+bsd_source_headers(name = "ethernet_kernel_bxe_headers", hdrs = ["zconf.h", "zlib.h"],
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
