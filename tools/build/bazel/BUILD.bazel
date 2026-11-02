@@ -183,3 +183,6 @@ exports_files(["kernel_inventory_validate.py"])
 
 bsd_python_test(name = "kernel_inventory_validate_test",
     src = "kernel-inventory-validate-test.py", data = ["kernel_inventory_validate.py"])
+
+load(":bsd_pkg_create_test.bzl", "bsd_pkg_create_test")
+bsd_pkg_create_test(name = "pkg_create_directories_test")

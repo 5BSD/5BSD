@@ -11,6 +11,14 @@ import tarfile
 import tempfile
 
 
+def directory_package(record, suffix_tags):
+    tags = record["tags"]
+    bases = [t[len("package="):] for t in tags if t.startswith("package=")]
+    if len(bases) != 1 or not bases[0] or len(set(tags)) != len(tags):
+        raise ValueError("invalid directory package tags")
+    return bases[0] + "".join("-" + tag for tag in suffix_tags if tag in tags)
+
+
 def create(request):
     versions = re.findall(r"^#define\s+__FreeBSD_version\s+(\d+)\s*$", Path(request["osversion_header"]).read_text(), re.M)
     if len(versions) != 1:
@@ -43,7 +51,8 @@ def create(request):
                     if record["destination"] in expected:
                         raise ValueError("duplicate package layout path")
                     expected[record["destination"]] = record
-            if set(indexed) - set(dirs) != set(expected):
+            payload_paths = {path for path, record in expected.items() if record["type"] != "dir"}
+            if set(indexed) - set(dirs) != payload_paths or not set(expected).issubset(indexed):
                 raise ValueError("archive and package layout payload inventories differ")
             if "/" not in dirs:
                 raise ValueError("archive root directory required")
@@ -56,6 +65,10 @@ def create(request):
                 if (member.uname, member.gname, member.mode) != (record["owner"], record["group"], int(record["mode"], 8)):
                     raise ValueError("archive metadata differs from package layout")
                 kind = record["type"]
+                if kind not in ("file", "dir", "symlink", "hardlink"):
+                    raise ValueError("unsupported package layout type")
+                if kind == "dir" and not member.isdir():
+                    raise ValueError("directory payload expected")
                 if kind == "file" and not member.isfile():
                     raise ValueError("regular payload expected")
                 if kind == "symlink" and (not member.issym() or member.linkname != record["link"]):
@@ -71,6 +84,18 @@ def create(request):
                     if expected[target]["type"] != "file" or not member.islnk() or member.linkname != target.lstrip("/"):
                         raise ValueError("hardlink payload differs")
         owned_directories = {name: set() for name in request["packages"]}
+        # Explicit layout records own their directories directly. The archive's
+        # optional directory_packages sidecar supplements source mtree ownership;
+        # it need not repeat directories already declared by the layout.
+        for name, entries in request["packages"].items():
+            for record in entries:
+                if record["type"] != "dir":
+                    continue
+                if directory_package(record, request["suffix_tags"]) != name:
+                    raise ValueError("directory package ownership differs from layout")
+                path = record["destination"]
+                owned_directories[name].add(path)
+                owned_directories[name].update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")
         policy = json.loads(Path(request["directory_metadata"]).read_text())
         if policy.get("format") != 1:
             raise ValueError("unsupported directory metadata format")
@@ -83,11 +108,11 @@ def create(request):
             meta = dirs[path]
             if (meta.uname, meta.gname, meta.mode) != (record["owner"], record["group"], int(record["mode"], 8)):
                 raise ValueError("archive directory differs from package directory policy")
-            tags = record["tags"]
-            bases = [t[len("package="):] for t in tags if t.startswith("package=")]
-            if len(bases) != 1 or not bases[0] or len(set(tags)) != len(tags):
-                raise ValueError("invalid directory package tags")
-            name = bases[0] + "".join("-" + tag for tag in request["suffix_tags"] if tag in tags)
+            declared = expected.get(path)
+            if declared is not None and (declared["type"] != "dir" or
+                    set(declared["tags"]) != set(record["tags"])):
+                raise ValueError("directory package ownership differs from layout")
+            name = directory_package(record, request["suffix_tags"])
             if name not in owned_directories:
                 raise ValueError("directory belongs to undeclared package: " + name)
             owned_directories[name].add(path)
@@ -108,6 +133,10 @@ def create(request):
                 for value in (path, record["owner"], record["group"], record["mode"]):
                     if any(c in value for c in "\n\r(),"):
                         raise ValueError("unsupported plist field")
+                if record["type"] == "dir":
+                    # Directory ownership and ancestor closure are emitted once below.
+                    parents.add(path)
+                    continue
                 kind = "config" if "config" in record["tags"] else ""
                 lines.append("@" + kind + "(" + ",".join([record["owner"], record["group"], record["mode"], ""]) + ") " + path)
                 parents.update(str(p) for p in PurePosixPath(path).parents if str(p) != "/")

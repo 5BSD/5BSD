@@ -19,6 +19,14 @@ alternate and colocated-debug layouts; see
 Next kernel work is pkgbase integration and module/configuration/architecture
 qualification, followed by VM/runtime and performance gates. Full world and
 bootstrap/publication remain open; Make stays production/default.
+
+The package driver now preserves first-class directory layout records, including
+empty directories, alongside optional mtree ownership metadata. Its registered
+real-pkg/BSD-tar Bazel regression passes three valid layouts and three rejection
+cases. Kernel/GDB component packages also preserve the captured payloads; this
+does not close complete kernel packaging. See
+[PACKAGE-DIRECTORY-QUALIFICATION.md](PACKAGE-DIRECTORY-QUALIFICATION.md).
+
 Earlier component checkpoints below are retained historical evidence.
 
 Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local
