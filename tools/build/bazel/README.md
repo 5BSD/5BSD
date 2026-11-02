@@ -47596,3 +47596,8 @@ constructor-time checks and eleven reserved/malformed-key analysis tests.
 [PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md](PLATFORM-SUPPORT-KERNEL-QUALIFICATION.md) records 56 more native platform built-ins and the source-derived ACPI wake-payload generator chain, with exact machine code/CTF and checked inputs/relocations. Runtime and full-system gates remain open.
 
 [MONITORING-DEVICES-KERNEL-QUALIFICATION.md](MONITORING-DEVICES-KERNEL-QUALIFICATION.md) records 52 more native kernel objects covering ACPI OS services, hardware monitoring/tracing, netmap and service/audit support. Exact code/CTF and compiler/input/relocation checks pass; runtime/full-system gates remain open.
+
+[PAM-TESTS-QUALIFICATION.md](PAM-TESTS-QUALIFICATION.md) records all seven original
+PAM test program/install producers, exact Make compiler/ELF/install contracts and
+fourteen safe wrapper passes. Ten original installed-path/root cases remain
+disposable-guest gates; full PAM/world/pkgbase completion is not claimed.

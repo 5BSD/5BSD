@@ -407,3 +407,12 @@ configurations/architectures and whole-world/pkgbase gates.
 ## Monitoring/device checkpoint (2026-11-02)
 
 52 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks. Reconciliation r31 leaves 79 missing link products and six weaker matches. See MONITORING-DEVICES-KERNEL-QUALIFICATION.md. Full linking, generators/tracing remainder, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+### Original PAM test inventory (2026-11-02)
+
+PAM-TESTS-QUALIFICATION.md closes the three missing original program producers
+and seven-program installation inventory. Nineteen exact object-policy/payload
+checks, seven ordered ELF contracts, twenty install records and fourteen safe
+wrapper results pass. Retain nine installed-path policy cases plus one root
+accounting case for disposable-guest execution, then PAM aggregate reconciliation
+and full world/pkgbase gates. No source assertions or requirements were disabled.
