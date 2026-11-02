@@ -17,6 +17,20 @@ Raw hashes/commands and independent ELF embedding comparison:
 /usr/obj/usr/src/bazel-linux64-generated-input-review-r1-20261102/original-vdso-inputs.json.
 This is original-side evidence; no native or runtime qualification is claimed.
 
+## Exact helper dependency controls
+
+Six additional original compiler replays cover linux_genassym, linux_locore and
+linux_vdso_gtod in both profiles. They add only dependency-reporting flags and a
+private output filename while retaining the original working directory, source,
+compiler and semantic flags. All six complete ELF objects reproduce their
+originals byte-for-byte, and the original artifacts remain unchanged. Their
+actual compiler dependency files record 280 occurrences for native declaration
+work. This closes an inventory gap in custom recipes that did not emit .d files;
+it does not qualify a native helper or installed Linuxulator behavior.
+
+Evidence: /usr/obj/usr/src/bazel-linux64-helper-dependency-controls-r1-20261102/
+results.json, original/actual command vectors, output and dependency hashes.
+
 ## Native implementation requirements
 
 - Reuse existing syscall-table generation from syscalls.master/syscalls.conf;

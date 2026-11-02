@@ -51,6 +51,23 @@ separate-debug-comparison.json. Current verifier commands, tool hash, status and
 logs: bazel-compat-services-modules-review-r1-20261102/separate-debug-verify.*.
 The section reader, direct observer and raw input files remain bound in reviews.
 
+## First decoded DIE comparison
+
+A retained LLVM 19 --debug-info --show-form comparison of the actual cfiscsi
+native/original pair contains 37,006 decoded lines. After removing only the
+first diagnostic filename line, exactly 289 lines differ, all DW_AT_comp_dir
+or DW_AT_decl_file attributes; every other decoded line is exact. No source
+paths were normalized, substituted or classified as equivalent. The raw
+--debug-line dumps and their diff are retained as well. Generated-header paths
+include Bazel virtual-include directories, so fixing architecture-header
+spellings alone would not close source lookup. This one-module result does
+not establish equivalence for the other 116 pairs or installed source lookup.
+
+Evidence: bazel-compat-services-modules-review-r1-20261102/cfiscsi-dwarf-reader/
+comparison.json and raw stdout/stderr files, bound to the actual reader/tool and
+input hashes. This is a narrower decoded comparison, not a replacement for the
+required canonical layout, source-resolution and debugger gates below.
+
 ## Required before claiming complete debug parity
 
 1. Define a consistent canonical source/debug layout, independently of temporary
