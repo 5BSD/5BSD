@@ -79,3 +79,7 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_pci_headers", hdrs = ["p
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_timer_headers", hdrs = ["pcivar.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

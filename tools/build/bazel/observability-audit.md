@@ -9684,3 +9684,12 @@ finding that shared kernel instrumentation is missing. AML evaluation, firmware
 events and ACPI diagnostics require isolated full-kernel/hardware qualification.
 Evidence: bazel-kernel-acpica-engine-review-r1-20261102/observability.json under
 /usr/obj/usr/src; see ACPICA-ENGINE-KERNEL-QUALIFICATION.md.
+
+## ISCI built-in batch (2026-11-02)
+
+109 source-hash-bound ISCI/SCIL files have no call-shaped DTrace/audit/CTR markers
+in the bounded scan. Absence does not prove missing shared instrumentation.
+No production instrumentation changed. Controller attach, command completion,
+reset/error recovery and disk I/O need relevant hardware/runtime qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-isci-review-r1-20261102/observability.json;
+see ISCI-KERNEL-QUALIFICATION.md for build evidence and limitations.

@@ -15,3 +15,7 @@ bsd_source_headers(name = "network_support_headers", hdrs = ["led.h"], visibilit
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["led.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["led.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

@@ -613,3 +613,7 @@ bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["in.h"],
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["in.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["in.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

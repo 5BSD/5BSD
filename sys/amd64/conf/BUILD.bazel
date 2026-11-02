@@ -517,3 +517,10 @@ cc_library(name = "acpica_core_kernel_opt_vm_header", hdrs = [":opt_vm"],
 # The ACPICA engine uses the configured GENERIC ACPI option header.
 cc_library(name = "acpica_engine_opt_acpi_header", hdrs = [":opt_acpi"],
     strip_include_prefix = "generic_options", visibility = ["//sys/contrib/dev/acpica:__pkg__"])
+
+# ISCI options are extracted from the selected config tree, including empty files.
+bsd_tree_file(name = "opt_isci", tree = ":generic_config", member = "opt_isci.h",
+    output = "generic_options/opt_isci.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_isci_header", hdrs = [":opt_isci"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/isci:__pkg__"])

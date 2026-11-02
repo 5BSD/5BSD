@@ -906,3 +906,9 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_hpet_headers", hdrs = ["vm.h"
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_pxm_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])
+bsd_source_headers(name = "isci_kernel_isci_oem_parameters_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

@@ -1135,3 +1135,7 @@ bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["ethernet.
 # Debugger core built-in prerequisites.
 bsd_source_headers(name = "ddb_core_kernel_db_sym_headers", hdrs = ["vnet.h"],
     visibility = ["//sys/ddb:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

@@ -129,6 +129,15 @@ and limitations. Known kernel reconciliation now has 835 source matches plus six
 name-only matches among 2,466 products; 1,625 remain unmatched. Full kernel/world,
 all architectures, package, runtime and performance gates remain open.
 
+## ISCI checkpoint (2026-11-02)
+
+109 additional amd64 GENERIC Intel SAS built-ins pass native compilation,
+code/CTF, actual input and relocation checks. Source-owned header closures and
+actual config/interface producers preserve maintained Make policy. Known graph
+reconciliation now has 944 source matches plus six name-only matches among
+2,466 final products; 1,516 remain unmatched. See ISCI-KERNEL-QUALIFICATION.md.
+Full-system, module, other-architecture, runtime and performance gates stay open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

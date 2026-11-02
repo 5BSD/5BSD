@@ -47499,3 +47499,7 @@ relocation review and remaining firmware/runtime/system gates.
 [ACPICA-ENGINE-KERNEL-QUALIFICATION.md](ACPICA-ENGINE-KERNEL-QUALIFICATION.md)
 records 156 native engine objects, upstream source ownership, exact code/CTF/input
 checks, affected userland action/build/smoke checks and remaining system gates.
+
+[ISCI-KERNEL-QUALIFICATION.md](ISCI-KERNEL-QUALIFICATION.md) records 109 native
+Intel SAS built-ins, source-owned prerequisites, exact code/CTF and compiler-input
+checks, bounded filename/relocation differences and remaining controller gates.
