@@ -47586,3 +47586,7 @@ Make-matching file/directory records, and preserved config/package ownership.
 Authentication, family/world composition and final package production remain open.
 
 [CODECS-CRYPTO-KERNEL-QUALIFICATION.md](CODECS-CRYPTO-KERNEL-QUALIFICATION.md) records 73 additional native Kernel codec/crypto built-ins, original interface generators and source-owned port headers, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[ATF-ENVIRONMENT-QUALIFICATION.md](ATF-ENVIRONMENT-QUALIFICATION.md) records
+source-owned ATF process environments through RunEnvironmentInfo: two actual
+constructor-time checks and eleven reserved/malformed-key analysis tests.

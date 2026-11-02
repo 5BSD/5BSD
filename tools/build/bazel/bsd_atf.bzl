@@ -3,6 +3,13 @@
 def _atf_test(ctx):
     if ctx.attr.body_timeout_seconds < 0 or ctx.attr.cleanup_timeout_seconds < 0:
         fail("ATF phase deadlines must be nonnegative seconds")
+    # Explicit rule-owned environment reaches the runner and its children before
+    # their constructors. Keep generated protocol/isolation variables authoritative.
+    for key in ctx.attr.test_environment:
+        if not key or key[0] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_" or any([c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789" for c in key.elems()]):
+            fail("invalid ATF environment variable: " + key)
+        if key.startswith("BSD_ATF_") or key.startswith("TEST_") or key.startswith("RUNFILES_") or key.startswith("ATF_") or key.startswith("LC_") or key in ["PATH", "HOME", "TMPDIR", "LD_LIBRARY_PATH", "LANG", "XML_OUTPUT_FILE"]:
+            fail("reserved ATF environment variable: " + key)
     links = {}
     environment = {
         "BSD_ATF_BODY_TIMEOUT": str(ctx.attr.body_timeout_seconds),
@@ -14,6 +21,7 @@ def _atf_test(ctx):
         "BSD_ATF_HARNESS": ctx.file.body.basename,
         "BSD_ATF_CONFIG_COUNT": str(len(ctx.attr.config_files)),
     }
+    environment.update(ctx.attr.test_environment)
     if ctx.file.loader:
         if ctx.attr.interface != "program":
             fail("explicit ATF loader requires the program interface")
@@ -87,6 +95,7 @@ bsd_atf_test = rule(
     test = True,
     attrs = {
         "case_name": attr.string(mandatory = True),
+        "test_environment": attr.string_dict(doc = "Explicit test process environment; runner/Bazel isolation keys are reserved."),
         "cleanup": attr.bool(default = False),
         "required_user": attr.string(default = "", values = ["", "root", "unprivileged"],
             doc = "Precondition checked by the runner before executing any test body."),

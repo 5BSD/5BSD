@@ -5237,3 +5237,15 @@ configuration or qualify final package creation.
 See
 .Pa tools/build/bazel/PAM-POLICY-QUALIFICATION.md
 for captured default and reduced configuration evidence and remaining gates.
+.Pp
+Native ATF rules accept a source-owned
+.Va test_environment
+string dictionary through the existing Bazel RunEnvironmentInfo provider.
+Values are present before runner and test process startup.
+Runner isolation and protocol variables, Bazel test/runfiles variables and the
+XML report destination are reserved; malformed names are rejected.
+The empty default retains existing behavior.
+No new frontend, signing or publication input is required.
+See
+.Pa tools/build/bazel/ATF-ENVIRONMENT-QUALIFICATION.md
+for constructor-time and analysis rejection evidence.
