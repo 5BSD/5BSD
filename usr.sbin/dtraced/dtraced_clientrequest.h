@@ -68,7 +68,10 @@ class client_request {
 	std::array<uint8_t, DTRACED_RELEASE_ATTESTED_SIZE> release_reply{};
 	bool release_ready = false;
 	bool release_signed = false;
+	const char *refused_check = nullptr;
+	int refused_line = 0;
 
+	bool refuse(int, const char *, int);
 	bool handle_elfmsg(void);
 	bool handle_killmsg(void);
 	bool handle_kill_appliedmsg(void);
@@ -98,6 +101,13 @@ class client_request {
 	~client_request() = default;
 
 	bool handle(void);
+	/* The check that refused the request, if one did. */
+	const char *refusal(int *line) const
+	{
+		if (line != nullptr)
+			*line = this->refused_line;
+		return (this->refused_check);
+	}
 	const dtraced_delivery_status_t *status_response(void) const
 	{
 		return (status_ready ? &status_reply : nullptr);

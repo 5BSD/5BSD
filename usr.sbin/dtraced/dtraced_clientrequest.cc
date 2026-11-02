@@ -70,6 +70,9 @@ static_assert(DTRACED_MSGHDRSIZE + DTRACED_HANDOFF_IMPORT_BINDING_SIZE +
 
 namespace dtraced {
 
+/* A refusal names its check for the reader's log (job::read_data()). */
+#define	REFUSE(error, check)	this->refuse((error), (check), __LINE__)
+
 static durable_delivery
 delivery_from_observation(const client_fd &sender, const dtraced_hdr_t &header)
 {
@@ -98,6 +101,15 @@ client_request::client_request(state &_s, dtraced_hdr_t &h, uchar *b,
 }
 
 bool
+client_request::refuse(int error, const char *check, int line)
+{
+	this->refused_check = check;
+	this->refused_line = line;
+	errno = error;
+	return (false);
+}
+
+bool
 client_request::handle_installedmsg(void)
 {
 	const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
@@ -116,8 +128,8 @@ client_request::handle_installedmsg(void)
 	    memchr(this->hdr.installed.name, '\0',
 	    sizeof(this->hdr.installed.name)) == nullptr ||
 	    strcmp(this->hdr.installed.name, this->origin->ident) != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "INSTALLED from an unexpected peer or VM name"));
 	}
 	installed_receipt receipt{};
 	receipt.delivery_id = this->hdr.installed.delivery_id;
@@ -132,13 +144,11 @@ client_request::handle_installedmsg(void)
 	    (this->origin->vmid != receipt.vmid ||
 	    this->origin->vm_epoch != receipt.epoch ||
 	    !this->origin->current_vm_attestation())) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "INSTALLED for another VM lifetime"));
 	}
 	std::lock_guard revocations(this->s.revocationmtx);
 	if (this->s.outbounddir == nullptr) {
-		errno = EINVAL;
-		return (false);
+		return (REFUSE(EINVAL, "no outbound directory"));
 	}
 	int revoked = this->s.outbounddir->source_revoked_for_vm(
 	    receipt.source_id.data(), receipt.vmid, receipt.epoch);
@@ -200,8 +210,8 @@ client_request::handle_installedmsg(void)
 			    (sent.observed &&
 			    (sent.observation.vmid != receipt.vmid ||
 			    sent.observation.epoch != receipt.epoch))) {
-				errno = EPROTO;
-				return (false);
+				return (REFUSE(EPROTO,
+				    "INSTALLED names another delivery"));
 			}
 			/* The disk transition must complete before bhyve gets an ACK. */
 			if (!this->s.outbounddir->record_delivery(durable,
@@ -241,20 +251,18 @@ client_request::handle_uninstalledmsg(void)
 	    memchr(this->hdr.installed.name, '\0',
 	    sizeof(this->hdr.installed.name)) == nullptr ||
 	    strcmp(this->hdr.installed.name, this->origin->ident) != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "UNINSTALLED from an unexpected peer or VM name"));
 	}
 	if (this->s.is_control_machine() &&
 	    (this->origin->vmid != this->hdr.installed.vmid ||
 	    this->origin->vm_epoch != this->hdr.installed.epoch ||
 	    !this->origin->current_vm_attestation())) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "UNINSTALLED for another VM lifetime"));
 	}
 	std::lock_guard revocations(this->s.revocationmtx);
 	if (this->s.outbounddir == nullptr) {
-		errno = EINVAL;
-		return (false);
+		return (REFUSE(EINVAL, "no outbound directory"));
 	}
 	durable_delivery durable = delivery_from_observation(
 	    *this->origin, this->hdr);
@@ -302,8 +310,8 @@ client_request::handle_uninstalledmsg(void)
 			    (it->observed &&
 			    (it->observation.vmid != this->hdr.installed.vmid ||
 			    it->observation.epoch != this->hdr.installed.epoch))) {
-				errno = EPROTO;
-				return (false);
+				return (REFUSE(EPROTO,
+				    "UNINSTALLED names another delivery"));
 			}
 			if (it->accepted)
 				candidate->outbound_deliveries.erase(it);
@@ -341,8 +349,7 @@ client_request::handle_statusmsg(void)
 	    this->origin->vm_epoch != this->hdr.installed.epoch ||
 	    !this->origin->current_vm_attestation() ||
 	    this->s.outbounddir == nullptr) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "STATUS from an unattested peer"));
 	}
 	durable_delivery durable = delivery_from_observation(
 	    *this->origin, this->hdr);
@@ -452,8 +459,8 @@ client_request::handle_ingress_statusmsg(void)
 	    !this->origin->current_vm_attestation() ||
 	    this->s.inbounddir == nullptr ||
 	    this->s.outbounddir == nullptr) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "INGRESS_STATUS from an unexpected peer"));
 	}
 	durable_delivery key{};
 	key.session_id = this->origin->session_id;
@@ -547,13 +554,13 @@ client_request::handle_elfmsg(void)
 		    this->hdr.elf.filter_by_vmid != 0 ||
 		    memcmp(this->hdr.elf.source_id,
 		    derived_parent.source_id, 16) != 0) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF sender, IDs or source"));
 		}
 		struct hypertrace_vm_envelope target{};
 		if (this->buf_size < HYPERTRACE_VM_ENVELOPE_WIRE_SIZE + 4) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF shorter than its VM target"));
 		}
 		hypertrace_envelope_decode(&target, this->buf);
 		if (target.magic != HYPERTRACE_TARGET_MAGIC ||
@@ -562,15 +569,13 @@ client_request::handle_elfmsg(void)
 		    target.epoch == 0 || target.name_length != 0 ||
 		    memcmp(this->buf + HYPERTRACE_VM_ENVELOPE_WIRE_SIZE,
 		    "\177ELF", 4) != 0) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO, "derived ELF VM target"));
 		}
 		uint8_t expected_id[16];
 		if (dtraced_derived_program_id(&derived_parent, this->buf,
 		    this->buf_size, expected_id) != 0 ||
 		    memcmp(this->hdr.elf.program_id, expected_id, 16) != 0) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO, "derived ELF program ID"));
 		}
 		derived_outcome_lock.reset(new (std::nothrow)
 		    consumer_outcome_lock(this->s.inbounddir->dirfd));
@@ -587,17 +592,15 @@ client_request::handle_elfmsg(void)
 		int parent_phase = this->s.inbounddir->host_ingress_phase(
 		    derived_parent.program_id, derived_parent.source_id,
 		    &parent_ingress);
-		if (parent_phase != (int)delivery_phase::accepted) {
-			if (parent_phase >= 0)
-				errno = EPROTO;
-			return (false);
-		}
+		if (parent_phase != (int)delivery_phase::accepted)
+			return (parent_phase < 0 ? false : REFUSE(EPROTO,
+			    "derived ELF parent ingress not accepted"));
 		if (parent_ingress.record.delivery_id !=
 		    derived_parent.delivery_id ||
 		    parent_ingress.record.vmid != derived_parent.vmid ||
 		    parent_ingress.record.epoch != derived_parent.epoch) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF parent delivery, VM or epoch"));
 		}
 		if (parent_ingress.record.journal_version == 5) {
 			/* HT-C BEGIN: disabled trace continuity. */
@@ -630,8 +633,8 @@ client_request::handle_elfmsg(void)
 			    imported_parent.recipient.ingress.payload_digest !=
 			    parent_ingress.record.payload_digest ||
 			    consumer_receipt_no_derived(imported_parent.outcome.phase)) {
-				errno = EPROTO;
-				return (false);
+				return (REFUSE(EPROTO,
+				    "imported derived parent"));
 			}
 			bool exact_receiver = false;
 			{
@@ -665,8 +668,8 @@ client_request::handle_elfmsg(void)
 			imported_derived_parent = true;
 			/* HT-C END */
 		} else if (parent_ingress.record.journal_version != 4) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF parent journal version"));
 		}
 		/* The write socket has a separate session. Match the exact
 		 * accepted ingress through the receiver's durable receipt and
@@ -692,20 +695,18 @@ client_request::handle_elfmsg(void)
 			    receipt.record.consumer_pid !=
 			    (uint32_t)this->origin->peer_pid)
 				continue;
-			if (matched != nullptr) {
-				errno = EEXIST;
-				return (false);
-			}
+			if (matched != nullptr)
+				return (REFUSE(EEXIST,
+				    "derived ELF parent has two receipts"));
 			matched = &receipt;
 		}
-		if (!imported_derived_parent && matched == nullptr) {
-			errno = EPERM;
-			return (false);
-		}
+		if (!imported_derived_parent && matched == nullptr)
+			return (REFUSE(EPERM,
+			    "derived ELF parent not received here"));
 		if (!imported_derived_parent &&
 		    consumer_receipt_no_derived(matched->phase)) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF parent has no derived result"));
 		}
 		memcpy(derived_claim.consumer_session.data(),
 		    derived_parent.consumer_session, 16);
@@ -732,8 +733,8 @@ client_request::handle_elfmsg(void)
 		    imported_derived_parent ? imported_parent.recipient.ingress :
 		    matched->record.ingress, accepted) != 1 ||
 		    accepted.phase != delivery_phase::accepted) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "derived ELF parent ingress not accepted"));
 		}
 		revocations.lock();
 		host_ingress_lock.lock();
@@ -742,10 +743,9 @@ client_request::handle_elfmsg(void)
 		    derived_parent.epoch);
 		if (revoked < 0)
 			return (false);
-		if (revoked != 0) {
-			errno = ECANCELED;
-			return (false);
-		}
+		if (revoked != 0)
+			return (REFUSE(ECANCELED,
+			    "derived ELF source revoked"));
 		source_live = this->s.outbounddir->lock_live_source(
 		    derived_parent.source_id, derived_parent.vmid,
 		    derived_parent.epoch);
@@ -771,12 +771,11 @@ client_request::handle_elfmsg(void)
 		    !parse_guest_elf_envelope(this->buf, this->buf_size,
 		    this->origin->vmid, this->origin->vm_epoch,
 		    this->origin->ident, guest_elf_offset)) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO,
+			    "guest ELF header or VM envelope"));
 		}
 		if (this->s.outbounddir == nullptr) {
-			errno = EINVAL;
-			return (false);
+			return (REFUSE(EINVAL, "no outbound directory"));
 		}
 		/* Match the KILL publisher's lock order and keep the source live
 		 * through the accepted journal commit. */
@@ -827,8 +826,8 @@ client_request::handle_elfmsg(void)
 			}
 			if (prior.record.payload_digest !=
 			    host_ingress.payload_digest) {
-				errno = EPROTO;
-				return (false);
+				return (REFUSE(EPROTO,
+				    "guest ELF retry with another payload"));
 			}
 			/* A new attested socket completes the original journal
 			 * transaction. It must not create a second ledger entry. */
@@ -869,8 +868,8 @@ client_request::handle_elfmsg(void)
 				if (errno != ENOENT)
 					return (false);
 			} else if (memcmp(actual, expected, sizeof(actual)) != 0) {
-				errno = EPROTO;
-				return (false);
+				return (REFUSE(EPROTO,
+				    "guest ELF retry differs from its spool"));
 			}
 			return (true);
 		}
@@ -954,8 +953,8 @@ client_request::handle_killmsg(void)
 	    this->hdr.kill.vmid >= HYPERTRACE_MAX_VMS ||
 	    this->hdr.kill.epoch == 0 ||
 	    memcmp(this->hdr.kill.source_id, zero_id, sizeof(zero_id)) == 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "KILL from a non-consumer or with no target"));
 	}
 	/* Prepare every subscriber before making the revocation durable. */
 	std::list<job *> staged;
@@ -975,8 +974,7 @@ client_request::handle_killmsg(void)
 	std::vector<durable_kill> lineage;
 	bool prepared = false;
 	if (this->s.outbounddir == nullptr) {
-		errno = EINVAL;
-		return (false);
+		return (REFUSE(EINVAL, "no outbound directory"));
 	}
 	bool persisted = this->s.outbounddir->record_kill(record,
 	    [&](const std::vector<durable_kill> &records) {
@@ -1094,8 +1092,8 @@ client_request::handle_kill_appliedmsg(void)
 	    this->origin->vmid != this->hdr.kill.vmid ||
 	    this->origin->vm_epoch != this->hdr.kill.epoch ||
 	    !this->origin->current_vm_attestation()) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "KILL_APPLIED from an unexpected peer or VM"));
 	}
 	durable_kill record{};
 	record.pid = this->hdr.kill.pid;
@@ -1104,8 +1102,7 @@ client_request::handle_kill_appliedmsg(void)
 	memcpy(record.source_id.data(), this->hdr.kill.source_id, 16);
 	std::lock_guard revocations(this->s.revocationmtx);
 	if (this->s.outbounddir == nullptr) {
-		errno = EINVAL;
-		return (false);
+		return (REFUSE(EINVAL, "no outbound directory"));
 	}
 	return (this->s.outbounddir->record_kill_applied(record));
 }
@@ -1127,8 +1124,8 @@ client_request::handle_cleanup_appliedmsg(void)
 	    this->origin->vm_epoch != this->hdr.cleanup.epoch ||
 	    !this->origin->current_vm_attestation() ||
 	    this->s.outbounddir == nullptr) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO,
+		    "CLEANUP_APPLIED from an unexpected peer"));
 	}
 	durable_cleanup record{};
 	record.vmid = this->hdr.cleanup.vmid;
@@ -1262,8 +1259,7 @@ client_request::handle_consumer_stop_commit(void)
 		return (false);
 	if (proof.result != 1 || memcmp(proof.consumer_session,
 	    this->origin->session_id.data(), 16) != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "consumer stop proof"));
 	}
 	durable_session_stop stop{};
 	int present = this->s.outbounddir->fresh_session_stop_for_vm(
@@ -2280,8 +2276,7 @@ client_request::handle_cleanupmsg(void)
 	}
 	if (this->hdr.cleanup.vmid != 0 || this->hdr.cleanup.epoch != 0 ||
 	    DTRACED_MSG_CLEANUP_DELIVERY_ID(this->hdr) != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "CLEANUP names a VM"));
 	}
 
 	vecstr entries;
@@ -2356,14 +2351,12 @@ client_request::handle_statsmsg(void)
 		return (false);
 	}
 	if (this->hdr.cleanup.vmid != 0 || this->hdr.cleanup.epoch != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "STATS names a VM"));
 	}
 	std::vector<std::string> names;
 	if (!parse_cleanup(this->buf, this->buf_size,
 	    DTRACED_MSG_NUMENTRIES(this->hdr), names)) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "STATS name list"));
 	}
 	std::lock_guard connections(this->s.sockfdsmtx);
 	for (client_fd *fd : this->s.sockfds) {
@@ -2397,8 +2390,7 @@ client_request::handle_consumer_programmsg(void)
 	    !this->s.is_control_machine() ||
 	    (this->hdr.elf.len != 32 && this->hdr.elf.len != 64) ||
 	    this->buf == nullptr || this->buf_size != this->hdr.elf.len) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "program registration frame"));
 	}
 	std::array<uint8_t, 32> digest{};
 	std::array<uint8_t, 24> lifetime{};
@@ -2406,14 +2398,12 @@ client_request::handle_consumer_programmsg(void)
 		if (dtraced_wire_decode_consumer_program_v2(
 		    (const unsigned char *)this->buf, this->buf_size,
 		    digest.data(), lifetime.data()) != 0) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO, "program registration body"));
 		}
 	} else
 		memcpy(digest.data(), this->buf, digest.size());
 	if (digest == std::array<uint8_t, 32>{}) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "program registration digest is zero"));
 	}
 	{
 		std::lock_guard clients(this->s.sockfdsmtx);
@@ -2510,8 +2500,7 @@ client_request::handle_consumer_executionmsg(void)
 	    memcmp(execution.source_id, zero_id, sizeof(zero_id)) == 0 ||
 	    (execution.outcome != DTRACED_CONSUMER_ACK_NO_DERIVED &&
 	    execution.outcome != DTRACED_CONSUMER_ACK_DERIVED)) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "execution report frame"));
 	}
 	/* The one-shot result socket is only a reporting channel.  Keep its
 	 * authority tied to the consumer's live ELF receiver; a stale session
@@ -2562,8 +2551,7 @@ client_request::handle_consumer_executionmsg(void)
 		    16) != 0 ||
 		    memcmp(ingress.source_id.data(), execution.source_id,
 		    16) != 0) {
-			errno = EPROTO;
-			return (false);
+			return (REFUSE(EPROTO, "execution report ingress"));
 		}
 		durable_committed_import_result_state result{};
 		int found = this->s.inbounddir->load_activated_import_recipient(
@@ -2624,8 +2612,7 @@ client_request::handle_consumer_executionmsg(void)
 	    ingress.epoch != execution.epoch ||
 	    memcmp(ingress.program_id.data(), execution.program_id, 16) != 0 ||
 	    memcmp(ingress.source_id.data(), execution.source_id, 16) != 0) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "execution report ingress"));
 	}
 	/* HCR1 predates process births. Where HCP1 exists, its frozen owner
 	 * and program must identify this live receiver before its separate
@@ -2676,8 +2663,7 @@ client_request::handle_consumer_executionmsg(void)
 	if (target == consumer_receipt_phase::executed_derived ?
 	    !consumer_receipt_derived(matched.phase) :
 	    !consumer_receipt_no_derived(matched.phase)) {
-		errno = EPROTO;
-		return (false);
+		return (REFUSE(EPROTO, "execution report outcome"));
 	}
 	return (this->s.inbounddir->record_consumer_receipt(
 	    matched.record, target) == (int)target);
