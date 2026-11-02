@@ -65,7 +65,11 @@ retained cohort artifact evidence, not a complete compiled or linked kernel.
 
 ## Remaining gates
 
-The missing chains are elf-vdso.so.o and force-dynamic-hack.pico. vers.o and
+Reconciliation r38 omitted elf-vdso.so.o and force-dynamic-hack.pico. The VDSO
+already had a qualified producer outside that query selection; the later
+FINAL-PRODUCERS-KERNEL-QUALIFICATION.md corrects the accounting and qualifies the
+new helper against a fresh post-merge reference. This cohort evidence and its
+2,466-product inventory predate the HyperTrace merge. vers.o and
 subr_clockcalib.o need stronger identity checks; four other generated identities
 need independent resolution. Complete linking/order/post-processing/install,
 modules, alternate KERNCONF, ARM64/RISC-V64, world, pkgbase/hardware publication,

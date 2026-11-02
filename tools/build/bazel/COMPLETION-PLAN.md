@@ -445,3 +445,7 @@ composition, inherited world selection and full-system/runtime/bootstrap gates.
 ## Custom-named kernel checkpoint (2026-11-02)
 
 Four radix/OpenZFS SHA objects pass code/CTF/compiler/input/relocation checks, including one complete hash-bound filename spelling difference. Three declared symlink aliases preserve actual final-link names and bytes. Reconciliation r38 binds 2,405 physical-source identities, leaves 57 generated-name matches (53 independently qualified), two weak object identities and two missing producer chains (VDSO and force-dynamic). See CUSTOM-NAMES-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Refreshed final-producer checkpoint (2026-11-02)
+
+After merge 7056e69713f, refreshed SDK/config inventories and a complete independent Make amd64 GENERIC reference pass. The native force-dynamic helper and existing VDSO yield six original products exactly matching fresh Make. Current query r45/reconciliation r39 accounts for all 2,462 selected amd64 products with no missing producer in this audit, retaining two weak object identities and four unqualified generated identities. The prior VDSO missing classification was a query-selection gap, now corrected. See FINAL-PRODUCERS-KERNEL-QUALIFICATION.md. Complete native kernel linking/post-processing/install, modules, other architectures, world, packaging, bootstrap, runtime and performance remain open.

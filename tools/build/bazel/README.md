@@ -47618,3 +47618,5 @@ Native PAM family composition, corrected shared-core compile/install policy,
 [PAM-FAMILY-QUALIFICATION.md](PAM-FAMILY-QUALIFICATION.md).
 
 [CUSTOM-NAMES-KERNEL-QUALIFICATION.md](CUSTOM-NAMES-KERNEL-QUALIFICATION.md) records four native radix/OpenZFS SHA objects, three declared final-link aliases, code/CTF/input/relocation checks, and alias-aware inventory reconciliation. Full-system gates remain open.
+
+[FINAL-PRODUCERS-KERNEL-QUALIFICATION.md](FINAL-PRODUCERS-KERNEL-QUALIFICATION.md) records the native final-link helper, refreshed VDSO/Make/SDK evidence and corrected special-producer accounting. Zero missing inventory products does not establish a complete native kernel or system build.

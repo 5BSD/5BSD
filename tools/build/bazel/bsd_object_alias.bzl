@@ -5,6 +5,6 @@ def _alias(ctx):
     return [DefaultInfo(files = depset([ctx.outputs.output]))]
 
 bsd_object_alias = rule(implementation = _alias, attrs = {
-    "src": attr.label(allow_single_file = [".o", ".pico"], mandatory = True),
+    "src": attr.label(allow_single_file = [".o", ".pico", ".so"], mandatory = True),
     "output": attr.output(mandatory = True),
 })
