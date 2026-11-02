@@ -90,6 +90,19 @@
 #define	VTCRYPTO_AES_BLOCK		16u
 #define	VTCRYPTO_GCM_IVLEN		12u
 
+/*
+ * Largest data request buffers: header, IV, AAD, source and GCM tag; output
+ * and GCM tag plus the status byte.  Neither is physically contiguous, so
+ * each can take one segment per page it touches.
+ */
+#define	VTCRYPTO_MAX_RBUFLEN		(VTCRYPTO_DATA_REQ_LEN + \
+	VTCRYPTO_AES_BLOCK + VTCRYPTO_MAX_AADLEN + VTCRYPTO_MAX_DATALEN + \
+	VTCRYPTO_GCM_TAGLEN)
+#define	VTCRYPTO_MAX_WBUFLEN		(VTCRYPTO_MAX_DATALEN + \
+	VTCRYPTO_GCM_TAGLEN + 1)
+#define	VTCRYPTO_MAX_SEGS		(howmany(VTCRYPTO_MAX_RBUFLEN, \
+	PAGE_SIZE) + howmany(VTCRYPTO_MAX_WBUFLEN, PAGE_SIZE) + 2)
+
 /* Control requests are polled; see vtcrypto_ctrl_exec(). */
 #define	VTCRYPTO_CTRL_TIMEOUT		(10 * SBT_1S)
 #define	VTCRYPTO_CTRL_POLL_DELAY_US	10
@@ -115,14 +128,15 @@ struct vtcrypto_dataq {
 	struct virtqueue	*vdq_vq;
 	struct mtx		 vdq_mtx;
 	TAILQ_HEAD(, cryptop)	 vdq_parked;	/* waiting for ring space */
+	struct sglist		*vdq_sg;	/* under vdq_mtx */
 	int			 vdq_id;
 	bool			 vdq_mtx_init;
 };
 
 /*
  * In-flight data request context; the cookie passed to virtqueue_enqueue().
- * The readable and writable wire buffers are each physically contiguous so
- * they occupy a single descriptor.
+ * The readable and writable wire buffers come from malloc(9) and take one
+ * descriptor per physically contiguous run.
  */
 struct vtcrypto_request {
 	struct cryptop	*vcr_crp;
@@ -364,6 +378,8 @@ vtcrypto_detach(device_t dev)
 		for (i = 0; i < sc->vtc_ndataq; i++) {
 			if (sc->vtc_dataq[i].vdq_mtx_init)
 				mtx_destroy(&sc->vtc_dataq[i].vdq_mtx);
+			if (sc->vtc_dataq[i].vdq_sg != NULL)
+				sglist_free(sc->vtc_dataq[i].vdq_sg);
 		}
 		free(sc->vtc_dataq, M_VTCRYPTO);
 		sc->vtc_dataq = NULL;
@@ -470,6 +486,11 @@ vtcrypto_alloc_virtqueues(struct vtcrypto_softc *sc)
 		    MTX_DEF);
 		dq->vdq_mtx_init = true;
 		TAILQ_INIT(&dq->vdq_parked);
+		dq->vdq_sg = sglist_alloc(VTCRYPTO_MAX_SEGS, M_NOWAIT);
+		if (dq->vdq_sg == NULL) {
+			free(info, M_VTCRYPTO);
+			return (ENOMEM);
+		}
 		VQ_ALLOC_INFO_INIT(&info[i], 0, vtcrypto_dataq_intr, dq,
 		    &dq->vdq_vq, "%s data.%d", device_get_nameunit(dev), i);
 	}
@@ -1146,10 +1167,9 @@ vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
 
 	vcr->vcr_rbuf_len = rlen;
 	vcr->vcr_wbuf_len = (size_t)dstlen + 1;	/* + 1 status byte */
-	vcr->vcr_rbuf = contigmalloc(rlen, M_VTCRYPTO, M_NOWAIT | M_ZERO,
-	    0, ~0UL, PAGE_SIZE, 0);
-	vcr->vcr_wbuf = contigmalloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
-	    M_NOWAIT | M_ZERO, 0, ~0UL, PAGE_SIZE, 0);
+	vcr->vcr_rbuf = malloc(rlen, M_VTCRYPTO, M_NOWAIT | M_ZERO);
+	vcr->vcr_wbuf = malloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
+	    M_NOWAIT | M_ZERO);
 	if (vcr->vcr_rbuf == NULL || vcr->vcr_wbuf == NULL) {
 		error = ENOMEM;
 		goto fail_bufs;
@@ -1217,28 +1237,34 @@ fail:
 }
 
 /*
- * Post a built request on a data queue: one readable and one writable
- * segment.  ENOSPC means the ring is full of in-flight requests.
+ * Post a built request on a data queue: the readable segments, then the
+ * writable ones.  ENOSPC means the ring lacks descriptors for it; the
+ * descriptors in use belong to in-flight requests.
  */
 static int
 vtcrypto_enqueue(struct vtcrypto_dataq *dq, struct vtcrypto_request *vcr)
 {
-	struct sglist_seg segs[4];
-	struct sglist sg;
+	struct sglist *sg;
 	int error, rd;
 
 	mtx_assert(&dq->vdq_mtx, MA_OWNED);
-	sglist_init(&sg, nitems(segs), segs);
-	error = sglist_append(&sg, vcr->vcr_rbuf, vcr->vcr_rbuf_len);
+	sg = dq->vdq_sg;
+	sglist_reset(sg);
+	error = sglist_append(sg, vcr->vcr_rbuf, vcr->vcr_rbuf_len);
 	if (error != 0)
 		return (error);
-	rd = sg.sg_nseg;
-	error = sglist_append(&sg, vcr->vcr_wbuf, vcr->vcr_wbuf_len);
+	rd = sg->sg_nseg;
+	error = sglist_append(sg, vcr->vcr_wbuf, vcr->vcr_wbuf_len);
 	if (error != 0)
 		return (error);
-	error = virtqueue_enqueue(dq->vdq_vq, vcr, &sg, rd, sg.sg_nseg - rd);
+	/* A request larger than the ring would never fit. */
+	if (sg->sg_nseg > virtqueue_size(dq->vdq_vq))
+		return (EFBIG);
+	error = virtqueue_enqueue(dq->vdq_vq, vcr, sg, rd, sg->sg_nseg - rd);
 	if (error == 0)
 		virtqueue_notify(dq->vdq_vq);
+	else if (error == EMSGSIZE)
+		error = ENOSPC;	/* fewer free descriptors than segments */
 	return (error);
 }
 

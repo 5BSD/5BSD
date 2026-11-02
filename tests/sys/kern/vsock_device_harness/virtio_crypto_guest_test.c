@@ -88,10 +88,19 @@ struct mtx { int held; };
 #define	M_NOWAIT		0x1
 #define	M_ZERO			0x100
 #define	MALLOC_DEFINE(t, s, l)	static const int t = 0
+/*
+ * Page aligned, as malloc(9) items up to PAGE_SIZE never cross a page and
+ * larger ones start on one: the segment counts below are deterministic.
+ */
 static void *
 mock_malloc(size_t sz, int fl)
 {
-	return ((fl & M_ZERO) ? calloc(1, sz) : malloc(sz));
+	void *p;
+
+	p = aligned_alloc(PAGE_SIZE, roundup2(MAX(sz, 1), PAGE_SIZE));
+	if (p != NULL && (fl & M_ZERO) != 0)
+		memset(p, 0, sz);
+	return (p);
 }
 #define	malloc(sz, t, fl)	mock_malloc((sz), (fl))
 #define	mallocarray(n, sz, t, fl) mock_malloc((n) * (sz), (fl))
@@ -127,14 +136,24 @@ sglist_alloc(int n, int fl)
 	sglist_init(sg, n, (struct sglist_seg *)(sg + 1));
 	return (sg);
 }
+#define	sglist_reset(sg)	((sg)->sg_nseg = 0)
+/* One segment per page touched: pages are not assumed to be contiguous. */
 static int
 sglist_append(struct sglist *sg, void *buf, size_t len)
 {
-	if (sg->sg_nseg >= sg->sg_maxseg)
-		return (EFBIG);
-	sg->sg_segs[sg->sg_nseg].ss_addr = buf;
-	sg->sg_segs[sg->sg_nseg].ss_len = len;
-	sg->sg_nseg++;
+	char *p = buf;
+	size_t n;
+
+	while (len > 0) {
+		if (sg->sg_nseg >= sg->sg_maxseg)
+			return (EFBIG);
+		n = MIN(len, PAGE_SIZE - ((uintptr_t)p & PAGE_MASK));
+		sg->sg_segs[sg->sg_nseg].ss_addr = p;
+		sg->sg_segs[sg->sg_nseg].ss_len = n;
+		sg->sg_nseg++;
+		p += n;
+		len -= n;
+	}
 	return (0);
 }
 #define	sglist_free(sg)		(free)(sg)
@@ -179,9 +198,15 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 {
 	int n = readable + writable;
 
-	/* sys/dev/virtio/virtqueue.c: ENOSPC when the ring lacks descriptors. */
-	if (vq->free_desc < n)
+	/*
+	 * sys/dev/virtio/virtqueue.c: more segments than the ring holds is a
+	 * KASSERT, no free descriptor is ENOSPC, too few free is EMSGSIZE.
+	 */
+	ATF_REQUIRE(n <= MOCK_RINGSZ);
+	if (vq->free_desc == 0)
 		return (ENOSPC);
+	if (vq->free_desc < n)
+		return (EMSGSIZE);
 	ATF_REQUIRE(vq->tail < MOCK_MAXREQ);
 	memcpy(vq->last_hdr, sg->sg_segs[0].ss_addr, sizeof(vq->last_hdr));
 	vq->free_desc -= n;
@@ -195,6 +220,7 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 #define	virtqueue_enable_intr(vq)	(0)
 #define	virtqueue_empty(vq)		((vq)->head == (vq)->tail)
 #define	virtqueue_full(vq)		((vq)->free_desc == 0)
+#define	virtqueue_size(vq)		MOCK_RINGSZ
 static void *
 virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 {
@@ -308,6 +334,8 @@ static struct mock_dev g_dev;
 static struct vtcrypto_softc g_sc;
 static struct vtcrypto_dataq g_dq[2];
 static struct virtqueue g_vq[2];
+static struct sglist_seg g_segs[2][VTCRYPTO_MAX_SEGS];
+static struct sglist g_sg[2];
 static struct vtcrypto_session g_drv;
 static struct mock_session g_ses;
 
@@ -323,6 +351,8 @@ fixture_queues(int ndataq)
 		g_dq[i].vdq_vq = &g_vq[i];
 		g_dq[i].vdq_id = i;
 		TAILQ_INIT(&g_dq[i].vdq_parked);
+		sglist_init(&g_sg[i], VTCRYPTO_MAX_SEGS, g_segs[i]);
+		g_dq[i].vdq_sg = &g_sg[i];
 	}
 	g_sc.vtc_dev = &g_dev;
 	g_sc.vtc_cid = 7;
@@ -524,6 +554,63 @@ ATF_TC_BODY(full_queue_uses_other_queue, tc)
 }
 
 /*
+ * A ring with fewer free descriptors than a request has segments is full
+ * for that request (virtqueue_enqueue() says EMSGSIZE): park it, do not fail
+ * it.  21 requests of 4080 bytes take three descriptors each (a two-page
+ * readable buffer and a one-page writable one) and leave one free.
+ */
+ATF_TC_WITHOUT_HEAD(partial_ring_parks_request);
+ATF_TC_BODY(partial_ring_parks_request, tc)
+{
+	struct cryptop *crp[21];
+	struct cryptop *extra;
+	int i;
+
+	fixture();
+	for (i = 0; i < 21; i++) {
+		crp[i] = sector_crp(true);
+		crp[i]->crp_payload_length = 4080;
+		ATF_REQUIRE_EQ(0, dispatch(crp[i]));
+		ATF_REQUIRE_EQ(3, g_vq[0].ndesc[i]);
+	}
+	ATF_REQUIRE_EQ(1, g_vq[0].free_desc);
+	extra = sector_crp(true);
+	ATF_REQUIRE_EQ(0, dispatch(extra));
+	ATF_REQUIRE_MSG(!extra->done,
+	    "one free descriptor failed the request with error %d",
+	    extra->crp_etype);
+	ATF_REQUIRE_EQ(21, device_complete_all());
+	ATF_REQUIRE(!extra->done);
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(extra->done);
+	ATF_REQUIRE_EQ(22, g_done);
+	ATF_REQUIRE_EQ(0, g_done_err);
+	for (i = 0; i < 21; i++)
+		free(crp[i]);
+	free(extra);
+}
+
+/*
+ * A 4 KiB geli(4) sector: the buffers are not physically contiguous, so
+ * each takes a descriptor per page it touches.
+ */
+ATF_TC_WITHOUT_HEAD(page_sector_takes_page_segments);
+ATF_TC_BODY(page_sector_takes_page_segments, tc)
+{
+	struct cryptop *crp;
+
+	fixture();
+	crp = sector_crp(false);
+	crp->crp_payload_length = 4096;
+	ATF_REQUIRE_EQ(0, dispatch(crp));
+	ATF_REQUIRE_EQ(4, g_vq[0].ndesc[0]);
+	ATF_REQUIRE_EQ(1, device_complete_all());
+	ATF_REQUIRE(crp->done);
+	ATF_REQUIRE_EQ(0, crp->crp_etype);
+	free(crp);
+}
+
+/*
  * A 1 MiB geli(4) WRITE and READ is 2048 sector requests; model opencrypto's
  * dispatch (ERESTART holds the request and blocks the driver until
  * crypto_unblock()) and require every request to complete without error.
@@ -602,6 +689,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ring_full_request_completes);
 	ATF_TP_ADD_TC(tp, ring_drained_before_erestart_recorded);
 	ATF_TP_ADD_TC(tp, full_queue_uses_other_queue);
+	ATF_TP_ADD_TC(tp, partial_ring_parks_request);
+	ATF_TP_ADD_TC(tp, page_sector_takes_page_segments);
 	ATF_TP_ADD_TC(tp, geli_1mib_write_burst);
 	ATF_TP_ADD_TC(tp, geli_1mib_read_burst);
 	ATF_TP_ADD_TC(tp, cipher_data_request_op_type);
