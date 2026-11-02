@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["mmp_firmware_c2xxx.bin"], visibility = ["//sys/modules/qat_c2xxxfw:__pkg__"])
+
+exports_files(["mof_firmware_c2xxx.bin"], visibility = ["//sys/modules/qat_c2xxxfw:__pkg__"])

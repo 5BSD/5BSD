@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "t7fw_cfg",
+    images = [{"source": "//sys/dev/cxgbe:firmware/t7fw_cfg.txt", "encoding": "raw", "filename": "t7fw_cfg.txt", "spec": "t7fw_cfg.txt:t7fw_cfg:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t7fw_cfg_fpga.txt", "encoding": "raw", "filename": "t7fw_cfg_fpga.txt", "spec": "t7fw_cfg_fpga.txt:t7fw_cfg_fpga:1.0.0.0"}, {"source": "//sys/dev/cxgbe:firmware/t7fw_cfg_uwire.txt", "encoding": "raw", "filename": "t7fw_cfg_uwire.txt", "spec": "t7fw_cfg_uwire.txt:t7fw_cfg_uwire:1.0.0.0"}],
+    license = "", export_all = False,
+    extra_objects = [], extra_object_order = [])

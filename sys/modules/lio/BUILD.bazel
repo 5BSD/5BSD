@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_firmware_module.bzl", "amd64_firmware_module")
+
+# Original image order, registration specifications and exports.
+amd64_firmware_module(module = "if_lio",
+    images = [{"source": "//sys/contrib/dev/liquidio:lio_23xx_nic.bin.uu", "encoding": "uu", "filename": "lio_23xx_nic.bin.fw", "spec": "lio_23xx_nic.bin.fw:lio_23xx_nic.bin"}],
+    license = "", export_all = False,
+    extra_objects = ["//sys/dev/liquidio:if_lio_lio_main_module_object_files", "//sys/dev/liquidio:if_lio_lio_core_module_object_files", "//sys/dev/liquidio:if_lio_lio_rss_module_object_files", "//sys/dev/liquidio:if_lio_lio_device_module_object_files", "//sys/dev/liquidio:if_lio_lio_ctrl_module_object_files", "//sys/dev/liquidio:if_lio_lio_console_module_object_files", "//sys/dev/liquidio:if_lio_cn23xx_pf_device_module_object_files", "//sys/dev/liquidio:if_lio_lio_mem_ops_module_object_files", "//sys/dev/liquidio:if_lio_lio_droq_module_object_files", "//sys/dev/liquidio:if_lio_lio_response_manager_module_object_files", "//sys/dev/liquidio:if_lio_lio_request_manager_module_object_files"], extra_object_order = ["lio_main.o", "lio_sysctl.o", "lio_ioctl.o", "lio_core.o", "lio_rxtx.o", "lio_rss.o", "lio_device.o", "lio_ctrl.o", "lio_console.o", "cn23xx_pf_device.o", "lio_mem_ops.o", "lio_droq.o", "lio_response_manager.o", "lio_request_manager.o"])

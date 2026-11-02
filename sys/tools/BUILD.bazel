@@ -12,4 +12,4 @@ exports_files(["acpi_quirks2h.awk"], visibility = ["//sys/dev/acpica:__pkg__"])
 
 exports_files(["kernel-gdb.py"], visibility = ["//sys/amd64/conf:__pkg__"])
 
-exports_files(["fw_stub.awk"], visibility = ["//sys/modules/usb/rsufw/rsurtl8712fw:__pkg__", "//sys/modules/usb/runfw:__pkg__"])
+exports_files(["fw_stub.awk"], visibility = ["//sys/modules:__subpackages__"])

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["rtwn-rtl8188eefw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8188ee:__pkg__"])
+
+exports_files(["rtwn-rtl8188eufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8188eu:__pkg__"])
+
+exports_files(["rtwn-rtl8192cfwE.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8192cE:__pkg__"])
+
+exports_files(["rtwn-rtl8192cfwE_B.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8192cEB:__pkg__"])
+
+exports_files(["rtwn-rtl8192cfwT.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8192cT:__pkg__"])
+
+exports_files(["rtwn-rtl8192cfwU.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8192cU:__pkg__"])
+
+exports_files(["rtwn-rtl8192eufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8192eu:__pkg__"])
+
+exports_files(["rtwn-rtl8723bufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8723bu:__pkg__"])
+
+exports_files(["rtwn-rtl8812aufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8812au:__pkg__"])
+
+exports_files(["rtwn-rtl8821aufw.fw.uu"], visibility = ["//sys/modules/rtwnfw/rtwnrtl8821au:__pkg__"])

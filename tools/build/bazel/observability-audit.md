@@ -10192,3 +10192,14 @@ generated dispatcher, with the same child-startup disable flag. No original resc
 application, login/credential operation, tracing registration or host install is
 exercised. Future crunched application probe/DOF preservation and full static
 constructor/runtime behavior remain open; see RESCUE-DISPATCH-QUALIFICATION.md.
+
+
+### Remaining FIRMWS module qualification (2026-11-02)
+
+The bounded scan of fourteen LiquidIO C files, firmw.S and fw_stub.awk finds no
+explicit source probe/audit markers. All 38 modules retain original compiled
+probe-section inventories (none present in this cohort). Shared header/subsystem
+instrumentation and runtime firmware lifecycle/driver behavior require separate
+review; prefer shared register/get/put/unregister/error hooks over per-image probes.
+Do not log firmware contents. Live loading, hardware, probes and audit remain
+unqualified. See FIRMWARE-MODULES-QUALIFICATION.md for immutable evidence.

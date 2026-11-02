@@ -47865,3 +47865,26 @@ fixture runtime methods pass. This is a generator/tool/dispatcher milestone;
 592 application object descriptors are not compiled rescue coverage. See
 [RESCUE-DISPATCH-QUALIFICATION.md](RESCUE-DISPATCH-QUALIFICATION.md) for exact
 configuration, debug-policy and remaining full-rescue gates.
+
+
+### Remaining FIRMWS module qualification (2026-11-02)
+
+The preceding reference-only checkpoint is superseded by the implemented and
+qualified native firmware composition. All 38 remaining selected FIRMWS modules
+now declare their 59 image inputs and original ordered registration/driver links.
+All 111 compiler contexts and 38 links pass actual input reviews. Plain modules
+match 37 untouched Make references and one independently checked LiquidIO
+filename-policy control; CTF/debug payload and all 114 installation records match.
+Four prior USB firmware artifacts remain byte-identical. The six existing provider
+tests pass in each profile; these are not firmware-loading or hardware tests.
+See FIRMWARE-MODULES-QUALIFICATION.md for evidence and configuration limits.
+
+Local BUILD presence is now 468/729 selected amd64 leaves (261 missing), not a
+whole-system qualification percentage. Complete rescue application/static linking,
+remaining module families, ARM64/RISC-V, aggregate pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain open.
+Add maintained automatic parameter-file capture before later build profiles:
+current proof preserves exact hash-verified recovered parameter bytes, not an
+implemented frontend capture guarantee. Make remains production/default; BIP is
+excluded. Existing format-5 build-bsd/backend inputs cover this composition; no
+CLI, signing, staging or publication policy change is needed for this cohort.

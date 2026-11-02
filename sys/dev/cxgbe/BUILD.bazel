@@ -8,3 +8,35 @@ cc_library(name = "rdma_common_headers", hdrs = ["common/t4_msg.h"], strip_inclu
 cc_library(name = "rdma_firmware_headers", hdrs = ["firmware/t4fw_interface.h"], strip_include_prefix = "firmware", visibility = ["//contrib/ofed/libcxgb4:__pkg__"])
 
 cc_library(name = "tool_headers", hdrs = ["t4_ioctl.h"], strip_include_prefix = ".", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+exports_files(["firmware/t4fw-1.27.5.0.bin"], visibility = ["//sys/modules/cxgbe/t4_firmware:__pkg__"])
+
+exports_files(["firmware/t4fw_cfg.txt"], visibility = ["//sys/modules/cxgbe/t4_firmware:__pkg__"])
+
+exports_files(["firmware/t4fw_cfg_uwire.txt"], visibility = ["//sys/modules/cxgbe/t4_firmware:__pkg__"])
+
+exports_files(["firmware/t5fw-1.27.5.0.bin"], visibility = ["//sys/modules/cxgbe/t5_firmware:__pkg__"])
+
+exports_files(["firmware/t5fw_cfg.txt"], visibility = ["//sys/modules/cxgbe/t5_firmware:__pkg__"])
+
+exports_files(["firmware/t5fw_cfg_fpga.txt"], visibility = ["//sys/modules/cxgbe/t5_firmware:__pkg__"])
+
+exports_files(["firmware/t5fw_cfg_hashfilter.txt"], visibility = ["//sys/modules/cxgbe/t5_firmware:__pkg__"])
+
+exports_files(["firmware/t5fw_cfg_uwire.txt"], visibility = ["//sys/modules/cxgbe/t5_firmware:__pkg__"])
+
+exports_files(["firmware/t6fw-1.27.5.0.bin"], visibility = ["//sys/modules/cxgbe/t6_firmware:__pkg__"])
+
+exports_files(["firmware/t6fw_cfg.txt"], visibility = ["//sys/modules/cxgbe/t6_firmware:__pkg__"])
+
+exports_files(["firmware/t6fw_cfg_fpga.txt"], visibility = ["//sys/modules/cxgbe/t6_firmware:__pkg__"])
+
+exports_files(["firmware/t6fw_cfg_hashfilter.txt"], visibility = ["//sys/modules/cxgbe/t6_firmware:__pkg__"])
+
+exports_files(["firmware/t6fw_cfg_uwire.txt"], visibility = ["//sys/modules/cxgbe/t6_firmware:__pkg__"])
+
+exports_files(["firmware/t7fw_cfg.txt"], visibility = ["//sys/modules/cxgbe/t7_firmware:__pkg__"])
+
+exports_files(["firmware/t7fw_cfg_fpga.txt"], visibility = ["//sys/modules/cxgbe/t7_firmware:__pkg__"])
+
+exports_files(["firmware/t7fw_cfg_uwire.txt"], visibility = ["//sys/modules/cxgbe/t7_firmware:__pkg__"])
