@@ -83,7 +83,8 @@ static int pci_vtcrypto_debug;
 #define	WPRINTF(msg, ...)	PRINTLN("virtio-crypto: " msg, ##__VA_ARGS__)
 
 #define	VTCRYPTO_RINGSZ			64
-#define	VTCRYPTO_MAXSEG			32
+/* vq_getchain() bounds a chain by the queue size: every chain fits. */
+#define	VTCRYPTO_MAXSEG			VTCRYPTO_RINGSZ
 #define	VTCRYPTO_MAX_DATAQ		8
 #define	VTCRYPTO_MAXQ			(VTCRYPTO_MAX_DATAQ + 1)
 #define	VTCRYPTO_DEFAULT_MAXSESSIONS	64u
@@ -1069,6 +1070,33 @@ out:
 	return (status);
 }
 
+/*
+ * Return a data request without processing it.  When the chain shows where
+ * the status byte is (the final writable byte), write VIRTIO_CRYPTO_ERR
+ * there, so the driver never reads a status the device did not write.
+ */
+static void
+pci_vtcrypto_data_reject(struct vqueue_info *vq, struct vi_req *vireq,
+    const struct iovec *iov, int n)
+{
+	const struct iovec *wiov;
+	size_t wtotal;
+	uint8_t status;
+
+	status = VIRTIO_CRYPTO_ERR;
+	if (n <= VTCRYPTO_MAXSEG && vireq->ordered && vireq->writable >= 1 &&
+	    vireq->readable + vireq->writable == n) {
+		wiov = &iov[vireq->readable];
+		wtotal = iov_total(wiov, vireq->writable);
+		if (wtotal >= 1 &&
+		    iov_push(wiov, vireq->writable, wtotal - 1, &status, 1)) {
+			vq_relchain_req(vq, vireq, 1);
+			return;
+		}
+	}
+	vq_relchain_req(vq, vireq, 0);
+}
+
 static void
 pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 {
@@ -1094,7 +1122,7 @@ pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 		    vireq.readable < 1 || vireq.writable < 1 ||
 		    vireq.readable + vireq.writable != n) {
 			WPRINTF("invalid data descriptor chain");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_data_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		riov = &iov[0];
@@ -1109,7 +1137,7 @@ pci_vtcrypto_data(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 
 		if (!iov_pull(riov, rniov, 0, hdr, sizeof(hdr))) {
 			WPRINTF("truncated data request");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_data_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		opcode = ld32(hdr + 0);

@@ -47,7 +47,7 @@ struct nvlist { int unused; };
 
 int raw_stdio;
 
-#define	MOCK_MAXSEG	16
+#define	MOCK_MAXSEG	80	/* more than VTCRYPTO_RINGSZ */
 
 static struct {
 	struct iovec iov[MOCK_MAXSEG];
@@ -449,7 +449,7 @@ vm_snapshot_le64(uint64_t *value, struct vm_snapshot_meta *meta)
 
 /* -------------------------------------------------------------- utilities */
 
-static uint8_t g_guest[16384];
+static uint8_t g_guest[192 * 1024];
 
 static size_t
 hexdecode(const char *hex, uint8_t *out)
@@ -1201,13 +1201,15 @@ ATF_TC_BODY(data_malformed, tc)
 	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
 	ATF_CHECK_EQ(VIRTIO_CRYPTO_BADMSG, g_guest[1040]);
 
-	/* Truncated data request header. */
+	/* Truncated data request header -> ERR in the status byte. */
 	r[0].len = 8;
+	g_guest[1040] = 0xff;
 	mock_set_chain(r, 3, w, 2, true);
 	g_rel_calls = 0;
 	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
 	ATF_CHECK_EQ(1, g_rel_calls);
-	ATF_CHECK_EQ(0u, g_rel_len);
+	ATF_CHECK_EQ(1u, g_rel_len);
+	ATF_CHECK_EQ(VIRTIO_CRYPTO_ERR, g_guest[1040]);
 	r[0].len = 72;
 
 	/* Wrong-service data op against a cipher session -> INVSESS. */
@@ -1231,6 +1233,145 @@ ATF_TC_BODY(data_malformed, tc)
 	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
 	ATF_CHECK_EQ(1, g_rel_calls);
 	ATF_CHECK_EQ(0u, g_rel_len);
+}
+
+/*
+ * A 64 KiB AES-CBC request as virtio_crypto(4) posts malloc(9) buffers: one
+ * descriptor per page, 18 readable (header, IV, 16 source pages) and 17
+ * writable (16 destination pages, status).
+ */
+#define	LONG_LEN	(64 * 1024)
+#define	LONG_SRC	4096
+#define	LONG_DST	(LONG_SRC + LONG_LEN + 4096)
+#define	LONG_STATUS	(LONG_DST + LONG_LEN)
+
+static void
+long_cipher(struct pci_vtcrypto_softc *sc, uint32_t opcode, uint64_t id,
+    const uint8_t *iv)
+{
+	struct seg r[2 + LONG_LEN / 4096], w[1 + LONG_LEN / 4096];
+	int i;
+
+	st32(g_guest + 0, opcode);
+	st64(g_guest + 8, id);
+	st32(g_guest + 24, 16);		/* iv_len */
+	st32(g_guest + 28, LONG_LEN);	/* src_data_len */
+	st32(g_guest + 32, LONG_LEN);	/* dst_data_len */
+	st32(g_guest + 64, VIRTIO_CRYPTO_SYM_OP_CIPHER);
+	memcpy(g_guest + 72, iv, 16);
+	r[0].off = 0;  r[0].len = 72;
+	r[1].off = 72; r[1].len = 16;
+	for (i = 0; i < LONG_LEN / 4096; i++) {
+		r[2 + i].off = LONG_SRC + i * 4096;
+		r[2 + i].len = 4096;
+		w[i].off = LONG_DST + i * 4096;
+		w[i].len = 4096;
+	}
+	w[i].off = LONG_STATUS;
+	w[i].len = 1;
+	g_guest[LONG_STATUS] = 0xff;
+	mock_set_chain(r, nitems(r), w, nitems(w), true);
+	g_rel_calls = 0;
+	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
+	ATF_REQUIRE_EQ(1, g_rel_calls);
+}
+
+/*
+ * A chain longer than 32 descriptors but within the queue size is
+ * processed: bhyve used to return it with used length 0 and no status,
+ * which the driver read as success.
+ */
+ATF_TC_WITHOUT_HEAD(data_long_chain);
+ATF_TC_BODY(data_long_chain, tc)
+{
+	/* NIST SP800-38A F.2.1, AES-128-CBC, first block. */
+	struct pci_vtcrypto_softc *sc;
+	uint8_t key[16], iv[16], pt[16], ct[16];
+	uint8_t *plain;
+	uint32_t para[4];
+	uint64_t enc_id, dec_id;
+	int i;
+
+	sc = make_device(NULL, NULL);
+	ATF_REQUIRE_EQ(16u, hexdecode("2b7e151628aed2a6abf7158809cf4f3c", key));
+	ATF_REQUIRE_EQ(16u, hexdecode("000102030405060708090a0b0c0d0e0f", iv));
+	ATF_REQUIRE_EQ(16u, hexdecode("6bc1bee22e409f96e93d7e117393172a", pt));
+	ATF_REQUIRE_EQ(16u, hexdecode("7649abac8119b246cee98e9b12e9197d", ct));
+	para[0] = VIRTIO_CRYPTO_CIPHER_AES_CBC;
+	para[1] = 16;
+	para[2] = VIRTIO_CRYPTO_OP_ENCRYPT;
+	para[3] = 0;
+	ATF_REQUIRE_EQ(VIRTIO_CRYPTO_OK, control_create(sc,
+	    VIRTIO_CRYPTO_CIPHER_CREATE_SESSION, para, 4,
+	    VIRTIO_CRYPTO_SYM_OP_CIPHER, key, 16, &enc_id));
+	para[2] = VIRTIO_CRYPTO_OP_DECRYPT;
+	ATF_REQUIRE_EQ(VIRTIO_CRYPTO_OK, control_create(sc,
+	    VIRTIO_CRYPTO_CIPHER_CREATE_SESSION, para, 4,
+	    VIRTIO_CRYPTO_SYM_OP_CIPHER, key, 16, &dec_id));
+
+	plain = malloc(LONG_LEN);
+	ATF_REQUIRE(plain != NULL);
+	memcpy(plain, pt, 16);
+	for (i = 16; i < LONG_LEN; i++)
+		plain[i] = (uint8_t)(i * 7 + 3);
+
+	memset(g_guest, 0, sizeof(g_guest));
+	memcpy(g_guest + LONG_SRC, plain, LONG_LEN);
+	long_cipher(sc, VIRTIO_CRYPTO_CIPHER_ENCRYPT, enc_id, iv);
+	ATF_REQUIRE_EQ(VIRTIO_CRYPTO_OK, g_guest[LONG_STATUS]);
+	ATF_CHECK_EQ((uint32_t)LONG_LEN + 1, g_rel_len);
+	ATF_CHECK(memcmp(g_guest + LONG_DST, ct, 16) == 0);
+
+	/* The ciphertext decrypts to the plaintext over the same layout. */
+	memcpy(g_guest + LONG_SRC, g_guest + LONG_DST, LONG_LEN);
+	memset(g_guest + LONG_DST, 0, LONG_LEN);
+	long_cipher(sc, VIRTIO_CRYPTO_CIPHER_DECRYPT, dec_id, iv);
+	ATF_REQUIRE_EQ(VIRTIO_CRYPTO_OK, g_guest[LONG_STATUS]);
+	ATF_CHECK(memcmp(g_guest + LONG_DST, plain, LONG_LEN) == 0);
+	free(plain);
+}
+
+/*
+ * A data chain the device rejects gets VIRTIO_CRYPTO_ERR in its final
+ * writable byte and a non-zero used length, never an unwritten status.
+ * Only a chain whose status byte cannot be located is returned with used
+ * length 0: one with nothing writable, or one longer than the queue, which
+ * vq_getchain() never returns.
+ */
+ATF_TC_WITHOUT_HEAD(data_rejected_chain_status);
+ATF_TC_BODY(data_rejected_chain_status, tc)
+{
+	struct pci_vtcrypto_softc *sc;
+	struct seg w[2], many[VTCRYPTO_RINGSZ];
+	int i;
+
+	sc = make_device(NULL, NULL);
+
+	/* No readable descriptor. */
+	memset(g_guest, 0, sizeof(g_guest));
+	w[0].off = 1024; w[0].len = 16;
+	w[1].off = 1040; w[1].len = 1;
+	g_guest[1040] = 0xff;
+	mock_set_chain(NULL, 0, w, 2, true);
+	g_rel_calls = 0;
+	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
+	ATF_CHECK_EQ(1, g_rel_calls);
+	ATF_CHECK_EQ(1u, g_rel_len);
+	ATF_CHECK_EQ(VIRTIO_CRYPTO_ERR, g_guest[1040]);
+
+	/* More descriptors than the queue holds. */
+	for (i = 0; i < VTCRYPTO_RINGSZ; i++) {
+		many[i].off = 1024 + i;
+		many[i].len = 1;
+	}
+	w[0].off = 0; w[0].len = 72;
+	mock_set_chain(w, 1, many, VTCRYPTO_RINGSZ, true);
+	g_guest[1024 + VTCRYPTO_RINGSZ - 1] = 0xff;
+	g_rel_calls = 0;
+	pci_vtcrypto_dataq_notify(sc, &sc->vcs_vq[0]);
+	ATF_CHECK_EQ(1, g_rel_calls);
+	ATF_CHECK_EQ(0u, g_rel_len);
+	ATF_CHECK_EQ(0xff, g_guest[1024 + VTCRYPTO_RINGSZ - 1]);
 }
 
 ATF_TC_WITHOUT_HEAD(reset_frees_sessions);
@@ -1813,6 +1954,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mac_kat);
 	ATF_TP_ADD_TC(tp, aead_kat);
 	ATF_TP_ADD_TC(tp, data_malformed);
+	ATF_TP_ADD_TC(tp, data_long_chain);
+	ATF_TP_ADD_TC(tp, data_rejected_chain_status);
 	ATF_TP_ADD_TC(tp, reset_frees_sessions);
 	ATF_TP_ADD_TC(tp, snapshot_save_restore);
 	ATF_TP_ADD_TC(tp, cipher_kat_aes192_aes256);
