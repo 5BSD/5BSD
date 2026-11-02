@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_ena", objects = ["//sys/contrib/ena-com:if_ena_ena_com_module_object_files", "//sys/contrib/ena-com:if_ena_ena_eth_com_module_object_files", "//sys/dev/ena:if_ena_ena_module_object_files", "//sys/dev/ena:if_ena_ena_sysctl_module_object_files", "//sys/dev/ena:if_ena_ena_datapath_module_object_files", "//sys/dev/ena:if_ena_ena_netmap_module_object_files", "//sys/dev/ena:if_ena_ena_rss_module_object_files"], object_order = ["ena_com.o", "ena_eth_com.o", "ena.o", "ena_sysctl.o", "ena_datapath.o", "ena_netmap.o", "ena_rss.o"], export_all = False, package = "kernel", aliases = [])

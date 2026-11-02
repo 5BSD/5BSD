@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_gve", objects = ["//sys/dev/gve:if_gve_gve_main_module_object_files", "//sys/dev/gve:if_gve_gve_adminq_module_object_files", "//sys/dev/gve:if_gve_gve_utils_module_object_files", "//sys/dev/gve:if_gve_gve_tx_dqo_module_object_files", "//sys/dev/gve:if_gve_gve_sysctl_module_object_files"], object_order = ["gve_main.o", "gve_adminq.o", "gve_utils.o", "gve_qpl.o", "gve_rx.o", "gve_rx_dqo.o", "gve_tx.o", "gve_tx_dqo.o", "gve_sysctl.o"], export_all = False, package = "kernel", aliases = [])

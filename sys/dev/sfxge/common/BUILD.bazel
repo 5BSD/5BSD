@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["efsys.h", "efx.h", "efx_annote.h", "efx_check.h", "efx_phy_ids.h", "efx_types.h"], includes = [],
+    visibility = ["//sys/dev/sfxge:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["efsys.h", "efx.h", "efx_annote.h", "efx_check.h", "efx_mcdi.h", "efx_phy_ids.h", "efx_regs_mcdi.h", "efx_regs_mcdi_strs.h", "efx_types.h"], includes = [],
+    visibility = ["//sys/dev/sfxge:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_2", hdrs = ["ef10_impl.h", "efsys.h", "efx.h", "efx_annote.h", "efx_check.h", "efx_impl.h", "efx_mcdi.h", "efx_phy_ids.h", "efx_regs.h", "efx_regs_ef10.h", "efx_regs_mcdi.h", "efx_regs_mcdi_strs.h", "efx_types.h", "hunt_impl.h", "medford2_impl.h", "medford_impl.h", "siena_flash.h", "siena_impl.h"], includes = [],
+    visibility = ["//sys/dev/sfxge/common:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_3", hdrs = ["ef10_impl.h", "efsys.h", "efx.h", "efx_annote.h", "efx_check.h", "efx_impl.h", "efx_mcdi.h", "efx_phy_ids.h", "efx_regs.h", "efx_regs_ef10.h", "efx_regs_mcdi.h", "efx_regs_mcdi_strs.h", "efx_types.h", "hunt_impl.h", "mcdi_mon.h", "medford2_impl.h", "medford_impl.h", "siena_flash.h", "siena_impl.h"], includes = [],
+    visibility = ["//sys/dev/sfxge/common:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_4", hdrs = ["ef10_impl.h", "ef10_tlv_layout.h", "efsys.h", "efx.h", "efx_annote.h", "efx_check.h", "efx_impl.h", "efx_mcdi.h", "efx_phy_ids.h", "efx_regs.h", "efx_regs_ef10.h", "efx_regs_mcdi.h", "efx_regs_mcdi_strs.h", "efx_types.h", "hunt_impl.h", "medford2_impl.h", "medford_impl.h", "siena_flash.h", "siena_impl.h"], includes = [],
+    visibility = ["//sys/dev/sfxge/common:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "sfxge_efx_bootcfg_module", srcs = ["efx_bootcfg.c", "efx_crc32.c", "efx_ev.c", "efx_intr.c", "efx_lic.c", "efx_mac.c", "efx_mcdi.c", "efx_mon.c", "efx_nic.c", "efx_nvram.c", "efx_phy.c", "efx_port.c", "efx_rx.c", "efx_sram.c", "efx_tunnel.c", "efx_tx.c", "efx_vpd.c", "efx_filter.c", "efx_hash.c", "siena_mac.c", "siena_mcdi.c", "siena_nvram.c", "siena_phy.c", "siena_sram.c", "siena_vpd.c", "ef10_ev.c", "ef10_filter.c", "ef10_image.c", "ef10_intr.c", "ef10_mac.c", "ef10_mcdi.c", "ef10_phy.c", "ef10_rx.c", "ef10_tx.c", "medford_nic.c", "medford2_nic.c"],
+    deps = ["//sys/dev/sfxge/common:network_services_module_context_2", "//sys/vm:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sfxge_mcdi_mon_module", srcs = ["mcdi_mon.c", "siena_nic.c"],
+    deps = ["//sys/dev/sfxge/common:network_services_module_context_3", "//sys/vm:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sfxge_ef10_nic_module", srcs = ["ef10_nic.c", "ef10_nvram.c", "ef10_vpd.c", "hunt_nic.c"],
+    deps = ["//sys/dev/sfxge/common:network_services_module_context_4", "//sys/vm:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

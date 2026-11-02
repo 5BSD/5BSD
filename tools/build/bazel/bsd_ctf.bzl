@@ -95,6 +95,15 @@ def _merge(ctx):
     if ctx.attr.ctf_label and ctx.attr.ctf_label_setting:
         fail("choose either ctf_label or ctf_label_setting")
     out = ctx.actions.declare_file(ctx.attr.output)
+    object_paths = ctx.attr.object_paths
+    if object_paths:
+        if len(object_paths) != len(source_objects) or len(depset(object_paths).to_list()) != len(object_paths):
+            fail("CTF object paths must uniquely cover the complete ordered object inventory")
+        for obj, path in zip(source_objects, object_paths):
+            if not path or path.startswith("/") or "\\" in path or any([part in ["", ".", ".."] for part in path.split("/")]):
+                fail("CTF object paths must be safe relative paths")
+            if path.split("/")[-1] != obj.basename:
+                fail("CTF object path basename must match its ordered object")
     if not ctx.attr.enabled:
         ctx.actions.symlink(output = out, target_file = ctx.file.linked)
         return [DefaultInfo(files = depset([out]))]
@@ -104,11 +113,13 @@ def _merge(ctx):
     if not source_objects:
         fail("CTF merge requires explicit converted object inputs")
     # ctfmerge sorts paths internally. Give inputs a common directory and
-    # basename-first ordering independent of their originating Bazel package.
+    # explicit source-relative ordering (or basenames by default), independent
+    # of their originating Bazel package. ctfmerge sorts the complete paths.
     # Symlinks retain declared dependencies without copying object contents.
     objects = []
     for index, obj in enumerate(source_objects):
-        staged = ctx.actions.declare_file(ctx.label.name + "/merge_inputs/" + obj.basename + "/" + str(index) + "/" + obj.basename)
+        relative = object_paths[index] if object_paths else obj.basename
+        staged = ctx.actions.declare_file(ctx.label.name + "/merge_inputs/" + relative + "/" + str(index) + "/" + obj.basename)
         ctx.actions.symlink(output = staged, target_file = obj)
         objects.append(staged)
     args = ctx.actions.args()
@@ -126,6 +137,7 @@ bsd_ctf_merge = rule(implementation = _merge, attrs = {
     "linked": attr.label(allow_single_file = True, mandatory = True),
     "objects": attr.label_list(allow_files = True, mandatory = True),
     "object_order": attr.string_list(),
+    "object_paths": attr.string_list(doc = "Optional source-relative CTF sort paths, corresponding to the complete ordered objects."),
     "merger": attr.label(executable = True, cfg = "exec", mandatory = True),
     "copy_runner": attr.label(executable = True, cfg = "exec", mandatory = True),
     "runtime": attr.label_list(allow_files = True, cfg = "exec"),

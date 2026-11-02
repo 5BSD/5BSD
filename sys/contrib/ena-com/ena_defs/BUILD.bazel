@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["ena_admin_defs.h", "ena_common_defs.h", "ena_eth_io_defs.h", "ena_includes.h", "ena_regs_defs.h"], includes = [],
+    visibility = ["//sys/contrib/ena-com:__pkg__", "//sys/dev/ena:__pkg__"])
+
+exports_files(["ena_admin_defs.h"], visibility = ["//:__pkg__"])
+
+exports_files(["ena_common_defs.h"], visibility = ["//:__pkg__"])
+
+exports_files(["ena_eth_io_defs.h"], visibility = ["//:__pkg__"])
+
+exports_files(["ena_includes.h"], visibility = ["//:__pkg__"])
+
+exports_files(["ena_regs_defs.h"], visibility = ["//:__pkg__"])

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["ena.h", "ena_datapath.h", "ena_netmap.h", "ena_rss.h", "ena_sysctl.h"], includes = [],
+    visibility = ["//sys/dev/ena:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["ena.h", "ena_rss.h", "ena_sysctl.h"], includes = [],
+    visibility = ["//sys/dev/ena:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_2", hdrs = ["ena.h", "ena_datapath.h", "ena_netmap.h"], includes = [],
+    visibility = ["//sys/dev/ena:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_3", hdrs = ["ena.h", "ena_netmap.h"], includes = [],
+    visibility = ["//sys/dev/ena:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_4", hdrs = ["ena.h", "ena_rss.h"], includes = [],
+    visibility = ["//sys/dev/ena:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_ena_ena_module", srcs = ["ena.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:network_services_module_context_4", "//sys/netinet:network_services_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/dev/ena:network_services_module_context_0", "//sys/contrib/ena-com:network_services_module_context_1", "//sys/dev/led:acpi_support_headers", "//sys/contrib/ena-com/ena_defs:network_services_module_context_0", "//sys/dev/netmap:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//:network_services_namespace_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ena_ena_sysctl_module", srcs = ["ena_sysctl.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ena:network_services_module_context_1", "//sys/contrib/ena-com:network_services_module_context_1", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_15", "//sys/netinet:network_services_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/contrib/ena-com/ena_defs:network_services_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//:network_services_namespace_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ena_ena_datapath_module", srcs = ["ena_datapath.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ena:network_services_module_context_2", "//sys/contrib/ena-com:network_services_module_context_1", "//sys/vm:mii_family_headers", "//sys/net:network_services_module_context_4", "//sys/netinet:network_services_module_context_3", "//sys/netinet6:usb_net_if_ure_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/contrib/ena-com/ena_defs:network_services_module_context_0", "//sys/dev/netmap:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//:network_services_namespace_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ena_ena_netmap_module", srcs = ["ena_netmap.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ena:network_services_module_context_3", "//sys/contrib/ena-com:network_services_module_context_1", "//sys/vm:mii_family_headers", "//sys/net:network_services_module_context_6", "//sys/netinet:network_services_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/contrib/ena-com/ena_defs:network_services_module_context_0", "//sys/dev/netmap:network_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//:network_services_namespace_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ena_ena_rss_module", srcs = ["ena_rss.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ena:network_services_module_context_4", "//sys/contrib/ena-com:network_services_module_context_1", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_15", "//sys/netinet:network_services_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/contrib/ena-com/ena_defs:network_services_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//:network_services_namespace_context_1"], preinclude_headers = [], textual_hdrs = [])

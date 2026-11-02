@@ -1119,3 +1119,18 @@ The pending network cohort's first six source-lookup failures are retained;
 repeat original controls with the actual kernel source context before native
 conversion. No accepted native artifacts or full-system gates are inferred from
 selection, and no build-bsd CLI/signing/publication change is required.
+
+### Network/routing/entropy modules (November 2, 2026)
+
+[Qualification](NETWORK-SERVICES-MODULES-QUALIFICATION.md): 37 more selected amd64
+leaves, 188 actual compiler contexts and exactly 32,362 consumed original/native
+dependency occurrences per plain/CTF profile; actual ordered parameters retained.
+All 37 plain ELF files match untouched Make bytes; all CTF/debug payloads and
+CTF data match, with valid debug CRCs and 111 original installation records.
+ENA's physical include namespace is explicitly declared; netlink's nested CTF
+sort paths are an optional validated native rule input. Four actual-rule analysis
+negatives and the existing CTF executable regression pass; 108 default-path
+outputs are unchanged. All 22 compiled SDT/DTrace module sections are preserved.
+Local BUILD presence is now 665/729, leaving 64; it does not close architecture,
+full kernel/world/rescue/library/pkgbase, bootstrap/runtime or performance gates.
+No build-bsd CLI, signing or publication policy change; Make remains default.

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "e6000sw", objects = ["//sys/dev/etherswitch:e6000sw_e6000sw_module_object_files"], object_order = ["e6000sw.o"], export_all = False, package = "kernel", aliases = [])

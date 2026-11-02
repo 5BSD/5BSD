@@ -57,7 +57,7 @@ bsd_source_headers(
         "mii.h",
         "miivar.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/axgbe:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/mgb:__pkg__"],
 )
 
 bsd_source_headers(

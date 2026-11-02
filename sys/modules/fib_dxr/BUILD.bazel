@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "fib_dxr", objects = ["//sys/netinet:fib_dxr_in_fib_dxr_module_object_files"], object_order = ["in_fib_dxr.o"], export_all = False, package = "kernel", aliases = [])

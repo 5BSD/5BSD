@@ -7,7 +7,7 @@ cc_library(name = "storage_module_headers", hdrs = ["led.h"],
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
-bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/isci:__pkg__"])
+bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/isci:__pkg__", "//sys/contrib/ena-com:__pkg__", "//sys/dev/ena:__pkg__"])
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["led.h"], visibility = ["//sys/net:__pkg__"])

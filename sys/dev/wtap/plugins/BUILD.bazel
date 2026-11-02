@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["visibility.h", "visibility_ioctl.h", "wtap_plugin.h"], includes = [],
+    visibility = ["//sys/dev/wtap/plugins:__pkg__", "//sys/dev/wtap:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["wtap_plugin.h"], includes = [],
+    visibility = ["//sys/dev/wtap/wtap_hal:__pkg__", "//sys/dev/wtap:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "wtap_visibility_module", srcs = ["visibility.c"],
+    deps = ["//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/wtap/plugins:network_services_module_context_0", "//sys/dev/wtap:network_services_module_context_0", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/wtap/wtap_hal:network_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

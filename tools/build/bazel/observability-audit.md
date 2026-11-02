@@ -10413,3 +10413,13 @@ string/alignment layout differ. No production probe source/checker changes or
 artifact rewriting. Thirty-one actual methods disable DOF initialization before
 product startup; no registration, live event or full rescue claim. See
 RESCUE-FOURTEEN-PROGRAM-QUALIFICATION.md for original/current/cached evidence.
+
+## Network/routing/entropy module cohort (November 2, 2026)
+
+[Qualification](NETWORK-SERVICES-MODULES-QUALIFICATION.md): bounded 186-source scan
+records 160 candidate DTrace/SDT/KTR/audit lines, including comments/macros. All
+22 modules with actual compiled SDT/DTrace sections retain exact original section
+payloads and relocations. No probes were added. This does not establish live
+network events, audit completeness or lack of instrumentation elsewhere; follow
+up in actual VM/runtime qualification. Raw source/section hashes are retained in
+bazel-network-services-modules-review-r1-20261102/observability-review.json.

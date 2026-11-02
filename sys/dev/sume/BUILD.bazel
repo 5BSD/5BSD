@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["adapter.h"], includes = [],
+    visibility = ["//sys/dev/sume:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_sume_if_sume_module", srcs = ["if_sume.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:network_services_module_context_48", "//sys/vm:usb_net_usie_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/sume:network_services_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

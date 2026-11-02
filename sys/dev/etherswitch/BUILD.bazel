@@ -59,3 +59,12 @@ cross_generic_module_objects(arch = "riscv", name = "network_support_module", sr
     copts = ["-fmacro-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c", "-fdebug-prefix-map=$(execpath :etherswitch_if_source)=etherswitch_if.c"])
 bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
     object_names = ["etherswitch.o", "etherswitch_if.o"], visibility = ["//sys/modules/etherswitch:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["e6000sw/e6000swreg.h", "etherswitch.h"], includes = [],
+    visibility = ["//sys/dev/etherswitch:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "e6000sw_e6000sw_module", srcs = ["e6000sw/e6000sw.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:network_services_module_context_2", "//sys/dev/etherswitch:network_services_module_context_0", "//sys/dev/mii:usb_net_uether_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/etherswitch:etherswitch_if_headers", "//sys/dev/mdio:mdio_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

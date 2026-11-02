@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_services_module_context_0", hdrs = ["gdma.h", "gdma_util.h", "hw_channel.h", "mana.h", "shm_channel.h"], includes = ["."],
+    visibility = ["//sys/dev/mana:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_1", hdrs = ["gdma.h", "gdma_util.h", "hw_channel.h", "mana.h", "mana_sysctl.h", "shm_channel.h"], includes = ["."],
+    visibility = ["//sys/dev/mana:__pkg__"])
+
+bsd_source_headers(name = "network_services_module_context_2", hdrs = ["gdma_util.h"], includes = ["."],
+    visibility = ["//sys/dev/mana:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_mana_gdma_main_module", srcs = ["gdma_main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:virtualization_kernel_hn_nvs_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/mana:network_services_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_mana_mana_sysctl_module", srcs = ["mana_sysctl.c"],
+    deps = ["//sys/net:network_services_module_context_30", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/mana:network_services_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_mana_shm_channel_module", srcs = ["shm_channel.c", "hw_channel.c"],
+    deps = ["//sys/net:network_services_module_context_30", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/mana:network_services_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_mana_mana_en_module", srcs = ["mana_en.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_31", "//sys/netinet:network_services_module_context_2", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/mana:network_services_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_mana_gdma_util_module", srcs = ["gdma_util.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/dev/mana:network_services_module_context_2"], preinclude_headers = [], textual_hdrs = [])

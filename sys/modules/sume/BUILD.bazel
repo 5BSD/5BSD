@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_sume", objects = ["//sys/dev/sume:if_sume_if_sume_module_object_files"], object_order = ["if_sume.o"], export_all = False, package = "kernel", aliases = [])

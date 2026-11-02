@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "random_fortuna", objects = ["//sys/dev/random:random_fortuna_randomdev_module_object_files", "//sys/dev/random:random_fortuna_hash_module_object_files", "//sys/dev/random:random_fortuna_fortuna_module_object_files"], object_order = ["randomdev.o", "hash.o", "fortuna.o"], export_all = False, package = "kernel", aliases = [])

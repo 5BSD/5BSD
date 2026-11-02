@@ -53,7 +53,7 @@ bsd_tree_file(name = "opt_platform", tree = ":generic_config", member = "opt_pla
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_platform_header", hdrs = [":opt_platform"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/pwm:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__", "//sys/dev/uart:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/etherswitch:__pkg__", "//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/pwm:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/mgb:__pkg__"])
 
 # Option contents come from config(8), including deliberately empty headers.
 [bsd_tree_file(name = "opt_" + option, tree = ":generic_config", member = "opt_" + option + ".h",
@@ -175,7 +175,7 @@ bsd_tree_file(name = "opt_panic", tree = ":generic_config", member = "opt_panic.
     output = "generic_options/opt_panic.h", python = "@bsd_sdk//toolchain:extra_python",
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "core_kernel_opt_capsicum_header", hdrs = [":opt_capsicum"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__"])
 cc_library(name = "core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/dcons:__pkg__", "//sys/dev/ioat:__pkg__", "//sys/dev/nvdimm:__pkg__"])
 cc_library(name = "core_kernel_opt_ekcd_header", hdrs = [":opt_ekcd"],
@@ -187,9 +187,9 @@ cc_library(name = "core_kernel_opt_gzio_header", hdrs = [":opt_gzio"],
 cc_library(name = "core_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__"])
 cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__"])
 cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/vkbd:__pkg__"])
 cc_library(name = "core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
@@ -199,7 +199,7 @@ cc_library(name = "core_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
 cc_library(name = "core_kernel_opt_kstack_usage_prof_header", hdrs = [":opt_kstack_usage_prof"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__"])
 cc_library(name = "core_kernel_opt_mac_header", hdrs = [":opt_mac"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_maxphys_header", hdrs = [":opt_maxphys"],
@@ -225,7 +225,7 @@ cc_library(name = "core_kernel_opt_printf_header", hdrs = [":opt_printf"],
 cc_library(name = "core_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/bnxt:__pkg__"])
 cc_library(name = "core_kernel_opt_rss_header", hdrs = [":opt_rss"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/sfxge:__pkg__"])
 cc_library(name = "core_kernel_opt_sched_header", hdrs = [":opt_sched"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_stack_header", hdrs = [":opt_stack"],
@@ -287,7 +287,7 @@ cc_library(name = "ipv4_kernel_opt_inet_header", hdrs = [":opt_inet"],
 cc_library(name = "ipv4_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_ipsec_header", hdrs = [":opt_ipsec"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/net:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_ipstealth_header", hdrs = [":opt_ipstealth"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
@@ -303,7 +303,7 @@ cc_library(name = "ipv4_kernel_opt_route_header", hdrs = [":opt_route"],
 cc_library(name = "ipv4_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_sctp_header", hdrs = [":opt_sctp"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__", "//sys/netinet6:__pkg__", "//sys/netipsec:__pkg__"])
 
 # IPv6 built-in prerequisites.
 cc_library(name = "ipv6_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
