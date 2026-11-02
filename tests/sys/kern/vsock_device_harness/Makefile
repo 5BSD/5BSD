@@ -78,6 +78,7 @@ ATF_TESTS_C+=	vmmapi_dirty_log_test
 ATF_TESTS_C+=	virtio_net_test
 ATF_TESTS_C+=	virtio_scsi_test
 ATF_TESTS_C+=	virtio_crypto_pci_test
+ATF_TESTS_C+=	virtio_crypto_guest_test
 ATF_TESTS_C+=	scmi_virtio_poll_test
 ATF_TESTS_C+=	virtio_guest_contract_test
 ATF_TESTS_C+=	virtio_host_contract_test
@@ -132,6 +133,7 @@ ATF_TESTS_C+=	virtio_gpu_2d_pci_test
 ATF_TESTS_C+=	virtio_scsi_event_test
 ATF_TESTS_C+=	virtio_iommu_config_test
 ATF_TESTS_C+=	virtio_iommu_pci_test
+ATF_TESTS_C+=	virtio_iommu_post_init_test
 ATF_TESTS_C+=	virtio_iommu_state_test
 ATF_TESTS_C+=	virtio_iommu_protocol_test
 ATF_TESTS_C+=	virtio_iommu_request_test
@@ -285,6 +287,8 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				virtio_scsi_event_test.c \
 				virtio_iommu_config_test.c \
 				virtio_iommu_pci_test.c \
+				virtio_iommu_post_init_test.c \
+				virtio_iommu_post_init_stubs.c \
 				virtio_iommu_state_test.c \
 				virtio_iommu_protocol_test.c \
 				virtio_iommu_request_test.c \
@@ -581,6 +585,13 @@ CFLAGS.virtio_iommu_config_test+= -I${.CURDIR} -I${.OBJDIR} \
 CFLAGS.virtio_iommu_pci_test+= -ffunction-sections -fdata-sections \
 	-DBHYVE_SNAPSHOT -Wno-error=cast-align -I${.CURDIR} -I${.OBJDIR} \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
+# Links the production VirtIO core, modern transport, and virtio-iommu model;
+# the stubs translation unit satisfies unreachable link-time references.
+SRCS.virtio_iommu_post_init_test=	virtio_iommu_post_init_test.c \
+	virtio_iommu_post_init_stubs.c
+CFLAGS.virtio_iommu_post_init_test+= -ffunction-sections -fdata-sections \
+	-DWITHOUT_CAPSICUM -Wno-error=cast-align -I${SRCTOP}/usr.sbin \
+	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 CFLAGS.virtio_iommu_state_test+= -I${.CURDIR} -I${.OBJDIR} \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 CFLAGS.virtio_iommu_protocol_test+= -I${.CURDIR} -I${.OBJDIR} \
@@ -651,6 +662,9 @@ CFLAGS.virtio_rnd_test+=	-DWITHOUT_CAPSICUM \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/sys
 CFLAGS.scmi_virtio_poll_test+= -I${SRCTOP}/sys
+# Guest driver TU-include; cryptodev_if.h in .CURDIR stands in for the
+# kobj-generated header.
+CFLAGS.virtio_crypto_guest_test+= -I${.CURDIR} -I${SRCTOP}/sys
 CFLAGS.virtio_rnd_interrupt_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
 				-I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin \
@@ -782,6 +796,7 @@ CWARNFLAGS.virtio_net_test.c+= -Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_scsi_test.c+= -Wno-error \
 						-Wno-thread-safety-analysis
+CWARNFLAGS.virtio_crypto_guest_test.c+= -Wno-error
 CWARNFLAGS.virtio_crypto_pci_test.c+= -Wno-error \
 						-Wno-thread-safety-analysis \
 						-Wno-cast-align
@@ -826,6 +841,7 @@ LDFLAGS.virtio_gpu_2d_pci_test+= -Wl,--gc-sections \
 LIBADD.virtio_gpu_2d_pci_test+=	pthread
 LDFLAGS.virtio_iommu_pci_test+= -Wl,--gc-sections \
 	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
+LDFLAGS.virtio_iommu_post_init_test+= -Wl,--gc-sections
 LDFLAGS.virtio_fs_pci_test+= -Wl,--gc-sections
 LDFLAGS.virtio_mem_test+=	-Wl,--gc-sections \
 	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
@@ -874,11 +890,13 @@ LIBADD.virtio_fs_export_test+=	pthread
 LIBADD.virtio_fs_handle_test+=	pthread
 LIBADD.virtio_fs_session_test+=	pthread
 LIBADD.virtio_fs_server_test+=	pthread
+LIBADD.virtio_fs_backend_io_test+=	pthread
 LIBADD.virtiofsd_daemon_test+=	pthread
 LIBADD.virtio_gpu_2d_state_test+=	pthread
 LIBADD.virtio_gpu_2d_queue_test+=	pthread
 LIBADD.virtio_iommu_config_test+=	pthread
 LIBADD.virtio_iommu_pci_test+=	pthread
+LIBADD.virtio_iommu_post_init_test+=	pthread
 LIBADD.virtio_iommu_state_test+=	pthread
 LIBADD.virtio_iommu_request_test+=	pthread
 LIBADD.virtio_iommu_queue_test+=	pthread
