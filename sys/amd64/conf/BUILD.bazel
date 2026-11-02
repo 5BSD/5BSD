@@ -866,3 +866,11 @@ filegroup(name = "generic_kernel_debug", srcs = [":generic_kernel"], output_grou
 
 load("//tools/build/bazel:bsd_kernel_installation.bzl", "kernel_installation")
 kernel_installation(name = "install_manifest", kernel = ":generic_kernel", debug = ":generic_kernel_debug", epoch = 0)
+
+# Original GENERIC watchdog option header, also consumed by its module.
+bsd_tree_file(name = "opt_amdsbwd", tree = ":generic_config", member = "opt_amdsbwd.h",
+    output = "generic_options/opt_amdsbwd.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "generic_opt_amdsbwd_header", hdrs = [":opt_amdsbwd"], strip_include_prefix = "generic_options",
+    visibility = ["//sys/dev/amdsbwd:__pkg__"])

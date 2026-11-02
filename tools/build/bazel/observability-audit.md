@@ -1,6 +1,6 @@
 # Bazel migration: DTrace and security-audit review log
 
-Last updated: 2026-10-26. This is an open review ledger, not a coverage certificate.
+Last updated: 2026-11-02. This is an open review ledger, not a coverage certificate.
 
 ## Review required for each migrated component
 
@@ -9944,3 +9944,17 @@ through the build; it is not live DTrace/audit behavior qualification. The fix
 changes linker input spelling only, with no C/assembly runtime-source edits.
 See FULL-KERNEL-PARITY-QUALIFICATION.md for the real DT_NEEDED defect found and
 rejected initial artifacts.
+
+
+### AMD ECC injection and watchdog modules (2026-11-02)
+
+Native amd_ecc_inject/amdsbwd preserve the original sources and exact CTF;
+plain files and configured debug artifact/install contracts match Make. The
+scoped source scan found no dedicated SDT or explicit security-audit hooks.
+This does not establish a defect: generic kernel/FBT/syscall coverage needs
+runtime review. Follow up on authorization and audit coverage for privileged
+ECC injection sysctl writes, and tracing/audit of watchdog arm/disarm/timeout
+transitions. These operations were not exercised during build qualification;
+ECC hardware actions and watchdog arming are not safe host build tests. Hardware
+or supported isolated-VM evidence is still required for operational claims.
+See HARDWARE-MODULE-GAP-QUALIFICATION.md for compiled scope and retained evidence.

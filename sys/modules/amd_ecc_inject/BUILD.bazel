@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original EXPORT_SYMS=NO uses the default empty export list.
+amd64_generic_module(module = "amd_ecc_inject", objects = ["//sys/dev/amd_ecc_inject:generic_module_object_files"])

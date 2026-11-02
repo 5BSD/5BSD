@@ -27,6 +27,13 @@ cases. Kernel/GDB component packages also preserve the captured payloads; this
 does not close complete kernel packaging. See
 [PACKAGE-DIRECTORY-QUALIFICATION.md](PACKAGE-DIRECTORY-QUALIFICATION.md).
 
+
+Two further hardware modules, amd_ecc_inject and amdsbwd, now pass native plain
+and CTF/debug artifact/install comparisons against corrected original Make
+controls. See [HARDWARE-MODULE-GAP-QUALIFICATION.md](HARDWARE-MODULE-GAP-QUALIFICATION.md)
+for the export-policy correction, debug-definedness mismatch and fresh SDK
+qualification after a changed host tar input. Other module coverage remains open.
+
 Earlier component checkpoints below are retained historical evidence.
 
 Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local

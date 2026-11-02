@@ -25,7 +25,7 @@ bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["isareg.h",
 # Native amd64 core consumer of the maintained ISA object interface.
 filegroup(name = "isa_if_header_file", srcs = [":isa_if"], output_group = "header")
 cc_library(name = "isa_if_headers", hdrs = [":isa_if_header_file"], strip_include_prefix = "isa_if.generated",
-    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/amdsbwd:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["isavar.h", "pnpvar.h"],
