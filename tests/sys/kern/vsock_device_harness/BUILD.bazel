@@ -26,6 +26,20 @@ _IOMMU_POST_INIT_CASES = ["msix_bar_does_not_overlap_modern_bar", "host_topology
  for case in _IOMMU_POST_INIT_CASES]
 test_suite(name = "virtio_iommu_post_init_tests", tests = [":" + case for case in _IOMMU_POST_INIT_CASES],
     visibility = ["//visibility:public"])
+# Make: SRCS.virtio_iommu_snapshot_test (the post-init composition with BHYVE_SNAPSHOT).
+cc_library(name = "virtio_iommu_post_init_test_textual", textual_hdrs = ["virtio_iommu_post_init_test.c"], includes = ["."])
+cc_binary(name = "virtio_iommu_snapshot_test", srcs = ["virtio_iommu_snapshot_test.c", "virtio_iommu_snapshot_stubs.c"],
+    deps = [":virtio_iommu_post_init_test_textual", "//usr.sbin/bhyve:virtio_iommu_post_init_test_inputs", "//contrib/libucl:headers", "//lib/atf/libatf-c:atf_c", "//lib/libthr:thr"],
+    dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC", "-DWITHOUT_CAPSICUM", "-ffunction-sections", "-fdata-sections",
+        "-Wno-error=cast-align", "-Wno-thread-safety-analysis"], linkopts = ["-pie", "-Wl,--gc-sections"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_IOMMU_SNAPSHOT_CASES = ["msix_bar_does_not_overlap_modern_bar", "host_topology_post_init_binds_endpoint",
+    "save_twice_without_guest_driver", "save_twice_after_guest_probe", "checkpoint_twice_endpoint_after_iommu"]
+[bsd_atf_test(name = "snapshot_" + case, case_name = case, body = ":virtio_iommu_snapshot_test", interface = "program",
+    runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
+ for case in _IOMMU_SNAPSHOT_CASES]
+test_suite(name = "virtio_iommu_snapshot_tests", tests = [":snapshot_" + case for case in _IOMMU_SNAPSHOT_CASES],
+    visibility = ["//visibility:public"])
 # Make: CFLAGS.virtio_crypto_guest_test (-I. for the cryptodev_if.h stand-in, -I sys), CWARNFLAGS.
 cc_library(name = "virtio_crypto_guest_test_headers", hdrs = ["cryptodev_if.h"], includes = ["."])
 cc_binary(name = "virtio_crypto_guest_test", srcs = ["virtio_crypto_guest_test.c"],
@@ -69,7 +83,8 @@ cc_binary(name = "virtio_fs_backend_io_test", srcs = ["virtio_fs_backend_io_test
     dynamic_deps = _SHARED, copts = ["-fPIE", "-DPIC"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 _FS_BACKEND_IO_CASES = ["api_errors_and_peer_close", "backend_connect_is_bounded_and_authenticated",
-    "backend_connect_supports_long_parent_path", "peer_authentication", "frame_round_trip_and_nonblocking",
+    "backend_connect_supports_long_parent_path", "capability_mode_reconnect_uses_directory_descriptor",
+    "peer_authentication", "frame_round_trip_and_nonblocking",
     "truncation_and_bad_frames", "descriptor_passing_is_rejected", "truncated_descriptors_are_closed",
     "receive_outputs_must_not_alias", "back_to_back_frames_keep_boundaries",
     "frames_larger_than_socket_buffer_are_reassembled", "full_length_without_eor_is_rejected",

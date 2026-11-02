@@ -134,6 +134,7 @@ ATF_TESTS_C+=	virtio_scsi_event_test
 ATF_TESTS_C+=	virtio_iommu_config_test
 ATF_TESTS_C+=	virtio_iommu_pci_test
 ATF_TESTS_C+=	virtio_iommu_post_init_test
+ATF_TESTS_C+=	virtio_iommu_snapshot_test
 ATF_TESTS_C+=	virtio_iommu_state_test
 ATF_TESTS_C+=	virtio_iommu_protocol_test
 ATF_TESTS_C+=	virtio_iommu_request_test
@@ -289,6 +290,8 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				virtio_iommu_pci_test.c \
 				virtio_iommu_post_init_test.c \
 				virtio_iommu_post_init_stubs.c \
+				virtio_iommu_snapshot_test.c \
+				virtio_iommu_snapshot_stubs.c \
 				virtio_iommu_state_test.c \
 				virtio_iommu_protocol_test.c \
 				virtio_iommu_request_test.c \
@@ -594,6 +597,14 @@ CFLAGS.virtio_iommu_post_init_test+= -ffunction-sections -fdata-sections \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 # virtio.c and virtio_pci_modern.c are included into the test translation unit.
 CWARNFLAGS.virtio_iommu_post_init_test.c+= -Wno-thread-safety-analysis
+# The same composition built with BHYVE_SNAPSHOT: checkpoint save of the
+# virtio-iommu model through the production VirtIO core.
+SRCS.virtio_iommu_snapshot_test=	virtio_iommu_snapshot_test.c \
+	virtio_iommu_snapshot_stubs.c
+CFLAGS.virtio_iommu_snapshot_test+= -ffunction-sections -fdata-sections \
+	-DWITHOUT_CAPSICUM -Wno-error=cast-align -I${SRCTOP}/usr.sbin \
+	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys -I${SRCTOP}/contrib/libucl/include
+CWARNFLAGS.virtio_iommu_snapshot_test.c+= -Wno-thread-safety-analysis
 CFLAGS.virtio_iommu_state_test+= -I${.CURDIR} -I${.OBJDIR} \
 	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
 CFLAGS.virtio_iommu_protocol_test+= -I${.CURDIR} -I${.OBJDIR} \
@@ -894,6 +905,7 @@ LIBADD.virtio_fs_dispatch_test+=	pthread
 LIBADD.virtio_fs_outbox_test+=	pthread
 LIBADD.virtio_fs_queue_test+=	pthread
 LIBADD.virtio_fs_pci_test+=	pthread
+LIBADD.virtio_iommu_snapshot_test+=	pthread
 LIBADD.virtio_fs_export_test+=	pthread
 LIBADD.virtio_fs_handle_test+=	pthread
 LIBADD.virtio_fs_session_test+=	pthread
