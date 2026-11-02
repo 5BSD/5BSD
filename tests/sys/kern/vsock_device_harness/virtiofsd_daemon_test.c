@@ -171,6 +171,58 @@ ATF_TC_BODY(pending_limit_validation, tc)
 	ATF_CHECK(!pending_limit_valid(UINT32_MAX / 2U + 1U, UINT32_MAX));
 }
 
+/*
+ * local(4) does not pass a listener's buffer sizes to accepted sockets, so the
+ * daemon sizes each connection itself and then drops CAP_SETSOCKOPT.
+ */
+ATF_TC_WITHOUT_HEAD(accepted_socket_is_sized_then_loses_setsockopt);
+ATF_TC_BODY(accepted_socket_is_sized_then_loses_setsockopt, tc)
+{
+	static const uint32_t message = 1024U * 1024U;
+	struct sockaddr_un address;
+	cap_rights_t rights;
+	socklen_t length;
+	int accepted, connector, listener, size, sized;
+
+	memset(&address, 0, sizeof(address));
+	address.sun_family = AF_UNIX;
+	(void)strlcpy(address.sun_path, "listener", sizeof(address.sun_path));
+	listener = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(listener >= 0);
+	ATF_REQUIRE_EQ(bind(listener, (struct sockaddr *)&address,
+	    sizeof(address)), 0);
+	ATF_REQUIRE_EQ(listen(listener, 1), 0);
+	size = (int)(VIRTIO_FS_BACKEND_HEADER_SIZE + message);
+	ATF_REQUIRE_EQ(setsockopt(listener, SOL_SOCKET, SO_RCVBUF, &size,
+	    sizeof(size)), 0);
+	connector = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	ATF_REQUIRE(connector >= 0);
+	ATF_REQUIRE_EQ(connect(connector, (struct sockaddr *)&address,
+	    sizeof(address)), 0);
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+
+	length = sizeof(sized);
+	ATF_REQUIRE_EQ(getsockopt(accepted, SOL_SOCKET, SO_RCVBUF, &sized,
+	    &length), 0);
+	ATF_CHECK_MSG(sized < size, "accepted socket inherited %d", sized);
+
+	ATF_REQUIRE_EQ(client_prepare(accepted, message), 0);
+	length = sizeof(sized);
+	ATF_REQUIRE_EQ(getsockopt(accepted, SOL_SOCKET, SO_RCVBUF, &sized,
+	    &length), 0);
+	ATF_CHECK_EQ(sized, size);
+	ATF_REQUIRE_EQ(cap_rights_get(accepted, &rights), 0);
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_SETSOCKOPT));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_EVENT, CAP_GETPEERNAME,
+	    CAP_GETSOCKOPT, CAP_READ, CAP_WRITE, CAP_RECV, CAP_SEND));
+	ATF_CHECK_ERRNO(ENOTCAPABLE, setsockopt(accepted, SOL_SOCKET,
+	    SO_RCVBUF, &size, sizeof(size)) == -1);
+	ATF_REQUIRE_EQ(close(accepted), 0);
+	ATF_REQUIRE_EQ(close(connector), 0);
+	ATF_REQUIRE_EQ(close(listener), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(silent_authenticated_client_times_out);
 ATF_TC_BODY(silent_authenticated_client_times_out, tc)
 {
@@ -570,6 +622,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, pending_limit_validation);
+	ATF_TP_ADD_TC(tp, accepted_socket_is_sized_then_loses_setsockopt);
 	ATF_TP_ADD_TC(tp, silent_authenticated_client_times_out);
 	ATF_TP_ADD_TC(tp,
 	    foreground_daemon_is_sandboxed_event_driven_and_cleans);
