@@ -220,6 +220,13 @@ lua-config-io-test:
 	${PYTHON} -B ${.CURDIR}/lua_io_read_test.py --lua-library ${LUA_TEST_LIBRARY} --lua-include ${LUA_TEST_INCLUDE}
 	${LUA_TEST_INTERPRETER} ${.CURDIR}/lua_config_close_test.lua ${SRCTOP}/stand/lua/config.lua
 
+# The loader's required modules against loader.conf; plain Lua 5.4, so the
+# base flua runs it.
+FLUA?=		/usr/libexec/flua
+.PHONY: lua-required-modules-test
+lua-required-modules-test:
+	${FLUA} ${.CURDIR}/lua_required_modules_test.lua ${SRCTOP}/stand/lua/config.lua
+
 .PHONY: verified-read-failure-test
 verified-read-failure-test:
 	${PYTHON} -B ${.CURDIR}/verified_read_failure_test.py --bearssl-library ${VERIFIER_BEARSSL_LIBRARY}

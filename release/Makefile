@@ -288,6 +288,13 @@ bootonly: pkgbase-repo-dir
 dvd: pkgbase-repo-dir
 .endif
 
+# Modules the loader loads on every boot (stand/lua/config.lua) that the
+# installer does not need: the Linux ABI, vmm and the DTrace user providers.
+# The rest of that set (ZFS, DTrace, pf and the others amd64 GENERIC compiles
+# in) is still loaded by a kernel that lacks it, on every architecture.
+INSTALLER_NOLOAD_KMODS=	linux_common linux64 linprocfs linsysfs vmm \
+			hypertrace kinst fasttrap
+
 # These media targets are directories, so without explicit file dependencies
 # they can remain stale across installer/release script edits.
 DISC_STAGING_DEPS=	${.CURDIR}/Makefile ${.CURDIR}/rc.local
@@ -461,9 +468,9 @@ disc1:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
-	# DTrace user providers); see stand/lua/config.lua.
-	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
+.for kmod in ${INSTALLER_NOLOAD_KMODS}
+	echo ${kmod}_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+.endfor
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -526,9 +533,9 @@ bootonly:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
-	# DTrace user providers); see stand/lua/config.lua.
-	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
+.for kmod in ${INSTALLER_NOLOAD_KMODS}
+	echo ${kmod}_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+.endfor
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
@@ -605,9 +612,9 @@ dvd:
 	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
 	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
-	# The installer needs none of the always-loaded modules (Linux ABI, vmm,
-	# DTrace user providers); see stand/lua/config.lua.
-	echo required_modules=\"NO\" >> ${.TARGET}/boot/loader.conf
+.for kmod in ${INSTALLER_NOLOAD_KMODS}
+	echo ${kmod}_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+.endfor
 	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
 	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf

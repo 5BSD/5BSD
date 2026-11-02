@@ -1045,6 +1045,7 @@ file_findmodule(struct preloaded_file *fp, char *modname,
 	}
 	return (best);
 }
+
 /*
  * Is a module of this name provided by any loaded file, the kernel included
  * (its statically compiled modules are registered from its metadata)?

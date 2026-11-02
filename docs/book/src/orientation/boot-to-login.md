@@ -26,11 +26,13 @@ The capsule package repeats the same line in
 other stays bootable. ZFS is compiled into GENERIC because the storage plane
 assumes a pool: `/dev/zfs` must exist for BSDFilesystem before rc(8) runs,
 even on a host whose root is UFS. DTrace, pf, the container and desktop
-drivers are compiled in as well. The loader loads, on every boot and
-independently of `*_load` lines, the base modules that cannot be compiled in:
+drivers are compiled in as well. The loader loads, on every boot and without
+`*_load` lines, the base modules that are not compiled in:
 `linux_common`, `linux64`, `linprocfs` and `linsysfs` (so the Linux ABI is
 available from the first multi-user moment), `vmm`, `hypertrace`, `kinst` and
-`fasttrap`; see `required_modules` in [Boot Knobs](../operations/boot-knobs.md).
+`fasttrap`, and `uvideo` (a module, so that `uvideo_load="NO"` leaves USB
+cameras to webcamd); see `required_modules` in
+[Boot Knobs](../operations/boot-knobs.md).
 There are no `mac_capability` module loads: since the plane became `standard`
 in `sys/conf/files`, every 5BSD kernel carries it.
 
