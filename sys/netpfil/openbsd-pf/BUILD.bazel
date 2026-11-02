@@ -134,3 +134,8 @@ amd64_generic_kernel_objects(name = "generic_network_policy_pf_sysctl", srcs = [
 amd64_generic_kernel_objects(name = "generic_network_policy_pf_pfsync", srcs = ["pf_pfsync.c"],
     deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//contrib/openbsd-pf/sys/net:network_policy_kernel_pf_pfsync_headers", "//sys/crypto/sha2:network_policy_kernel_pf_headers", "//sys/crypto/siphash:network_policy_kernel_pf_headers", "//sys/net:network_policy_kernel_pf_headers", "//sys/netinet:network_policy_kernel_pf_ruleset_headers", "//sys/netinet/cc:network_policy_kernel_netlink_sock_diag_headers", "//sys/netinet6:network_policy_kernel_pf_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
     warning_flags = _NETWORK_POLICY_VENDOR_WARNING_FLAGS, early_deps = ["//sys/netpfil/openbsd-pf:compatibility_headers"], copts = ["-DOPENBSD_PF", "-DOPENBSD_PF_GLUE", "-include", "sys/netpfil/openbsd-pf/openbsd_compat.h"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["include/net/radix.h", "include/sys/pool.h", "openbsd_compat.h"],
+    includes = ["include"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

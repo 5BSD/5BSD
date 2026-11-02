@@ -31,3 +31,8 @@ bsd_source_headers(name = "monitoring_devices_kernel_audit_dtrace_headers", hdrs
 bsd_source_headers(name = "dtrace_builtins_kernel_opensolaris_headers", hdrs = ["static_ccompile.h"],
     includes = ["."],
     visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_zfs-sha256-x86_64_headers", hdrs = ["static_ccompile.h"],
+    includes = ["."],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

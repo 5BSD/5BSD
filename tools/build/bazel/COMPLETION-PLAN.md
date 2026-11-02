@@ -441,3 +441,7 @@ linked ELF/DOF contracts and 65 install records per configuration. Default15 saf
 wrappers pass; KERBEROS-off13 pass with two explicit exclusions. Preserve original
 nine installed-policy and one privileged accounting guest gates, final pkgbase
 composition, inherited world selection and full-system/runtime/bootstrap gates.
+
+## Custom-named kernel checkpoint (2026-11-02)
+
+Four radix/OpenZFS SHA objects pass code/CTF/compiler/input/relocation checks, including one complete hash-bound filename spelling difference. Three declared symlink aliases preserve actual final-link names and bytes. Reconciliation r38 binds 2,405 physical-source identities, leaves 57 generated-name matches (53 independently qualified), two weak object identities and two missing producer chains (VDSO and force-dynamic). See CUSTOM-NAMES-KERNEL-QUALIFICATION.md. Full linking, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

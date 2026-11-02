@@ -1465,3 +1465,16 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_ifdi_if", srcs = [":b
 # Physical prerequisites for native generated RPC built-ins.
 bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["vnet.h"],
     visibility = ["//sys/rpc:__pkg__"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_radix_headers", hdrs = ["radix.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "pfil.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_COMMON_WARNING_FLAGS")
+load("//tools/build/bazel:bsd_object_alias.bzl", "bsd_object_alias")
+
+# Native amd64 GENERIC custom-named kernel built-ins.
+amd64_generic_kernel_objects(name = "generic_custom_names_radix", srcs = ["radix.c"],
+    deps = ["//sys/net:custom_names_kernel_radix_headers"], early_deps = [],
+    pre_copts = [], copts = [], warning_flags = KERNEL_COMMON_WARNING_FLAGS + [] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))

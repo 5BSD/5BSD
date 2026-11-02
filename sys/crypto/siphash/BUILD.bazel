@@ -37,3 +37,7 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_siphash", srcs = ["si
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_siphash_test", srcs = ["siphash_test.c"],
     deps = ["//sys/crypto/siphash:codecs_crypto_kernel_siphash_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["siphash.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

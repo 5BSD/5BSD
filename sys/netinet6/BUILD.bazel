@@ -610,3 +610,7 @@ bsd_source_headers(name = "kobj_builtins_physical_nvme_if_headers", hdrs = ["in6
 # Physical prerequisites for native generated RPC built-ins.
 bsd_source_headers(name = "rpc_builtins_kernel_rpctlscd_xdr_headers", hdrs = ["in6.h"],
     visibility = ["//sys/rpc:__pkg__"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])

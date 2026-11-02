@@ -9880,3 +9880,7 @@ indices/length/load boundary; provenance is exact. Safe tests disable DOF
 registration before startup. These checks do not qualify live probe delivery,
 loader registration, privileged accounting or authentication behavior. See
 PAM-FAMILY-QUALIFICATION.md and retained shared-dof-audit-r3 evidence.
+
+## Custom-named radix/SHA built-ins (2026-11-02)
+
+A bounded scan finds no matching call-shaped tracing/audit markers in four converted radix/SHA files. This proves neither absent shared hooks nor runtime coverage. See CUSTOM-NAMES-KERNEL-QUALIFICATION.md and retained observability.json; production sources and instrumentation remain unchanged.

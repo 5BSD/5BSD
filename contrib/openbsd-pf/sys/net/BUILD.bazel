@@ -78,3 +78,14 @@ amd64_generic_kernel_objects(name = "generic_network_policy_if_pflow", srcs = ["
 amd64_generic_kernel_objects(name = "generic_network_policy_if_pfsync", srcs = ["if_pfsync.c"],
     deps = ["//sys/contrib/ck:network_policy_kernel_nhgrp_headers", "//contrib/openbsd-pf/sys/net:network_policy_kernel_if_pfsync_headers", "//sys/crypto/sha2:network_policy_kernel_pf_headers", "//sys/crypto/siphash:network_policy_kernel_pf_headers", "//sys/net:network_policy_kernel_pf_headers", "//sys/netinet:network_policy_kernel_pf_headers", "//sys/netinet/cc:network_policy_kernel_netlink_sock_diag_headers", "//sys/netinet6:network_policy_kernel_pf_headers", "//sys/vm:network_policy_kernel_nhgrp_headers", "//sys/amd64/conf:network_policy_kernel_opt_inet_header", "//sys/amd64/conf:network_policy_kernel_opt_inet6_header"],
     warning_flags = _NETWORK_POLICY_VENDOR_WARNING_FLAGS, early_deps = ["//sys/netpfil/openbsd-pf:compatibility_headers"], copts = ["-DOPENBSD_PF", "-include", "sys/netpfil/openbsd-pf/openbsd_compat.h"])
+
+# Physical prerequisites for native custom-named kernel built-ins.
+bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["radix.h"],
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+load("//tools/build/bazel:bsd_object_alias.bzl", "bsd_object_alias")
+
+# Native amd64 GENERIC custom-named kernel built-ins.
+amd64_generic_kernel_objects(name = "generic_custom_names_obsd_radix", srcs = ["radix.c"],
+    deps = ["//sys/contrib/ck:custom_names_kernel_obsd_radix_headers", "//contrib/openbsd-pf/sys/net:custom_names_kernel_obsd_radix_headers", "//sys/crypto/sha2:custom_names_kernel_obsd_radix_headers", "//sys/crypto/siphash:custom_names_kernel_obsd_radix_headers", "//sys/net:custom_names_kernel_obsd_radix_headers", "//sys/netinet:custom_names_kernel_obsd_radix_headers", "//sys/netinet/cc:custom_names_kernel_obsd_radix_headers", "//sys/netinet6:custom_names_kernel_obsd_radix_headers", "//sys/netpfil/openbsd-pf:custom_names_kernel_obsd_radix_headers", "//sys/vm:custom_names_kernel_obsd_radix_headers", "//sys/amd64/conf:custom_names_kernel_opt_inet_header", "//sys/amd64/conf:custom_names_kernel_opt_inet6_header"], early_deps = ["//sys/netpfil/openbsd-pf:compatibility_headers"],
+    pre_copts = ["-DOPENBSD_PF", "-DOBSD_RADIX_IMPL"], copts = ["-include", "sys/netpfil/openbsd-pf/openbsd_compat.h"], warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-missing-prototypes", "-Wno-strict-prototypes", "-Wno-format", "-Wno-incompatible-pointer-types-discards-qualifiers", "-Wno-cast-qual", "-Wno-unused-but-set-variable", "-Wno-pointer-sign", "-Wno-sign-compare", "-Wno-address-of-packed-member", "-Wno-constant-conversion"])
+bsd_object_alias(name = "generic_custom_names_obsd_radix_link_object", src = ":generic_custom_names_obsd_radix_object_files", output = "generic_link_objects/obsd_radix.o", visibility = ["//visibility:public"])

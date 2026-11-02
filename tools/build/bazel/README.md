@@ -47616,3 +47616,5 @@ Configured suite compatibility and strict BEP exclusion controls are recorded in
 Native PAM family composition, corrected shared-core compile/install policy,
 15 safe wrappers and explicit guest/package limits are recorded in
 [PAM-FAMILY-QUALIFICATION.md](PAM-FAMILY-QUALIFICATION.md).
+
+[CUSTOM-NAMES-KERNEL-QUALIFICATION.md](CUSTOM-NAMES-KERNEL-QUALIFICATION.md) records four native radix/OpenZFS SHA objects, three declared final-link aliases, code/CTF/input/relocation checks, and alias-aware inventory reconciliation. Full-system gates remain open.
