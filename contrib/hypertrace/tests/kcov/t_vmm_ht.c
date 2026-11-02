@@ -35,6 +35,8 @@
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_param.h>
 
 #include <machine/frame.h>
 #include <machine/md_var.h>
@@ -1533,6 +1535,82 @@ case_lifetime_query(void)
 	khx_vmm_file_close();
 }
 
+/* ---- internal exits: nested paging ------------------------------------- */
+/*
+ * svm_nested_l2_paging() turns an L2 nested page fault that L1's NPT12
+ * allows, but L0's map of L1 memory refuses, into VM_EXITCODE_PAGING at the
+ * L1 physical address.  vm_handle_internal_exit() must fault that address
+ * in L1's vmspace and report a refusal; dropping the exit re-enters L2 into
+ * the same fault forever.
+ */
+#define	NESTED_L1_GPA	0x7654000UL
+
+static int
+internal_paging(struct vm *vm, struct vcpu *vcpu, int fault_rv, long *runs)
+{
+	struct khx_exit ex[2];
+	long faults, start;
+	int error;
+
+	memset(ex, 0, sizeof(ex));
+	ex[0].exitcode = VM_EXITCODE_VMM_INTERNAL;
+	ex[1].exitcode = VM_EXITCODE_BOGUS;	/* back to userland */
+	khx_vmm_script(ex, 2);
+	memset(&khx_vmm_internal, 0, sizeof(khx_vmm_internal));
+	khx_vmm_internal.exitcode = VM_EXITCODE_PAGING;
+	khx_vmm_internal.rip = 0x401000;
+	khx_vmm_internal.u.paging.gpa = NESTED_L1_GPA;
+	khx_vmm_internal.u.paging.fault_type = VM_PROT_WRITE;
+	khx_vm_fault_rv = fault_rv;
+	khx_vm_fault_map = NULL;
+	faults = khx_vm_faults;
+	start = khx_vmm_runs;
+	error = vm_run(vcpu);
+	*runs = khx_vmm_runs - start;
+	KHX_EQ(vcpu_get_state(vcpu, NULL), VCPU_FROZEN);
+	/* The L1 page was faulted once, in L1's own vmspace. */
+	KHX_EQ(khx_vm_faults, faults + 1);
+	KHX_CHECK(khx_vm_fault_map == &vm_vmspace(vm)->vm_map);
+	KHX_EQ(khx_vm_fault_va, NESTED_L1_GPA);
+	KHX_EQ(khx_vm_fault_type, VM_PROT_WRITE);
+	return (error);
+}
+
+static void
+case_internal_paging(void)
+{
+	struct vm *vm;
+	struct vcpu *vcpu;
+	long calls, faults, runs;
+
+	khx_host_case("internal-paging");
+	vm = vm_new("npfvm");
+	vcpu = vcpu_new(vm, 0, 0);
+	calls = khx_vmm_internal_calls;
+
+	/* L0 refuses: the run ends with EFAULT, L2 is not re-entered. */
+	KHX_EQ(internal_paging(vm, vcpu, KERN_PROTECTION_FAILURE, &runs),
+	    EFAULT);
+	KHX_EQ(runs, 1);
+	KHX_EQ(khx_vmm_internal_calls, calls + 1);
+
+	/* The fault resolves: L2 resumes and its next exit is handled. */
+	KHX_EQ(internal_paging(vm, vcpu, KERN_SUCCESS, &runs), 0);
+	KHX_EQ(runs, 2);
+	KHX_EQ(vm_exitinfo(vcpu)->exitcode, VM_EXITCODE_BOGUS);
+	KHX_EQ(khx_vmm_internal_calls, calls + 2);
+
+	/* A failed backend handler is returned without faulting anything. */
+	khx_vmm_internal_error = EPROTO;
+	khx_vmm_script((struct khx_exit[]){
+	    { .exitcode = VM_EXITCODE_VMM_INTERNAL } }, 1);
+	faults = khx_vm_faults;
+	KHX_EQ(vm_run(vcpu), EPROTO);
+	KHX_EQ(khx_vm_faults, faults);
+	khx_vmm_internal_error = 0;
+	vm_gone(vm);
+}
+
 int
 khx_test_main(void)
 {
@@ -1552,6 +1630,7 @@ khx_test_main(void)
 	case_free_memseg();
 	case_run_witness();
 	case_lifetime_query();
+	case_internal_paging();
 	khx_host_case("teardown");
 	KHX_EQ(khx_ht_live, 0);
 	KHX_EQ(khx_module_event("vmm", MOD_UNLOAD), 0);
