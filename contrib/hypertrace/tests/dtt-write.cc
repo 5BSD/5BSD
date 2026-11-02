@@ -928,31 +928,52 @@ test_device_full_mid_delivery()
 }
 
 /*
- * Sessions that end without a delivery (a job that fails every time) are
- * bounded: after six in a row the bridge stops instead of re-registering
- * every 2 s forever.  A delivery resets the count.
+ * A host that stalls for minutes fails every job the bridge forwards: the
+ * frame gets no receipt, then the device stays full before the first
+ * fragment, then the local daemon fails the replayed job (kill_socket) again
+ * and again.  None of that stops the guest daemon; once the host drains, the
+ * pending token is replayed and delivered.
  */
 static void
-test_idle_sessions_bounded()
+test_host_stall_recovers()
 {
 	writer_fixture f;
 	f.start();
-	for (int i = 0; i < 5; ++i) {
-		int c = f.accept_peer();
-		handshake(c);
-		close(c);
-	}
+	dtraced_hdr_t h = elf_header(60, 2 * DTT_MAXDATALEN + 9);
+	auto body = payload(h.elf.len, 0x60);
+
+	/* No receipt within 20 s. */
 	int c = f.accept_peer();
 	handshake(c);
-	deliver_one(f, c, 50, 0x50);
+	send_frame(c, h, body);
+	CHECK(collect_elf(f.dev[1], h) == body);
+	CHECK(peer_eof(c, 25000));
 	close(c);
-	for (int i = 0; i < 6; ++i) {
+
+	/* The device stays full for the 10 s deadline at offset 0. */
+	device_room.store(0);
+	c = f.accept_peer();
+	handshake(c);
+	send_frame(c, h, body);
+	CHECK(peer_eof(c, 15000));
+	close(c);
+	CHECK(peer_quiet(f.dev[1], 10));
+	device_room.store(-1);
+
+	/* Twice the sessions of the former idle bound, all failed jobs. */
+	for (int i = 0; i < 12; ++i) {
 		CHECK(!f.writer_done.load() && !f.s.shutdown.load());
 		c = f.accept_peer();
 		handshake(c);
 		close(c);
 	}
-	CHECK(f.writer_stopped() && f.s.shutdown.load());
+
+	/* The host drained: the replayed token is delivered. */
+	c = f.accept_peer();
+	handshake(c);
+	deliver_one(f, c, 60, 0x60);
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	close(c);
 }
 
 static void
@@ -1182,7 +1203,7 @@ test_minion_round_trip()
 int
 main()
 {
-	alarm(240);
+	alarm(300);
 	signal(SIGPIPE, SIG_IGN);
 	test_delivery();
 	test_bad_frames();
@@ -1191,7 +1212,7 @@ main()
 	test_failed_job_token_replayed();
 	test_device_faults();
 	test_device_full_mid_delivery();
-	test_idle_sessions_bounded();
+	test_host_stall_recovers();
 	test_connection_setup();
 	test_minion_round_trip();
 	printf("dtt-write: %u checks passed\n", harness_checks);

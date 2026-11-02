@@ -79,6 +79,13 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	before then; it no longer starts the broker early by running
 	sysextctl after a failed direct load.
 
+	dtraced(8) now refuses to start when its control directory
+	/var/ddtrace is not owned by root or grants group or other access:
+	it logs "must be owned by uid 0 with mode 0700" and exits with
+	EX_OSERR.  A /var/ddtrace left with mode 0755 by an older dtraced
+	must be fixed once with "chmod 700 /var/ddtrace" (and
+	"chown root /var/ddtrace" if needed) before dtraced is started.
+
 20261101:
 	Root can load a kernel module of the base system from a login shell
 	again: "sysextctl load NAME" from a root login shell (effective UID

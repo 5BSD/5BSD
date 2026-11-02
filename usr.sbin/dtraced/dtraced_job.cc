@@ -1345,7 +1345,11 @@ job::read_data(state &s) try
 		 * stream from registration through the status: no job frame may
 		 * precede it. Registration takes no output lock of its own. */
 		std::unique_lock output(dfd.output_mtx);
+		bool bound;
+		int error;
+		errno = 0;
 		unsigned char status = cr.handle() ? 1 : 0;
+		error = errno;
 		if (status == 0)
 			WARN("refused HyperTrace program registration from "
 			    "%s: %m", dfd.ident);
@@ -1358,7 +1362,8 @@ job::read_data(state &s) try
 		 * retryable on this connection. */
 		{
 			std::lock_guard clients(s.sockfdsmtx);
-			if (dfd.consumer_program_valid)
+			bound = dfd.consumer_program_valid;
+			if (bound)
 				dfd.consumer_registration_acked.store(true);
 		}
 		if (!dfd.send(&status, sizeof(status), deadline)) {
@@ -1366,6 +1371,13 @@ job::read_data(state &s) try
 			return (false);
 		}
 		output.unlock();
+		if (status == 0 && bound) {
+			/* A retry on this socket would reach the ELF worker as
+			 * a delivery ACK.  Close it; the client registers again
+			 * on a new connection. */
+			errno = error != 0 ? error : EPROTO;
+			return (false);
+		}
 		if (!dfd.re_enable_read()) {
 			ERR("re_enable_read() failed with: %m");
 			return (false);
