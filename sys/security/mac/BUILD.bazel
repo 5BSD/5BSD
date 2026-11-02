@@ -91,3 +91,15 @@ bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["mac_frame
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

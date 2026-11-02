@@ -9511,3 +9511,14 @@ physical interfaces and symbolic relocation comparisons. Packet/session,
 retransmit/timer/MIB events and audit delivery remain matching-kernel runtime
 checks. No host network/tracing activation or new hot-path instrumentation was
 performed; review shared coverage and measured overhead before adding events.
+
+## IPv6 kernel built-ins (2026-11-02)
+
+Twenty-nine unchanged selected sys/netinet6 sources retain original machine code
+and CTF against Make. A bounded scan including real network probe wrappers finds
+recognized markers in 6 sources and none in 23. See
+[IPv6 qualification](IPV6-KERNEL-QUALIFICATION.md) for source hashes/lines and
+compiled interface/relocation evidence. Packet, ICMPv6, neighbor discovery,
+routing/fragmentation/session event delivery and audit remain matching-kernel
+runtime gates. No host network/tracing activation or new hot-path probes were
+introduced; shared coverage and measured overhead must guide further changes.

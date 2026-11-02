@@ -101,3 +101,11 @@ bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["cc.h"],
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["cc.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["cc.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

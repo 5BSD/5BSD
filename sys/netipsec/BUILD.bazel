@@ -30,3 +30,15 @@ bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["ipsec_suppo
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["ipsec_support.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["ipsec_support.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["ipsec_support.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["ipsec_support.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["ipsec_support.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["ipsec_support.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

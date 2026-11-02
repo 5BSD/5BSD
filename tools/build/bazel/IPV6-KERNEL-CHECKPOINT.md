@@ -1,5 +1,9 @@
 # IPv6 candidate: CTF equivalence gate remains open
 
+**Historical checkpoint, superseded:** see IPV6-KERNEL-QUALIFICATION.md and
+CTF-SEMANTIC-CHECK.md for the maintained binary verifier, negative tests and
+completed component reviews. The original failure/diagnosis below is retained.
+
 ## Current state (2026-11-02)
 
 Twenty-nine selected amd64 GENERIC sys/netinet6 objects have native declarations

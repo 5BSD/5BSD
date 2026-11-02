@@ -36,3 +36,7 @@ bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["sha256.h
 # IPv4 built-in prerequisites.
 bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha256.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["sha256.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

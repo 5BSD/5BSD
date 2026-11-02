@@ -304,3 +304,25 @@ cc_library(name = "ipv4_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_sctp_header", hdrs = [":opt_sctp"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+cc_library(name = "ipv6_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_ipsec_header", hdrs = [":opt_ipsec"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_ipstealth_header", hdrs = [":opt_ipstealth"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_route_header", hdrs = [":opt_route"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_rss_header", hdrs = [":opt_rss"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+cc_library(name = "ipv6_kernel_opt_sctp_header", hdrs = [":opt_sctp"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])

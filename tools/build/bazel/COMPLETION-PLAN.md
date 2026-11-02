@@ -17,6 +17,9 @@ progress, not a full native kernel/world/package/runtime or performance gate.
 A further forty-three selected IPv4/TCP built-in objects pass the same native
 compile/input, code/CTF and symbolic relocation checks; see
 IPV4-KERNEL-QUALIFICATION.md. Full kernel link/network runtime gates remain open.
+Twenty-nine selected IPv6 objects now pass corresponding native object/input
+checks; see IPV6-KERNEL-QUALIFICATION.md. These cohorts do not close full kernel
+aggregation, cross-build or runtime/performance gates.
 Userland resumes from USERLAND-UPGRADE-CHECKPOINT-20261101.md with fresh WPA
 references. All remaining work and final completion requirements below apply.
 

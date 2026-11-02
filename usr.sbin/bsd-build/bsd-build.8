@@ -5106,3 +5106,11 @@ See
 .Pa tools/build/bazel/CTF-SEMANTIC-CHECK.md
 for supported formats, negative regressions and ABI/runtime limits.
 Kernel artifact profiles retain their restriction against runnable host tests.
+.Pp
+The format-5 native target API also qualifies twenty-nine selected amd64 GENERIC
+IPv6 built-in objects through the existing staged SDK and kernel settings.
+See
+.Pa tools/build/bazel/IPV6-KERNEL-QUALIFICATION.md
+for actual compiler/input, code, CTF and symbolic relocation checks.
+Complete kernel, cross-build, network runtime and performance gates
+remain open.

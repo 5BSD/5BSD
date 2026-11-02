@@ -433,3 +433,63 @@ amd64_generic_kernel_objects(name = "generic_ipv4_tcp_usrreq", srcs = ["tcp_usrr
 amd64_generic_kernel_objects(name = "generic_ipv4_udp_usrreq", srcs = ["udp_usrreq.c"],
     deps = ["//sys/contrib/ck:ipv4_kernel_udp_usrreq_headers", "//sys/ddb:ipv4_kernel_udp_usrreq_headers", "//sys/net:ipv4_kernel_udp_usrreq_headers", "//sys/netinet:ipv4_kernel_udp_usrreq_headers", "//sys/netinet6:ipv4_kernel_udp_usrreq_headers", "//sys/netipsec:ipv4_kernel_udp_usrreq_headers", "//sys/security/mac:ipv4_kernel_udp_usrreq_headers", "//sys/vm:ipv4_kernel_udp_usrreq_headers", "//sys/amd64/conf:ipv4_kernel_opt_inet_header", "//sys/amd64/conf:ipv4_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv4_kernel_opt_rss_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_var.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip6.h", "tcp.h", "tcp_fsm.h", "tcp_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["icmp6.h", "if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_carp.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["in.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["in.h", "in_var.h", "ip6.h", "ip_mroute.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["in.h", "in_kdtrace.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_gif_headers", hdrs = ["in.h", "in_kdtrace.h", "in_systm.h", "ip.h", "ip6.h", "ip_ecn.h", "ip_encap.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip6.h", "ip_var.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_jail_headers", hdrs = ["in.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_fsm.h", "tcp_var.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_pcb_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_pcb_var.h", "in_systm.h", "in_var.h", "ip6.h", "ip_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_proto_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rmx_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_var.h", "ip6.h", "ip_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rss_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip6.h", "tcp.h", "udp.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_var.h", "ip6.h", "ip_var.h", "sctp_crc32.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "sctp_crc32.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_id_headers", hdrs = ["in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "ip.h", "ip6.h", "ip_encap.h", "ip_icmp.h", "ip_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip6.h", "ip_var.h", "sctp.h", "sctp_crc32.h", "sctp_uio.h", "tcp.h", "tcp_fsm.h", "tcp_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_var.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["icmp6.h", "if_ether.h", "in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_nbr_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_var.h", "ip6.h", "ip_carp.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_rtr_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip6.h", "ip_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_route6_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["in.h", "in_kdtrace.h", "ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "udp.h", "udp_var.h", "udplite.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

@@ -540,3 +540,61 @@ bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["_vm_phys.h"
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_jail_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_pcb_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_proto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rmx_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rss_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_nbr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_rtr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_route6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])

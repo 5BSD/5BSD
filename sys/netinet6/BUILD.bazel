@@ -231,3 +231,154 @@ bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["in6.h", "in
     visibility = ["//sys/netinet:__pkg__"])
 bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["in6.h", "in6_fib.h", "in6_ifattach.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h", "send.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["in6.h", "in6_fib.h", "in6_ifattach.h", "in6_pcb.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["in6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_gif_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_ecn.h", "ip6_var.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_jail_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_pcb_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_proto_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h", "nd6.h", "raw_ip6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rmx_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rss_headers", hdrs = ["in6.h", "in6_rss.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "nd6.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["in6.h", "in6_fib.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_id_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_rss.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "mld6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["in6.h", "in6_fib.h", "in6_rss.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "mld6.h", "mld6_var.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["in6.h", "in6_fib.h", "in6_ifattach.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h", "send.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_nbr_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h", "send.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_rtr_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_var.h", "ip6_var.h", "nd6.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_var.h", "ip6_mroute.h", "ip6_var.h", "nd6.h", "raw_ip6.h", "scope6_var.h", "send.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_route6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h", "scope6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["in6.h", "in6_fib.h", "in6_pcb.h", "in6_rss.h", "in6_var.h", "ip6_var.h", "scope6_var.h", "udp6_var.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+
+# Native IPv6 built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_ipv6_dest6", srcs = ["dest6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_dest6_headers", "//sys/net:ipv6_kernel_dest6_headers", "//sys/netinet:ipv6_kernel_dest6_headers", "//sys/netinet6:ipv6_kernel_dest6_headers", "//sys/vm:ipv6_kernel_dest6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_frag6", srcs = ["frag6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_frag6_headers", "//sys/ddb:ipv6_kernel_frag6_headers", "//sys/net:ipv6_kernel_frag6_headers", "//sys/netinet:ipv6_kernel_frag6_headers", "//sys/netinet6:ipv6_kernel_frag6_headers", "//sys/security/mac:ipv6_kernel_frag6_headers", "//sys/vm:ipv6_kernel_frag6_headers", "//sys/amd64/conf:ipv6_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_icmp6", srcs = ["icmp6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_icmp6_headers", "//sys/net:ipv6_kernel_icmp6_headers", "//sys/netinet:ipv6_kernel_icmp6_headers", "//sys/netinet/cc:ipv6_kernel_icmp6_headers", "//sys/netinet6:ipv6_kernel_icmp6_headers", "//sys/vm:ipv6_kernel_icmp6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6", srcs = ["in6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_headers", "//sys/ddb:ipv6_kernel_in6_headers", "//sys/net:ipv6_kernel_in6_headers", "//sys/netinet:ipv6_kernel_in6_headers", "//sys/netinet6:ipv6_kernel_in6_headers", "//sys/security/mac:ipv6_kernel_in6_headers", "//sys/vm:ipv6_kernel_in6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_cksum", srcs = ["in6_cksum.c"],
+    deps = ["//sys/net:ipv6_kernel_in6_cksum_headers", "//sys/netinet:ipv6_kernel_in6_cksum_headers", "//sys/netinet6:ipv6_kernel_in6_cksum_headers", "//sys/vm:ipv6_kernel_in6_cksum_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_fib", srcs = ["in6_fib.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_fib_headers", "//sys/net:ipv6_kernel_in6_fib_headers", "//sys/netinet:ipv6_kernel_in6_fib_headers", "//sys/netinet6:ipv6_kernel_in6_fib_headers", "//sys/vm:ipv6_kernel_in6_fib_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_route_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_fib_algo", srcs = ["in6_fib_algo.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_fib_algo_headers", "//sys/net:ipv6_kernel_in6_fib_algo_headers", "//sys/netinet:ipv6_kernel_in6_fib_algo_headers", "//sys/netinet6:ipv6_kernel_in6_fib_algo_headers", "//sys/vm:ipv6_kernel_in6_fib_algo_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_gif", srcs = ["in6_gif.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_gif_headers", "//sys/net:ipv6_kernel_in6_gif_headers", "//sys/netinet:ipv6_kernel_in6_gif_headers", "//sys/netinet6:ipv6_kernel_in6_gif_headers", "//sys/vm:ipv6_kernel_in6_gif_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_ifattach", srcs = ["in6_ifattach.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_ifattach_headers", "//sys/crypto/sha2:ipv6_kernel_in6_ifattach_headers", "//sys/net:ipv6_kernel_in6_ifattach_headers", "//sys/netinet:ipv6_kernel_in6_ifattach_headers", "//sys/netinet6:ipv6_kernel_in6_ifattach_headers", "//sys/vm:ipv6_kernel_in6_ifattach_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_jail", srcs = ["in6_jail.c"],
+    deps = ["//sys/net:ipv6_kernel_in6_jail_headers", "//sys/netinet:ipv6_kernel_in6_jail_headers", "//sys/netinet6:ipv6_kernel_in6_jail_headers", "//sys/vm:ipv6_kernel_in6_jail_headers", "//sys/amd64/conf:ipv6_kernel_opt_ddb_header", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_mcast", srcs = ["in6_mcast.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_mcast_headers", "//sys/net:ipv6_kernel_in6_mcast_headers", "//sys/netinet:ipv6_kernel_in6_mcast_headers", "//sys/netinet/cc:ipv6_kernel_in6_mcast_headers", "//sys/netinet6:ipv6_kernel_in6_mcast_headers", "//sys/vm:ipv6_kernel_in6_mcast_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_pcb", srcs = ["in6_pcb.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_pcb_headers", "//sys/net:ipv6_kernel_in6_pcb_headers", "//sys/netinet:ipv6_kernel_in6_pcb_headers", "//sys/netinet6:ipv6_kernel_in6_pcb_headers", "//sys/vm:ipv6_kernel_in6_pcb_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_proto", srcs = ["in6_proto.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_proto_headers", "//sys/net:ipv6_kernel_in6_proto_headers", "//sys/netinet:ipv6_kernel_in6_proto_headers", "//sys/netinet6:ipv6_kernel_in6_proto_headers", "//sys/vm:ipv6_kernel_in6_proto_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_ipstealth_header", "//sys/amd64/conf:ipv6_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_rmx", srcs = ["in6_rmx.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_rmx_headers", "//sys/net:ipv6_kernel_in6_rmx_headers", "//sys/netinet:ipv6_kernel_in6_rmx_headers", "//sys/netinet6:ipv6_kernel_in6_rmx_headers", "//sys/vm:ipv6_kernel_in6_rmx_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_rss", srcs = ["in6_rss.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_rss_headers", "//sys/net:ipv6_kernel_in6_rss_headers", "//sys/netinet:ipv6_kernel_in6_rss_headers", "//sys/netinet6:ipv6_kernel_in6_rss_headers", "//sys/vm:ipv6_kernel_in6_rss_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_in6_src", srcs = ["in6_src.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_in6_src_headers", "//sys/net:ipv6_kernel_in6_src_headers", "//sys/netinet:ipv6_kernel_in6_src_headers", "//sys/netinet6:ipv6_kernel_in6_src_headers", "//sys/vm:ipv6_kernel_in6_src_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_ip6_fastfwd", srcs = ["ip6_fastfwd.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_ip6_fastfwd_headers", "//sys/net:ipv6_kernel_ip6_fastfwd_headers", "//sys/netinet:ipv6_kernel_ip6_fastfwd_headers", "//sys/netinet6:ipv6_kernel_ip6_fastfwd_headers", "//sys/vm:ipv6_kernel_ip6_fastfwd_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipstealth_header", "//sys/amd64/conf:ipv6_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_ip6_forward", srcs = ["ip6_forward.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_ip6_forward_headers", "//sys/net:ipv6_kernel_ip6_forward_headers", "//sys/netinet:ipv6_kernel_ip6_forward_headers", "//sys/netinet6:ipv6_kernel_ip6_forward_headers", "//sys/netipsec:ipv6_kernel_ip6_forward_headers", "//sys/vm:ipv6_kernel_ip6_forward_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_ipstealth_header", "//sys/amd64/conf:ipv6_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_ip6_id", srcs = ["ip6_id.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_ip6_id_headers", "//sys/net:ipv6_kernel_ip6_id_headers", "//sys/netinet:ipv6_kernel_ip6_id_headers", "//sys/netinet6:ipv6_kernel_ip6_id_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_ip6_input", srcs = ["ip6_input.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_ip6_input_headers", "//sys/net:ipv6_kernel_ip6_input_headers", "//sys/netinet:ipv6_kernel_ip6_input_headers", "//sys/netinet6:ipv6_kernel_ip6_input_headers", "//sys/netipsec:ipv6_kernel_ip6_input_headers", "//sys/vm:ipv6_kernel_ip6_input_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header", "//sys/amd64/conf:ipv6_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_ip6_output", srcs = ["ip6_output.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_ip6_output_headers", "//sys/net:ipv6_kernel_ip6_output_headers", "//sys/netinet:ipv6_kernel_ip6_output_headers", "//sys/netinet/cc:ipv6_kernel_ip6_output_headers", "//sys/netinet6:ipv6_kernel_ip6_output_headers", "//sys/netipsec:ipv6_kernel_ip6_output_headers", "//sys/vm:ipv6_kernel_ip6_output_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_kern_tls_header", "//sys/amd64/conf:ipv6_kernel_opt_ratelimit_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header", "//sys/amd64/conf:ipv6_kernel_opt_sctp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_mld6", srcs = ["mld6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_mld6_headers", "//sys/ddb:ipv6_kernel_mld6_headers", "//sys/net:ipv6_kernel_mld6_headers", "//sys/netinet:ipv6_kernel_mld6_headers", "//sys/netinet6:ipv6_kernel_mld6_headers", "//sys/security/mac:ipv6_kernel_mld6_headers", "//sys/vm:ipv6_kernel_mld6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_nd6", srcs = ["nd6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_nd6_headers", "//sys/ddb:ipv6_kernel_nd6_headers", "//sys/net:ipv6_kernel_nd6_headers", "//sys/netinet:ipv6_kernel_nd6_headers", "//sys/netinet6:ipv6_kernel_nd6_headers", "//sys/security/mac:ipv6_kernel_nd6_headers", "//sys/vm:ipv6_kernel_nd6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_nd6_nbr", srcs = ["nd6_nbr.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_nd6_nbr_headers", "//sys/net:ipv6_kernel_nd6_nbr_headers", "//sys/netinet:ipv6_kernel_nd6_nbr_headers", "//sys/netinet6:ipv6_kernel_nd6_nbr_headers", "//sys/vm:ipv6_kernel_nd6_nbr_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_nd6_rtr", srcs = ["nd6_rtr.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_nd6_rtr_headers", "//sys/net:ipv6_kernel_nd6_rtr_headers", "//sys/netinet:ipv6_kernel_nd6_rtr_headers", "//sys/netinet6:ipv6_kernel_nd6_rtr_headers", "//sys/vm:ipv6_kernel_nd6_rtr_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_raw_ip6", srcs = ["raw_ip6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_raw_ip6_headers", "//sys/net:ipv6_kernel_raw_ip6_headers", "//sys/netinet:ipv6_kernel_raw_ip6_headers", "//sys/netinet6:ipv6_kernel_raw_ip6_headers", "//sys/netipsec:ipv6_kernel_raw_ip6_headers", "//sys/vm:ipv6_kernel_raw_ip6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_route6", srcs = ["route6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_route6_headers", "//sys/net:ipv6_kernel_route6_headers", "//sys/netinet:ipv6_kernel_route6_headers", "//sys/netinet6:ipv6_kernel_route6_headers", "//sys/vm:ipv6_kernel_route6_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_scope6", srcs = ["scope6.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_scope6_headers", "//sys/net:ipv6_kernel_scope6_headers", "//sys/netinet:ipv6_kernel_scope6_headers", "//sys/netinet6:ipv6_kernel_scope6_headers", "//sys/vm:ipv6_kernel_scope6_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ipv6_udp6_usrreq", srcs = ["udp6_usrreq.c"],
+    deps = ["//sys/contrib/ck:ipv6_kernel_udp6_usrreq_headers", "//sys/ddb:ipv6_kernel_udp6_usrreq_headers", "//sys/net:ipv6_kernel_udp6_usrreq_headers", "//sys/netinet:ipv6_kernel_udp6_usrreq_headers", "//sys/netinet6:ipv6_kernel_udp6_usrreq_headers", "//sys/netipsec:ipv6_kernel_udp6_usrreq_headers", "//sys/security/mac:ipv6_kernel_udp6_usrreq_headers", "//sys/vm:ipv6_kernel_udp6_usrreq_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
