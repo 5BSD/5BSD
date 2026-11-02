@@ -242,3 +242,51 @@ amd64_generic_module_objects(name = "if_qlnxev_lkpi_iic_if_module", srcs = [":lk
 amd64_generic_module_objects(name = "qlnxr_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
     deps = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0", "//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
     warning_flags = select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}) + ["-Wall", "-Wstrict-prototypes", "-Wmissing-prototypes", "-Wpointer-arith", "-Wcast-qual", "-Wundef", "-Wno-pointer-sign", "-Wmissing-include-dirs", "-fdiagnostics-show-option", "-Wno-unknown-pragmas", "-Wswitch", "-Wno-error=tautological-compare", "-Wno-error=empty-body", "-Wno-error=parentheses-equality", "-Wno-error=unused-function", "-Wno-error=pointer-sign", "-Wno-error=shift-negative-value", "-Wno-address-of-packed-member", "-Wno-cast-qual", "-Wno-unused-function", "-Wno-gnu-variable-sized-type-not-at-end", "-Wno-missing-prototypes", "-Wno-error=constant-conversion", "-Wno-format", "-Wno-shift-count-overflow", "-Wno-empty-body", "-Wno-format-zero-length", "-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-g", "-fno-inline", "-include", "$(execpath //sys/compat/linuxkpi/common/include/linux:kconfig.h)", "-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_ECORE_IWARP", "CONFIG_ECORE_L2", "CONFIG_ECORE_LL2", "CONFIG_ECORE_RDMA", "CONFIG_ECORE_ROCE", "CONFIG_INFINIBAND_USER_MEM", "ECORE_CONFIG_DIRECT_HWFN", "ECORE_PACKAGE", "INET", "INET6", "LINUX_TYPES_DEFINED", "QLNX_DEBUG", "QLNX_RDMA"], header_overrides = [], preinclude_headers = [], textual_hdrs = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"])
+
+amd64_generic_module_objects(name = "ibcore_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith", "-Wno-unused-but-set-variable"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ipoib_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "iser_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "ICL_KERNEL_PROXY", "INET", "INET6"], header_overrides = ["//sys/sys:kernel_headers", "//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx4_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx4en_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx4ib_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx5_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx5en_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlx5ib_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlxfw_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mthca_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith"], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = ["CONFIG_INFINIBAND_USER_MEM", "INET", "INET6"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "krping_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

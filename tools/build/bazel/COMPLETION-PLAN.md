@@ -1147,3 +1147,19 @@ matches source and leaves ELF bytes unchanged. Next close the genuine original
 static-library/provider/order gate or first new library dependency, remaining
 applications, original test suites and installed rescue/mv helper/pkgbase paths;
 full world/bootstrap/publication/resource gates remain open.
+
+### RDMA/InfiniBand/Mellanox modules (November 2, 2026)
+
+[Qualification](RDMA-MODULES-QUALIFICATION.md): fourteen more selected amd64 leaves,
+206 actual uncached compiler contexts and exactly 83,230 original/native consumed
+dependency occurrences per plain/CTF profile. All actual ordered link parameters
+are captured. Thirteen plain ELFs match untouched original Make files; iSER
+matches an independent one-map original filename control (ten exact compiler
+vector comparisons, ordinary originals retained). All CTF/debug data and CRCs
+and 42 installation records match corresponding controls. Original iSER header
+precedence is preserved by ordered provider composition; default helper vectors
+and 39 other-module outputs remain unchanged. Four compiled SDT/DTrace modules
+retain exact sections/relocations. Local BUILD presence is 679/729 (50 remain),
+not full-system completion. No frontend CLI/signing/publication policy change;
+Make remains default and cross-target/full world/kernel/packages/runtime and
+performance gates remain open.

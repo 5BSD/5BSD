@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ipoib", objects = ["//sys/ofed/drivers/infiniband/ulp/ipoib:ipoib_ipoib_cm_module_object_files", "//sys/ofed/drivers/infiniband/ulp/ipoib:ipoib_ipoib_ib_module_object_files", "//sys/ofed/drivers/infiniband/ulp/ipoib:ipoib_ipoib_main_module_object_files", "//sys/compat/linuxkpi/common/src:ipoib_lkpi_iic_if_module_object_files"], object_order = ["ipoib_cm.o", "ipoib_ib.o", "ipoib_main.o", "ipoib_multicast.o", "ipoib_verbs.o", "lkpi_iic_if.o"], export_all = False, package = "kernel", aliases = [])

@@ -177,11 +177,12 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 665 selected directories contain local BUILD
-files, leaving 64 without. This is declaration presence, not qualified-build
+GENERIC audit selects 729 modules; 679 selected directories contain local BUILD
+files, leaving 50 without. This is declaration presence, not qualified-build
 coverage. The newest qualified module cohort is documented in
-[network services qualification](NETWORK-SERVICES-MODULES-QUALIFICATION.md).
-Selection snapshot before this 37-leaf cohort (628 local BUILD files):
+[RDMA qualification](RDMA-MODULES-QUALIFICATION.md).
+Earlier selection snapshot (628 local BUILD files; the two later module cohorts
+add 51 selected leaves):
 `/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
 Complete native world/kernel/pkgbase and system qualification remain open.
 The corrected query context selects 627 ARM64 and 553 RISC-V64 modules, with 504

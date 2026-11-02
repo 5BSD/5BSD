@@ -1138,9 +1138,9 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["if.h", "vnet.h"],
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlxfw:__pkg__"])
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
@@ -1190,7 +1190,7 @@ bsd_source_headers(name = "mlx_kernel_mlx5_diagnostics_headers", hdrs = ["bpf.h"
 bsd_source_headers(name = "mlx_kernel_mlx5_eq_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "route.h", "rss_config.h", "vnet.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_main_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/dev/mlx5:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/dev/mlx4/mlx4_en:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "pfkeyv2.h", "route.h", "rss_config.h", "vnet.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 
@@ -1527,7 +1527,7 @@ bsd_source_headers(name = "network_families_module_context_7", hdrs = ["bpf.h", 
     visibility = ["//sys/dev/bnxt:__pkg__"])
 
 bsd_source_headers(name = "network_families_module_context_8", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"], includes = [],
-    visibility = ["//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__"])
+    visibility = ["//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/contrib/rdma/krping:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/iser:__pkg__", "//sys/dev/mlx4/mlx4_en:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 
 bsd_source_headers(name = "network_families_module_context_9", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "route.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/bnxt:__pkg__"])
@@ -1647,4 +1647,26 @@ amd64_generic_module_objects(name = "if_vxlan_if_vxlan_module", srcs = ["if_vxla
 
 amd64_generic_module_objects(name = "ipsec_if_ipsec_module", srcs = ["if_ipsec.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_20", "//sys/netinet:network_services_module_context_14", "//sys/netinet6:network_policy_kernel_route_ctl_headers", "//sys/netipsec:network_services_module_context_0", "//sys/opencrypto:mlx_kernel_mlx5_ipsec_offload_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ipv4_kernel_opt_ipsec_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/irdma:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_3", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_5", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_lagg.h", "if_llatbl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "infiniband.h", "netisr.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/net:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_6", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_7", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "infiniband.h", "netisr.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_9", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_en:__pkg__"])
+
+amd64_generic_module_objects(name = "if_infiniband_if_infiniband_module", srcs = ["if_infiniband.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:rdma_module_context_5", "//sys/netinet:rdma_module_context_5", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kbd_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

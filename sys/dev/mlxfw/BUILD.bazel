@@ -27,3 +27,19 @@ amd64_generic_kernel_objects(name = "generic_peripheral_devices_mlxfw_mfa2", src
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_mlxfw_mfa2_tlv_multi", srcs = ["mlxfw_mfa2_tlv_multi.c"],
     deps = ["//sys/compat/linuxkpi/common/include/linux:peripheral_devices_kernel_mlxfw_mfa2_tlv_multi_headers", "//sys/dev/mlxfw:peripheral_devices_kernel_mlxfw_mfa2_tlv_multi_headers", "//sys/vm:peripheral_devices_kernel_mlxfw_mfa2_tlv_multi_headers"], early_deps = ["//sys/compat/linuxkpi/common/include:peripheral_devices_kernel_mlxfw_mfa2_tlv_multi_headers"],
     warning_flags = KERNEL_COMMON_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-pointer-arith", "-Wno-unused-but-set-variable"] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}), copts = ["-DCONFIG_INFINIBAND_USER_MEM", "-include", "sys/compat/linuxkpi/common/include/linux/kconfig.h"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "mlxfw_mlxfw_fsm_module", srcs = ["mlxfw_fsm.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/mlxfw:peripheral_devices_kernel_mlxfw_fsm_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:rdma_module_context_51"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlxfw_mlxfw_mfa2_module", srcs = ["mlxfw_mfa2.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/contrib/xz-embedded:peripheral_devices_kernel_mlxfw_mfa2_headers", "//sys/dev/mlxfw:peripheral_devices_kernel_mlxfw_mfa2_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:rdma_module_context_52"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "mlxfw_mlxfw_mfa2_tlv_multi_module", srcs = ["mlxfw_mfa2_tlv_multi.c"],
+    deps = ["//sys/dev/mlxfw:peripheral_devices_kernel_mlxfw_mfa2_tlv_multi_headers", "//sys/vm:linuxkpi_kernel_linux_mhi_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:rdma_module_context_53"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

@@ -43,7 +43,7 @@ bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["sha256.h"
 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
-    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__", "//sys/netipsec:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],

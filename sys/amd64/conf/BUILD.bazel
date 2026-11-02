@@ -187,15 +187,15 @@ cc_library(name = "core_kernel_opt_gzio_header", hdrs = [":opt_gzio"],
 cc_library(name = "core_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/qlxgb:__pkg__", "//sys/dev/qlxgbe:__pkg__", "//sys/dev/qlxge:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__", "//sys/contrib/rdma/krping:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/iser:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_en:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])
 cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/contrib/dpdk_rte_lpm:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/gve:__pkg__", "//sys/dev/oce:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/wg:__pkg__", "//sys/net:__pkg__", "//sys/netinet6:__pkg__", "//sys/netlink:__pkg__", "//sys/contrib/rdma/krping:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/iser:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])
 cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/vkbd:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/net:__pkg__"])
 cc_library(name = "core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/dcons:__pkg__"])
 cc_library(name = "core_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/mlx5:__pkg__"])
 cc_library(name = "core_kernel_opt_kstack_usage_prof_header", hdrs = [":opt_kstack_usage_prof"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_ktrace_header", hdrs = [":opt_ktrace"],
@@ -223,9 +223,9 @@ cc_library(name = "core_kernel_opt_param_header", hdrs = [":opt_param"],
 cc_library(name = "core_kernel_opt_printf_header", hdrs = [":opt_printf"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/bnxt:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/mlx5:__pkg__"])
 cc_library(name = "core_kernel_opt_rss_header", hdrs = [":opt_rss"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/sfxge:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/ena:__pkg__", "//sys/dev/enic:__pkg__", "//sys/dev/sfxge:__pkg__", "//sys/dev/mlx5:__pkg__"])
 cc_library(name = "core_kernel_opt_sched_header", hdrs = [":opt_sched"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_stack_header", hdrs = [":opt_stack"],
@@ -287,7 +287,7 @@ cc_library(name = "ipv4_kernel_opt_inet_header", hdrs = [":opt_inet"],
 cc_library(name = "ipv4_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_ipsec_header", hdrs = [":opt_ipsec"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/net:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__", "//sys/netipsec:__pkg__", "//sys/net:__pkg__", "//sys/dev/mlx5:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_ipstealth_header", hdrs = [":opt_ipstealth"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet:__pkg__"])
 cc_library(name = "ipv4_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
@@ -587,7 +587,7 @@ cc_library(name = "mlx_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
 cc_library(name = "mlx_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/mlx5:__pkg__"])
 cc_library(name = "storage_hba_kernel_opt_cam_header", hdrs = [":opt_cam"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptmv:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/isci:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/tws:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/sdio:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/hyperv:__pkg__", "//sys/dev/nvmf:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptmv:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/isci:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/tws:__pkg__", "//sys/dev/ufshci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/sdio:__pkg__", "//sys/dev/iser:__pkg__"])
 cc_library(name = "storage_hba_kernel_opt_stack_header", hdrs = [":opt_stack"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
 cc_library(name = "storage_core_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
@@ -911,3 +911,5 @@ cc_library(name = "system_io_module_opt_vesa_header", hdrs = [":opt_vesa"], stri
 bsd_tree_file(name = "opt_videomode", tree = ":generic_config", member = "opt_videomode.h", output = "generic_options/opt_videomode.h", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 
 cc_library(name = "system_io_module_opt_videomode_header", hdrs = [":opt_videomode"], strip_include_prefix = "generic_options", visibility = ["//sys/dev/videomode:__pkg__"])
+
+cc_library(name = "rdma_module_opt_ofed_header", hdrs = [":opt_ofed"], strip_include_prefix = "generic_options", visibility = ["//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])

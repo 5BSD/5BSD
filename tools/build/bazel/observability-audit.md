@@ -10436,3 +10436,13 @@ actual utils.o definitions. Forty-three real methods disable DOF initialization
 before startup; no live registration/event or installed mv helper claim. The
 initial cp -n test expectation failure and unchanged accepted ELF remain bound.
 See RESCUE-NINETEEN-PROGRAM-QUALIFICATION.md for source/action/cached proof limits.
+
+## RDMA/InfiniBand/Mellanox modules (November 2, 2026)
+
+[Qualification](RDMA-MODULES-QUALIFICATION.md): bounded 195 physical C/schema-input
+scan records two candidate DTrace/SDT/KTR/audit lines. All four modules with actual
+compiled SDT/DTrace sections preserve exact payloads and relocations. No probes
+were added. Source-line counts include macros/comments; this is not a claim of
+missing instrumentation elsewhere, live probe delivery, audit completeness or
+RDMA/device runtime behavior. Raw bindings and actual section comparisons:
+bazel-rdma-modules-review-r1-20261102/observability-review.json.

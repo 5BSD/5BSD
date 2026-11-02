@@ -24,7 +24,7 @@ bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["rijndael
 
 # Wireless built-in prerequisites.
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_ccmp_headers", hdrs = ["rijndael.h"],
-    visibility = ["//sys/net80211:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netipsec:__pkg__"])
+    visibility = ["//sys/net80211:__pkg__", "//sys/crypto/chacha20:__pkg__", "//sys/crypto/rijndael:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netipsec:__pkg__", "//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["rijndael.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcm_headers", hdrs = ["rijndael.h"],

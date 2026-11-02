@@ -618,7 +618,7 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["in.h"],
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["in.h", "in_pcb.h", "in_var.h", "tcp_lro.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_en:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["in.h"],
@@ -642,7 +642,7 @@ bsd_source_headers(name = "intel_nic_kernel_ice_iflib_txrx_headers", hdrs = ["in
 
 # Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
 bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["in.h", "in_pcb.h", "in_var.h", "ip.h", "tcp_lro.h"],
-    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/dev/bnxt:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/contrib/rdma/krping:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_eq_headers", hdrs = ["if_ether.h", "in.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
 bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_rss.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"],
@@ -1109,3 +1109,30 @@ amd64_generic_module_objects(name = "sctp_sctputil_module", srcs = ["sctputil.c"
 amd64_generic_module_objects(name = "siftr_siftr_module", srcs = ["siftr.c"],
     deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_services_module_context_47", "//sys/netinet:network_services_module_context_50", "//sys/netinet6:usb_net_umb_headers", "//sys/netinet/cc:network_support_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "rdma_module_context_0", hdrs = ["if_ether.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip.h", "ip_var.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_2", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_4", hdrs = ["in.h", "in_pcb.h", "in_var.h", "ip.h", "ip6.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/core:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_5", hdrs = ["if_ether.h", "in.h", "ip6.h"], includes = [],
+    visibility = ["//sys/net:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_6", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_var.h", "ip.h", "ip_var.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_7", hdrs = ["if_ether.h", "in.h", "in_pcb.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"], includes = [],
+    visibility = ["//sys/dev/irdma:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_8", hdrs = ["if_ether.h", "in.h", "in_fib.h", "in_pcb.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"], includes = [],
+    visibility = ["//sys/dev/irdma:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_9", hdrs = ["in.h", "in_pcb.h", "in_var.h", "ip.h", "tcp.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/dev/iser:__pkg__"])
+
+bsd_source_headers(name = "rdma_module_context_10", hdrs = ["if_ether.h", "in.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"], includes = [],
+    visibility = ["//sys/dev/mlx4/mlx4_en:__pkg__"])

@@ -35,7 +35,7 @@ def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         # rules_cc permits execpath expansion in copts for these inputs.
         additional_compiler_inputs = textual_hdrs + additional_compiler_inputs,
-        deps = header_overrides + AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
+        deps = header_overrides + [header for header in AMD64_KERNEL_HEADER_DEPS if header not in header_overrides] + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
         copts = preinclude_flags + [flag for flag in flags if flag != "-fcommon"] + ["-fno-common"] + (AMD64_KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags) + AMD64_KERNEL_DEBUG_FLAGS +
             # Inline code in declared transitive headers also embeds __FILE__.
             # Use the same canonical source paths as the individual sources.
