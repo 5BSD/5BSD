@@ -211,6 +211,8 @@ void cap_authority_exit(struct proc *);
 void cap_authority_cred_changed(struct proc *, const struct ucred *,
     const struct ucred *);
 void cap_authority_info_locked(struct proc *, struct cap_authority_info *);
+/* Running an image pinned in its valid managed grant; takes the PROC lock. */
+bool cap_authority_runs_pinned_image(struct proc *);
 struct cap_authority *cap_authority_hold_locked(struct proc *);
 void cap_authority_drop(struct cap_authority *);
 void cap_authority_retain(struct cap_authority *);

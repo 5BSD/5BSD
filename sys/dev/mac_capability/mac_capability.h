@@ -289,11 +289,15 @@ bool mac_capability_debug_authorized(pid_t, pid_t);
 /*
  * Clock discipline delegation (mac_ntpd(4)).  Publishes the one unprivileged
  * uid whose PRIV_ADJTIME, PRIV_NTP_ADJTIME and PRIV_CLOCK_SETTIME checks pass
- * the SYS_GATE_SETTIME claim; -1 withdraws it.  Root is never accepted.  The
- * raw syscalls keep their priv_check(9): the publishing policy's grant still
- * decides, this only stops the claim from refusing that uid.
+ * the SYS_GATE_SETTIME claim, and only in a process running an image pinned in
+ * its switchboard program-limited grant; -1 withdraws it.  Root is never
+ * accepted.  The raw syscalls keep their priv_check(9): the publishing
+ * policy's grant still decides, this only stops the claim from refusing that
+ * process.  mac_capability_clock_claimed() is true while a provider holds the
+ * SYS_GATE_SETTIME claim; the publisher then refuses to widen the delegate.
  */
 void mac_capability_clock_delegate(int uid);
+bool mac_capability_clock_claimed(void);
 
 #endif /* _KERNEL */
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_H_ */

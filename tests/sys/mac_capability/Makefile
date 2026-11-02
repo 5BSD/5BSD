@@ -12,14 +12,17 @@ ATF_TESTS_C+=	mac_capability_accounting_test
 ATF_TESTS_C+=	mac_capability_procdesc_test
 ATF_TESTS_C+=	mac_capability_mount_test
 ATF_TESTS_C+=	mac_capability_system_test
+ATF_TESTS_C+=	mac_ntpd_delegate_test
 # These programs change or assert on global state, so run each alone (ATF
 # test cases cannot carry is_exclusive; it is program metadata):
 # - system: SYSCTL/SETTIME/KLDLOAD gate claims deny every other nonce;
+# - mac_ntpd_delegate: probes the live clock gate and mac_ntpd sysctls;
 # - channel: ordering_mixed_paths toggles kern.mac_capability.direct_delivery;
 # - coalition: cases assert on kern.mac_capability_coalition.count;
 # - isolation: wildcard and overlapping net/vsock claims fail with EBUSY
 #   across nonces.
 TEST_METADATA.mac_capability_system_test+=	is_exclusive="true"
+TEST_METADATA.mac_ntpd_delegate_test+=	is_exclusive="true"
 TEST_METADATA.mac_capability_channel_test+=	is_exclusive="true"
 TEST_METADATA.mac_capability_coalition_test+=	is_exclusive="true"
 TEST_METADATA.mac_capability_isolation_test+=	is_exclusive="true"
