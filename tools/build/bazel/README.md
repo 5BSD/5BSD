@@ -47538,3 +47538,8 @@ contexts, exact code/CTF/policy/input proof and remaining device/system gates.
 strict nondebug relocation review and remaining storage/system gates.
 
 [RELOCATABLE-ARCHIVE-QUALIFICATION.md](RELOCATABLE-ARCHIVE-QUALIFICATION.md) records ordered archive/runtime inputs, unchanged old partial-link actions, real execution bindings, strict archive variant/collision tests and explicit PAM/bootstrap limits.
+
+[STORAGE-CORE-KERNEL-QUALIFICATION.md](STORAGE-CORE-KERNEL-QUALIFICATION.md) records
+76 native CAM/GEOM/NVMe/UFSHCI objects, preserved source ownership, exact code/CTF,
+actual compiler policy/input proof and strict relocation checks. Runtime and full
+system qualification remain open.

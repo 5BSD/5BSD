@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_ufshci_headers", hdrs = ["ufshci.h", "ufshci_private.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_ufshci_ctrlr_headers", hdrs = ["ufshci.h", "ufshci_private.h", "ufshci_reg.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_ufshci_ioctl_headers", hdrs = ["ufshci.h", "ufshci_ioctl.h", "ufshci_private.h", "ufshci_reg.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native amd64 GENERIC storage core built-ins, using maintained per-source warnings.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci", srcs = ["ufshci.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_acpi", srcs = ["ufshci_acpi.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/contrib/dev/acpica/include:storage_core_kernel_ufshci_acpi_headers", "//sys/dev/acpica:storage_core_kernel_ufshci_acpi_headers", "//sys/vm:storage_core_kernel_nvme_pci_headers", "//sys/dev/acpica:storage_core_acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_acpi_header", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_ctrlr", srcs = ["ufshci_ctrlr.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ctrlr_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_ctrlr_cmd", srcs = ["ufshci_ctrlr_cmd.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_dev", srcs = ["ufshci_dev.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ctrlr_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_ioctl", srcs = ["ufshci_ioctl.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ioctl_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_pci", srcs = ["ufshci_pci.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/dev/pci:storage_core_kernel_nvme_pci_headers", "//sys/vm:storage_core_kernel_nvme_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_req_queue", srcs = ["ufshci_req_queue.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_req_sdb", srcs = ["ufshci_req_sdb.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ctrlr_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_sim", srcs = ["ufshci_sim.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_headers", "//sys/cam:storage_core_kernel_ufshci_sim_headers", "//sys/dev/mmc:storage_core_kernel_cam_headers", "//sys/dev/nvme:storage_core_kernel_cam_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_sysctl", srcs = ["ufshci_sysctl.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ctrlr_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_ufshci_uic_cmd", srcs = ["ufshci_uic_cmd.c"],
+    deps = ["//sys/dev/ufshci:storage_core_kernel_ufshci_ctrlr_headers", "//sys/cam:storage_core_kernel_ufshci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

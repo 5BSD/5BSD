@@ -590,3 +590,31 @@ cc_library(name = "storage_hba_kernel_opt_cam_header", hdrs = [":opt_cam"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
 cc_library(name = "storage_hba_kernel_opt_stack_header", hdrs = [":opt_stack"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_ada_header", hdrs = [":opt_ada"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_cam_header", hdrs = [":opt_cam"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_cd_header", hdrs = [":opt_cd"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_da_header", hdrs = [":opt_da"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_geom_header", hdrs = [":opt_geom"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_kdtrace_header", hdrs = [":opt_kdtrace"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_nvme_header", hdrs = [":opt_nvme"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_pass_header", hdrs = [":opt_pass"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_printf_header", hdrs = [":opt_printf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_sa_header", hdrs = [":opt_sa"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_scsi_header", hdrs = [":opt_scsi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+cc_library(name = "storage_core_kernel_opt_ses_header", hdrs = [":opt_ses"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])

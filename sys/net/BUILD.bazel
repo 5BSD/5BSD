@@ -1201,3 +1201,7 @@ bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["bpf.h", "
 # Physical storage HBA prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["if.h", "vnet.h"],
     visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])

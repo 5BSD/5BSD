@@ -9,3 +9,9 @@ cc_library(name = "filesystem_module_headers", hdrs = glob(["*.h"]), strip_inclu
     visibility = ["//sys/fs:__subpackages__", "//sys/ufs:__subpackages__"])
 
 exports_files(["ffs_alloc.c", "ffs_balloc.c", "ffs_inode.c", "ffs_rawread.c", "ffs_snapshot.c", "ffs_softdep.c", "ffs_suspend.c", "ffs_vfsops.c", "ffs_vnops.c"], visibility = ["//sys/ufs/ufs:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_g_label_ufs_headers", hdrs = ["ffs_extern.h", "fs.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])

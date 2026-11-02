@@ -139,3 +139,9 @@ bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["pci
     visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
 bsd_source_headers(name = "storage_hba_kernel_ocs_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_nvme_ctrlr_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_nvme_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])

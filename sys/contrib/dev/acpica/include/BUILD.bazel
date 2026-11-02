@@ -335,3 +335,7 @@ bsd_source_headers(name = "engine_utxfinit_headers", hdrs = ["acbuffer.h", "acco
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_ufshci_acpi_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])

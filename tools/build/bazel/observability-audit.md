@@ -9761,3 +9761,13 @@ unchanged. CAM/storage error, timeout/reset/recovery, DMA/queue/hotplug and mult
 runtime behavior still needs relevant device qualification.
 Evidence: /usr/obj/usr/src/bazel-kernel-storage-hba-review-r1-20261102/observability.json;
 see STORAGE-HBA-KERNEL-QUALIFICATION.md for scope and remaining gates.
+
+## Storage core built-in batch (2026-11-02)
+
+The bounded call-shaped scan finds existing tracing/CTR-family markers in 12 of
+76 CAM/GEOM/NVMe/UFSHCI files. The other 64 files do not establish missing shared
+hooks. Production instrumentation stays unchanged. Controller attach, queues,
+interrupt/DMA, timeout/reset/recovery, partition/label and hotplug/multipath runtime
+behavior still need relevant device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-storage-core-review-r1-20261102/observability.json;
+see STORAGE-CORE-KERNEL-QUALIFICATION.md for exact scope and remaining gates.

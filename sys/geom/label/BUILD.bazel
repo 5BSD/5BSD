@@ -39,3 +39,45 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/ufs/ffs:kernel_headers",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_g_label_headers", hdrs = ["g_label.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_label_msdosfs_headers", hdrs = ["g_label.h", "g_label_msdosfs.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native amd64 GENERIC storage core built-ins, using maintained per-source warnings.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label", srcs = ["g_label.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_headers", "//sys/amd64/conf:storage_core_kernel_opt_geom_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_ext2fs", srcs = ["g_label_ext2fs.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_flashmap", srcs = ["g_label_flashmap.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_flashmap_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_iso9660", srcs = ["g_label_iso9660.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_msdosfs", srcs = ["g_label_msdosfs.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_msdosfs_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_ntfs", srcs = ["g_label_ntfs.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_nvme_ns_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_ufs", srcs = ["g_label_ufs.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers", "//sys/ufs/ffs:storage_core_kernel_g_label_ufs_headers", "//sys/ufs/ufs:storage_core_kernel_g_label_ufs_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_gpt", srcs = ["g_label_gpt.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_gpt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_disk_ident", srcs = ["g_label_disk_ident.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_nvme_da_headers", "//sys/geom/multipath:storage_core_kernel_g_label_disk_ident_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_label_swaplinux", srcs = ["g_label_swaplinux.c"],
+    deps = ["//sys/geom/label:storage_core_kernel_g_label_headers", "//sys/geom:storage_core_kernel_g_label_ext2fs_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

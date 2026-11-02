@@ -195,6 +195,15 @@ policy/input and nondebug relocation checks. Known graph reconciliation now has
 leaving 943 unmatched. See STORAGE-HBA-KERNEL-QUALIFICATION.md. Full kernel link,
 modules, other architectures, storage runtime and performance gates remain open.
 
+## Storage core checkpoint (2026-11-02)
+
+76 native amd64 GENERIC CAM/GEOM/NVMe/UFSHCI objects pass code/CTF, actual compiler
+policy/input and nondebug relocation checks. Existing source package boundaries
+are preserved. Known graph reconciliation has 1,593 source matches plus six
+name-only matches among 2,466 final products, leaving 867 unmatched. See
+STORAGE-CORE-KERNEL-QUALIFICATION.md. Complete kernel link, modules, other
+architectures, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

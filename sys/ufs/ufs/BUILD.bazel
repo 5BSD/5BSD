@@ -21,3 +21,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_zfs_vfsops_headers", hdrs = ["quota.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_g_label_ufs_headers", hdrs = ["dinode.h", "extattr.h", "quota.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
