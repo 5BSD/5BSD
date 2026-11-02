@@ -808,3 +808,21 @@ default dispatcher/cache/Makefile bytes and fresh tool/install checks. See
 gates are genuine per-application RESCUE objects, original crunchide/relocatable
 transforms, complete static link and rescue installation/package/runtime.
 Generating 103 stubs does not count those applications as compiled.
+
+
+### ISP and Myricom module qualification (2026-11-02)
+
+Eleven additional selected amd64 leaves now use native C/module composition:
+six ISP firmware selections, four Myricom firmware modules and its network driver.
+All eleven plain modules are byte-identical to untouched Make outputs; CTF/debug,
+33 installation records, eleven actual compiler contexts/1,008 prerequisites and
+eleven initial links pass. Nine firmware array headers are declared inputs.
+Original runtime C and Makefiles are unchanged. See
+CARRAY-FIRMWARE-MODULES-QUALIFICATION.md for evidence and qualification limits.
+Local BUILD presence is 479/729 selected leaves (250 missing), not a qualified
+whole-system percentage. Six existing provider tests pass in each profile; no
+firmware loading/hardware claim. Cross-architecture, complete world/rescue/pkgbase,
+bootstrap/publication, VM and performance/cache/sandbox gates remain open.
+Existing build-bsd format-5/backend helpers cover this composition without a new
+CLI, helper extension, signing/staging or publication policy. Make remains the
+production/default build. BIP stays excluded.

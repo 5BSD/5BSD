@@ -307,9 +307,7 @@ bsd_source_headers(
         "ifq.h",
         "vnet.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__"],
 )
 
 bsd_source_headers(

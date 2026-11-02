@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "carray_firmware_module_context_0", hdrs = ["asm_2400.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_1", hdrs = ["asm_2500.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_2", hdrs = ["asm_2600.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_3", hdrs = ["asm_2700.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_4", hdrs = ["asm_2800.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_5", hdrs = ["asm_2400.h", "asm_2500.h", "asm_2600.h", "asm_2700.h", "asm_2800.h"], includes = [],
+    visibility = ["//sys/dev/ispfw:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "isp_2400_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-DMODULE_NAME=\\\"isp_2400\\\""], local_defines = ["ISP_2400"])
+
+amd64_generic_module_objects(name = "isp_2500_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_1"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-DMODULE_NAME=\\\"isp_2500\\\""], local_defines = ["ISP_2500"])
+
+amd64_generic_module_objects(name = "isp_2600_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-DMODULE_NAME=\\\"isp_2600\\\""], local_defines = ["ISP_2600"])
+
+amd64_generic_module_objects(name = "isp_2700_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-DMODULE_NAME=\\\"isp_2700\\\""], local_defines = ["ISP_2700"])
+
+amd64_generic_module_objects(name = "isp_2800_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-DMODULE_NAME=\\\"isp_2800\\\""], local_defines = ["ISP_2800"])
+
+amd64_generic_module_objects(name = "ispfw_ispfw_module", srcs = ["ispfw.c"],
+    deps = ["//sys/dev/ispfw:carray_firmware_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["ISP_ALL"])

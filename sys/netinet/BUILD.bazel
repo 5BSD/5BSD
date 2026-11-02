@@ -808,3 +808,6 @@ bsd_source_headers(name = "i2c_module_context_0", hdrs = ["if_ether.h", "in.h", 
 
 bsd_source_headers(name = "firmware_driver_module_context_0", hdrs = ["in.h", "in_rss.h", "tcp_lro.h"], includes = [],
     visibility = ["//sys/dev/liquidio:__pkg__"])
+
+bsd_source_headers(name = "carray_firmware_module_context_0", hdrs = ["in.h", "in_kdtrace.h", "in_systm.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h"], includes = [],
+    visibility = ["//sys/dev/mxge:__pkg__"])

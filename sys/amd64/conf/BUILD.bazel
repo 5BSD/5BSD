@@ -187,9 +187,9 @@ cc_library(name = "core_kernel_opt_gzio_header", hdrs = [":opt_gzio"],
 cc_library(name = "core_kernel_opt_hwpmc_hooks_header", hdrs = [":opt_hwpmc_hooks"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
 cc_library(name = "core_kernel_opt_inet_header", hdrs = [":opt_inet"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/mxge:__pkg__"])
 cc_library(name = "core_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
-    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__"])
+    strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__"])
 cc_library(name = "core_kernel_opt_kbd_header", hdrs = [":opt_kbd"],
     strip_include_prefix = "generic_options", visibility = ["//sys/kern:__pkg__", "//sys/dev/evdev:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/usb:__pkg__"])
 cc_library(name = "core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],

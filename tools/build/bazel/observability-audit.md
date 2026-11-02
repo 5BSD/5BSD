@@ -10214,3 +10214,13 @@ fresh tool compiler records and three digest-bound prior records preserve
 explicit cache provenance and 166 original dependency checks. See
 [producer qualification](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md); no real rescue
 application execution or tracing/probe activation is claimed.
+
+
+### ISP and Myricom module qualification (2026-11-02)
+
+A bounded scan of six C files finds no explicit probe/audit markers; eleven
+compiled module section comparisons preserve existing instrumentation payloads.
+This does not cover shared header/subsystem or live instrumentation. Shared
+firmware lifecycle and driver attach/reset/interrupt/rx/tx review remains open.
+Prefer shared lifecycle hooks; do not log firmware contents. See
+CARRAY-FIRMWARE-MODULES-QUALIFICATION.md for scoped evidence.

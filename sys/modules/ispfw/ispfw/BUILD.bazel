@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ispfw", objects = ["//sys/dev/ispfw:ispfw_ispfw_module_object_files"], object_order = ["ispfw.o"], export_all = False)

@@ -116,9 +116,7 @@ bsd_source_headers(
         "in6.h",
         "ip6_var.h"
     ],
-    visibility = [
-        "//sys/dev/usb/net:__pkg__"
-    ],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__"],
 )
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
