@@ -733,3 +733,31 @@ controller/WLAN/storage/input/video/serial/gadget and firmware runtime, live
 probes/audit, cross/KERNCONF/FDT and aggregate world/pkgbase/bootstrap/publication
 gates remain open, along with CPU/memory/disk I/O/disk-use/cache/sandbox checks.
 Make stays production/default; BIP remains excluded.
+
+## Remaining firmware reference checkpoint (2026-11-02)
+
+Read-only source queries now cover all 299 remaining selected amd64 leaves.
+Selection by actual nonempty FIRMWS identifies 38 modules, 59 images and 111
+object contexts. This includes LiquidIO's fourteen real driver C objects as well
+as its firmware registration/embedding; it must not be reduced to a data-only
+module. All 76 original Make build/install controls pass, sequentially with
+sixteen jobs per control. No host installation occurs.
+
+`/usr/obj/usr/src/bazel-remaining-module-source-facts-r1-20261102` retains the
+complete missing-leaf query. `bazel-firmware-module-make-references-r1-20261102`
+under the same object root contains original controls;
+`bazel-firmware-module-source-facts-r1-20261102` binds actual compiler/producer
+recipes and payload hashes. Twenty-four inputs are uudecoded; thirty-five are
+raw, including two Otus copies whose original source and copied bytes agree.
+Original FIRMWS specifications preserve omitted, dotted and hexadecimal version
+spellings and image order. No filename/family-based producer guesses are needed.
+
+Next: implement and qualify native composition of decode/raw inputs, original
+AWK registration, declared .incbin inputs, original ordered driver objects and
+module/debug/install stages. A native macro draft is retained as design material,
+not implemented or qualified production code. Required gates are real per-context
+compiler/input and link audits, payload/generated-source equality, plain and
+CTF/debug/install parity, prior firmware regressions and honest configuration/
+runtime limits. These 38 modules still count as missing native declarations;
+coverage remains 430/729 local BUILD leaves. Hardware/firmware-loading, complete
+world/cross/pkgbase/bootstrap/publication and performance gates remain open.
