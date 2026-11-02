@@ -32,6 +32,32 @@ struct svm_nested_npt_root {
 static MALLOC_DEFINE(M_SVM_NESTED_NPT, "svm_nested_npt",
     "SVM nested NPT02 roots");
 
+/*
+ * Remove the NPT02 aliases in [start, end).  svm_nested_npt_root_populate()
+ * system-wires every alias so the hardware walk never meets a page the VM
+ * system has unmapped.  vm_map_delete() on a non-kernel map waits for system
+ * wirings to disappear and nothing else ever drops these, so a plain
+ * vm_map_remove() of a populated range sleeps forever in the vCPU thread:
+ * that L1 vCPU never runs again and its siblings spin waiting for it.  Drop
+ * the wiring first.  An alias that is not system-wired breaks the populate
+ * invariant; refuse it rather than sleep.
+ */
+static int
+svm_nested_npt_root_unmap(struct svm_nested_npt_root *root, uint64_t start,
+    uint64_t end)
+{
+	int rv;
+
+	rv = vm_map_unwire(&root->vmspace->vm_map, start, end,
+	    VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_HOLESOK);
+	if (rv == KERN_INVALID_ARGUMENT)
+		return (EPROTO);
+	if (rv != KERN_SUCCESS)
+		return (vm_mmap_to_errno(rv));
+	rv = vm_map_remove(&root->vmspace->vm_map, start, end);
+	return (rv == KERN_SUCCESS ? 0 : vm_mmap_to_errno(rv));
+}
+
 int
 svm_nested_npt_root_create(uint64_t max_address,
     struct svm_nested_npt_root **result)
@@ -61,6 +87,11 @@ svm_nested_npt_root_destroy(struct svm_nested_npt_root *root)
 
 	if (root == NULL)
 		return;
+	/*
+	 * vmspace_free() ends in vm_map_remove() of the whole map, which
+	 * would sleep forever on the system-wired aliases.
+	 */
+	(void)svm_nested_npt_root_unmap(root, 0, root->max_address);
 	svm_npt_free(root->vmspace);
 	free(root, M_SVM_NESTED_NPT);
 }
@@ -68,12 +99,10 @@ svm_nested_npt_root_destroy(struct svm_nested_npt_root *root)
 int
 svm_nested_npt_root_clear(struct svm_nested_npt_root *root)
 {
-	int error;
 
 	if (root == NULL)
 		return (EINVAL);
-	error = vm_map_remove(&root->vmspace->vm_map, 0, root->max_address);
-	return (error == KERN_SUCCESS ? 0 : vm_mmap_to_errno(error));
+	return (svm_nested_npt_root_unmap(root, 0, root->max_address));
 }
 
 uint64_t
@@ -120,10 +149,9 @@ svm_nested_npt_root_populate(struct svm_nested_npt_root *root,
 	    VM_PROT_READ;
 
 	/* Rewalked NPT12 permissions replace only this L2 page. */
-	error = vm_map_remove(&root->vmspace->vm_map, l2_gpa,
-	    l2_gpa + PAGE_SIZE);
-	if (error != KERN_SUCCESS)
-		return (vm_mmap_to_errno(error));
+	error = svm_nested_npt_root_unmap(root, l2_gpa, l2_gpa + PAGE_SIZE);
+	if (error != 0)
+		return (error);
 	error = vm_gpa_map_alias(vcpu, root->vmspace, l2_gpa, l1_gpa,
 	    PAGE_SIZE, prot, access_prot, NULL);
 	if (error != 0)

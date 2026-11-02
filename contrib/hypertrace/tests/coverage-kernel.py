@@ -142,6 +142,14 @@ SUITES['vmm_hypertrace'] = {
     'component': 'amd64 VMM HyperTrace hooks',
 }
 
+SUITES['svm_nested_npt_root'] = {
+    'production': ['sys/amd64/vmm/amd/nested_svm_npt_root.c'],
+    'tests': ['t_svm_npt_root.c'],
+    'shims': [],
+    'cflags': ['-I' + str(SYS / 'amd64/vmm/amd')],
+    'component': 'amd64 nested SVM NPT02 lifetime',
+}
+
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
