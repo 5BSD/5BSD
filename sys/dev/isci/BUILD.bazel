@@ -536,3 +536,411 @@ amd64_generic_kernel_objects(name = "generic_isci_scif_sas_task_request_states",
 amd64_generic_kernel_objects(name = "generic_isci_scif_sas_timer", srcs = ["scil/scif_sas_timer.c"],
     deps = ["//sys/dev/isci:isci_kernel_scif_sas_timer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "isci_isci_module", srcs = ["isci.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_headers", "//sys/cam:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/led:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_oem_parameters_module", srcs = ["isci_oem_parameters.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_oem_parameters_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_controller_module", srcs = ["isci_controller.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_controller_headers", "//sys/cam:isci_kernel_isci_controller_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/led:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_domain_module", srcs = ["isci_domain.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_domain_headers", "//sys/cam:isci_kernel_isci_controller_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_io_request_module", srcs = ["isci_io_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_io_request_headers", "//sys/cam:isci_kernel_isci_io_request_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_timer_module", srcs = ["isci_timer.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_timer_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_remote_device_module", srcs = ["isci_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_remote_device_headers", "//sys/cam:isci_kernel_isci_controller_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_logger_module", srcs = ["isci_logger.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_logger_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_task_request_module", srcs = ["isci_task_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_task_request_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_sysctl_module", srcs = ["isci_sysctl.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_sysctl_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_isci_interrupt_module", srcs = ["isci_interrupt.c"],
+    deps = ["//sys/dev/isci:isci_kernel_isci_interrupt_headers", "//sys/cam:isci_kernel_isci_interrupt_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:generic_opt_isci_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_controller_module", srcs = ["scil/sci_base_controller.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_controller_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_domain_module", srcs = ["scil/sci_base_domain.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_domain_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_iterator_module", srcs = ["scil/sci_base_iterator.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_iterator_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_library_module", srcs = ["scil/sci_base_library.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_library_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_logger_module", srcs = ["scil/sci_base_logger.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_logger_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_memory_descriptor_list_module", srcs = ["scil/sci_base_memory_descriptor_list.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_memory_descriptor_list_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_memory_descriptor_list_decorator_module", srcs = ["scil/sci_base_memory_descriptor_list_decorator.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_memory_descriptor_list_decorator_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_object_module", srcs = ["scil/sci_base_object.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_object_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_observer_module", srcs = ["scil/sci_base_observer.c", "scil/sci_base_subject.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_observer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_phy_module", srcs = ["scil/sci_base_phy.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_phy_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_port_module", srcs = ["scil/sci_base_port.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_port_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_remote_device_module", srcs = ["scil/sci_base_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_request_module", srcs = ["scil/sci_base_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_state_machine_module", srcs = ["scil/sci_base_state_machine.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_state_machine_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_state_machine_logger_module", srcs = ["scil/sci_base_state_machine_logger.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_state_machine_logger_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_base_state_machine_observer_module", srcs = ["scil/sci_base_state_machine_observer.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_base_state_machine_observer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_abstract_list_module", srcs = ["scil/sci_abstract_list.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_abstract_list_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sci_util_module", srcs = ["scil/sci_util.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sci_util_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_controller_module", srcs = ["scil/scic_sds_controller.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_controller_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_library_module", srcs = ["scil/scic_sds_library.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_library_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_pci_module", srcs = ["scil/scic_sds_pci.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_pci_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_phy_module", srcs = ["scil/scic_sds_phy.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_phy_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_port_module", srcs = ["scil/scic_sds_port.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_port_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_port_configuration_agent_module", srcs = ["scil/scic_sds_port_configuration_agent.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_port_configuration_agent_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_remote_device_module", srcs = ["scil/scic_sds_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_remote_node_context_module", srcs = ["scil/scic_sds_remote_node_context.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_remote_node_context_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_remote_node_table_module", srcs = ["scil/scic_sds_remote_node_table.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_remote_node_table_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_request_module", srcs = ["scil/scic_sds_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_sgpio_module", srcs = ["scil/scic_sds_sgpio.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_sgpio_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_smp_remote_device_module", srcs = ["scil/scic_sds_smp_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_smp_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_smp_request_module", srcs = ["scil/scic_sds_smp_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_smp_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_ssp_request_module", srcs = ["scil/scic_sds_ssp_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_ssp_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_stp_packet_request_module", srcs = ["scil/scic_sds_stp_packet_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_stp_packet_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_stp_remote_device_module", srcs = ["scil/scic_sds_stp_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_stp_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_stp_request_module", srcs = ["scil/scic_sds_stp_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_stp_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scic_sds_unsolicited_frame_control_module", srcs = ["scil/scic_sds_unsolicited_frame_control.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scic_sds_unsolicited_frame_control_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_controller_module", srcs = ["scil/scif_sas_controller.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_controller_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_controller_state_handlers_module", srcs = ["scil/scif_sas_controller_state_handlers.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_controller_state_handlers_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_controller_states_module", srcs = ["scil/scif_sas_controller_states.c", "scil/scif_sas_io_request_state_handlers.c", "scil/scif_sas_io_request_states.c", "scil/scif_sas_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_controller_states_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_domain_module", srcs = ["scil/scif_sas_domain.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_domain_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_domain_state_handlers_module", srcs = ["scil/scif_sas_domain_state_handlers.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_domain_state_handlers_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_domain_states_module", srcs = ["scil/scif_sas_domain_states.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_domain_states_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_high_priority_request_queue_module", srcs = ["scil/scif_sas_high_priority_request_queue.c", "scil/scif_sas_remote_device_ready_substates.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_high_priority_request_queue_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_internal_io_request_module", srcs = ["scil/scif_sas_internal_io_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_internal_io_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_io_request_module", srcs = ["scil/scif_sas_io_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_io_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_library_module", srcs = ["scil/scif_sas_library.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_library_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_remote_device_module", srcs = ["scil/scif_sas_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_remote_device_ready_substate_handlers_module", srcs = ["scil/scif_sas_remote_device_ready_substate_handlers.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_remote_device_ready_substate_handlers_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_remote_device_starting_substate_handlers_module", srcs = ["scil/scif_sas_remote_device_starting_substate_handlers.c", "scil/scif_sas_remote_device_state_handlers.c", "scil/scif_sas_remote_device_states.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_remote_device_starting_substate_handlers_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_remote_device_starting_substates_module", srcs = ["scil/scif_sas_remote_device_starting_substates.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_remote_device_starting_substates_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_smp_activity_clear_affiliation_module", srcs = ["scil/scif_sas_smp_activity_clear_affiliation.c", "scil/scif_sas_smp_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_smp_activity_clear_affiliation_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_smp_io_request_module", srcs = ["scil/scif_sas_smp_io_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_smp_io_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_smp_phy_module", srcs = ["scil/scif_sas_smp_phy.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_smp_phy_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_stp_io_request_module", srcs = ["scil/scif_sas_stp_io_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_stp_io_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_stp_remote_device_module", srcs = ["scil/scif_sas_stp_remote_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_stp_remote_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_stp_task_request_module", srcs = ["scil/scif_sas_stp_task_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_stp_task_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_task_request_module", srcs = ["scil/scif_sas_task_request.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_task_request_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_task_request_state_handlers_module", srcs = ["scil/scif_sas_task_request_state_handlers.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_task_request_state_handlers_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_task_request_states_module", srcs = ["scil/scif_sas_task_request_states.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_task_request_states_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_scif_sas_timer_module", srcs = ["scil/scif_sas_timer.c"],
+    deps = ["//sys/dev/isci:isci_kernel_scif_sas_timer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_module", srcs = ["scil/sati.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_abort_task_set_module", srcs = ["scil/sati_abort_task_set.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_abort_task_set_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_atapi_module", srcs = ["scil/sati_atapi.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_atapi_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_device_module", srcs = ["scil/sati_device.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_device_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_inquiry_module", srcs = ["scil/sati_inquiry.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_inquiry_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_log_sense_module", srcs = ["scil/sati_log_sense.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_log_sense_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_lun_reset_module", srcs = ["scil/sati_lun_reset.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_lun_reset_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_mode_pages_module", srcs = ["scil/sati_mode_pages.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_mode_pages_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_mode_select_module", srcs = ["scil/sati_mode_select.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_mode_select_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_mode_sense_module", srcs = ["scil/sati_mode_sense.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_mode_sense_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_mode_sense_6_module", srcs = ["scil/sati_mode_sense_6.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_mode_sense_6_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_mode_sense_10_module", srcs = ["scil/sati_mode_sense_10.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_mode_sense_10_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_move_module", srcs = ["scil/sati_move.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_move_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_passthrough_module", srcs = ["scil/sati_passthrough.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_passthrough_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_read_module", srcs = ["scil/sati_read.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_read_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_read_buffer_module", srcs = ["scil/sati_read_buffer.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_read_buffer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_read_capacity_module", srcs = ["scil/sati_read_capacity.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_read_capacity_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_report_luns_module", srcs = ["scil/sati_report_luns.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_report_luns_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_request_sense_module", srcs = ["scil/sati_request_sense.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_request_sense_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_reassign_blocks_module", srcs = ["scil/sati_reassign_blocks.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_reassign_blocks_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_start_stop_unit_module", srcs = ["scil/sati_start_stop_unit.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_start_stop_unit_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_synchronize_cache_module", srcs = ["scil/sati_synchronize_cache.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_synchronize_cache_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_test_unit_ready_module", srcs = ["scil/sati_test_unit_ready.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_test_unit_ready_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_unmap_module", srcs = ["scil/sati_unmap.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_unmap_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_util_module", srcs = ["scil/sati_util.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_util_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_verify_module", srcs = ["scil/sati_verify.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_verify_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_write_module", srcs = ["scil/sati_write.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_write_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_write_buffer_module", srcs = ["scil/sati_write_buffer.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_write_buffer_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_write_long_module", srcs = ["scil/sati_write_long.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_write_long_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "isci_sati_write_and_verify_module", srcs = ["scil/sati_write_and_verify.c"],
+    deps = ["//sys/dev/isci:isci_kernel_sati_write_and_verify_headers", "//sys/amd64/conf:generic_opt_isci_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

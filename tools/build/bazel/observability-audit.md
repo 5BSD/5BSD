@@ -10362,3 +10362,15 @@ Review GPIO/controller lifecycle, watchdog arm/disarm/expiry, sensor access erro
 serial attach/detach and firmware-resource failures with shared subsystem hooks;
 avoid excessive polling logs or disclosure of firmware/memory contents. No probes
 added. See PLATFORM-FAMILIES-MODULES-QUALIFICATION.md for exact evidence and limits.
+
+### Storage adapter modules (2026-11-02)
+
+The bounded 260-C-file source scan finds twelve DTrace/SDT/CTR/audit candidate
+lines, including macros/comments, in MPR/MPS allocation/request/free paths. These
+two modules retain compiled probe/tracepoint sections and relocation payloads
+against Make. No new/live probes are qualified. Other source-only absences do not
+establish absence of shared CAM/storage instrumentation. Review command/error/
+recovery, DMA/completion and controller reset/lifecycle with useful shared events;
+avoid per-I/O logs and payload disclosure. Four original binary objects have no
+source scan coverage; they remain explicit vendor objects. See
+STORAGE-ADAPTERS-MODULES-QUALIFICATION.md for scope and retained evidence.

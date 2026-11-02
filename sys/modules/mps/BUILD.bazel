@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mps", objects = ["//sys/dev/mps:mps_mps_pci_module_object_files", "//sys/dev/mps:mps_mps_module_object_files", "//sys/dev/mps:mps_mps_sas_module_object_files", "//sys/dev/mps:mps_mps_table_module_object_files", "//sys/dev/mps:mps_mps_user_module_object_files", "//sys/dev/mps:mps_mps_config_module_object_files", "//sys/dev/mps:mps_mps_mapping_module_object_files", "//sys/dev/mps:mps_mps_sas_lsi_module_object_files"], object_order = ["mps_pci.o", "mps.o", "mps_sas.o", "mps_table.o", "mps_user.o", "mps_config.o", "mps_mapping.o", "mps_sas_lsi.o"], export_all = False, package = "kernel", aliases = [])

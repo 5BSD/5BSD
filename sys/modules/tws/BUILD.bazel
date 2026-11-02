@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tws", objects = ["//sys/dev/tws:tws_tws_module_object_files", "//sys/dev/tws:tws_tws_services_module_object_files", "//sys/dev/tws:tws_tws_cam_module_object_files", "//sys/dev/tws:tws_tws_user_module_object_files"], object_order = ["tws.o", "tws_services.o", "tws_cam.o", "tws_hdm.o", "tws_user.o"], export_all = False, package = "kernel", aliases = [])

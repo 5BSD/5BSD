@@ -46,19 +46,19 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Native ISCI built-in physical prerequisites, with identical closures shared.
 bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
-    visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/firewire:__pkg__"])
+    visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/mpt:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_controller_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
     visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/mrsas:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_interrupt_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
     visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/nvmf:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_io_request_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
-    visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/vmware:__pkg__"])
+    visibility = ["//sys/dev/isci:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/isp:__pkg__"])
 
 # Physical storage HBA prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
-    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/firewire:__pkg__"])
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/hptmv:__pkg__", "//sys/dev/hptrr:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/pms:__pkg__", "//sys/dev/tws:__pkg__"])
 bsd_source_headers(name = "storage_hba_kernel_smartpqi_cam_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
-    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__"])
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/hpt27xx:__pkg__", "//sys/dev/hptnr:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/ufshci:__pkg__"])
 
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/smp_all.h"],
@@ -106,7 +106,7 @@ bsd_source_headers(name = "storage_core_kernel_smp_all_headers", hdrs = ["ata/at
 bsd_source_headers(name = "storage_core_kernel_nvme_sim_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_ufshci_headers", hdrs = ["cam.h", "scsi/scsi_all.h"],
-    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/mps:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_ufshci_sim_headers", hdrs = ["ata/ata_all.h", "cam.h", "cam_ccb.h", "cam_debug.h", "cam_periph.h", "cam_queue.h", "cam_sim.h", "cam_xpt.h", "cam_xpt_periph.h", "cam_xpt_sim.h", "mmc/mmc.h", "mmc/mmc_all.h", "mmc/mmc_bus.h", "nvme/nvme_all.h", "scsi/scsi_all.h", "scsi/scsi_message.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 

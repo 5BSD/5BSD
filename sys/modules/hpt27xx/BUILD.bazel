@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hpt27xx", objects = ["//sys/dev/hpt27xx:hpt27xx_hpt27xx_os_bsd_module_object_files", "//sys/dev/hpt27xx:hpt27xx_hpt27xx_osm_bsd_module_object_files", "//sys/dev/hpt27xx:amd64-elf.hpt27xx_lib.o"], object_order = ["hpt27xx_os_bsd.o", "hpt27xx_osm_bsd.o", "hpt27xx_config.o", "amd64-elf.hpt27xx_lib.o"], export_all = False, package = "kernel", aliases = [])

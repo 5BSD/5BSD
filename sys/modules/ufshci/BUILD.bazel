@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ufshci", objects = ["//sys/dev/ufshci:ufshci_ufshci_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_acpi_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_pci_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_ctrlr_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_req_queue_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_sim_module_object_files", "//sys/dev/ufshci:ufshci_ufshci_ioctl_module_object_files"], object_order = ["ufshci.o", "ufshci_acpi.o", "ufshci_pci.o", "ufshci_ctrlr.o", "ufshci_dev.o", "ufshci_ctrlr_cmd.o", "ufshci_uic_cmd.o", "ufshci_req_queue.o", "ufshci_req_sdb.o", "ufshci_sim.o", "ufshci_ioctl.o", "ufshci_sysctl.o"], export_all = True, package = "kernel", aliases = [])

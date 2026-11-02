@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "hptmv", objects = ["//sys/dev/hptmv:hptmv_mv_module_object_files", "//sys/dev/hptmv:hptmv_entry_module_object_files", "//sys/dev/hptmv:hptmv_ioctl_module_object_files", "//sys/dev/hptmv:amd64-elf.hptmvraid.o"], object_order = ["mv.o", "entry.o", "ioctl.o", "hptproc.o", "gui_lib.o", "amd64-elf.hptmvraid.o"], export_all = False, package = "kernel", aliases = [])

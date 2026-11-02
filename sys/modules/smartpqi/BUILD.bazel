@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "smartpqi", objects = ["//sys/dev/smartpqi:smartpqi_smartpqi_mem_module_object_files", "//sys/dev/smartpqi:smartpqi_smartpqi_main_module_object_files"], object_order = ["smartpqi_mem.o", "smartpqi_intr.o", "smartpqi_main.o", "smartpqi_cam.o", "smartpqi_ioctl.o", "smartpqi_misc.o", "smartpqi_sis.o", "smartpqi_init.o", "smartpqi_queue.o", "smartpqi_tag.o", "smartpqi_cmd.o", "smartpqi_request.o", "smartpqi_response.o", "smartpqi_event.o", "smartpqi_helper.o", "smartpqi_discovery.o", "smartpqi_features.o"], export_all = False, package = "kernel", aliases = [])

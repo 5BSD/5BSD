@@ -152,7 +152,7 @@ cc_library(name = "compiler_headers", hdrs = [
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/ufshci:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],

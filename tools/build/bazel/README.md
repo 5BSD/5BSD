@@ -48111,3 +48111,23 @@ percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
 bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
 open. Existing build-bsd format-5 inputs/helpers carry this cohort; no new CLI or
 security/publication policy. Make stays production/default; BIP remains excluded.
+
+## Latest storage-adapter checkpoint (2026-11-02)
+
+Seventeen further amd64 storage module leaves pass native compiler/input/link,
+artifact and installation checks: 260 compiler contexts, 36,990 original/native-
+consumed dependencies and seventeen ordered links per profile. Four original
+vendor ELF objects are explicit hash-bound link inputs. All seventeen plain
+modules match untouched Make whole-file; CTF/debug payloads, CRCs and 34 install
+records pass, plus seventeen plain records. Qualification found and corrected
+hptmv's missing original CFLAGS-reset policy using native feature selection;
+its first artifact remains rejected. Eighty unchanged-default output bindings
+remain exact. See
+[STORAGE-ADAPTERS-MODULES-QUALIFICATION.md](STORAGE-ADAPTERS-MODULES-QUALIFICATION.md).
+
+BUILD presence is 591/729 selected amd64 leaves (138 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Maintained build-bsd format-5 inputs carry this cohort; module helper and
+docs are updated without new CLI/security/publication policy. Make stays default;
+BIP remains excluded.
