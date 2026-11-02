@@ -3,7 +3,15 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 cc_library(name = "elf64_input", textual_hdrs = ["exec_elf32.c"])
-cc_binary(name = "crunchide", srcs = ["crunchide.c", "exec_elf32.c", "exec_elf64.c", "extern.h"], deps = [":elf64_input"], dynamic_deps = [], local_defines = ["NLIST_ELF32", "NLIST_ELF64"], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+cc_library(name = "objects", srcs = ["crunchide.c", "exec_elf32.c", "exec_elf64.c", "extern.h"],
+    deps = [":elf64_input"], local_defines = ["PIC", "NLIST_ELF32", "NLIST_ELF64"],
+    copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments', '-fPIE'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_selected_objects(name = "compiler_outputs", group = ":objects", pic = False,
+    object_names = ["crunchide.o", "exec_elf32.o", "exec_elf64.o"], visibility = ["//visibility:public"])
+cc_binary(name = "crunchide", srcs = [":compiler_outputs"], linkopts = ["-pie"], linkstatic = True,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "crunchide", manual = "crunchide.1", package = "toolchain", bindir = "/usr/bin", man_section = "1", aliases = [], extra_entries = [])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

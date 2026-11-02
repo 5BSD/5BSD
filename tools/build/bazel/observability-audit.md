@@ -10236,3 +10236,14 @@ review libalias helper/protocol/error paths and NTB link/memory-window/doorbell,
 DMA/queue/reset/rx/tx failures for useful shared events without per-packet logs or
 payload disclosure. Remaining scanned files lack explicit markers; that does
 not prove lack of inherited instrumentation. See ALIAS-NTB-MODULES-QUALIFICATION.md.
+
+### Real rescue objects and crunchide build (November 2)
+
+Six fresh native compiler actions bind 391 actual consumed source/header
+occurrences to original Make, using hash-checked copied native dependency files.
+The three real rescue application variants retain child SSP/debug, disable PIE
+and omit their RESCUE-disabled tracing/Casper feature branches. No real rescue
+application executes here. Crunchide original/native raw-layout negative checks
+run only on private copies with DOF initialization disabled before startup; the
+supported ld-r combined-input transformation remains a gate. See
+[build-only evidence](RESCUE-CORE-OBJECTS-QUALIFICATION.md).

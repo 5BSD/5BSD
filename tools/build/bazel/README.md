@@ -47933,3 +47933,11 @@ publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification rema
 required. Existing build-bsd C/format-5/backend helpers cover this composition
 without new CLI, helper extension, signing/staging or publication requirements.
 Make remains production/default. BIP stays excluded.
+
+### First real rescue application object variants
+
+The actual original nested cat/echo/head RESCUE objects and ordinary crunchide
+tool are built and checked against Make, including six exact allocated object
+payloads and 391 consumed input occurrences. Child strong stack protection is
+preserved despite the rescue parent's disabled setting. [Build-only scope and
+remaining relocatable/crunchide/full-rescue gates](RESCUE-CORE-OBJECTS-QUALIFICATION.md).

@@ -845,3 +845,13 @@ publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification rema
 required. Existing build-bsd C/format-5/backend helpers cover this composition
 without new CLI, helper extension, signing/staging or publication requirements.
 Make remains production/default. BIP stays excluded.
+
+### Real rescue object checkpoint (November 2)
+
+Three source-owned RESCUE application variants (cat/echo/head) plus crunchide's
+three tool objects pass original Make allocated/relocation/symbol and actual
+compiler policy/input checks. Ordinary tool installation metadata also passes.
+[Evidence](RESCUE-CORE-OBJECTS-QUALIFICATION.md) explicitly keeps successful
+stub-plus-application ld-r/crunchide transformation, static dispatcher/runtime
+and complete rescue installation/package coverage open. Raw Clang input rejection
+is preserved; it is not a successful transformation or reason to relax the tool.
