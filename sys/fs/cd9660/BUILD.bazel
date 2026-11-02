@@ -28,3 +28,46 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     ],
     deps = [":kernel_headers"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_bmap_headers", hdrs = ["cd9660_node.h", "iso.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_lookup_headers", hdrs = ["cd9660_node.h", "iso.h", "iso_rrip.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_node_headers", hdrs = ["cd9660_mount.h", "cd9660_node.h", "iso.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_rrip_headers", hdrs = ["cd9660_node.h", "cd9660_rrip.h", "iso.h", "iso_rrip.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_util_headers", hdrs = ["cd9660_mount.h", "iso.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_cd9660_vfsops_headers", hdrs = ["cd9660_mount.h", "cd9660_node.h", "iso.h", "iso_rrip.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC filesystem/RPC built-ins.
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_bmap", srcs = ["cd9660_bmap.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_bmap_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_lookup", srcs = ["cd9660_lookup.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_lookup_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_node", srcs = ["cd9660_node.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_node_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_rrip", srcs = ["cd9660_rrip.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_rrip_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_util", srcs = ["cd9660_util.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_util_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_vfsops", srcs = ["cd9660_vfsops.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_vfsops_headers", "//sys/geom:filesystems_rpc_kernel_msdosfs_vfsops_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_cd9660_vnops", srcs = ["cd9660_vnops.c"],
+    deps = ["//sys/fs/cd9660:filesystems_rpc_kernel_cd9660_vfsops_headers", "//sys/vm:filesystems_rpc_kernel_cd9660_vnops_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

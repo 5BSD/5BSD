@@ -108,7 +108,7 @@ bsd_python_test(
 bsd_python_test(
     name = "install_reference_options_test",
     src = "install-reference-options-test.py",
-    data = ["install_reference_options.py"],
+    data = ["install_reference_options.py", "install-reference.py", "libmd_environment.py"],
 )
 
 # Includes rejection of foreign userland and unqualified target execution.

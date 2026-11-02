@@ -168,6 +168,53 @@ Known graph reconciliation now has 1,357 source matches plus six name-only match
 among 2,466 final products, leaving 1,103 unmatched. See ATH-KERNEL-QUALIFICATION.md.
 Full-system, module, other-architecture, radio/runtime and performance gates remain.
 
+## Intel NIC checkpoint (2026-11-02)
+
+69 native amd64 GENERIC objects pass code/CTF, compiler policy/input/header-order
+and nondebug relocation checks. bhyve's header/action contracts remain unchanged
+apart from 333 recorded action keys; an actual post-move binary build passes. Known
+graph reconciliation has 1,426 source matches plus six name-only matches among 2,466
+final products, leaving 1,034 unmatched. See INTEL-NIC-KERNEL-QUALIFICATION.md.
+Full-system/module, other-architecture, device/guest/runtime and performance gates
+remain open.
+
+## Mellanox checkpoint (2026-11-02)
+
+52 native amd64 GENERIC objects pass code/CTF, compiler policy/input/compatibility
+header order and nondebug relocation checks. Explicit OFED/UAPI child exports
+preserve source ownership. Known graph reconciliation has 1,478 source matches
+plus six name-only matches among 2,466 final products, leaving 982 unmatched.
+See MLX-KERNEL-QUALIFICATION.md. Full-system/module, other-architecture,
+device/runtime and performance gates remain open.
+
+## Storage HBA checkpoint (2026-11-02)
+
+39 native amd64 GENERIC OCS FC/SmartPQI objects pass code/CTF, actual compiler
+policy/input and nondebug relocation checks. Known graph reconciliation now has
+1,517 source matches plus six name-only matches among 2,466 final products,
+leaving 943 unmatched. See STORAGE-HBA-KERNEL-QUALIFICATION.md. Full kernel link,
+modules, other architectures, storage runtime and performance gates remain open.
+
+## Storage core checkpoint (2026-11-02)
+
+76 native amd64 GENERIC CAM/GEOM/NVMe/UFSHCI objects pass code/CTF, actual compiler
+policy/input and nondebug relocation checks. Existing source package boundaries
+are preserved. Known graph reconciliation has 1,593 source matches plus six
+name-only matches among 2,466 final products, leaving 867 unmatched. See
+STORAGE-CORE-KERNEL-QUALIFICATION.md. Complete kernel link, modules, other
+architectures, runtime and performance gates remain open.
+
+## Filesystem/RPC checkpoint (2026-11-02)
+
+101 native amd64 GENERIC objects pass code, compiler policy/input, NFS tracing
+header precedence and nondebug relocation checks. CTF is byte-exact for 100;
+ufs_bmap passes the unchanged production graph/symbol verifier with one fewer
+unreferenced empty slot. Native RPC TLS reuses its existing protocol generators.
+Known graph: 1,694 source matches plus six name-only matches among 2,466 final
+products, leaving 766 unmatched. See FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md.
+Complete kernel/world/modules, other architectures, runtime and performance gates
+remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

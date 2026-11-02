@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["if_ix_mdio.h", "if_ix_mdio_hw.h", "ixgbe.h", "ixgbe_api.h", "ixgbe_bypass.h", "ixgbe_common.h", "ixgbe_e610.h", "ixgbe_fdir.h", "ixgbe_features.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_rss.h", "ixgbe_sriov.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_vf.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ixv_headers", hdrs = ["ixgbe.h", "ixgbe_api.h", "ixgbe_bypass.h", "ixgbe_common.h", "ixgbe_e610.h", "ixgbe_fdir.h", "ixgbe_features.h", "ixgbe_hv_vf.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_rss.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_vf.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ix_mdio_hw_headers", hdrs = ["if_ix_mdio_hw.h", "ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_bypass_headers", hdrs = ["ixgbe.h", "ixgbe_api.h", "ixgbe_bypass.h", "ixgbe_common.h", "ixgbe_e610.h", "ixgbe_fdir.h", "ixgbe_features.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_rss.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_vf.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_sriov_headers", hdrs = ["ixgbe.h", "ixgbe_api.h", "ixgbe_bypass.h", "ixgbe_common.h", "ixgbe_e610.h", "ixgbe_fdir.h", "ixgbe_features.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_rss.h", "ixgbe_sriov.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_vf.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_phy_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_api_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_common_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_dcb.h", "ixgbe_dcb_82599.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_hv_vf_headers", hdrs = ["ixgbe_common.h", "ixgbe_hv_vf.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_vf.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_mbx_headers", hdrs = ["ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_82598_headers", hdrs = ["ixgbe_82598.h", "ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_82599_headers", hdrs = ["ixgbe_82599.h", "ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_x540_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_x540.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_x550_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_x540.h", "ixgbe_x550.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_e610_headers", hdrs = ["ixgbe_api.h", "ixgbe_common.h", "ixgbe_e610.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_phy.h", "ixgbe_type.h", "ixgbe_type_e610.h", "ixgbe_x550.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_dcb_headers", hdrs = ["ixgbe_dcb.h", "ixgbe_dcb_82598.h", "ixgbe_dcb_82599.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_dcb_82598_headers", hdrs = ["ixgbe_dcb.h", "ixgbe_dcb_82598.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ixgbe_dcb_82599_headers", hdrs = ["ixgbe_dcb.h", "ixgbe_dcb_82599.h", "ixgbe_mbx.h", "ixgbe_osdep.h", "ixgbe_type.h", "ixgbe_type_e610.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+# Native amd64 GENERIC Intel NIC built-ins.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_ix", srcs = ["if_ix.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_ix_headers", "//sys/dev/mdio:intel_nic_kernel_if_ix_headers", "//sys/dev/netmap:intel_nic_kernel_if_ix_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_ix_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/dev/mdio:intel_nic_mdio_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers", "//sys/dev/pci:intel_nic_pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DSMP"])
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_ixv", srcs = ["if_ixv.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_ixv_headers", "//sys/dev/netmap:intel_nic_kernel_if_ix_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_ix_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DSMP"])
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_ix_mdio", srcs = ["if_ix_mdio.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_ix_headers", "//sys/dev/mdio:intel_nic_kernel_if_ix_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/dev/mdio:intel_nic_mdio_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers", "//sys/dev/pci:intel_nic_pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_ix_mdio_hw", srcs = ["if_ix_mdio_hw.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_if_ix_mdio_hw_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_bypass", srcs = ["if_bypass.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_fdir", srcs = ["if_fdir.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_sriov", srcs = ["if_sriov.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_sriov_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_igb_iov_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers", "//sys/dev/pci:intel_nic_pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ix_txrx", srcs = ["ix_txrx.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_osdep", srcs = ["ixgbe_osdep.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_phy", srcs = ["ixgbe_phy.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_phy_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_api", srcs = ["ixgbe_api.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_api_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_common", srcs = ["ixgbe_common.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_common_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_fw_logging", srcs = ["ixgbe_fw_logging.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_hv_vf", srcs = ["ixgbe_hv_vf.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_hv_vf_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_mbx", srcs = ["ixgbe_mbx.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_mbx_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_vf", srcs = ["ixgbe_vf.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/ixgbe:intel_nic_kernel_if_bypass_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_ix_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_82598", srcs = ["ixgbe_82598.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_82598_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_82599", srcs = ["ixgbe_82599.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_82599_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_x540", srcs = ["ixgbe_x540.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_x540_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_x550", srcs = ["ixgbe_x550.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_x550_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_e610", srcs = ["ixgbe_e610.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_e610_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_dcb", srcs = ["ixgbe_dcb.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_dcb_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_dcb_82598", srcs = ["ixgbe_dcb_82598.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_dcb_82598_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_ixgbe_dcb_82599", srcs = ["ixgbe_dcb_82599.c"],
+    deps = ["//sys/dev/ixgbe:intel_nic_kernel_ixgbe_dcb_82599_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

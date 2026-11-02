@@ -40,3 +40,8 @@ cross_cddl_module_objects(arch = "riscv", name = "opensolaris_module", compatibi
 bsd_component_selected_objects(name = "riscv_opensolaris_ordered_objects", group = ":riscv_opensolaris_module_ctf",
     object_names = ["opensolaris.o", "opensolaris_proc.o", "spl_cmn_err.o", "spl_kmem.o", "spl_misc.o", "spl_sunddi.o", "opensolaris_atomic.o"],
     visibility = ["//sys/modules/opensolaris:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clkdtrace_headers", hdrs = ["sys/cpuvar.h", "sys/cpuvar_defs.h", "sys/modctl.h"],
+    includes = ["."],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

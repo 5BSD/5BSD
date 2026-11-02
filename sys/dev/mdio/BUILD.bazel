@@ -36,3 +36,11 @@ cross_generic_module_objects(arch = "riscv", name = "mii_module", srcs = ["mdio.
     copts = ["-fmacro-prefix-map=$(execpath :mdio_if_source)=mdio_if.c", "-fdebug-prefix-map=$(execpath :mdio_if_source)=mdio_if.c"])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_mii_module_ctf",
     object_names = ["mdio.o", "mdio_if.o"], visibility = ["//sys/modules/mdio:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["mdio.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "intel_nic_mdio_if_header_file", srcs = [":mdio_if"], output_group = "header")
+cc_library(name = "intel_nic_mdio_if_headers", hdrs = [":intel_nic_mdio_if_header_file"],
+    strip_include_prefix = "mdio_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])

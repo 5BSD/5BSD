@@ -29,6 +29,8 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--jobs', type=int, required=True)
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
+    parser.add_argument('--make-meta', action='store_true',
+                        help='record original build recipes with supported metadata mode, without filemon')
     parser.add_argument('--with-option', action='append', default=[],
                         help='enable a component option against the unchanged recorded SDK')
     parser.add_argument('--without-option', action='append', default=[],
@@ -113,6 +115,8 @@ def main():
                        str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__))}
     receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference',
                'component': str(component), 'jobs': args.jobs,
+               'make_metadata': {'enabled': args.make_meta,
+                                 'mode': 'meta missing-meta=yes nofilemon curdirok=yes' if args.make_meta else None},
                'component_options': component_options,
                'component_definitions': definitions,
                'sdk_reconfigured': False, 'source_hashes': source_hashes,
@@ -141,6 +145,8 @@ def main():
     try:
         base = [str(make), '-C', str(component),
                 *environment.fixed, *environment.options]
+        if args.make_meta:
+            base += ['.MAKE.MODE=meta missing-meta=yes nofilemon curdirok=yes']
         run(buildenv(base + ['-j' + str(args.jobs), 'all']), 'build')
         flags = ['NO_ROOT=yes', 'DB_FROM_SRC=yes', 'BUILD_PKGS=yes',
                  'DESTDIR=' + str(stage), 'METALOG=' + str(metalog)]

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Validate the independent Make oracle's restricted presence-only selectors."""
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 from install_reference_options import component_definitions
 
@@ -42,6 +44,20 @@ class ComponentDefinitionsTests(unittest.TestCase):
             component_definitions(component, [name], option_names=[name])
         with self.assertRaisesRegex(ValueError, 'collides'):
             component_definitions(component, [name], profile_names=[name])
+
+    def test_metadata_mode_does_not_accept_arbitrary_make_assignments(self):
+        helper = Path(__file__).with_name('install-reference.py')
+        command = [sys.executable, '-B', str(helper), '--src', '/nonexistent',
+                   '--objtop', '/nonexistent', '--profile', '/nonexistent',
+                   '--component', '/nonexistent', '--output', '/nonexistent', '--jobs', '1']
+        for value in ('filemon', 'normal', 'meta missing-meta=yes'):
+            with self.subTest(value=value):
+                result = subprocess.run(command + ['--make-meta=' + value],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('--make-meta', result.stderr)
+                self.assertIn('ignored explicit argument', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
 
     def test_no_defines_preserves_existing_component_behavior(self):
         self.assertEqual(component_definitions(Path('/usr/src/123'), []), {})

@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["e1000_80003es2lan.h", "e1000_82541.h", "e1000_82543.h", "e1000_82571.h", "e1000_82575.h", "e1000_api.h", "e1000_base.h", "e1000_defines.h", "e1000_hw.h", "e1000_i210.h", "e1000_ich8lan.h", "e1000_mac.h", "e1000_manage.h", "e1000_mbx.h", "e1000_nvm.h", "e1000_osdep.h", "e1000_phy.h", "e1000_regs.h", "if_em.h", "if_igb_iov.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_igbv_headers", hdrs = ["e1000_80003es2lan.h", "e1000_82541.h", "e1000_82543.h", "e1000_82571.h", "e1000_82575.h", "e1000_api.h", "e1000_base.h", "e1000_defines.h", "e1000_hw.h", "e1000_i210.h", "e1000_ich8lan.h", "e1000_mac.h", "e1000_manage.h", "e1000_mbx.h", "e1000_nvm.h", "e1000_osdep.h", "e1000_phy.h", "e1000_regs.h", "if_em.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_e1000_80003es2lan_headers", hdrs = ["e1000_80003es2lan.h", "e1000_82541.h", "e1000_82543.h", "e1000_82571.h", "e1000_82575.h", "e1000_api.h", "e1000_base.h", "e1000_defines.h", "e1000_hw.h", "e1000_i210.h", "e1000_ich8lan.h", "e1000_mac.h", "e1000_manage.h", "e1000_mbx.h", "e1000_nvm.h", "e1000_osdep.h", "e1000_phy.h", "e1000_regs.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+exports_files(["e1000_defines.h", "e1000_regs.h"], visibility = ["//:__pkg__"])
+
+# Native amd64 GENERIC Intel NIC built-ins.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_em", srcs = ["if_em.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_if_em_headers", "//sys/ddb:intel_nic_kernel_if_em_headers", "//sys/dev/led:intel_nic_kernel_if_em_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_em_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_ddb_header", "//sys/amd64/conf:intel_nic_kernel_opt_device_polling_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers", "//sys/dev/pci:intel_nic_pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_igbv", srcs = ["if_igbv.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_if_igbv_headers", "//sys/ddb:intel_nic_kernel_if_em_headers", "//sys/dev/led:intel_nic_kernel_if_em_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_em_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_ddb_header", "//sys/amd64/conf:intel_nic_kernel_opt_device_polling_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_if_igb_iov", srcs = ["if_igb_iov.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_if_em_headers", "//sys/ddb:intel_nic_kernel_if_em_headers", "//sys/dev/led:intel_nic_kernel_if_em_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_igb_iov_headers", "//sys/netinet:intel_nic_kernel_if_em_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_ddb_header", "//sys/amd64/conf:intel_nic_kernel_opt_device_polling_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers", "//sys/dev/pci:intel_nic_pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_em_txrx", srcs = ["em_txrx.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_if_igbv_headers", "//sys/ddb:intel_nic_kernel_if_em_headers", "//sys/dev/led:intel_nic_kernel_if_em_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_em_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_ddb_header", "//sys/amd64/conf:intel_nic_kernel_opt_device_polling_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_igb_txrx", srcs = ["igb_txrx.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_if_igbv_headers", "//sys/ddb:intel_nic_kernel_if_em_headers", "//sys/dev/led:intel_nic_kernel_if_em_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:intel_nic_kernel_if_em_headers", "//sys/netinet6:intel_nic_kernel_if_em_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/net:intel_nic_ifdi_if_headers", "//sys/amd64/conf:intel_nic_kernel_opt_ddb_header", "//sys/amd64/conf:intel_nic_kernel_opt_device_polling_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet_header", "//sys/amd64/conf:intel_nic_kernel_opt_inet6_header", "//sys/amd64/conf:intel_nic_kernel_opt_rss_header", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_80003es2lan", srcs = ["e1000_80003es2lan.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82540", srcs = ["e1000_82540.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82541", srcs = ["e1000_82541.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82542", srcs = ["e1000_82542.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82543", srcs = ["e1000_82543.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82571", srcs = ["e1000_82571.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_82575", srcs = ["e1000_82575.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_ich8lan", srcs = ["e1000_ich8lan.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_i210", srcs = ["e1000_i210.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_api", srcs = ["e1000_api.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_base", srcs = ["e1000_base.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_mac", srcs = ["e1000_mac.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_manage", srcs = ["e1000_manage.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_nvm", srcs = ["e1000_nvm.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_phy", srcs = ["e1000_phy.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_vf", srcs = ["e1000_vf.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_mbx", srcs = ["e1000_mbx.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_intel_nic_e1000_osdep", srcs = ["e1000_osdep.c"],
+    deps = ["//sys/contrib/ck:intel_nic_kernel_if_em_headers", "//sys/dev/e1000:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/dev/pci:intel_nic_kernel_if_igbv_headers", "//sys/net:intel_nic_kernel_e1000_80003es2lan_headers", "//sys/vm:intel_nic_kernel_if_em_headers", "//sys/kern:intel_nic_bus_if_headers", "//sys/kern:intel_nic_device_if_headers", "//sys/dev/pci:intel_nic_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

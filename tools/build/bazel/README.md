@@ -47522,3 +47522,30 @@ symbol/relocation qualification, with remaining filesystem/system gates.
 [ATH-KERNEL-QUALIFICATION.md](ATH-KERNEL-QUALIFICATION.md) records 130 native
 Atheros driver/HAL objects, source-owned headers and generated options, exact
 code/CTF/policy/input checks, bounded string/relocation proof and remaining gates.
+
+[INTEL-NIC-KERNEL-QUALIFICATION.md](INTEL-NIC-KERNEL-QUALIFICATION.md) records
+69 native e1000/ixgbe/ice objects, exact code/CTF/policy/input checks and bhyve
+header/action-contract compatibility with an actual post-move binary build.
+
+[MLX-KERNEL-QUALIFICATION.md](MLX-KERNEL-QUALIFICATION.md) records 52 native
+Mellanox core/Ethernet/acceleration objects, ordered OFED/UAPI/LinuxKPI source
+contexts, exact code/CTF/policy/input proof and remaining device/system gates.
+
+[MAKE-REFERENCE-METADATA-QUALIFICATION.md](MAKE-REFERENCE-METADATA-QUALIFICATION.md) records the optional original-recipe Make oracle, default and DTrace reference controls, restricted CLI checks and qualification limits.
+
+[STORAGE-HBA-KERNEL-QUALIFICATION.md](STORAGE-HBA-KERNEL-QUALIFICATION.md) records
+39 native OCS FC/SmartPQI objects, exact code/CTF and compiler input/policy checks,
+strict nondebug relocation review and remaining storage/system gates.
+
+[RELOCATABLE-ARCHIVE-QUALIFICATION.md](RELOCATABLE-ARCHIVE-QUALIFICATION.md) records ordered archive/runtime inputs, unchanged old partial-link actions, real execution bindings, strict archive variant/collision tests and explicit PAM/bootstrap limits.
+
+[STORAGE-CORE-KERNEL-QUALIFICATION.md](STORAGE-CORE-KERNEL-QUALIFICATION.md) records
+76 native CAM/GEOM/NVMe/UFSHCI objects, preserved source ownership, exact code/CTF,
+actual compiler policy/input proof and strict relocation checks. Runtime and full
+system qualification remain open.
+
+[FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md](FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md)
+records 101 native filesystem/RPC objects, native RPC header dependencies,
+NFS tracing compatibility precedence and strict compiler/input/code/relocation
+checks. 100 CTF byte matches and one unchanged-production-verifier semantic match
+are distinguished explicitly; complete system/runtime gates remain open.

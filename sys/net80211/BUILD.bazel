@@ -313,3 +313,7 @@ bsd_source_headers(name = "ath_kernel_ah_headers", hdrs = ["_ieee80211.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_ah_regdomain_headers", hdrs = ["_ieee80211.h", "ieee80211_regdomain.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["_ieee80211.h", "ieee80211.h", "ieee80211_ageq.h", "ieee80211_crypto.h", "ieee80211_dfs.h", "ieee80211_freebsd.h", "ieee80211_ht.h", "ieee80211_ioctl.h", "ieee80211_node.h", "ieee80211_phy.h", "ieee80211_power.h", "ieee80211_proto.h", "ieee80211_radiotap.h", "ieee80211_scan.h", "ieee80211_var.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

@@ -9734,3 +9734,50 @@ missing shared hooks. Production instrumentation is unchanged. Radio attach,
 calibration, authentication, rate control, TX/RX and recovery remain runtime gates.
 Evidence: /usr/obj/usr/src/bazel-kernel-ath-review-r1-20261102/observability.json;
 see ATH-KERNEL-QUALIFICATION.md for build/policy and CTF comparison limits.
+
+## Intel NIC built-in batch (2026-11-02)
+
+Among 69 source-bound files, existing call-shaped tracing/CTR-family markers occur
+in if_igb_iov.c, if_ix.c, if_sriov.c and ice_fw_logging.c. No matches in 65 other files
+do not establish missing shared hooks. No production instrumentation changed.
+Queue/offload/RSS/netmap/SR-IOV/RDMA and reset/recovery behavior remain runtime gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-intel-nic-review-r1-20261102/observability.json;
+see INTEL-NIC-KERNEL-QUALIFICATION.md for build/header ownership and comparison scope.
+
+## Mellanox built-in batch (2026-11-02)
+
+Among 52 source-bound files, existing bounded call-shaped tracing/CTR-family markers
+appear in mlx5_health.c. No matches in 51 other files do not prove missing shared
+hooks. Production instrumentation is unchanged. Firmware/health/reset, queue and
+IPsec/TLS/SR-IOV/RDMA runtime behavior remain gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-mlx-review-r1-20261102/observability.json;
+see MLX-KERNEL-QUALIFICATION.md for comparison scope and remaining device tests.
+
+## Storage HBA built-in batch (2026-11-02)
+
+The bounded call-shaped marker scan finds no matches in 39 OCS FC/SmartPQI files;
+this is not evidence of missing shared instrumentation. Production hooks remain
+unchanged. CAM/storage error, timeout/reset/recovery, DMA/queue/hotplug and multipath
+runtime behavior still needs relevant device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-storage-hba-review-r1-20261102/observability.json;
+see STORAGE-HBA-KERNEL-QUALIFICATION.md for scope and remaining gates.
+
+## Storage core built-in batch (2026-11-02)
+
+The bounded call-shaped scan finds existing tracing/CTR-family markers in 12 of
+76 CAM/GEOM/NVMe/UFSHCI files. The other 64 files do not establish missing shared
+hooks. Production instrumentation stays unchanged. Controller attach, queues,
+interrupt/DMA, timeout/reset/recovery, partition/label and hotplug/multipath runtime
+behavior still need relevant device qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-storage-core-review-r1-20261102/observability.json;
+see STORAGE-CORE-KERNEL-QUALIFICATION.md for exact scope and remaining gates.
+
+## Filesystem/RPC built-in batch (2026-11-02)
+
+Existing bounded call-shaped tracing/CTR/audit-family markers occur in 17 of
+101 selected filesystem/RPC files. The other 84 do not prove missing shared hooks.
+NFS tracing preserves the original OpenZFS/SPL/Solaris header and forced-config
+precedence. Production instrumentation is unchanged. Live probes, RPC/TLS/auth,
+NFS locking/recovery and local filesystem consistency/error behavior remain gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-filesystems-rpc-review-r1-20261102/observability.json;
+see FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md for exact scope and limitations.

@@ -41,3 +41,59 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Native ISCI built-in physical prerequisites, with identical closures shared.
 bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["nvme.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical storage HBA prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["nvme.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["nvme.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_nvme_headers", hdrs = ["nvme.h", "nvme_private.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_nvme_ctrlr_headers", hdrs = ["nvme.h", "nvme_linux.h", "nvme_private.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+filegroup(name = "storage_core_nvme_if_header_file", srcs = [":nvme_if"], output_group = "header")
+cc_library(name = "storage_core_nvme_if_headers", hdrs = [":storage_core_nvme_if_header_file"],
+    strip_include_prefix = "nvme_if.generated", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native amd64 GENERIC storage core built-ins, using maintained per-source warnings.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme", srcs = ["nvme.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/nvme:storage_core_nvme_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_ahci", srcs = ["nvme_ahci.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_ctrlr", srcs = ["nvme_ctrlr.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_ctrlr_headers", "//sys/dev/pci:storage_core_kernel_nvme_ctrlr_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_nvme_ctrlr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/nvme:storage_core_nvme_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_nvme_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_ctrlr_cmd", srcs = ["nvme_ctrlr_cmd.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_ns", srcs = ["nvme_ns.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_ctrlr_headers", "//sys/dev/pci:storage_core_kernel_nvme_ctrlr_headers", "//sys/geom:storage_core_kernel_nvme_ns_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_ns_cmd", srcs = ["nvme_ns_cmd.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_pci", srcs = ["nvme_pci.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/dev/pci:storage_core_kernel_nvme_pci_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_nvme_pci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/nvme:storage_core_nvme_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_qpair", srcs = ["nvme_qpair.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/dev/pci:storage_core_kernel_nvme_ctrlr_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_sim", srcs = ["nvme_sim.c"],
+    deps = ["//sys/cam:storage_core_kernel_nvme_sim_headers", "//sys/dev/mmc:storage_core_kernel_cam_headers", "//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/dev/pci:storage_core_kernel_nvme_pci_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/nvme:storage_core_nvme_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_cam_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_sysctl", srcs = ["nvme_sysctl.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_nvme_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_test", srcs = ["nvme_test.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_nvme_headers", "//sys/geom:storage_core_kernel_nvme_ns_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/vm:storage_core_kernel_cam_compat_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_nvme_util", srcs = ["nvme_util.c"],
+    deps = ["//sys/dev/nvme:storage_core_kernel_cam_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

@@ -21,3 +21,7 @@ bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["netlink.h", "net
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_clnt_nl_headers", hdrs = ["netlink.h", "netlink_ctl.h", "netlink_generic.h", "netlink_message_parser.h", "netlink_message_writer.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

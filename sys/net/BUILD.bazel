@@ -1161,3 +1161,55 @@ bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h",
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Physical native Intel NIC built-in prerequisites.
+bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_igb_iov_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_e1000_80003es2lan_headers", hdrs = ["ethernet.h", "if.h", "if_var.h", "iflib.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ix_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "netmap.h", "netmap_legacy.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_if_ice_iflib_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_lib_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_resmgr_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_strings_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+bsd_source_headers(name = "intel_nic_kernel_ice_iov_headers", hdrs = ["ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "if_vf_status.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+filegroup(name = "intel_nic_ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
+cc_library(name = "intel_nic_ifdi_if_headers", hdrs = [":intel_nic_ifdi_if_header_file"],
+    strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/e1000:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ice:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_diagnostics_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "sff8472.h", "vnet.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_eq_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_main_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "pfkeyv2.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Physical storage HBA prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/dev/ocs_fc:__pkg__", "//sys/dev/smartpqi:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["if.h", "if_dl.h", "if_var.h", "ifq.h", "radix.h", "route.h", "vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clvfsops_headers", hdrs = ["if.h", "if_dl.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nlm_advlock_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

@@ -30,3 +30,7 @@ bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["camel
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_crypto_os_headers", hdrs = ["camellia.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

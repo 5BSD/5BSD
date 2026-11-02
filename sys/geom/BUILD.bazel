@@ -41,3 +41,100 @@ bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["geom.h", 
     visibility = ["//sys/contrib/openzfs:__pkg__"])
 bsd_source_headers(name = "openzfs_kernel_zvol_os_headers", hdrs = ["geom.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_cam_iosched_headers", hdrs = ["geom_disk.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_nvme_da_headers", hdrs = ["geom.h", "geom_disk.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_nvme_ns_headers", hdrs = ["geom.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_ctl_headers", hdrs = ["geom.h", "geom_ctl.h", "geom_int.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_dev_headers", hdrs = ["geom.h", "geom_int.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_disk_headers", hdrs = ["geom.h", "geom_disk.h", "geom_int.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_flashmap_headers", hdrs = ["geom.h", "geom_disk.h", "geom_flashmap.h", "geom_slice.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_slice_headers", hdrs = ["geom.h", "geom_slice.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_subr_headers", hdrs = ["geom.h", "geom_dbg.h", "geom_int.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_geom_vfs_headers", hdrs = ["geom.h", "geom_vfs.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_label_headers", hdrs = ["geom.h", "geom_dbg.h", "geom_slice.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_label_ext2fs_headers", hdrs = ["geom.h", "geom_dbg.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_label_flashmap_headers", hdrs = ["geom.h", "geom_flashmap.h", "geom_slice.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_label_gpt_headers", hdrs = ["geom.h", "part/g_part.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_part_headers", hdrs = ["geom.h", "geom_ctl.h", "geom_int.h", "part/g_part.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+bsd_source_headers(name = "storage_core_kernel_g_part_gpt_headers", hdrs = ["geom.h", "geom_int.h", "part/g_part.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+filegroup(name = "storage_core_g_part_if_header_file", srcs = [":g_part_if"], output_group = "header")
+cc_library(name = "storage_core_g_part_if_headers", hdrs = [":storage_core_g_part_if_header_file"],
+    strip_include_prefix = "g_part_if.generated", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native amd64 GENERIC storage core built-ins, using maintained per-source warnings.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_bsd_enc", srcs = ["geom_bsd_enc.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_ctl", srcs = ["geom_ctl.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_ctl_headers", "//sys/vm:storage_core_kernel_geom_ctl_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_dev", srcs = ["geom_dev.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_disk", srcs = ["geom_disk.c"],
+    deps = ["//sys/dev/led:storage_core_kernel_geom_disk_headers", "//sys/geom:storage_core_kernel_geom_disk_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers", "//sys/amd64/conf:storage_core_kernel_opt_geom_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_dump", srcs = ["geom_dump.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_disk_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_event", srcs = ["geom_event.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_dev_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_flashmap", srcs = ["geom_flashmap.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_flashmap_headers", "//sys/net:storage_core_kernel_cam_headers", "//sys/netinet:storage_core_kernel_cam_headers", "//sys/netinet6:storage_core_kernel_cam_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_io", srcs = ["geom_io.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/vm:storage_core_kernel_geom_io_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_kern", srcs = ["geom_kern.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_dev_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_slice", srcs = ["geom_slice.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_slice_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_subr", srcs = ["geom_subr.c"],
+    deps = ["//sys/ddb:storage_core_kernel_cam_iosched_headers", "//sys/geom:storage_core_kernel_geom_subr_headers", "//sys/amd64/conf:storage_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_geom_vfs", srcs = ["geom_vfs.c"],
+    deps = ["//sys/geom:storage_core_kernel_geom_vfs_headers", "//sys/vm:storage_core_kernel_cam_compat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_part", srcs = ["part/g_part.c"],
+    deps = ["//sys/geom:storage_core_kernel_g_part_headers", "//sys/geom:storage_core_g_part_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_part_bsd", srcs = ["part/g_part_bsd.c"],
+    deps = ["//sys/geom:storage_core_kernel_g_label_gpt_headers", "//sys/geom:storage_core_g_part_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_part_ebr", srcs = ["part/g_part_ebr.c"],
+    deps = ["//sys/geom:storage_core_kernel_g_label_gpt_headers", "//sys/geom:storage_core_g_part_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_geom_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_part_gpt", srcs = ["part/g_part_gpt.c"],
+    deps = ["//sys/geom:storage_core_kernel_g_part_gpt_headers", "//sys/geom:storage_core_g_part_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_core_g_part_mbr", srcs = ["part/g_part_mbr.c"],
+    deps = ["//sys/geom:storage_core_kernel_g_part_gpt_headers", "//sys/geom:storage_core_g_part_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_msdosfs_vfsops_headers", hdrs = ["geom.h", "geom_vfs.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

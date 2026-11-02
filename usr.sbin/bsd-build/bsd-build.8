@@ -5178,3 +5178,14 @@ Validator regressions use a separate host-test profile.
 See
 .Pa tools/build/bazel/VDSO-QUALIFICATION.md
 for original Make comparisons, actual producer bindings and runtime limits.
+.Pp
+The independent qualification helper
+.Pa tools/build/bazel/install-reference.py
+accepts
+.Fl Fl make-meta
+to record original Make recipes without filemon from the initial build.
+The option is disabled by default and accepts no arbitrary metadata-mode value.
+It does not introduce Make interpretation into production Bazel actions.
+See
+.Pa tools/build/bazel/MAKE-REFERENCE-METADATA-QUALIFICATION.md
+for controls and scope.

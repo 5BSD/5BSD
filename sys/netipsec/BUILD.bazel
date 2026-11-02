@@ -42,3 +42,13 @@ bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["ipsec_support.
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["ipsec_support.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_fs_headers", hdrs = ["ipsec.h", "ipsec_offload.h", "key_var.h", "keydb.h", "xform.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_offload_headers", hdrs = ["ipsec.h", "key_var.h", "keydb.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_headers", hdrs = ["ipsec.h", "ipsec_offload.h", "key.h", "key_var.h", "keydb.h", "xform.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])
+bsd_source_headers(name = "mlx_kernel_mlx5_ipsec_rxtx_headers", hdrs = ["ipsec_offload.h", "key_var.h", "keydb.h", "xform.h"],
+    visibility = ["//sys/dev/mlx5:__pkg__"])

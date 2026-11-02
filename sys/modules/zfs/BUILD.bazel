@@ -16,3 +16,8 @@ bsd_source_headers(name = "openzfs_kernel_sysctl_os_config", hdrs = ["static_cco
 bsd_source_headers(name = "openzfs_kernel_spa_history_config", hdrs = ["static_ccompile.h", "zfs_gitrev.h"],
     includes = ["."],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clkdtrace_headers", hdrs = ["static_ccompile.h"],
+    includes = ["."],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

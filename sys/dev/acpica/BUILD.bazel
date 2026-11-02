@@ -221,3 +221,11 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["acpivar
 filegroup(name = "linuxkpi_acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
 cc_library(name = "linuxkpi_acpi_if_headers", hdrs = [":linuxkpi_acpi_if_header_file"],
     strip_include_prefix = "acpi_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Physical storage core prerequisites; identical contexts share providers.
+bsd_source_headers(name = "storage_core_kernel_ufshci_acpi_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+filegroup(name = "storage_core_acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
+cc_library(name = "storage_core_acpi_if_headers", hdrs = [":storage_core_acpi_if_header_file"],
+    strip_include_prefix = "acpi_if.generated", visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
