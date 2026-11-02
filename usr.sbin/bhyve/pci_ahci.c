@@ -2773,6 +2773,7 @@ pci_ahci_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 		ret = blockif_add_boot_device(pi, bctxt);
 		if (ret) {
+			blockif_close(bctxt);
 			sc->ports = p;
 			goto open_fail;
 		}
