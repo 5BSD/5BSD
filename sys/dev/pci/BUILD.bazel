@@ -101,3 +101,7 @@ cc_library(name = "linuxkpi_pci_iov_if_headers", hdrs = [":linuxkpi_pci_iov_if_h
 filegroup(name = "linuxkpi_pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
 cc_library(name = "linuxkpi_pcib_if_headers", hdrs = [":linuxkpi_pcib_if_header_file"],
     strip_include_prefix = "pcib_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

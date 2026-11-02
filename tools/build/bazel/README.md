@@ -47518,3 +47518,7 @@ include inputs, unchanged shared-rule defaults, exact code/CTF and bounded strin
 symbol/relocation qualification, with remaining filesystem/system gates.
 
 [APM-PROGRAM-QUALIFICATION.md](APM-PROGRAM-QUALIFICATION.md) records closure of the selected APM producer/install gap, exact native code/flags/inputs, strict ELF, three safe methods and separate power/device/architecture gates.
+
+[ATH-KERNEL-QUALIFICATION.md](ATH-KERNEL-QUALIFICATION.md) records 130 native
+Atheros driver/HAL objects, source-owned headers and generated options, exact
+code/CTF/policy/input checks, bounded string/relocation proof and remaining gates.

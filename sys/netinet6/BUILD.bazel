@@ -514,3 +514,7 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["in6.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

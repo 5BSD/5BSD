@@ -1095,3 +1095,8 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_lid_headers", hdrs = ["includ
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
     includes = ["include"], visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

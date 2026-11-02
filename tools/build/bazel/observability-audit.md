@@ -9725,3 +9725,12 @@ see OPENZFS-KERNEL-QUALIFICATION.md for build, CTF comparison and runtime limits
 ## APM native leaf (2026-11-02)
 
 The original apm.c has no direct recognized SDT/DTrace, FIDL or BSM calls. Native source, warning/PIC/PIE policy and package ownership are retained. Three safe CLI/loader methods do not cover device status or power ioctls; no hardware path ran. See APM-PROGRAM-QUALIFICATION.md.
+
+## Atheros built-in batch (2026-11-02)
+
+Among 130 source-bound driver/HAL files, the bounded call-shaped scan finds existing
+tracing/CTR-family calls in if_ath.c. No matches in 129 other files do not establish
+missing shared hooks. Production instrumentation is unchanged. Radio attach,
+calibration, authentication, rate control, TX/RX and recovery remain runtime gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-ath-review-r1-20261102/observability.json;
+see ATH-KERNEL-QUALIFICATION.md for build/policy and CTF comparison limits.

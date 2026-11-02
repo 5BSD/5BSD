@@ -159,6 +159,15 @@ matches plus six name-only matches among 2,466 final products, leaving 1,233
 unmatched. See OPENZFS-KERNEL-QUALIFICATION.md. Full-system/module, other-architecture,
 filesystem/runtime and comparative performance gates remain open.
 
+## Atheros checkpoint (2026-11-02)
+
+130 native amd64 GENERIC driver/HAL objects pass exact code/CTF, actual compiler
+policy/input/include-order and nondebug relocation checks. New source owners and
+actual config-generated AH/ATH options replace no runtime policies or source code.
+Known graph reconciliation now has 1,357 source matches plus six name-only matches
+among 2,466 final products, leaving 1,103 unmatched. See ATH-KERNEL-QUALIFICATION.md.
+Full-system, module, other-architecture, radio/runtime and performance gates remain.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

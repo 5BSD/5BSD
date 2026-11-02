@@ -1149,3 +1149,15 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h",
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
     visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_btcoex_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

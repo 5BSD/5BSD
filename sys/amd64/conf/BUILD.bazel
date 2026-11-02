@@ -542,3 +542,19 @@ cc_library(name = "linuxkpi_kernel_opt_usb_header", hdrs = [":opt_usb"],
 
 cc_library(name = "linuxkpi_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
     strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+bsd_tree_file(name = "opt_ah", tree = ":generic_config", member = "opt_ah.h",
+    output = "generic_options/opt_ah.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "ath_kernel_opt_ah_header", hdrs = [":opt_ah"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+bsd_tree_file(name = "opt_ath", tree = ":generic_config", member = "opt_ath.h",
+    output = "generic_options/opt_ath.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "ath_kernel_opt_ath_header", hdrs = [":opt_ath"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+cc_library(name = "ath_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+cc_library(name = "ath_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
