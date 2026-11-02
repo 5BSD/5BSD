@@ -51,7 +51,7 @@ __wrap_pwrite(int fd, const void *buffer, size_t length, off_t offset)
 ssize_t
 __wrap_pwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset)
 {
-	struct iovec limited[BLOCKIF_IOV_MAX];
+	struct iovec limited[BLOCKIF_IOV_LIMIT];
 	size_t remaining;
 	int i, count;
 
@@ -423,7 +423,7 @@ ATF_TC_BODY(read_write_reject_invalid_vectors, tc)
 	req.br_offset = 0;
 	req.br_iovcnt = -1;
 	ATF_CHECK_EQ(blockif_write(&bc, &req), EINVAL);
-	req.br_iovcnt = BLOCKIF_IOV_MAX + 1;
+	req.br_iovcnt = BLOCKIF_IOV_LIMIT + 1;
 	ATF_CHECK_EQ(blockif_read(&bc, &req), EINVAL);
 	req.br_iovcnt = 1;
 	req.br_resid = 1;
@@ -563,6 +563,75 @@ ATF_TC_BODY(file_write_retries_short_pwritev, tc)
 
 	ATF_REQUIRE(close(fd) == 0);
 	ATF_REQUIRE(unlink(path) == 0);
+}
+
+/*
+ * pci_nvme extends br_iov[] with trailing storage (iovpadding) so that a full
+ * MDTS transfer of discontiguous guest pages fits in one request.  A 1 MiB
+ * guest write spans 256 pages; with blockif's validation capped at
+ * BLOCKIF_IOV_MAX (128) every such request failed with EINVAL and the guest
+ * saw NVMe DATA_TRANSFER_ERROR (00/04) on dd bs=1m to /dev/nda0.
+ */
+#define	NVME_SHAPED_PAGES	256
+ATF_TC_WITHOUT_HEAD(nvme_padded_request_accepts_mdts_iovecs);
+ATF_TC_BODY(nvme_padded_request_accepts_mdts_iovecs, tc)
+{
+	struct {
+		struct blockif_req req;
+		struct iovec pad[NVME_SHAPED_PAGES - BLOCKIF_IOV_MAX];
+	} padded;
+	struct blockif_ctxt bc;
+	struct blockif_elem be;
+	uint8_t *guest, *actual;
+	const char *path = "block-if-nvme-shaped";
+	size_t bytes;
+	ssize_t done;
+	int fd, i;
+
+	bytes = (size_t)NVME_SHAPED_PAGES * PAGE_SIZE;
+	/* Every other page: no two iovecs are contiguous. */
+	guest = malloc(2 * bytes);
+	actual = malloc(bytes);
+	ATF_REQUIRE(guest != NULL && actual != NULL);
+	(void)unlink(path);
+	fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&padded, 0, sizeof(padded));
+	for (i = 0; i < NVME_SHAPED_PAGES; i++) {
+		memset(guest + 2 * i * PAGE_SIZE, i & 0xff, PAGE_SIZE);
+		padded.req.br_iov[i] = (struct iovec){
+			.iov_base = guest + 2 * i * PAGE_SIZE,
+			.iov_len = PAGE_SIZE,
+		};
+	}
+	padded.req.br_iovcnt = NVME_SHAPED_PAGES;
+	padded.req.br_resid = (ssize_t)bytes;
+	padded.req.br_callback = record_completion;
+	ATF_CHECK_EQ(blockif_rw_request_validate(&padded.req), 0);
+
+	memset(&bc, 0, sizeof(bc));
+	bc.bc_fd = fd;
+	memset(&be, 0, sizeof(be));
+	be.be_req = &padded.req;
+	be.be_op = BOP_WRITE;
+	callback_calls = 0;
+	callback_error = -1;
+	blockif_proc(&bc, &be, NULL);
+	ATF_REQUIRE_EQ(callback_calls, 1);
+	ATF_CHECK_EQ(callback_error, 0);
+	ATF_CHECK_EQ(padded.req.br_resid, 0);
+
+	done = pread(fd, actual, bytes, 0);
+	ATF_REQUIRE_EQ(done, (ssize_t)bytes);
+	for (i = 0; i < NVME_SHAPED_PAGES; i++)
+		ATF_CHECK(memcmp(actual + i * PAGE_SIZE,
+		    guest + 2 * i * PAGE_SIZE, PAGE_SIZE) == 0);
+
+	ATF_REQUIRE(close(fd) == 0);
+	ATF_REQUIRE(unlink(path) == 0);
+	free(guest);
+	free(actual);
 }
 
 ATF_TC_WITHOUT_HEAD(file_write_zero_progress_fails);
@@ -973,6 +1042,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_write_reject_invalid_vectors);
 	ATF_TP_ADD_TC(tp, translated_write_retries_short_pwrite);
 	ATF_TP_ADD_TC(tp, file_write_retries_short_pwritev);
+	ATF_TP_ADD_TC(tp, nvme_padded_request_accepts_mdts_iovecs);
 	ATF_TP_ADD_TC(tp, file_write_zero_progress_fails);
 	ATF_TP_ADD_TC(tp, translated_read_eof_makes_progress);
 	ATF_TP_ADD_TC(tp, translated_write_zero_progress_fails);

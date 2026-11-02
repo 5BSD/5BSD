@@ -223,6 +223,9 @@ struct pci_nvme_blockstore {
 	( NVME_MAX_IOVEC > BLOCKIF_IOV_MAX ? \
 	  NVME_MAX_IOVEC - BLOCKIF_IOV_MAX : \
 	  0 )
+/* blockif must accept every entry of the padded request. */
+_Static_assert(NVME_MAX_IOVEC <= BLOCKIF_IOV_LIMIT,
+    "a full MDTS transfer exceeds the blockif iovec limit");
 
 struct pci_nvme_ioreq {
 	struct pci_nvme_softc *sc;

@@ -315,7 +315,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 {
 	struct spacectl_range range;
 	struct blockif_req *br;
-	struct iovec iov[BLOCKIF_IOV_MAX];
+	struct iovec iov[BLOCKIF_IOV_LIMIT];
 	off_t arg[2];
 	ssize_t n;
 	size_t clen, len, off, boff, voff, written, completed;
@@ -1020,7 +1020,7 @@ blockif_rw_request_validate(const struct blockif_req *breq)
 
 	if (breq == NULL || breq->br_offset < 0 || breq->br_resid < 0 ||
 	    breq->br_resid > OFF_MAX - breq->br_offset ||
-	    breq->br_iovcnt < 0 || breq->br_iovcnt > BLOCKIF_IOV_MAX)
+	    breq->br_iovcnt < 0 || breq->br_iovcnt > BLOCKIF_IOV_LIMIT)
 		return (EINVAL);
 
 	total = 0;
