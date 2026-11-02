@@ -58,3 +58,7 @@ bsd_source_headers(name = "lowlevel_kernel_sys_machdep_headers", hdrs = ["audit.
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["audit.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_ffs_alloc_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

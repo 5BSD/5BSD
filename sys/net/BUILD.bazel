@@ -1205,3 +1205,11 @@ bsd_source_headers(name = "storage_hba_kernel_ocs_gendump_headers", hdrs = ["if.
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_cam_headers", hdrs = ["if.h", "vnet.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["if.h", "if_dl.h", "if_var.h", "ifq.h", "radix.h", "route.h", "vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clvfsops_headers", hdrs = ["if.h", "if_dl.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nlm_advlock_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

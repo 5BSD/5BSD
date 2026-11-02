@@ -9771,3 +9771,13 @@ interrupt/DMA, timeout/reset/recovery, partition/label and hotplug/multipath run
 behavior still need relevant device qualification.
 Evidence: /usr/obj/usr/src/bazel-kernel-storage-core-review-r1-20261102/observability.json;
 see STORAGE-CORE-KERNEL-QUALIFICATION.md for exact scope and remaining gates.
+
+## Filesystem/RPC built-in batch (2026-11-02)
+
+Existing bounded call-shaped tracing/CTR/audit-family markers occur in 17 of
+101 selected filesystem/RPC files. The other 84 do not prove missing shared hooks.
+NFS tracing preserves the original OpenZFS/SPL/Solaris header and forced-config
+precedence. Production instrumentation is unchanged. Live probes, RPC/TLS/auth,
+NFS locking/recovery and local filesystem consistency/error behavior remain gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-filesystems-rpc-review-r1-20261102/observability.json;
+see FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md for exact scope and limitations.

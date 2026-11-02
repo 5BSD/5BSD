@@ -15,3 +15,49 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_g_label_ufs_headers", hdrs = ["ffs_extern.h", "fs.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_ffs_alloc_headers", hdrs = ["ffs_extern.h", "fs.h", "softdep.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_ffs_balloc_headers", hdrs = ["ffs_extern.h", "fs.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_ffs_tables_headers", hdrs = ["fs.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_ufs_lookup_headers", hdrs = ["ffs_extern.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC filesystem/RPC built-ins.
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_alloc", srcs = ["ffs_alloc.c"],
+    deps = ["//sys/geom:filesystems_rpc_kernel_msdosfs_vfsops_headers", "//sys/security/audit:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/vm:filesystems_rpc_kernel_fdesc_vnops_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_balloc", srcs = ["ffs_balloc.c"],
+    deps = ["//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_inode", srcs = ["ffs_inode.c"],
+    deps = ["//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/vm:filesystems_rpc_kernel_ffs_inode_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ufs_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_snapshot", srcs = ["ffs_snapshot.c"],
+    deps = ["//sys/geom:filesystems_rpc_kernel_msdosfs_vfsops_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/vm:filesystems_rpc_kernel_nfs_clkdtrace_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ffs_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_softdep", srcs = ["ffs_softdep.c"],
+    deps = ["//sys/ddb:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/geom:filesystems_rpc_kernel_msdosfs_vfsops_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/vm:filesystems_rpc_kernel_ffs_inode_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ddb_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ffs_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_subr", srcs = ["ffs_subr.c"],
+    deps = ["//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_tables", srcs = ["ffs_tables.c"],
+    deps = ["//sys/ufs/ffs:filesystems_rpc_kernel_ffs_tables_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_tables_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_vfsops", srcs = ["ffs_vfsops.c"],
+    deps = ["//sys/ddb:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/geom:filesystems_rpc_kernel_msdosfs_vfsops_headers", "//sys/security/mac:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/vm:filesystems_rpc_kernel_ffs_vfsops_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ddb_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ffs_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_quota_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ufs_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_vnops", srcs = ["ffs_vnops.c"],
+    deps = ["//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_alloc_headers", "//sys/vm:filesystems_rpc_kernel_ffs_vnops_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_directio_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ffs_header", "//sys/amd64/conf:filesystems_rpc_kernel_opt_ufs_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_ffs_suspend", srcs = ["ffs_suspend.c"],
+    deps = ["//sys/ddb:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/security/mac:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/ufs/ffs:filesystems_rpc_kernel_ffs_balloc_headers", "//sys/ufs/ufs:filesystems_rpc_kernel_ffs_suspend_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

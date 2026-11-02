@@ -13,3 +13,42 @@ amd64_generic_module_objects(name = "nfslockd_module", srcs = _SOURCES,
 [cross_generic_module_objects(arch = arch, name = "nfslockd_module", srcs = _SOURCES,
     deps = _DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet6", "opt_nfs"]])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_nfsdport_headers", hdrs = ["nlm.h", "nlm_prot.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nlm_prot_clnt_headers", hdrs = ["nlm_prot.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nlm_prot_impl_headers", hdrs = ["nlm.h", "nlm_prot.h", "sm_inter.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_sm_inter_xdr_headers", hdrs = ["sm_inter.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC filesystem/RPC built-ins.
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_advlock", srcs = ["nlm_advlock.c"],
+    deps = ["//sys/kgssapi:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nfs:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nfsclient:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_nfs_nfsdport_headers", "//sys/rpc:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/vm:filesystems_rpc_kernel_msdosfs_fat_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_nfs_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_prot_clnt", srcs = ["nlm_prot_clnt.c"],
+    deps = ["//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_nlm_prot_clnt_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_clnt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_prot_impl", srcs = ["nlm_prot_impl.c"],
+    deps = ["//sys/ddb:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nfs:filesystems_rpc_kernel_nlm_prot_impl_headers", "//sys/nlm:filesystems_rpc_kernel_nlm_prot_impl_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_impl_headers", "//sys/security/mac:filesystems_rpc_kernel_nfs_commonsubs_headers", "//sys/amd64/conf:filesystems_rpc_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_prot_server", srcs = ["nlm_prot_server.c"],
+    deps = ["//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_nfs_nfsdport_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_clnt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_prot_svc", srcs = ["nlm_prot_svc.c"],
+    deps = ["//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_nfs_nfsdport_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_clnt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_nlm_prot_xdr", srcs = ["nlm_prot_xdr.c"],
+    deps = ["//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_nlm_prot_clnt_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_clnt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_filesystems_rpc_sm_inter_xdr", srcs = ["sm_inter_xdr.c"],
+    deps = ["//sys/net:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/netinet6:filesystems_rpc_kernel_nlm_advlock_headers", "//sys/nlm:filesystems_rpc_kernel_sm_inter_xdr_headers", "//sys/rpc:filesystems_rpc_kernel_nlm_prot_clnt_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

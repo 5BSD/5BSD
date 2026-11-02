@@ -37,3 +37,11 @@ amd64_generic_module_objects(name = "kgssapi_krb5_module", srcs = _KGSSAPI_KRB5_
 [cross_generic_module_objects(arch = arch, name = "kgssapi_krb5_module", srcs = _KGSSAPI_KRB5_SOURCES,
     deps = _KGSSAPI_KRB5_DEPS + ["//sys/" + arch + "/conf:generic_opt_inet6_header"])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["gssapi.h", "krb5/kcrypto.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonsubs_headers", hdrs = ["gssapi.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

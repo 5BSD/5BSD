@@ -1110,3 +1110,8 @@ bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["include/ck_
 bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
     includes = ["include"],
     visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonkrpc_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

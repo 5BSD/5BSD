@@ -134,3 +134,7 @@ amd64_generic_kernel_objects(name = "generic_storage_core_g_part_gpt", srcs = ["
 amd64_generic_kernel_objects(name = "generic_storage_core_g_part_mbr", srcs = ["part/g_part_mbr.c"],
     deps = ["//sys/geom:storage_core_kernel_g_part_gpt_headers", "//sys/geom:storage_core_g_part_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_msdosfs_vfsops_headers", hdrs = ["geom.h", "geom_vfs.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

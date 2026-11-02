@@ -204,6 +204,17 @@ name-only matches among 2,466 final products, leaving 867 unmatched. See
 STORAGE-CORE-KERNEL-QUALIFICATION.md. Complete kernel link, modules, other
 architectures, runtime and performance gates remain open.
 
+## Filesystem/RPC checkpoint (2026-11-02)
+
+101 native amd64 GENERIC objects pass code, compiler policy/input, NFS tracing
+header precedence and nondebug relocation checks. CTF is byte-exact for 100;
+ufs_bmap passes the unchanged production graph/symbol verifier with one fewer
+unreferenced empty slot. Native RPC TLS reuses its existing protocol generators.
+Known graph: 1,694 source matches plus six name-only matches among 2,466 final
+products, leaving 766 unmatched. See FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md.
+Complete kernel/world/modules, other architectures, runtime and performance gates
+remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

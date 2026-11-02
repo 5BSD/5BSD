@@ -323,3 +323,7 @@ bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["ddb.h"],
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_cam_iosched_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_commonsubs_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])

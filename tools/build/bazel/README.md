@@ -47543,3 +47543,9 @@ strict nondebug relocation review and remaining storage/system gates.
 76 native CAM/GEOM/NVMe/UFSHCI objects, preserved source ownership, exact code/CTF,
 actual compiler policy/input proof and strict relocation checks. Runtime and full
 system qualification remain open.
+
+[FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md](FILESYSTEMS-RPC-KERNEL-QUALIFICATION.md)
+records 101 native filesystem/RPC objects, native RPC header dependencies,
+NFS tracing compatibility precedence and strict compiler/input/code/relocation
+checks. 100 CTF byte matches and one unchanged-production-verifier semantic match
+are distinguished explicitly; complete system/runtime gates remain open.

@@ -43,3 +43,8 @@ bsd_component_selected_objects(name = "fasttrap_ordered_objects", group = ":fast
     object_names = ["fasttrap.o", "fasttrap_isa.o", "u8_textprep.o"], visibility = ["//sys/modules/dtrace/fasttrap:__pkg__"])
 
 bsd_source_headers(name = "fasttrap_isa_headers", hdrs = ["uts/intel/sys/fasttrap_isa.h"], includes = ["uts/intel"])
+
+# Native filesystem/RPC physical prerequisites; identical contexts share providers.
+bsd_source_headers(name = "filesystems_rpc_kernel_nfs_clkdtrace_headers", hdrs = ["uts/common/sys/ctf_api.h", "uts/common/sys/dtrace.h"],
+    includes = ["uts/common"],
+    visibility = ["//sys/fs/cd9660:__pkg__", "//sys/fs/cuse:__pkg__", "//sys/fs/deadfs:__pkg__", "//sys/fs/fdescfs:__pkg__", "//sys/fs/fifofs:__pkg__", "//sys/fs/mntfs:__pkg__", "//sys/fs/msdosfs:__pkg__", "//sys/fs/nfs:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/fs/nfsserver:__pkg__", "//sys/fs/nullfs:__pkg__", "//sys/nlm:__pkg__", "//sys/rpc:__pkg__", "//sys/ufs/ffs:__pkg__", "//sys/ufs/ufs:__pkg__", "//sys/xdr:__pkg__"])
