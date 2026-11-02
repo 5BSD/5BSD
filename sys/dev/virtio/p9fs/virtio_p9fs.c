@@ -60,7 +60,16 @@
 #define VT9P_LOCK_INIT(_sc) mtx_init(VT9P_MTX(_sc), \
     "VIRTIO 9P CHAN lock", NULL, MTX_DEF)
 #define VT9P_LOCK_DESTROY(_sc) mtx_destroy(VT9P_MTX(_sc))
-#define MAX_SUPPORTED_SGS 20
+/*
+ * A request and its response are each one P9FS_MTU buffer from p9fs_buf_zone.
+ * Those buffers are virtually but not physically contiguous, so each can need
+ * one segment per page it touches; sglist_append_boundary() additionally
+ * splits the response's first page.  Twenty segments sufficed only while the
+ * response buffer happened to be physically contiguous: on a fragmented guest
+ * Tversion failed with EFBIG and mount(8) reported "File too large".
+ */
+#define VT9P_BUF_SEGS (howmany(P9FS_MTU, PAGE_SIZE) + 1)
+#define MAX_SUPPORTED_SGS (2 * VT9P_BUF_SEGS)
 static MALLOC_DEFINE(M_P9FS_MNTTAG, "p9fs_mount_tag", "P9fs Mounttag");
 
 struct vt9p_softc {
