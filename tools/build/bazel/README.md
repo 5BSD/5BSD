@@ -47530,3 +47530,5 @@ header/action-contract compatibility with an actual post-move binary build.
 [MLX-KERNEL-QUALIFICATION.md](MLX-KERNEL-QUALIFICATION.md) records 52 native
 Mellanox core/Ethernet/acceleration objects, ordered OFED/UAPI/LinuxKPI source
 contexts, exact code/CTF/policy/input proof and remaining device/system gates.
+
+[MAKE-REFERENCE-METADATA-QUALIFICATION.md](MAKE-REFERENCE-METADATA-QUALIFICATION.md) records the optional original-recipe Make oracle, default and DTrace reference controls, restricted CLI checks and qualification limits.
