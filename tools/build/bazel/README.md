@@ -47481,3 +47481,9 @@ review and remaining kernel/runtime/system gates.
 [DDB-CORE-KERNEL-QUALIFICATION.md](DDB-CORE-KERNEL-QUALIFICATION.md) records
 22 debugger built-ins, exact machine code/CTF and declared input checks,
 symbolic filename/relocation review and remaining debugger/runtime/system gates.
+
+[SOURCE-COMPACT-LOG-QUALIFICATION.md](SOURCE-COMPACT-LOG-QUALIFICATION.md)
+records opt-in format-5 compact logs through build-bsd, explicit log receipt
+bindings, configured inventory flag handling, 25 native regression methods and
+hash-verified upstream streaming conversion. JSON remains the default; full
+resource/cache/system qualification remains open.

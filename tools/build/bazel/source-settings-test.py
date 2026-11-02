@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Typed source setting serialization, without accepting native flag injection."""
 import unittest
-from source_graph import setting_arguments, platform_arguments
+from source_graph import setting_arguments, platform_arguments, execution_log_format
 
 
 class SettingsTest(unittest.TestCase):
@@ -49,6 +49,18 @@ class PlatformTest(unittest.TestCase):
                 ({'tests': [], 'target-kind': '--extra_toolchains=//:escape'}, 'amd64')]:
             with self.subTest(config=config, arch=arch), self.assertRaises(ValueError):
                 platform_arguments(config, arch)
+
+
+class ExecutionLogFormatTest(unittest.TestCase):
+    def test_default_and_explicit_formats(self):
+        self.assertEqual(execution_log_format({}), 'json')
+        for value in ('json', 'compact'):
+            self.assertEqual(execution_log_format({'execution-log-format': value}), value)
+
+    def test_invalid_formats_rejected(self):
+        for value in (None, True, 1, [], {}, 'binary', 'COMPACT', '--execution_log_json_file=/escape'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                execution_log_format({'execution-log-format': value})
 
 
 if __name__ == "__main__":

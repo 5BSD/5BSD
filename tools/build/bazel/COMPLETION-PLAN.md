@@ -102,6 +102,14 @@ kernel build. The next 29 ACPI drivers have unchanged independent Make object/
 recipe/dependency references prepared; native declarations/output qualification
 remain required. Full system, runtime and performance gates remain open.
 
+Format 5 now supports opt-in compact execution evidence, matching formats 3/4;
+see SOURCE-COMPACT-LOG-QUALIFICATION.md. Three native test targets pass 25 actual
+unittest methods, configured inventory succeeds, and the hash-verified upstream
+converter preserves source/XML bindings through the shared streaming reader.
+JSON remains default. Compiler/link/generator coverage on subsequent component
+runs and controlled resource/cache comparisons remain required; this bounded
+integration does not close the full-system performance gate.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

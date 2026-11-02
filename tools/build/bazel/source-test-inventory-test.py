@@ -14,6 +14,13 @@ class TestInventory(unittest.TestCase):
         self.assertEqual(query[-1],'tests(set("//:suite"))')
         self.assertNotIn('//:archive',query)
         self.assertFalse(any(a.startswith('--build_event_json') for a in query))
+    def test_compact_log_is_not_passed_to_inventory_query(self):
+        command=['bazel','test','--execution_log_compact_file=/log','--noexecution_log_sort','--//cfg:enabled=true','//:suite']
+        query=test_inventory_command(command,['//:suite'],['//:suite'])
+        self.assertNotIn('--execution_log_compact_file=/log',query)
+        self.assertNotIn('--noexecution_log_sort',query)
+        self.assertIn('--//cfg:enabled=true',query)
+        self.assertEqual(query[-1],'tests(set("//:suite"))')
     def test_query_quotes_label_punctuation(self):
         command=['bazel','test','//:a+b']
         self.assertEqual(test_inventory_command(command,['//:a+b'],['//:a+b'])[-1],

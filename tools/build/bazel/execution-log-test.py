@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 """Regression checks for execution-log record boundaries and malformed input."""
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
-from execution_log import objects
+from execution_log import objects, stream_objects
 
 
 class ExecutionLogTests(unittest.TestCase):
@@ -28,6 +29,19 @@ class ExecutionLogTests(unittest.TestCase):
         for data in ['{"a":', '{} {"a":', '{} invalid', '{"a":"unterminated']:
             with self.subTest(data=data), self.assertRaises(json.JSONDecodeError):
                 self.decode(data)
+
+    def test_caller_owned_stream(self):
+        stream = io.StringIO('{"a": 1}\n{"b": [2, 3]}')
+        self.assertEqual(list(stream_objects(stream)), [{"a": 1}, {"b": [2, 3]}])
+        self.assertFalse(stream.closed)
+
+    def test_stream_rejects_truncated_tail(self):
+        stream = io.StringIO('{"ok": true}{"bad":')
+        iterator = stream_objects(stream)
+        self.assertEqual(next(iterator), {"ok": True})
+        with self.assertRaises(json.JSONDecodeError):
+            next(iterator)
+        self.assertFalse(stream.closed)
 
     def test_nonobject_records(self):
         for data in ['[]', '1', 'null', '"text"']:
