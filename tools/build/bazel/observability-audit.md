@@ -9697,3 +9697,13 @@ see ISCI-KERNEL-QUALIFICATION.md for build evidence and limitations.
 ## WPA family composition and evidence repair (2026-11-02)
 
 The aggregate retains all five programs and sixteen private source groups; no tracing/FIDL/audit instrumentation changed. Twenty-three safe methods do not qualify daemon authentication or event delivery. WPA-FAMILY-QUALIFICATION.md records immutable composition and a rejected mutated historical client capture. Fresh read-only Make/object/ELF/install checks replace unsafe one-off section-dump evidence; no old payload or receipt was rewritten.
+
+## LinuxKPI built-in batch (2026-11-02)
+
+Bounded call-shaped marker checks find existing tracing/CTR calls in
+linux_80211_fullmac.c, linux_firmware.c, linux_shrinker.c and linux_work.c among
+46 source-hash-bound files. Probe plumbing is unchanged. No matches in the other
+42 files do not establish missing shared hooks. Wireless/firmware, memory pressure,
+workers/RCU and device-compatibility runtime paths remain to be qualified.
+Evidence: /usr/obj/usr/src/bazel-kernel-linuxkpi-review-r2-20261102/observability.json;
+see LINUXKPI-KERNEL-QUALIFICATION.md for build/policy corrections and limitations.

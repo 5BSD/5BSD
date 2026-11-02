@@ -343,3 +343,7 @@ bsd_source_headers(
         "//sys/dev/usb/net:__pkg__"
     ],
 )
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_usb_headers", hdrs = ["usb.h", "usb_busdma.h", "usb_core.h", "usb_debug.h", "usb_device.h", "usb_dynamic.h", "usb_endian.h", "usb_freebsd.h", "usb_hub.h", "usb_process.h", "usb_request.h", "usb_transfer.h", "usb_util.h", "usbdi.h", "usbdi_util.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

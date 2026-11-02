@@ -524,3 +524,21 @@ bsd_tree_file(name = "opt_isci", tree = ":generic_config", member = "opt_isci.h"
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
 cc_library(name = "generic_opt_isci_header", hdrs = [":opt_isci"],
     strip_include_prefix = "generic_options", visibility = ["//sys/dev/isci:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_platform_header", hdrs = [":opt_platform"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_stack_header", hdrs = [":opt_stack"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_usb_header", hdrs = [":opt_usb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+cc_library(name = "linuxkpi_kernel_opt_wlan_header", hdrs = [":opt_wlan"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

@@ -307,3 +307,7 @@ amd64_generic_kernel_objects(name = "generic_ddb_core_db_watch", srcs = ["db_wat
 amd64_generic_kernel_objects(name = "generic_ddb_core_db_write_cmd", srcs = ["db_write_cmd.c"],
     deps = ["//sys/ddb:ddb_core_kernel_db_write_cmd_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_skbuff_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

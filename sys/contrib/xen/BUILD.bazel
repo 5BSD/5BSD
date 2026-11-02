@@ -10,3 +10,7 @@ bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["arch-x86/
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["arch-x86/cpuid.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_compat_headers", hdrs = ["arch-x86/xen-x86_64.h", "arch-x86/xen.h", "callback.h", "event_channel.h", "hvm/dm_op.h", "hvm/hvm_op.h", "hvm/params.h", "memory.h", "physdev.h", "platform.h", "sched.h", "trace.h", "xen-compat.h", "xen.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

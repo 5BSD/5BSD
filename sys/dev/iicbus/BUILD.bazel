@@ -2,3 +2,19 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_i2c_headers", hdrs = ["iic.h", "iicbus.h", "iiconf.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "linuxkpi_iicbb_if_header_file", srcs = [":iicbb_if"], output_group = "header")
+cc_library(name = "linuxkpi_iicbb_if_headers", hdrs = [":linuxkpi_iicbb_if_header_file"],
+    strip_include_prefix = "iicbb_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_iicbus_if_header_file", srcs = [":iicbus_if"], output_group = "header")
+cc_library(name = "linuxkpi_iicbus_if_headers", hdrs = [":linuxkpi_iicbus_if_header_file"],
+    strip_include_prefix = "iicbus_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

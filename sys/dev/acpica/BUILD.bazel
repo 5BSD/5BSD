@@ -213,3 +213,11 @@ bsd_device_ids_header(name = "quirk_table", src = "acpi_quirks",
     mnemonic = "BSDAcpiQuirks")
 cc_library(name = "quirk_table_headers", hdrs = [":quirk_table"],
     strip_include_prefix = "quirk_table.generated")
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["acpivar.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
+cc_library(name = "linuxkpi_acpi_if_headers", hdrs = [":linuxkpi_acpi_if_header_file"],
+    strip_include_prefix = "acpi_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

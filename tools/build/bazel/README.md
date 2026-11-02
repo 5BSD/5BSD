@@ -47505,3 +47505,7 @@ Intel SAS built-ins, source-owned prerequisites, exact code/CTF and compiler-inp
 checks, bounded filename/relocation differences and remaining controller gates.
 
 [WPA-FAMILY-QUALIFICATION.md](WPA-FAMILY-QUALIFICATION.md) records the native five-program/sixteen-private-library aggregate, 37 immutable products, distinct package contexts and 23 safe methods. It also records the rejected historical control-client capture and independent read-only reference repair; whole-world, backend and final pkg gates remain open.
+
+[LINUXKPI-KERNEL-QUALIFICATION.md](LINUXKPI-KERNEL-QUALIFICATION.md) records
+46 native compatibility built-ins, source-owned headers and generated interfaces,
+forced-include policy correction, exact code/CTF/input checks and remaining gates.

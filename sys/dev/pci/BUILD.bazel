@@ -83,3 +83,21 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_timer_headers", hdrs = ["pciv
 # Native ISCI built-in physical prerequisites, with identical closures shared.
 bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linuxkpi_80211_pm_headers", hdrs = ["pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_pci_headers", hdrs = ["pci_iov.h", "pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pci_if_header_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "linuxkpi_pci_if_headers", hdrs = [":linuxkpi_pci_if_header_file"],
+    strip_include_prefix = "pci_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
+cc_library(name = "linuxkpi_pci_iov_if_headers", hdrs = [":linuxkpi_pci_iov_if_header_file"],
+    strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
+cc_library(name = "linuxkpi_pcib_if_headers", hdrs = [":linuxkpi_pcib_if_header_file"],
+    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

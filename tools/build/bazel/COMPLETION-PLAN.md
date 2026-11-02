@@ -138,6 +138,15 @@ reconciliation now has 944 source matches plus six name-only matches among
 2,466 final products; 1,516 remain unmatched. See ISCI-KERNEL-QUALIFICATION.md.
 Full-system, module, other-architecture, runtime and performance gates stay open.
 
+## LinuxKPI checkpoint (2026-11-02)
+
+46 native amd64 GENERIC compatibility objects pass final code/CTF, actual input,
+forced-include policy and relocation checks. The strict policy audit caught and
+corrected an omission despite matching machine code. Known graph reconciliation
+now has 990 source matches plus six name-only matches among 2,466 final inputs;
+1,470 remain unmatched. See LINUXKPI-KERNEL-QUALIFICATION.md. Full-system, module,
+other-architecture, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

@@ -912,3 +912,23 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["uma.h", "uma_alig
     visibility = ["//sys/dev/isci:__pkg__"])
 bsd_source_headers(name = "isci_kernel_isci_oem_parameters_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
     visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_param.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_compat_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_radix.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_mhi_headers", hdrs = ["vm.h", "vm_extern.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_page_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_radix_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_shmemfs_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_usb_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_xarray_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_param.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

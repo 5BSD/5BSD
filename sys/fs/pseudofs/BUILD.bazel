@@ -17,3 +17,9 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     srcs = _KERNEL_SOURCES,
     deps = [":headers", "//sys/" + arch + "/conf:generic_opt_pseudofs_header"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["pseudofs.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
