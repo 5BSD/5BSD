@@ -1,2 +1,35 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["genassym.c"], visibility = ["//sys/kern:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+# Native VDSO: compile, link, validate/derive offsets, then embed the validated ELF.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_vdso.bzl", "bsd_vdso_link", "bsd_vdso_validate")
+_VDSO_DEPS = ["//sys/amd64/conf:generic_global_headers", "//sys/sys:kernel_headers",
+    "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers"]
+_VDSO_FLAGS = ["-x", "assembler-with-cpp", "-DLOCORE", "-fPIC", "-nostdinc", "-include", "opt_global.h"]
+_VDSO_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "generic_vdso_sigtramp", srcs = ["sigtramp.S"],
+    deps = _VDSO_DEPS + ["//sys/kern:generic_assym_header"], copts = _VDSO_FLAGS,
+    features = ["-opt", "-dbg", "-fastbuild"], target_compatible_with = _VDSO_PLATFORM)
+bsd_component_object(name = "generic_vdso_sigtramp_object", group = ":generic_vdso_sigtramp",
+    out = "generic_vdso/sigtramp.pico", visibility = ["//visibility:public"])
+bsd_vdso_link(name = "generic_vdso_link", objects = [":generic_vdso_sigtramp_object"],
+    script = "//sys/conf:vdso_amd64.ldscript", output = "generic_vdso_unchecked/elf-vdso.so.1",
+    linkopts = ["--shared", "-Bsymbolic", "-soname=elf-vdso.so.1", "--eh-frame-hdr", "--no-undefined",
+        "-z", "rodynamic", "-z", "norelro", "-nmagic", "--hash-style=sysv", "--fatal-warnings", "--strip-all"],
+    target_compatible_with = _VDSO_PLATFORM)
+bsd_vdso_validate(name = "generic_vdso_validate", src = ":generic_vdso_link",
+    directory = "generic_vdso", header = "vdso_offsets.h", maximum_size = 2048,
+    machine = 62, osabi = 9, symbol = "__vdso_sigcode", macro = "VDSO_SIGCODE_OFFSET",
+    soname = "elf-vdso.so.1", target_compatible_with = _VDSO_PLATFORM)
+filegroup(name = "generic_vdso_image", srcs = [":generic_vdso_validate"], output_group = "image", visibility = ["//visibility:public"])
+filegroup(name = "generic_vdso_header_file", srcs = [":generic_vdso_validate"], output_group = "header", visibility = ["//visibility:public"])
+cc_library(name = "generic_vdso_header", hdrs = [":generic_vdso_header_file"], strip_include_prefix = "generic_vdso",
+    target_compatible_with = _VDSO_PLATFORM)
+cc_library(name = "generic_vdso_wrapper", srcs = ["//sys/tools:vdso_wrap.S"], deps = _VDSO_DEPS,
+    copts = _VDSO_FLAGS + ["-DVDSO_NAME=elf_vdso_so_1", "-DVDSO_FILE=\\\"$(execpath :generic_vdso_image)\\\""],
+    additional_compiler_inputs = [":generic_vdso_image"], features = ["-opt", "-dbg", "-fastbuild"],
+    target_compatible_with = _VDSO_PLATFORM)
+bsd_component_object(name = "generic_vdso_object", group = ":generic_vdso_wrapper",
+    out = "generic_vdso/elf-vdso.so.o", visibility = ["//visibility:public"])

@@ -9592,3 +9592,12 @@ constant sections across actual OpenSSL/EAPOL/IPv6 selections. See
 No runtime probes were introduced or disabled. Archive parity does not prove
 wired packet, authentication, RADIUS/PASN/WPS or daemon event delivery; exercise
 shared instrumentation and service logging with the completed consumers.
+
+## Native amd64 VDSO (2026-11-02)
+
+The unchanged sigtramp and VDSO wrapper assembly contain no directly recognized
+SDT/DTrace/audit calls. Full byte equality with Make preserves existing CFI and
+unwind data; live signal delivery, nested/alternate-stack signals and libexecinfo
+signal-frame unwinding still require the matching isolated kernel. Avoid adding
+hot-path code or widening the compact image to manufacture tracing coverage.
+See VDSO-QUALIFICATION.md for actual producer inputs, validation tests and limits.

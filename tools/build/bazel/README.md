@@ -47452,3 +47452,7 @@ five source-specific warning-policy corrections and remaining runtime gates.
 [OPENCRYPTO-KERNEL-QUALIFICATION.md](OPENCRYPTO-KERNEL-QUALIFICATION.md) records
 25 native amd64 GENERIC OpenCrypto built-ins, narrow libsodium ownership,
 code/CTF/input/relocation checks and remaining crypto/runtime/system gates.
+
+[VDSO-QUALIFICATION.md](VDSO-QUALIFICATION.md) records the native amd64 VDSO
+compile/link/validation/embed graph, four byte-identical Make products, 16 native
+validator regressions and remaining signal-frame/runtime/system gates.

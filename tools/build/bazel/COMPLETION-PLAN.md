@@ -63,6 +63,13 @@ are retained snapshots; complete link/runtime/performance gates remain open.
 The existing frontend API handles these targets unchanged; no new CLI/manual
 option or signing/packaging policy is required.
 
+Native amd64 VDSO production now uses separate declared compile/link/validation/
+offset/embed actions; see VDSO-QUALIFICATION.md. Four original products match
+Make byte for byte and 16 native validator regression methods pass. This closes
+a producer prerequisite for elf_machdep, not the prepared 32-source low-level
+amd64 conversion or full kernel link/runtime qualification. Existing staged
+compiler/linker/Python and format-5 artifact/host-test APIs remain the workflow.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

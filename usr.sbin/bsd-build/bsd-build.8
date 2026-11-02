@@ -5164,3 +5164,12 @@ See
 .Pa tools/build/bazel/WIRELESS-KERNEL-QUALIFICATION.md
 for code/CTF, actual input and relocation checks and remaining wireless,
 complete kernel, cross-build and performance gates.
+
+.Pp
+Native VDSO artifact qualification uses the existing format-5 explicit targets.
+The graph validates the linked image and derives its symbol-offset header before
+embedding it; the target declares its size, ELF and entry-symbol policy.
+Validator regressions use a separate host-test profile.
+See
+.Pa tools/build/bazel/VDSO-QUALIFICATION.md
+for original Make comparisons, actual producer bindings and runtime limits.
