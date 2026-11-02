@@ -26,3 +26,7 @@ bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["if_bcereg.h"], visibility = ["//sys/dev/mii:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["if_bcereg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

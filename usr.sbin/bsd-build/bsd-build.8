@@ -5148,3 +5148,11 @@ and safe CLI and loader tests.
 The client is assigned to the hostapd package.
 Control requests, daemon and wireless behavior, cross builds and complete
 system qualification remain separate open gates.
+
+.Pp
+The existing format-5 native target API also qualifies thirty-six selected
+amd64 GENERIC MII built-ins, with existing device-ID and interface generators.
+See
+.Pa tools/build/bazel/MII-KERNEL-QUALIFICATION.md
+for code/CTF, actual input and relocation checks, and remaining hardware,
+complete kernel, cross-build and performance gates.

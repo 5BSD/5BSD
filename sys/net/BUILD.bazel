@@ -973,3 +973,75 @@ amd64_generic_kernel_objects(name = "generic_net_toeplitz", srcs = ["toeplitz.c"
 amd64_generic_kernel_objects(name = "generic_net_vnet", srcs = ["vnet.c"],
     deps = ["//sys/contrib/ck:net_kernel_vnet_headers", "//sys/ddb:net_kernel_vnet_headers", "//sys/net:net_kernel_vnet_headers", "//sys/vm:net_kernel_vnet_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_kdb_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_acphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_amphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_atphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_axphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_bmtphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ciphy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83822phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83867phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_e1000phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_gentbi_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_icsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ip1000phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_jmphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_lxtphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mcommphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_physubr_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mv88e151x_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsgphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphyter_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_pnaphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_qsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rdcphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smcphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smscphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_tdkphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_truephy_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_subr_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_vscphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

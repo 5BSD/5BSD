@@ -660,3 +660,75 @@ bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["uma.h", "uma_ali
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_acphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_amphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_atphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_axphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_bmtphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ciphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83822phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83867phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_e1000phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_gentbi_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_icsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ip1000phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_jmphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_lxtphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mcommphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_physubr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mv88e151x_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsgphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphyter_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_pnaphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_qsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rdcphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smcphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smscphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_tdkphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_truephy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_subr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_vscphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

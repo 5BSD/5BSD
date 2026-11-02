@@ -7,3 +7,9 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_rlreg.h"], visibil
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["if_rlreg.h"], visibility = ["//sys/dev/mii:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["if_rlreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["if_rlreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

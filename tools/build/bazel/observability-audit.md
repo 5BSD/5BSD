@@ -9554,3 +9554,14 @@ See [common/client qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). Safe CLI
 and rtld tests do not qualify daemon control/events or authentication audit
 delivery; review shared instrumentation with the remaining WPA services.
 No runtime tracing policy or new probes were introduced.
+
+## MII built-ins (2026-11-02)
+
+The bounded call-shaped scan recognizes no direct tracing/audit calls in the
+36-source MII cohort. The initial broad _PROBE candidate scan incorrectly
+counted BUS_PROBE device-match scores; it is retained and superseded by a scan
+that excludes device scores and protocol-state constants. Existing network,
+IPv6 and IPv4 source-marker counts remain 12/6/14 after the same narrow check.
+Review shared bus/network hooks before proposing new hot-path events.
+No PHY attach, negotiation or live hardware tracing is qualified; see
+MII-KERNEL-QUALIFICATION.md for evidence and remaining gates.

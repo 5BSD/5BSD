@@ -40,3 +40,7 @@ cc_library(name = "pci_iov_if_headers", hdrs = [":pci_iov_if_header_file"],
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["pci_iov.h", "pci_private.h", "pcireg.h", "pcivar.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

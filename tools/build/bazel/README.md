@@ -47434,3 +47434,7 @@ The next 32 amd64 GENERIC network built-ins are qualified through native
 compiler and CTF actions. See [NETWORK-KERNEL-QUALIFICATION.md](NETWORK-KERNEL-QUALIFICATION.md)
 for byte-identical text/CTF, declared input and symbolic relocation checks,
 existing interface-provider reuse, and remaining whole-system gates.
+
+See [MII-KERNEL-QUALIFICATION.md](MII-KERNEL-QUALIFICATION.md) for the next
+36 native amd64 GENERIC MII built-ins: original text/CTF, actual input and
+relocation checks, reused device/interface generators and hardware/runtime gates.

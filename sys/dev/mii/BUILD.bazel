@@ -160,3 +160,189 @@ bsd_source_headers(
         "//sys/dev/usb/net:__pkg__"
     ],
 )
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_acphy_headers", hdrs = ["acphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_amphy_headers", hdrs = ["amphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_atphy_headers", hdrs = ["atphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_axphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_bmtphy_headers", hdrs = ["bmtphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["brgphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ciphy_headers", hdrs = ["ciphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83822phy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83867phy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_e1000phy_headers", hdrs = ["e1000phyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_gentbi_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_icsphy_headers", hdrs = ["icsphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ip1000phy_headers", hdrs = ["ip1000phyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_jmphy_headers", hdrs = ["jmphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_lxtphy_headers", hdrs = ["lxtphyreg.h", "mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mcommphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_bitbang_headers", hdrs = ["mii.h", "mii_bitbang.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_physubr_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mv88e151x_headers", hdrs = ["mii.h", "miivar.h", "mv88e151xreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsgphy_headers", hdrs = ["mii.h", "miivar.h", "nsgphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphy_headers", hdrs = ["mii.h", "miivar.h", "nsphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphyter_headers", hdrs = ["mii.h", "miivar.h", "nsphyterreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_pnaphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_qsphy_headers", hdrs = ["mii.h", "miivar.h", "qsphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rdcphy_headers", hdrs = ["mii.h", "miivar.h", "rdcphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["mii.h", "miivar.h", "rgephyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smcphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smscphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_tdkphy_headers", hdrs = ["mii.h", "miivar.h", "tdkphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_truephy_headers", hdrs = ["mii.h", "miivar.h", "truephyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_subr_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_vscphy_headers", hdrs = ["mii.h", "miivar.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["mii.h", "miivar.h", "xmphyreg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+
+# Native MII built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_mii_acphy", srcs = ["acphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_acphy_headers", "//sys/dev/mii:mii_kernel_acphy_headers", "//sys/net:mii_kernel_acphy_headers", "//sys/vm:mii_kernel_acphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_amphy", srcs = ["amphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_amphy_headers", "//sys/dev/mii:mii_kernel_amphy_headers", "//sys/net:mii_kernel_amphy_headers", "//sys/vm:mii_kernel_amphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_atphy", srcs = ["atphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_atphy_headers", "//sys/dev/mii:mii_kernel_atphy_headers", "//sys/net:mii_kernel_atphy_headers", "//sys/vm:mii_kernel_atphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_axphy", srcs = ["axphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_axphy_headers", "//sys/dev/mii:mii_kernel_axphy_headers", "//sys/net:mii_kernel_axphy_headers", "//sys/vm:mii_kernel_axphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_bmtphy", srcs = ["bmtphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_bmtphy_headers", "//sys/dev/mii:mii_kernel_bmtphy_headers", "//sys/net:mii_kernel_bmtphy_headers", "//sys/vm:mii_kernel_bmtphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_brgphy", srcs = ["brgphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_brgphy_headers", "//sys/dev/bce:mii_kernel_brgphy_headers", "//sys/dev/bge:mii_kernel_brgphy_headers", "//sys/dev/mii:mii_kernel_brgphy_headers", "//sys/dev/pci:mii_kernel_brgphy_headers", "//sys/net:mii_kernel_brgphy_headers", "//sys/vm:mii_kernel_brgphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_ciphy", srcs = ["ciphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_ciphy_headers", "//sys/dev/mii:mii_kernel_ciphy_headers", "//sys/net:mii_kernel_ciphy_headers", "//sys/vm:mii_kernel_ciphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_dp83822phy", srcs = ["dp83822phy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_dp83822phy_headers", "//sys/dev/mii:mii_kernel_dp83822phy_headers", "//sys/net:mii_kernel_dp83822phy_headers", "//sys/vm:mii_kernel_dp83822phy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_dp83867phy", srcs = ["dp83867phy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_dp83867phy_headers", "//sys/dev/mii:mii_kernel_dp83867phy_headers", "//sys/net:mii_kernel_dp83867phy_headers", "//sys/vm:mii_kernel_dp83867phy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_e1000phy", srcs = ["e1000phy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_e1000phy_headers", "//sys/dev/mii:mii_kernel_e1000phy_headers", "//sys/net:mii_kernel_e1000phy_headers", "//sys/vm:mii_kernel_e1000phy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_gentbi", srcs = ["gentbi.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_gentbi_headers", "//sys/dev/mii:mii_kernel_gentbi_headers", "//sys/net:mii_kernel_gentbi_headers", "//sys/vm:mii_kernel_gentbi_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_icsphy", srcs = ["icsphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_icsphy_headers", "//sys/dev/mii:mii_kernel_icsphy_headers", "//sys/net:mii_kernel_icsphy_headers", "//sys/vm:mii_kernel_icsphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_ip1000phy", srcs = ["ip1000phy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_ip1000phy_headers", "//sys/dev/mii:mii_kernel_ip1000phy_headers", "//sys/dev/stge:mii_kernel_ip1000phy_headers", "//sys/net:mii_kernel_ip1000phy_headers", "//sys/vm:mii_kernel_ip1000phy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_jmphy", srcs = ["jmphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_jmphy_headers", "//sys/dev/mii:mii_kernel_jmphy_headers", "//sys/net:mii_kernel_jmphy_headers", "//sys/vm:mii_kernel_jmphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_lxtphy", srcs = ["lxtphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_lxtphy_headers", "//sys/dev/mii:mii_kernel_lxtphy_headers", "//sys/net:mii_kernel_lxtphy_headers", "//sys/vm:mii_kernel_lxtphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_mcommphy", srcs = ["mcommphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_mcommphy_headers", "//sys/dev/mii:mii_kernel_mcommphy_headers", "//sys/net:mii_kernel_mcommphy_headers", "//sys/vm:mii_kernel_mcommphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_mii", srcs = ["mii.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_mii_headers", "//sys/dev/mii:mii_kernel_mii_headers", "//sys/net:mii_kernel_mii_headers", "//sys/vm:mii_kernel_mii_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_mii_bitbang", srcs = ["mii_bitbang.c"],
+    deps = ["//sys/dev/mii:mii_kernel_mii_bitbang_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_mii_physubr", srcs = ["mii_physubr.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_mii_physubr_headers", "//sys/dev/mii:mii_kernel_mii_physubr_headers", "//sys/net:mii_kernel_mii_physubr_headers", "//sys/vm:mii_kernel_mii_physubr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_mv88e151x", srcs = ["mv88e151x.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_mv88e151x_headers", "//sys/dev/mii:mii_kernel_mv88e151x_headers", "//sys/net:mii_kernel_mv88e151x_headers", "//sys/vm:mii_kernel_mv88e151x_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_nsgphy", srcs = ["nsgphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_nsgphy_headers", "//sys/dev/mii:mii_kernel_nsgphy_headers", "//sys/net:mii_kernel_nsgphy_headers", "//sys/vm:mii_kernel_nsgphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_nsphy", srcs = ["nsphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_nsphy_headers", "//sys/dev/mii:mii_kernel_nsphy_headers", "//sys/net:mii_kernel_nsphy_headers", "//sys/vm:mii_kernel_nsphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_nsphyter", srcs = ["nsphyter.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_nsphyter_headers", "//sys/dev/mii:mii_kernel_nsphyter_headers", "//sys/net:mii_kernel_nsphyter_headers", "//sys/vm:mii_kernel_nsphyter_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_pnaphy", srcs = ["pnaphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_pnaphy_headers", "//sys/dev/mii:mii_kernel_pnaphy_headers", "//sys/net:mii_kernel_pnaphy_headers", "//sys/vm:mii_kernel_pnaphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_qsphy", srcs = ["qsphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_qsphy_headers", "//sys/dev/mii:mii_kernel_qsphy_headers", "//sys/net:mii_kernel_qsphy_headers", "//sys/vm:mii_kernel_qsphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_rdcphy", srcs = ["rdcphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_rdcphy_headers", "//sys/dev/mii:mii_kernel_rdcphy_headers", "//sys/net:mii_kernel_rdcphy_headers", "//sys/vm:mii_kernel_rdcphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_rgephy", srcs = ["rgephy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_rgephy_headers", "//sys/dev/mii:mii_kernel_rgephy_headers", "//sys/dev/rl:mii_kernel_rgephy_headers", "//sys/net:mii_kernel_rgephy_headers", "//sys/vm:mii_kernel_rgephy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_rlphy", srcs = ["rlphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_rlphy_headers", "//sys/dev/mii:mii_kernel_rlphy_headers", "//sys/dev/rl:mii_kernel_rlphy_headers", "//sys/net:mii_kernel_rlphy_headers", "//sys/vm:mii_kernel_rlphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_smcphy", srcs = ["smcphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_smcphy_headers", "//sys/dev/mii:mii_kernel_smcphy_headers", "//sys/net:mii_kernel_smcphy_headers", "//sys/vm:mii_kernel_smcphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_smscphy", srcs = ["smscphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_smscphy_headers", "//sys/dev/mii:mii_kernel_smscphy_headers", "//sys/net:mii_kernel_smscphy_headers", "//sys/vm:mii_kernel_smscphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_tdkphy", srcs = ["tdkphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_tdkphy_headers", "//sys/dev/mii:mii_kernel_tdkphy_headers", "//sys/net:mii_kernel_tdkphy_headers", "//sys/vm:mii_kernel_tdkphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_truephy", srcs = ["truephy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_truephy_headers", "//sys/dev/mii:mii_kernel_truephy_headers", "//sys/net:mii_kernel_truephy_headers", "//sys/vm:mii_kernel_truephy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_ukphy", srcs = ["ukphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_ukphy_headers", "//sys/dev/mii:mii_kernel_ukphy_headers", "//sys/net:mii_kernel_ukphy_headers", "//sys/vm:mii_kernel_ukphy_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_ukphy_subr", srcs = ["ukphy_subr.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_ukphy_subr_headers", "//sys/dev/mii:mii_kernel_ukphy_subr_headers", "//sys/net:mii_kernel_ukphy_subr_headers", "//sys/vm:mii_kernel_ukphy_subr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_vscphy", srcs = ["vscphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_vscphy_headers", "//sys/dev/mii:mii_kernel_vscphy_headers", "//sys/net:mii_kernel_vscphy_headers", "//sys/vm:mii_kernel_vscphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_mii_xmphy", srcs = ["xmphy.c"],
+    deps = ["//sys/contrib/ck:mii_kernel_xmphy_headers", "//sys/dev/mii:mii_kernel_xmphy_headers", "//sys/net:mii_kernel_xmphy_headers", "//sys/vm:mii_kernel_xmphy_headers", "//sys/dev/mii:device_id_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:mii_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

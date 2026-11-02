@@ -36,6 +36,13 @@ graph reuses existing interface providers. Whole-kernel aggregation, cross-build
 and runtime/performance gates remain open. This work resumed at user instruction
 after the November 2 committed stopping point; host/SDK revalidation passes.
 
+Thirty-six selected MII built-ins now pass native code/CTF, input and relocation
+checks; see MII-KERNEL-QUALIFICATION.md. Refreshed known-builtin analysis finds
+512 source matches among 2,466 Make final link products, plus six weaker name
+matches and 1,948 unmatched products. These counts describe analysis, not full
+compiled coverage. Kernel aggregation, cross-build, runtime and performance
+requirements remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.
