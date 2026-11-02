@@ -44,10 +44,14 @@
  *
  * Data requests are submitted asynchronously: process() enqueues onto a data
  * queue and returns, and the queue interrupt handler copies results back and
- * calls crypto_done().  Control requests (session create/destroy) are
- * synchronous and, because the crypto framework may call into the driver with
- * a mutex held, poll the control queue without sleeping.  The wire layouts
- * are defined in virtio_crypto.h and byte-match the bhyve host model.
+ * calls crypto_done().  A full data queue is back-pressure, not a request
+ * failure: process() returns ERESTART so opencrypto holds the request and
+ * blocks the driver, and the interrupt handler calls crypto_unblock() once
+ * completions have returned descriptors.  Control requests (session
+ * create/destroy) are synchronous and, because the crypto framework may call
+ * into the driver with a mutex held, poll the control queue without sleeping.
+ * The wire layouts are defined in virtio_crypto.h and byte-match the bhyve
+ * host model.
  */
 
 #include <sys/param.h>
@@ -142,6 +146,7 @@ struct vtcrypto_softc {
 	int			 vtc_ndataq;
 	struct vtcrypto_dataq	*vtc_dataq;
 	u_int			 vtc_rr;	/* data queue round-robin */
+	u_int			 vtc_blocked;	/* ERESTART returned; unblock */
 
 	/* Parsed device configuration / capabilities. */
 	uint32_t		 vtc_services;
@@ -969,17 +974,27 @@ vtcrypto_dataq_intr(void *xdq)
 	struct vtcrypto_softc *sc = dq->vdq_sc;
 	struct virtqueue *vq = dq->vdq_vq;
 	struct vtcrypto_request *vcr;
+	bool done;
 
+	done = false;
 	mtx_lock(&dq->vdq_mtx);
 	do {
 		virtqueue_disable_intr(vq);
 		while ((vcr = virtqueue_dequeue(vq, NULL)) != NULL) {
 			mtx_unlock(&dq->vdq_mtx);
 			vtcrypto_finish_request(sc, vcr);
+			done = true;
 			mtx_lock(&dq->vdq_mtx);
 		}
 	} while (virtqueue_enable_intr(vq) != 0);
 	mtx_unlock(&dq->vdq_mtx);
+
+	/*
+	 * Descriptors were returned; if process() pushed back with ERESTART,
+	 * let opencrypto resubmit the requests it is holding.
+	 */
+	if (done && atomic_cmpset_int(&sc->vtc_blocked, 1, 0))
+		crypto_unblock(sc->vtc_cid, CRYPTO_SYMQ);
 }
 
 /*
@@ -1104,6 +1119,8 @@ vtcrypto_process(device_t dev, struct cryptop *crp, int hint __unused)
 		st32(hdr + VTC_DATA_OFF_CIPHER_IV_LEN, ivlen);
 		st32(hdr + VTC_DATA_OFF_CIPHER_SRC_LEN, crp->crp_payload_length);
 		st32(hdr + VTC_DATA_OFF_CIPHER_DST_LEN, dstlen);
+		st32(hdr + VTC_DATA_OFF_SYM_OP_TYPE,
+		    VIRTIO_CRYPTO_SYM_OP_CIPHER);
 		crypto_read_iv(crp, vcr->vcr_rbuf + roff);
 		roff += ivlen;
 		crypto_copydata(crp, crp->crp_payload_start,
@@ -1165,8 +1182,24 @@ vtcrypto_process(device_t dev, struct cryptop *crp, int hint __unused)
 	error = virtqueue_enqueue(dq->vdq_vq, vcr, sg, rd, wr);
 	if (error == 0)
 		virtqueue_notify(dq->vdq_vq);
+	else if (error == ENOSPC) {
+		/*
+		 * The ring is full of in-flight requests (geli(4) dispatches
+		 * one request per sector, far more than a ring holds).  Their
+		 * completions unblock the driver; set the flag while the queue
+		 * lock still excludes this queue's interrupt handler.
+		 */
+		atomic_store_int(&sc->vtc_blocked, 1);
+	}
 	mtx_unlock(&dq->vdq_mtx);
 	sglist_free(sg);
+	if (error == ENOSPC) {
+		/* opencrypto keeps crp and resubmits it after unblock. */
+		free(vcr->vcr_rbuf, M_VTCRYPTO);
+		free(vcr->vcr_wbuf, M_VTCRYPTO);
+		free(vcr, M_VTCRYPTO);
+		return (ERESTART);
+	}
 	if (error != 0)
 		goto fail_bufs;
 
