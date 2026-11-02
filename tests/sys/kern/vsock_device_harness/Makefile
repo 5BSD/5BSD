@@ -798,7 +798,13 @@ CWARNFLAGS.virtio_net_test.c+= -Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_scsi_test.c+= -Wno-error \
 						-Wno-thread-safety-analysis
-CWARNFLAGS.virtio_crypto_guest_test.c+= -Wno-error
+# The included guest driver is kernel code, built without -W's unused-parameter
+# and sign-compare checks; the test stubs DRIVER_MODULE, which references the
+# module event handler.
+CWARNFLAGS.virtio_crypto_guest_test.c+= -Wno-unused-parameter \
+					-Wno-unused-but-set-variable \
+					-Wno-sign-compare \
+					-Wno-unused-function
 CWARNFLAGS.virtio_crypto_pci_test.c+= -Wno-error \
 						-Wno-thread-safety-analysis \
 						-Wno-cast-align
