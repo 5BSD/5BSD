@@ -28,7 +28,11 @@
 
 #include <sys/param.h>
 #include <sys/cpuset.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/pcpu.h>
+#include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
@@ -103,6 +107,12 @@ SYSCTL_INT(_hw_vmm_topology, OID_AUTO, cpuid_leaf_b, CTLFLAG_RDTUN,
  * compatibility queries on the same host would disagree.  KVM likewise
  * serves the CPUID table that userspace configured once per vCPU.
  *
+ * Leaves 1 and 7 are the exception: they are identical on every core of a
+ * supported CPU, and the kernel re-evaluates them at run time (a microcode
+ * update through cpuctl(4), or TSX_CPUID_CLEAR from the TAA mitigation,
+ * changes HLE, RTM and MD_CLEAR).  They are read live so that guests see
+ * the current host features.
+ *
  * Each range keeps its first HOST_CPUID_LEAVES leaves.  A leaf whose
  * subleaves all repeat subleaf 0 ignores ECX and is stored once; an indexed
  * leaf keeps its subleaves up to the last non-zero one.
@@ -120,15 +130,36 @@ struct host_cpuid_leaf {
 static struct host_cpuid_leaf host_cpuid_leaves[2][HOST_CPUID_LEAVES];
 static u_int host_cpuid_values[HOST_CPUID_VALUES][4];
 
+/*
+ * Leaves the emulation never serves from the table: the live leaves, the
+ * synthesized topology leaves and the per-logical-CPU leaves.
+ */
+static bool
+host_cpuid_tabled(u_int func)
+{
+
+	switch (func) {
+	case CPUID_0000_0001:
+	case CPUID_0000_0007:
+	case CPUID_0000_000B:
+	case CPUID_0000_001F:
+		return (false);
+	default:
+		return (!x86_cpuid_leaf_host_cpu_local(func));
+	}
+}
+
 static void
-host_cpuid_capture(void *arg __unused)
+host_cpuid_capture(void)
 {
 	static const u_int zero[4];
 	struct host_cpuid_leaf *leaf;
 	u_int base, func, high, i, n, range, sub, used;
-	u_int regs[HOST_CPUID_SUBLEAVES][4];
+	u_int regs[HOST_CPUID_SUBLEAVES + 1][4];
+	bool truncated;
 
 	used = 0;
+	truncated = false;
 	memset(host_cpuid_leaves, 0, sizeof(host_cpuid_leaves));
 	for (range = 0; range < 2; range++) {
 		base = range == 0 ? 0 : 0x80000000;
@@ -137,8 +168,10 @@ host_cpuid_capture(void *arg __unused)
 			continue;
 		for (i = 0; i < HOST_CPUID_LEAVES && i <= high - base; i++) {
 			func = base + i;
+			if (!host_cpuid_tabled(func))
+				continue;
 			leaf = &host_cpuid_leaves[range][i];
-			for (sub = 0; sub < HOST_CPUID_SUBLEAVES; sub++)
+			for (sub = 0; sub <= HOST_CPUID_SUBLEAVES; sub++)
 				cpuid_count(func, sub, regs[sub]);
 			for (sub = 1; sub < HOST_CPUID_SUBLEAVES; sub++)
 				if (memcmp(regs[sub], regs[0],
@@ -151,9 +184,25 @@ host_cpuid_capture(void *arg __unused)
 					if (memcmp(regs[n - 1], zero,
 					    sizeof(zero)) != 0)
 						break;
+				if (n == HOST_CPUID_SUBLEAVES &&
+				    memcmp(regs[n], zero, sizeof(zero)) != 0 &&
+				    !truncated) {
+					printf("vmm: host CPUID leaf %#x has "
+					    "more than %d subleaves; the rest "
+					    "read as zero\n", func,
+					    HOST_CPUID_SUBLEAVES);
+					truncated = true;
+				}
 			}
-			if (n > HOST_CPUID_VALUES - used)
-				continue;	/* reported as absent */
+			if (n > HOST_CPUID_VALUES - used) {
+				if (!truncated)
+					printf("vmm: host CPUID table is full "
+					    "(%d values) at leaf %#x; omitted "
+					    "leaves read as zero\n",
+					    HOST_CPUID_VALUES, func);
+				truncated = true;
+				continue;
+			}
 			memcpy(host_cpuid_values[used], regs, n *
 			    sizeof(regs[0]));
 			leaf->first = used;
@@ -165,25 +214,39 @@ host_cpuid_capture(void *arg __unused)
 
 /*
  * Capture the host CPUID values on the boot processor (CPU 0) at module
- * load, before any guest can execute CPUID.
+ * load, before any guest can execute CPUID.  Binding the loading thread is
+ * enough: CPUID needs no interrupt-free section, and each CPUID exits to
+ * the hypervisor when vmm runs nested.
  */
 void
 x86_host_cpuid_init(void)
 {
-	cpuset_t bsp;
+	struct thread *td;
 
-	CPU_SETOF(0, &bsp);
-	smp_rendezvous_cpus(bsp, smp_no_rendezvous_barrier,
-	    host_cpuid_capture, smp_no_rendezvous_barrier, NULL);
+	td = curthread;
+	thread_lock(td);
+	sched_bind(td, 0);
+	thread_unlock(td);
+	host_cpuid_capture();
+	thread_lock(td);
+	sched_unbind(td);
+	thread_unlock(td);
 }
 
-/* The boot processor's CPUID(func, param); zeros for an absent leaf. */
+/*
+ * The boot processor's CPUID(func, param), or the current one for the live
+ * leaves; zeros for an absent leaf.
+ */
 static void
 host_cpuid(u_int func, u_int param, u_int regs[4])
 {
 	const struct host_cpuid_leaf *leaf;
 	u_int i, range;
 
+	if (func == CPUID_0000_0001 || func == CPUID_0000_0007) {
+		cpuid_count(func, param, regs);
+		return;
+	}
 	range = func >= 0x80000000 ? 1 : 0;
 	i = func - (range == 0 ? 0 : 0x80000000);
 	leaf = i < HOST_CPUID_LEAVES ? &host_cpuid_leaves[range][i] : NULL;

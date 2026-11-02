@@ -86,6 +86,7 @@ extern int khx_vmm_vmspace_fail;	/* vmspace_alloc returns NULL */
 extern int khx_vmm_pvclock;		/* vpvclock_capable() */
 extern int khx_vmm_ipi;			/* lapic_ipi_alloc() result */
 extern long khx_vmm_runs;
+extern int khx_vmm_sched_binds;	/* sched_bind() calls */
 
 /* Guest entries (vmmops_run) return these exits in order. */
 #include <machine/vmm.h>
