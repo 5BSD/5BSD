@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -173,6 +174,94 @@ ATF_TC_BODY(service_valid, tc)
 	ATF_CHECK_EQ(s[1].nimages, 1);
 }
 
+/* An empty endpoint list is a grant that reaches nothing (ntpd). */
+ATF_TC_WITHOUT_HEAD(service_empty_endpoints);
+ATF_TC_BODY(service_empty_endpoints, tc)
+{
+	struct svc_service_authority s[2];
+	unsigned count = 99;
+
+	(void)tc;
+	ATF_REQUIRE(parse_services("ntpd { endpoints=[]; "
+	    "images=[\"/usr/bin/su\",\"/usr/sbin/ntpd\"]; }", s, 2,
+	    &count) == 0);
+	ATF_REQUIRE_EQ(count, 1);
+	ATF_CHECK_STREQ(s[0].label, "ntpd");
+	ATF_CHECK_EQ(s[0].scope.count, 0);
+	ATF_CHECK_EQ(s[0].nimages, 2);
+	ATF_CHECK_STREQ(s[0].images[1], "/usr/sbin/ntpd");
+	/* The key itself stays required. */
+	ATF_CHECK(parse_services("ntpd { images=[\"/usr/sbin/ntpd\"]; }", s, 2,
+	    &count) == -1);
+}
+
+/*
+ * Images are pinned only when regular, root-owned, executable and not
+ * writable by group or others; links and special files are refused without
+ * blocking (a FIFO would otherwise stall switchboard in open(2)).
+ */
+ATF_TC_WITHOUT_HEAD(service_image_rejection);
+ATF_TC_BODY(service_image_rejection, tc)
+{
+	int fd;
+
+	(void)tc;
+	fd = svc_authority_open_image("/bin/sh");
+	ATF_REQUIRE_MSG(fd >= 0, "/bin/sh refused: %s", strerror(errno));
+	close(fd);
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("/bin"));
+	ATF_CHECK_EQ(EPERM, errno);
+
+	ATF_REQUIRE(symlink("/bin/sh", "link") == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("link"));
+	ATF_CHECK(errno == EMLINK || errno == ELOOP);
+
+	ATF_REQUIRE(mkfifo("fifo", 0755) == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("fifo"));
+	ATF_CHECK_EQ(EPERM, errno);
+
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("absent"));
+	ATF_CHECK_EQ(ENOENT, errno);
+
+	fd = open("prog", O_WRONLY | O_CREAT | O_EXCL, 0755);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	if (geteuid() != 0) {
+		/* Owned by the test user, not root. */
+		errno = 0;
+		ATF_CHECK_EQ(-1, svc_authority_open_image("prog"));
+		ATF_CHECK_EQ(EPERM, errno);
+		return;
+	}
+	ATF_REQUIRE(chown("prog", 0, 0) == 0);
+	ATF_REQUIRE(chmod("prog", 0755) == 0);
+	fd = svc_authority_open_image("prog");
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	ATF_REQUIRE(chmod("prog", 0775) == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("prog"));
+	ATF_CHECK_EQ(EPERM, errno);
+	ATF_REQUIRE(chmod("prog", 0757) == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("prog"));
+	ATF_CHECK_EQ(EPERM, errno);
+	ATF_REQUIRE(chmod("prog", 0644) == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("prog"));
+	ATF_CHECK_EQ(EPERM, errno);
+	ATF_REQUIRE(chown("prog", 65534, 0) == 0);
+	ATF_REQUIRE(chmod("prog", 0755) == 0);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_authority_open_image("prog"));
+	ATF_CHECK_EQ(EPERM, errno);
+}
+
 ATF_TC_WITHOUT_HEAD(service_reject_malformed);
 ATF_TC_BODY(service_reject_malformed, tc)
 {
@@ -181,7 +270,6 @@ ATF_TC_BODY(service_reject_malformed, tc)
 	    "devd=true;",
 	    "devd { endpoints=[\"x.y\"]; }",
 	    "devd { images=[\"/sbin/devd\"]; }",
-	    "devd { endpoints=[]; images=[\"/sbin/devd\"]; }",
 	    "devd { endpoints=[\"x.y\"]; images=[]; }",
 	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/devd\"]; admin_rights=true; }",
 	    "devd { endpoints=[\"x.y\"]; images=[\"/sbin/devd\"]; attributes=[\"a.b\"]; }",
@@ -224,7 +312,8 @@ ATF_TC(service_packaged_policy);
 ATF_TC_HEAD(service_packaged_policy, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "The installed service-authority.ucl grants devd only SystemExtension");
+	    "The installed service-authority.ucl grants devd only "
+	    "SystemExtension and ntpd no endpoint");
 }
 ATF_TC_BODY(service_packaged_policy, tc)
 {
@@ -245,6 +334,12 @@ ATF_TC_BODY(service_packaged_policy, tc)
 	ATF_REQUIRE_MSG(i < count, "devd has no lasting grant");
 	ATF_CHECK_EQ(s[i].scope.count, 1);
 	ATF_CHECK_STREQ(s[i].scope.endpoints[0], "system.SystemExtension");
+	for (i = 0; i < count; i++)
+		if (strcmp(s[i].label, "ntpd") == 0)
+			break;
+	ATF_REQUIRE_MSG(i < count, "ntpd has no lasting grant");
+	ATF_CHECK_EQ(s[i].scope.count, 0);
+	ATF_CHECK_STREQ(s[i].images[s[i].nimages - 1], "/usr/sbin/ntpd");
 }
 
 static int
@@ -441,6 +536,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reject_malformed);
 	ATF_TP_ADD_TC(tp, no_external_includes);
 	ATF_TP_ADD_TC(tp, service_valid);
+	ATF_TP_ADD_TC(tp, service_empty_endpoints);
+	ATF_TP_ADD_TC(tp, service_image_rejection);
 	ATF_TP_ADD_TC(tp, service_reject_malformed);
 	ATF_TP_ADD_TC(tp, service_packaged_policy);
 	ATF_TP_ADD_TC(tp, root_query_valid);

@@ -54,6 +54,12 @@ int svc_authority_issue_boot(struct svc_runtime *, int *);
 int svc_authority_parse_services(int, struct svc_service_authority *, unsigned,
     unsigned *);
 const struct svc_service_authority *svc_authority_service_policy(const char *);
+/*
+ * Open a service-authority.ucl image for pinning: a regular, root-owned,
+ * executable file not writable by group or others, not a symbolic link.
+ * Returns the descriptor, or -1 with errno (EPERM for an unacceptable file).
+ */
+int svc_authority_open_image(const char *);
 int svc_authority_issue_service(struct svc_runtime *, int *);
 bool svc_authority_permits(const struct svc_domain *, const char *);
 /*

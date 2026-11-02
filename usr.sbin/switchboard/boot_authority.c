@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -249,9 +250,10 @@ valid_image_path(const char *path, size_t len)
 
 /*
  * service-authority.ucl: one object per adopted rc.d service label, each with
- * a non-empty "endpoints" list and a non-empty "images" list.  The grant
- * carries no attributes and no administrative rights; the format has no key
- * for either.
+ * an "endpoints" list and a non-empty "images" list.  An empty endpoint list
+ * is a grant that reaches no endpoint (svc_authority_permits() admits only a
+ * listed name).  The grant carries no attributes and no administrative rights;
+ * the format has no key for either.
  */
 int
 svc_authority_parse_services(int fd, struct svc_service_authority *out,
@@ -332,7 +334,7 @@ svc_authority_parse_services(int fd, struct svc_service_authority *out,
 				    sizeof(s->images[0]));
 			}
 		}
-		if (seen != 3 || s->scope.count == 0 || s->nimages == 0)
+		if (seen != 3 || s->nimages == 0)
 			goto out;
 		count++;
 	}
@@ -387,4 +389,30 @@ out:
 	ucl_object_unref(root);
 	ucl_parser_free(parser);
 	return (error == 0 ? 0 : (errno = error, -1));
+}
+
+int
+svc_authority_open_image(const char *path)
+{
+	struct stat st;
+	int fd, saved;
+
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK |
+	    O_VERIFY);
+	if (fd == -1)
+		return (-1);
+	if (fstat(fd, &st) == -1)
+		goto fail;
+	if (!S_ISREG(st.st_mode) || st.st_uid != 0 ||
+	    (st.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
+	    (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+		errno = EPERM;
+		goto fail;
+	}
+	return (fd);
+fail:
+	saved = errno;
+	(void)close(fd);
+	errno = saved;
+	return (-1);
 }

@@ -247,6 +247,20 @@ ATF_TC_BODY(restart_argv_uses_onerestart, tc)
 	ATF_CHECK_STREQ("onerestart", rc_adopt_restart_verb);
 }
 
+ATF_TC_WITHOUT_HEAD(enabled_argv_honours_rcvar);
+ATF_TC_BODY(enabled_argv_honours_rcvar, tc)
+{
+	const char *argv[4];
+
+	/* A grant unit starts only when rc.subr reports its rcvar enabled. */
+	rc_adopt_enabled_argv("ntpd", argv);
+	ATF_CHECK_STREQ("/usr/sbin/service", argv[0]);
+	ATF_CHECK_STREQ("ntpd", argv[1]);
+	ATF_CHECK_STREQ("enabled", argv[2]);
+	ATF_CHECK(argv[3] == NULL);
+	ATF_CHECK_STREQ("enabled", rc_adopt_enabled_verb);
+}
+
 ATF_TC_WITHOUT_HEAD(stop_argv_uses_onestop);
 ATF_TC_BODY(stop_argv_uses_onestop, tc)
 {
@@ -337,6 +351,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, launch_argv_uses_onestart);
 	ATF_TP_ADD_TC(tp, stop_argv_uses_onestop);
 	ATF_TP_ADD_TC(tp, restart_argv_uses_onerestart);
+	ATF_TP_ADD_TC(tp, enabled_argv_honours_rcvar);
 	ATF_TP_ADD_TC(tp, verb_argv_layout);
 	ATF_TP_ADD_TC(tp, selects_only_allowlisted);
 	ATF_TP_ADD_TC(tp, absent_cron_zero_units);
