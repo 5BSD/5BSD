@@ -11,13 +11,29 @@
  *	process_elf_hypertrace(): parse BASE-ELF, apply the HyperTrace
  *	relocations, write LINKED-ELF and print the source identity that
  *	dtrace_send_elf() puts on the guest's upload.
+ * usage: consumer-elf-path publish SOCKET LINKED-ELF
+ *	process_elf_hypertrace() for a program it does not run: upload the
+ *	linked program to the guest daemon's outbound with its identity, which
+ *	the daemon lists for the launch of the program derived from it.
+ * usage: consumer-elf-path -q -Y SPOOL -N
+ *	The guest's dtrace -Y as the guest daemon's launch_program() runs it
+ *	(HT_EXEC_DTRACE in daemon-main.cc): read the identifier list, parse
+ *	the derived program (the parser acknowledges its srcident), link it
+ *	with dtrace.c's link_acknowledged(), upload the response to
+ *	HT_DTRACE_SOCKET's outbound and report the launch.  Enabling needs the
+ *	device: a program marked for execution is reported installed.  Then
+ *	trace until SIGTERM.
  * usage: consumer-elf-path SOCKET OUTDIR COUNT
  *	dtrace -E: compile the program, register it (HPI2) on the ELF receiver,
  *	send the base program (OUTDIR/base) on a READDATA channel, then, as
  *	listen_dtraced(), for each of COUNT linked guest programs: decode the
  *	VM envelope, parse against the host program, derive the guest program
  *	with dtrace_vprog_from(), send it with dtrace_send_elf_derived()
- *	(OUTDIR/derived.N) and acknowledge the ingress as DERIVED.
+ *	(OUTDIR/derived.N) and acknowledge the ingress as DERIVED.  For the
+ *	first, the guest's response (the derived program linked as dtrace -Y
+ *	does) is matched as listen_dtraced() does, and the session's KILL is
+ *	sent with dtrace.c's kill_from() and send_kill() (OUTDIR/kill.0 holds
+ *	the response's guest pid).
  * Prints one line per step; exits nonzero at the first failed step.
  */
 #include <sys/types.h>
@@ -25,6 +41,7 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <dev/vmm/vmm_param.h>
+#include <assert.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -39,6 +56,7 @@
 #include <dtraced_io.h>
 #include <dtraced_wire.h>
 #include <dtraced_derived.h>
+#include <dtrace_identifiers.h>
 #include "hypertrace_frame.h"
 
 #define	PROGRAM	"syscall::getpid:entry { @htmark1 = count(); }"
@@ -118,6 +136,9 @@ write_elf(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, const char *path)
 	return (fd);
 }
 
+/* dtrace.c's link_acknowledged(), kill_from() and send_kill(). */
+#include "consumer-elf-path.inc"
+
 /* process_elf_hypertrace(): link_elf(), hypertrace_link(), the upload. */
 static int
 link_guest(const char *base, const char *linked)
@@ -143,20 +164,134 @@ link_guest(const char *base, const char *linked)
 	return (0);
 }
 
+/* process_elf_hypertrace() for a program that is not marked for execution. */
+static int
+publish_linked(const char *linked)
+{
+	dtrace_hdl_t *dtp;
+	dtrace_prog_t *pgp = NULL;
+	int fd, sock, err = 0;
+
+	dtp = open_handle(1);
+	fd = open(linked, O_RDONLY);
+	step("parsed", fd < 0 || (pgp = dtrace_elf_parse(dtp, fd, linked, 1,
+	    &err, errmsg, NULL)) == NULL);
+	sock = open_dtraced(DTD_SUB_READDATA);
+	step("published", sock < 0 || lseek(fd, 0, SEEK_SET) != 0 ||
+	    dtrace_send_elf(pgp, fd, sock, "outbound", 1) != 0);
+	close(sock);
+	close(fd);
+	dtrace_close(dtp);
+	return (0);
+}
+
+/*
+ * process_elf_hypertrace() with -N, as launch_program() runs it.  Its
+ * stdout is the daemon's launch channel: diagnostics go to stderr.
+ */
+static int
+run_guest(const char *spool)
+{
+	char acknowledged[DT_PROG_IDENTLEN], response[PATH_MAX];
+	const char *daemon = getenv("HT_DTRACE_SOCKET");
+	unsigned char *idents = NULL;
+	size_t count = 0;
+	dtrace_hdl_t *dtp;
+	dtrace_prog_t *pgp;
+	int fd, sock, err = 0, installed;
+
+	if (daemon == NULL ||
+	    strlcpy(sockpath, daemon, sizeof(sockpath)) >= sizeof(sockpath) ||
+	    dtrace_read_identifiers(STDIN_FILENO, &idents, &count,
+	    DT_PROG_IDENTLEN, dtraced_io_deadline_after(10000)) != 0) {
+		fprintf(stderr, "-N: %s\n", strerror(errno));
+		return (1);
+	}
+	dtp = open_handle(1);
+	if (dtrace_compile_idents_set(dtp, (char *)idents, count) != 0)
+		return (1);
+	free(idents);
+	fd = open(spool, O_RDONLY);
+	pgp = fd < 0 ? NULL : dtrace_elf_parse(dtp, fd, spool, 1, &err,
+	    errmsg, NULL);
+	close(fd);
+	if (pgp == NULL) {
+		fprintf(stderr, "parse %s: %s\n", spool, errmsg);
+		return (1);
+	}
+	if (link_acknowledged(dtp, pgp, acknowledged, errmsg) != 0) {
+		fprintf(stderr, "link: %s\n", errmsg);
+		return (1);
+	}
+	installed = pgp->dp_exec == DT_PROG_EXEC;
+	pgp->dp_pid = getpid();
+	snprintf(response, sizeof(response), "%s.response", spool);
+	fd = write_elf(dtp, pgp, response);
+	sock = fd < 0 ? -1 : open_dtraced(DTD_SUB_READDATA);
+	if (sock < 0 || dtrace_send_elf(pgp, fd, sock, "outbound", 0) != 0) {
+		fprintf(stderr, "upload: %s\n", strerror(errno));
+		return (1);
+	}
+	close(sock);
+	close(fd);
+	(void)unlink(response);
+	if (dtrace_write_launch_result(STDOUT_FILENO, installed, acknowledged,
+	    DT_PROG_IDENTLEN, dtraced_io_deadline_after(10000)) != 0)
+		return (1);
+	for (;;)
+		pause();
+}
+
+/*
+ * listen_dtraced() for the guest's response: dtrace -Y linked the derived
+ * program and uploaded it; it names the derived program as its source.
+ */
+static dtrace_prog_t *
+guest_response(dtrace_hdl_t *dtp, dtrace_prog_t *hostpgp,
+    dtrace_prog_t *guestpgp, const char *derived, const char *path)
+{
+	dtrace_hdl_t *guest;
+	dtrace_prog_t *pgp, *response;
+	int fd, err = 0;
+
+	guest = open_handle(1);
+	fd = open(derived, O_RDONLY);
+	pgp = fd < 0 ? NULL : dtrace_elf_parse(guest, fd, derived, 1, &err,
+	    errmsg, NULL);
+	close(fd);
+	if (pgp == NULL || hypertrace_link(guest, pgp, errmsg) != 0)
+		return (NULL);
+	fd = write_elf(guest, pgp, path);
+	dtrace_close(guest);
+	if (fd < 0)
+		return (NULL);
+	response = dtrace_elf_parse(dtp, fd, path, 0, &err, errmsg, hostpgp);
+	if (response != NULL || err != E_HYPERTRACE_AGAIN) {
+		close(fd);
+		errno = EPROTO;
+		return (NULL);
+	}
+	response = dtrace_elf_parse(dtp, fd, path, 0, &err, errmsg, guestpgp);
+	close(fd);
+	return (response);
+}
+
 int
 main(int argc, char **argv)
 {
 	uint8_t session[16] = { 0 }, registration[64] = { 0 }, digest[32];
 	unsigned char header_wire[DTRACED_MSGHDRSIZE];
 	unsigned char ack_wire[DTRACED_CONSUMER_ACK_WIRE_SIZE];
-	char path[PATH_MAX];
+	char path[PATH_MAX], rpath[PATH_MAX];
 	dtraced_hdr_t program_message = { 0 }, header = { 0 };
 	dtraced_consumer_ack_t ack = { 0 };
 	dtraced_derived_parent_t parent = { 0 };
 	dtrace_handle_lifetime_t lifetime;
 	struct dtrace_ht_view view;
 	dtrace_hdl_t *dtp;
-	dtrace_prog_t *hostpgp = NULL, *newprog = NULL, *guestpgp;
+	dtrace_prog_t *hostpgp = NULL, *newprog = NULL, *guestpgp, *response;
+	dt_kill_t *kp = NULL;
+	FILE *f;
 	unsigned char *frame = NULL;
 	size_t transferred;
 	int64_t deadline;
@@ -164,6 +299,13 @@ main(int argc, char **argv)
 
 	if (argc == 4 && strcmp(argv[1], "link") == 0)
 		return (link_guest(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "publish") == 0) {
+		strlcpy(sockpath, argv[2], sizeof(sockpath));
+		return (publish_linked(argv[3]));
+	}
+	if (argc == 5 && strcmp(argv[1], "-q") == 0 &&
+	    strcmp(argv[2], "-Y") == 0 && strcmp(argv[4], "-N") == 0)
+		return (run_guest(argv[3]));
 	if (argc != 4 || (count = atoi(argv[3])) <= 0 ||
 	    strlcpy(sockpath, argv[1], sizeof(sockpath)) >= sizeof(sockpath))
 		return (2);
@@ -252,8 +394,28 @@ main(int argc, char **argv)
 		deadline = dtraced_io_deadline_after(10000);
 		step("acked", deadline < 0 || dtraced_io_transfer(rx, ack_wire,
 		    sizeof(ack_wire), true, deadline, &transferred) != 0);
+		if (n != 0)
+			continue;
+
+		/* The guest's response, kept for the session's KILL. */
+		snprintf(path, sizeof(path), "%s/derived.%d", argv[2], n);
+		snprintf(rpath, sizeof(rpath), "%s/response.%d", argv[2], n);
+		response = guest_response(dtp, hostpgp, guestpgp, path, rpath);
+		step("response", response == NULL);
+		response->dp_vmid = view.vmid;
+		response->dp_vmepoch = view.epoch;
+		response->dp_pid = 4243;
+		step("kill", (kp = kill_from(newprog, response)) == NULL);
 	}
-	/* Hold both channels until the driver has seen the publication. */
+
+	/* Once the driver has seen the publication, the session ends: the
+	 * KILL for the first guest program. */
+	(void)getchar();
+	snprintf(path, sizeof(path), "%s/kill.0", argv[2]);
+	f = fopen(path, "w");
+	step("killed", f == NULL || fprintf(f, "%d\n", kp->response->dp_pid) < 0 ||
+	    fclose(f) != 0 || send_kill(wx, kp) != 0);
+	free(kp);
 	(void)getchar();
 	close(wx);
 	close(rx);
