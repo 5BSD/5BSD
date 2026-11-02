@@ -47841,3 +47841,15 @@ order/allocated payloads and 1,694 consumed dependency occurrences. No installed
 invented; the full crunchgen rescue executable remains open. See
 [LIBRESCUE-QUALIFICATION.md](LIBRESCUE-QUALIFICATION.md), including the separate
 HESIOD-enabled SDK prerequisite and preserved initial policy rejection.
+
+## Remaining selected USB modules and firmware (2026-11-02)
+
+Closed 63 selected amd64 GENERIC USB local-BUILD gaps, including core/controllers,
+device drivers, gadgets and two firmware modules. All 63 plain modules match
+respective Make references byte for byte; CTF/debug, actual input/link and 189
+installation-record comparisons pass. An actual duplicate i2ctinyusb Make source
+was fixed, removing duplicate driver metadata/sysinit entries. Firmware decode,
+registration and .incbin inputs are native and declared. See
+[USB-REMAINING-MODULES-QUALIFICATION.md](USB-REMAINING-MODULES-QUALIFICATION.md).
+Local BUILD presence is 430/729 reviewed selected amd64 leaves, not full
+qualification. Hardware/runtime, other architectures and aggregate gates remain.

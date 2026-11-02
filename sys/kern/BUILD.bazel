@@ -899,3 +899,5 @@ cc_library(name = "hardware_module_bus_if_headers", hdrs = [":hardware_module_bu
 
 filegroup(name = "hardware_module_device_if_file", srcs = [":device_if"], output_group = "header")
 cc_library(name = "hardware_module_device_if_headers", hdrs = [":hardware_module_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+exports_files(["firmw.S"], visibility = ["//sys/modules/usb/rsufw/rsurtl8712fw:__pkg__", "//sys/modules/usb/runfw:__pkg__"])

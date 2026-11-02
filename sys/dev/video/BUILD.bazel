@@ -41,3 +41,6 @@ filegroup(name = "builtin_video_if_source", srcs = [":video_if"], output_group =
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_video_if", srcs = [":builtin_video_if_source"],
     deps = ["//sys/dev/video:kobj_builtins_physical_video_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/video:kobj_builtins_kernel_video_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "video_if_module_header", srcs = [":video_if"], output_group = "header")
+cc_library(name = "video_if_headers", hdrs = [":video_if_module_header"], strip_include_prefix = "video_if.generated", visibility = ["//sys/dev/usb:__pkg__"])

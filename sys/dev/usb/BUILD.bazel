@@ -12,10 +12,10 @@ load("//tools/build/bazel:bsd_usbdevs.bzl", "bsd_usbdevs_header")
 exports_files(["usbdevs"])
 bsd_usbdevs_header(name = "device_ids")
 cc_library(name = "device_id_headers", hdrs = [":device_ids"],
-    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__"])
+    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/usb:__pkg__"])
 filegroup(name = "usb_if_header_file", srcs = [":usb_if"], output_group = "header")
 cc_library(name = "usb_if_headers", hdrs = [":usb_if_header_file"],
-    strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
+    strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/usb:__pkg__"])
 
 cc_library(name = "bluetooth_headers", hdrs = ["usb.h", "usb_busdma.h", "usb_debug.h", "usb_dev.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h", "usbdi_util.h"], strip_include_prefix = "/sys",
     deps = [":device_id_headers", ":usb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
@@ -477,7 +477,7 @@ bsd_source_headers(name = "network_policy_kernel_ng_ubt_headers", hdrs = ["usb.h
 bsd_source_headers(name = "network_policy_kernel_ng_ubt_intel_headers", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_ng_ubt_rtl_headers", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h"],
-    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
+    visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__", "//sys/dev/usb:__pkg__"])
 bsd_source_headers(name = "network_policy_kernel_ubtbcmfw_headers", hdrs = ["usb.h", "usb_debug.h", "usb_dev.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//contrib/openbsd-pf/sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/netgraph:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/netinet:__pkg__", "//sys/netinet/cc:__pkg__", "//sys/netipsec:__pkg__", "//sys/netlink:__pkg__", "//sys/netpfil/dummynet:__pkg__", "//sys/netpfil/openbsd-pf:__pkg__"])
 
@@ -499,3 +499,426 @@ bsd_source_headers(name = "hid_module_context_0", hdrs = ["usb.h", "usb_endian.h
 
 bsd_source_headers(name = "hid_module_context_1", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h"], includes = [],
     visibility = ["//sys/dev/hid:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_4", hdrs = ["gadget/g_audio.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_5", hdrs = ["gadget/g_keyboard.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_6", hdrs = ["gadget/g_modem.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_7", hdrs = ["gadget/g_mouse.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_8", hdrs = ["usb.h", "usb_busdma.h", "usb_core.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_transfer.h", "usbdi.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_9", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_msctest.h", "usb_request.h", "usbdi.h", "wlan/if_mtwreg.h", "wlan/if_mtwvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_11", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "wlan/if_rsureg.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_12", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "wlan/if_rumfw.h", "wlan/if_rumreg.h", "wlan/if_rumvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_13", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_msctest.h", "usbdi.h", "wlan/if_runreg.h", "wlan/if_runvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_14", hdrs = ["template/usb_template.h", "usb.h", "usb_bus.h", "usb_busdma.h", "usb_cdc.h", "usb_controller.h", "usb_core.h", "usb_debug.h", "usb_device.h", "usb_dynamic.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_process.h", "usb_request.h", "usb_transfer.h", "usb_util.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_15", hdrs = ["template/usb_template.h", "usb.h", "usb_cdc.h", "usb_core.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_util.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_16", hdrs = ["template/usb_template.h", "usb.h", "usb_core.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_util.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_17", hdrs = ["quirk/usb_quirk.h", "serial/usb_serial.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_msctest.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_19", hdrs = ["serial/usb_serial.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_20", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "wlan/if_uathreg.h", "wlan/if_uathvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_21", hdrs = ["serial/usb_serial.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_22", hdrs = ["serial/usb_serial.h", "usb.h", "usb_busdma.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_23", hdrs = ["serial/usb_serial.h", "usb.h", "usb_core.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_24", hdrs = ["misc/udbp.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_25", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "video/udl.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_26", hdrs = ["serial/usb_serial.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_27", hdrs = ["serial/uftdi_reg.h", "serial/usb_serial.h", "uftdiio.h", "usb.h", "usb_core.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_28", hdrs = ["serial/usb_serial.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_29", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_31", hdrs = ["input/usb_rdesc.h", "quirk/usb_quirk.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_generic.h", "usb_ioctl.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_32", hdrs = ["input/usb_rdesc.h", "usb.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_34", hdrs = ["uled_ioctl.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_36", hdrs = ["serial/umcs.h", "serial/usb_serial.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_37", hdrs = ["quirk/usb_quirk.h", "serial/usb_serial.h", "usb.h", "usb_cdc.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_process.h", "usbdi.h", "usbdi_util.h", "usbhid.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_38", hdrs = ["usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "wlan/if_uralreg.h", "wlan/if_uralvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_39", hdrs = ["storage/rio500_usb.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_generic.h", "usb_ioctl.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_40", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "wlan/if_urtwreg.h", "wlan/if_urtwvar.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_60", hdrs = ["serial/usb_serial.h", "usb.h", "usb_debug.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usb_process.h", "usbdi.h", "usbdi_util.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_62", hdrs = ["usb.h", "usb_endian.h", "usb_freebsd.h", "usbdi.h", "usbdi_util.h", "wlan/if_zydfw.h", "wlan/if_zydreg.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+filegroup(name = "usb_if_module_source", srcs = [":usb_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "atp_atp_module", srcs = ["input/atp.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "cfumass_cfumass_module", srcs = ["storage/cfumass.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/cam:usb_remaining_module_context_0", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/nvmf:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "cp2112_cp2112_module", srcs = ["misc/cp2112.c"],
+    deps = ["//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "g_audio_g_audio_module", srcs = ["gadget/g_audio.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_4", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "g_keyboard_g_keyboard_module", srcs = ["gadget/g_keyboard.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_5", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "g_modem_g_modem_module", srcs = ["gadget/g_modem.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_6", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "g_mouse_g_mouse_module", srcs = ["gadget/g_mouse.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_7", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "i2ctinyusb_i2ctinyusb_module", srcs = ["misc/i2ctinyusb.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_8", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_mtw_if_mtw_module", srcs = ["wlan/if_mtw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:i2c_module_context_0", "//sys/netinet6:usb_net_umb_headers", "//sys/dev/usb:usb_remaining_module_context_9", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_quirk_usb_quirk_module", srcs = ["quirk/usb_quirk.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_quirk_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_rsu_if_rsu_module", srcs = ["wlan/if_rsu.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:i2c_module_context_0", "//sys/netinet6:usb_net_umb_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/dev/usb:usb_remaining_module_context_11", "//sys/dev/rtwn:usb_remaining_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_rum_if_rum_module", srcs = ["wlan/if_rum.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_12", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_run_if_run_module", srcs = ["wlan/if_run.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/netinet:i2c_module_context_0", "//sys/netinet6:usb_net_umb_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/usb:usb_remaining_module_context_13", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_template_usb_template_module", srcs = ["template/usb_template.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_14", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_template_usb_template_audio_module", srcs = ["template/usb_template_audio.c", "template/usb_template_cdce.c", "template/usb_template_kbd.c", "template/usb_template_modem.c", "template/usb_template_mouse.c", "template/usb_template_phone.c", "template/usb_template_serialnet.c", "template/usb_template_multi.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_15", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_template_usb_template_msc_module", srcs = ["template/usb_template_msc.c", "template/usb_template_mtp.c", "template/usb_template_midi.c", "template/usb_template_cdceem.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_16", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "u3g_u3g_module", srcs = ["serial/u3g.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_17", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uacpi_usb_if_module", srcs = [":usb_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :usb_if_module_source)=usb_if.c", "-fdebug-prefix-map=$(execpath :usb_if_module_source)=usb_if.c"])
+
+amd64_generic_module_objects(name = "uacpi_usb_hub_acpi_module", srcs = ["usb_hub_acpi.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_hub_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uark_uark_module", srcs = ["serial/uark.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_19", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_uath_if_uath_module", srcs = ["wlan/if_uath.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_ioctl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_20", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ubsa_ubsa_module", srcs = ["serial/ubsa.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ubser_ubser_module", srcs = ["serial/ubser.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uchcom_uchcom_module", srcs = ["serial/uchcom.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ucom_usb_serial_module", srcs = ["serial/usb_serial.c"],
+    deps = ["//sys/dev/uart:usb_remaining_module_context_0", "//sys/dev/usb:usb_remaining_module_context_22", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/gdb:peripheral_devices_kernel_uart_dbg_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_gdb_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ucycom_ucycom_module", srcs = ["serial/ucycom.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_19", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "udbc_udbc_module", srcs = ["serial/udbc.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_23", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "udbp_udbp_module", srcs = ["misc/udbp.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_24", "//sys/vm:usb_net_usie_headers", "//sys/netgraph:network_policy_kernel_ng_ubt_headers", "//sys/netgraph/bluetooth/include:network_policy_kernel_ng_bluetooth_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kdb_header", "//sys/amd64/conf:net_kernel_opt_netgraph_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "udl_udl_module", srcs = ["video/udl.c"],
+    deps = ["//sys/dev/fb:peripheral_devices_kernel_fb_headers", "//sys/dev/videomode:usb_remaining_module_context_0", "//sys/dev/usb:usb_remaining_module_context_25", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/fb:fb_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uep_uep_module", srcs = ["input/uep.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ufoma_ufoma_module", srcs = ["serial/ufoma.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uftdi_uftdi_module", srcs = ["serial/uftdi.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_27", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ugensa_ugensa_module", srcs = ["serial/ugensa.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_28", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ugold_ugold_module", srcs = ["misc/ugold.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_29", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uhid_uhid_module", srcs = ["input/uhid.c"],
+    deps = ["//sys/dev/hid:usb_remaining_module_context_1", "//sys/dev/usb:usb_remaining_module_context_31", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uhid_snes_uhid_snes_module", srcs = ["input/uhid_snes.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_32", "//sys/dev/hid:usb_remaining_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uipaq_uipaq_module", srcs = ["serial/uipaq.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ukbd_ukbd_module", srcs = ["input/ukbd.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:device_io_kernel_hkbd_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:device_io_kernel_opt_ukbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uled_uled_module", srcs = ["misc/uled.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_34", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ulpt_ulpt_module", srcs = ["serial/ulpt.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_29", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "umass_umass_module", srcs = ["storage/umass.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_umass_headers", "//sys/cam:device_io_kernel_umass_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_hba_kernel_opt_cam_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "umcs_umcs_module", srcs = ["serial/umcs.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_36", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "umct_umct_module", srcs = ["serial/umct.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "umodem_umodem_module", srcs = ["serial/umodem.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_37", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "umoscom_umoscom_module", srcs = ["serial/umoscom.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ums_ums_module", srcs = ["input/ums.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uplcom_uplcom_module", srcs = ["serial/uplcom.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_26", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_ural_if_ural_module", srcs = ["wlan/if_ural.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_38", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "urio_urio_module", srcs = ["storage/urio.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_39", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_urtw_if_urtw_module", srcs = ["wlan/if_urtw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_2", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:wlan_kernel_ieee80211_regdomain_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_40", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_if_module", srcs = [":usb_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :usb_if_module_source)=usb_if.c", "-fdebug-prefix-map=$(execpath :usb_if_module_source)=usb_if.c"])
+
+amd64_generic_module_objects(name = "usb_usb_busdma_module", srcs = ["usb_busdma.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_busdma_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_core_module", srcs = ["usb_core.c", "usb_error.c", "usb_lookup.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_debug_module", srcs = ["usb_debug.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_debug_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/ddb:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_dev_module", srcs = ["usb_dev.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_dev_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_device_module", srcs = ["usb_device.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_device_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_dynamic_module", srcs = ["usb_dynamic.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_dynamic_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_generic_module", srcs = ["usb_generic.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_generic_headers", "//sys/vm:mii_family_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_handle_request_module", srcs = ["usb_handle_request.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_handle_request_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_hid_module", srcs = ["usb_hid.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_hid_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_hub_module", srcs = ["usb_hub.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_hub_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_mbuf_module", srcs = ["usb_mbuf.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_mbuf_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_msctest_module", srcs = ["usb_msctest.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_msctest_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_parse_module", srcs = ["usb_parse.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_parse_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_pf_module", srcs = ["usb_pf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:net_kernel_bpf_filter_headers", "//sys/dev/usb:device_io_kernel_usb_pf_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_process_module", srcs = ["usb_process.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_process_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_request_module", srcs = ["usb_request.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_request_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_transfer_module", srcs = ["usb_transfer.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_transfer_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_util_module", srcs = ["usb_util.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_util_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usbhid_usbhid_module", srcs = ["input/usbhid.c"],
+    deps = ["//sys/dev/evdev:device_io_kernel_hidquirk_headers", "//sys/dev/hid:device_io_kernel_hid_headers", "//sys/dev/usb:device_io_kernel_usbhid_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/hid:hid_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usfs_ustorage_fs_module", srcs = ["storage/ustorage_fs.c"],
+    deps = ["//sys/dev/usb:network_policy_kernel_ng_ubt_rtl_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uslcom_uslcom_module", srcs = ["serial/uslcom.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_60", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uvideo_uvideo_module", srcs = ["video/uvideo.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_uvideo_headers", "//sys/dev/video:device_io_kernel_uvideo_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers", "//sys/dev/video:video_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uvisor_uvisor_module", srcs = ["serial/uvisor.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uvscom_uvscom_module", srcs = ["serial/uvscom.c"],
+    deps = ["//sys/dev/usb:usb_remaining_module_context_21", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "wmt_wmt_module", srcs = ["input/wmt.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_ukbd_headers", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "wsp_wsp_module", srcs = ["input/wsp.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:usb_remaining_module_context_0", "//sys/dev/evdev:acpi_support_headers", "//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/dev/kbd:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:acpica_core_kernel_opt_evdev_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "if_zyd_if_zyd_module", srcs = ["wlan/if_zyd.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:usb_remaining_module_context_62", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

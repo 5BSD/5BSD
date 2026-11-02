@@ -49,3 +49,43 @@ amd64_generic_kernel_objects(name = "generic_device_io_usb_controller", srcs = [
 # Physical prerequisites for native peripheral device built-ins.
 bsd_source_headers(name = "peripheral_devices_kernel_pci_headers", hdrs = ["ehcireg.h", "ohcireg.h", "uhcireg.h", "xhcireg.h"],
     visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ehci_ehci_pci_module", srcs = ["ehci_pci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_pci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/usb/controller:device_io_kernel_ehci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ehci_ehci_module", srcs = ["ehci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/usb/controller:device_io_kernel_ehci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ohci_ohci_pci_module", srcs = ["ohci_pci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_pci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/usb/controller:device_io_kernel_ohci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "ohci_ohci_module", srcs = ["ohci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/usb/controller:device_io_kernel_ohci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uhci_uhci_pci_module", srcs = ["uhci_pci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_uhci_pci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/usb/controller:device_io_kernel_uhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "uhci_uhci_module", srcs = ["uhci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/usb/controller:device_io_kernel_uhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "usb_usb_controller_module", srcs = ["usb_controller.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_usb_controller_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:mii_family_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "xhci_xhci_pci_module", srcs = ["xhci_pci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_pci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/usb/controller:device_io_kernel_xhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/usb:usb_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "xhci_xhci_module", srcs = ["xhci.c"],
+    deps = ["//sys/dev/usb:device_io_kernel_ehci_headers", "//sys/vm:usb_net_usie_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/usb/controller:device_io_kernel_xhci_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

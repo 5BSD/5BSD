@@ -708,3 +708,28 @@ product gap, not full rescue: crunchgen generation, all crunched application
 variants, static linking, aliases/scripts/install and safe/guest runtime gates
 remain. HESIOD-enabled SDK/header preparation is an explicit configuration gate.
 See LIBRESCUE-QUALIFICATION.md.
+
+## USB cohort milestone and genuine Make fix (2026-11-02)
+
+Qualified 63 remaining selected amd64 USB leaves: 99 ordinary compile contexts
+and four firmware compile contexts, 13,412 consumed prerequisite occurrences,
+63 ordered initial links and 189 plain/CTF-debug file-install records pass. All
+plain files match respective Make references: 62 untouched originals plus fresh
+corrected i2ctinyusb. Its real duplicated SRCS/OBJS produced duplicate module
+registration/sysinit; original compiler argv is unchanged and corrected Make/
+native each have one entry. Old artifacts/failures are retained.
+
+Firmware blobs and registration C are produced by declared native uudecode/AWK
+actions; original firmw.S uses explicit cc_library additional_compiler_inputs
+for .incbin payloads, then the existing object-alias rule preserves .fwo names.
+Twenty previous sound artifacts remain byte-identical with the helper default.
+Actual successful partial-run compilers reused by the accepted retry are bound
+from original logs, not invented cache spawns. See
+USB-REMAINING-MODULES-QUALIFICATION.md for exact evidence and retained failures.
+
+Discovery now observes 430/729 local BUILD leaves, leaving 299 missing in this
+selection. Existing BUILD presence is not a qualified percentage. USB device/
+controller/WLAN/storage/input/video/serial/gadget and firmware runtime, live
+probes/audit, cross/KERNCONF/FDT and aggregate world/pkgbase/bootstrap/publication
+gates remain open, along with CPU/memory/disk I/O/disk-use/cache/sandbox checks.
+Make stays production/default; BIP remains excluded.

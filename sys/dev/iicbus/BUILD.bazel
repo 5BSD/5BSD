@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_i2c_headers", hdrs = ["iic.h", "iicbus.h", "iiconf.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -90,7 +90,7 @@ bsd_source_headers(name = "i2c_module_context_3", hdrs = ["iic.h", "iicbus.h", "
     visibility = ["//sys/dev/iicbus:__pkg__"])
 
 filegroup(name = "iicbus_if_module_header", srcs = [":iicbus_if"], output_group = "header")
-cc_library(name = "iicbus_if_headers", hdrs = [":iicbus_if_module_header"], strip_include_prefix = "iicbus_if.generated", visibility = ["//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__"])
+cc_library(name = "iicbus_if_headers", hdrs = [":iicbus_if_module_header"], strip_include_prefix = "iicbus_if.generated", visibility = ["//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__"])
 
 filegroup(name = "iicbb_if_module_source", srcs = [":iicbb_if"], output_group = "source")
 

@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+exports_files(["rsu-rtl8712fw.fw.uu"], visibility = ["//sys/modules/usb/rsufw/rsurtl8712fw:__pkg__"])

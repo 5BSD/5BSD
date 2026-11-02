@@ -30,6 +30,6 @@ S=     ${SRCTOP}/sys
 
 KMOD=	i2ctinyusb
 SRCS=	i2ctinyusb.c
-SRCS+=	i2ctinyusb.c device_if.h bus_if.h opt_usb.h usbdevs.h iicbus_if.h
+SRCS+=	device_if.h bus_if.h opt_usb.h usbdevs.h iicbus_if.h
 
 .include <bsd.kmod.mk>

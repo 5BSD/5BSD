@@ -10162,3 +10162,21 @@ object allocated payloads, runtime relocations and symbol records. No credential
 login/session, exec/system/popen, sysctl or shell-list function was executed.
 Future rescue runtime/error and audit coverage remains open; see
 LIBRESCUE-QUALIFICATION.md.
+
+## Remaining selected USB cohort (2026-11-02)
+
+The bounded source scan records 23 marker matches over 97 physical C files,
+firmw.S, usb_if.m and fw_stub.awk. Actual SDT provider/probe/argument/tracepoint
+sections and relocations match respective Make references in cp2112, if_mtw,
+if_run, if_uath, udbp, if_ural, if_urtw, usb and if_zyd. Evidence is under
+/usr/obj/usr/src/bazel-usb-remaining-modules-review-r1-20261102; see
+USB-REMAINING-MODULES-QUALIFICATION.md. Static preservation does not establish
+registration, event delivery or complete instrumentation.
+
+Keep USB runtime coverage on the queue: enumerate/reset/detach/hotplug, transfer
+submit/complete/cancel, controller DMA/interrupt ownership, contention/timeouts,
+HID/serial/storage/video/WLAN/gadget state and firmware registration/unregistration
+failures. Review access-control/audit paths and firmware provenance/version,
+without logging device data, input reports or packet payload secrets. Actual
+i2ctinyusb duplicate sysinit/metadata was corrected and checked statically in
+both variants; runtime controller attach/error cleanup still needs qualification.

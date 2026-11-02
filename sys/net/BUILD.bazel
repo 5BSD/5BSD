@@ -636,7 +636,7 @@ cc_library(name = "cxgbetool_headers", hdrs = ['bpf.h', 'dlt.h', 'ethernet.h', '
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["if.h", "vnet.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/flash:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/usb:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_mbuf_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["route.h", "vnet.h"],
@@ -814,7 +814,7 @@ bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["bpf.h", "bpf_buffer
 bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["bpf.h", "bpf_buffer.h", "bpfdesc.h", "dlt.h", "if.h"],
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["bpf.h", "dlt.h"],
-    visibility = ["//sys/net:__pkg__"])
+    visibility = ["//sys/net:__pkg__", "//sys/dev/usb:__pkg__"])
 bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["bpf.h", "bpf_zerocopy.h", "bpfdesc.h", "dlt.h", "if.h"],
     visibility = ["//sys/net:__pkg__"])
 bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["bpf.h", "bpfdesc.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
@@ -1490,3 +1490,9 @@ bsd_source_headers(name = "broadcom_module_context_3", hdrs = ["debugnet.h", "et
 
 bsd_source_headers(name = "i2c_module_context_0", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/iicbus:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_1", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "usb_remaining_module_context_2", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])

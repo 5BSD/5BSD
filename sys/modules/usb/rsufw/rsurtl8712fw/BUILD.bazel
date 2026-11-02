@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module", "amd64_generic_module_objects")
+load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
+load("//tools/build/bazel:bsd_uudecode.bzl", "bsd_uudecode")
+load("//tools/build/bazel:bsd_object_alias.bzl", "bsd_object_alias")
+
+bsd_uudecode(name = "firmware", src = "//sys/contrib/dev/rsu:rsu-rtl8712fw.fw.uu", output = "rsu-rtl8712fw.fw", decoder = "//usr.bin/bintrans:bintrans", loader = "//libexec/rtld-elf:rtld_binary", runtime_libraries = ["//lib/libc:c_shared", "//lib/libsys:sys_shared"])
+
+bsd_awk_output(name = "registration_source", script = "//sys/tools:fw_stub.awk", output = "rsu-rtl8712fw.c", arguments = ["rsu-rtl8712fw.fw:rsu-rtl8712fw:120", "-mrsu-rtl8712fw"], awk = "@bsd_sdk//toolchain:awk", redirect = "@bsd_sdk//toolchain:stdout_redirect", runtime = ["@bsd_sdk//toolchain:awk_runtime"])
+
+amd64_generic_module_objects(name = "registration", srcs = [":registration_source"], copts = ["-fmacro-prefix-map=$(execpath :registration_source)=rsu-rtl8712fw.c", "-fdebug-prefix-map=$(execpath :registration_source)=rsu-rtl8712fw.c"])
+
+amd64_generic_module_objects(name = "firmware_bytes", srcs = ["//sys/kern:firmw.S"], additional_compiler_inputs = [":firmware"], local_defines = ["LOCORE", "FIRMW_SYMBOL=rsu_rtl8712fw_fw"], copts = ["-DFIRMW_FILE=\\\"$(execpath :firmware)\\\"", "-Werror"])
+
+bsd_object_alias(name = "embedded_object", src = ":firmware_bytes_object_files", output = "rsu-rtl8712fw.fw.fwo")
+
+amd64_generic_module(module = "rsu-rtl8712fw", objects = [":embedded_object", ":registration_object_files"], object_order = ["rsu-rtl8712fw.fw.fwo", "rsu-rtl8712fw.o"], export_all = False)
