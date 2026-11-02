@@ -34,16 +34,12 @@ basic_head()
 {
 	atf_set "descr" "Check that all reported variables " \
 		"exist with the reported values."
+	atf_set "require.progs" "env"
 }
 basic_body()
 {
-	atf_check -o save:out printenv
-	while IFS= read -r env; do
-		env_name=${env%%=*}
-		env_value=${env#*=}
-		atf_check -o inline:"${env_value}" -x \
-		    printf "%s" "\"\$${env_name}\""
-	done <out
+	atf_check -o save:expected env
+	atf_check -o file:expected printenv
 }
 
 atf_test_case add_delete_env

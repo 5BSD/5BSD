@@ -10109,3 +10109,14 @@ and fallback, key-buffer cleanup and audit semantics without exposing secrets.
 All module export policies remain original; local-symbol fallback and strict ELF
 contract distinctions still apply. No live crypto device/session was exercised.
 See CRYPTO-MODULES-QUALIFICATION.md for exact input/artifact scope and remaining gates.
+
+
+### printenv and original environment tests (2026-11-02)
+
+Printenv source has no direct tracing/audit probe declarations; its existing
+Capsicum stdio restriction and capmode entry remain unchanged. The native
+object/program allocated payloads match Make exactly, preserving error and
+streaming behavior. Four original ATF cases pass using declared runtime tools,
+with DTRACE_DOF_INIT_DISABLE=1 before process startup. No live tracing,
+registration, debugger or host configuration operation was performed. Test
+closure and retained failure details are in PRINTENV-QUALIFICATION.md.

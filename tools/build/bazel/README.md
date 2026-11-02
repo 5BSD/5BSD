@@ -47799,3 +47799,13 @@ LLDB-off selects no payloads and explicitly requesting its disabled tests is
 rejected before execution. Original parent controls and fresh recursive Make
 inventory are documented in [LLDB-FAMILY-QUALIFICATION.md](LLDB-FAMILY-QUALIFICATION.md).
 World observations total 2,128 directories; they are not compiled coverage.
+
+
+## printenv program and original test installation (2026-11-02)
+
+Printenv now preserves its actual Make compiler policy and selected test/package
+installation graph. All four original ATF cases pass with declared native
+runtime tools; default eight and TESTS-off five installation records match Make.
+The object/program allocated payloads match exactly. The focused environment
+oracle portability correction, retained initial failures and runtime limits are
+recorded in [PRINTENV-QUALIFICATION.md](PRINTENV-QUALIFICATION.md).

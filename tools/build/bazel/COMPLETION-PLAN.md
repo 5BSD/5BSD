@@ -649,3 +649,16 @@ See LLDB-FAMILY-QUALIFICATION.md. Next: reconcile actual selected product/action
 and aggregate coverage. sbin/mount_virtiofs already has a native graph and
 October 26 component evidence; later recursive selection is not a missing-native
 proof. Full world/bootstrap/package ownership and debugger execution remain open.
+
+
+### printenv selected original test/package gap (2026-11-02)
+
+The selected printenv program/test graph now preserves actual Make PIC/warning
+policy, all four original cases and separate utility/debug/test installation
+contexts. Native default and TESTS-off products match eight/five Make records;
+object/program allocated sections and all 73 consumed dependency occurrences
+agree. Legal non-shell environment names exposed an original shell-variable
+oracle defect, corrected by a complete-byte comparison to native env with no
+filtering. A missing ATF tr dependency was caught after green XML and fixed
+before qualification. See PRINTENV-QUALIFICATION.md. This bounded completion
+adds no full-world, cross-architecture or final-package completion claim.
