@@ -50,10 +50,16 @@ trusted_workdir()
 	[ "$1" -eq 0 ] && [ "$2" = 700 ] ||
 	    fail "WORKDIR must be root-owned mode 0700"
 	while :; do
-		set -- $(stat -f '%u %Lp' "$component") ||
+		# Use %p, not %Lp: %Lp prints only the permission bits and drops
+		# S_ISVTX, so the sticky test below would never match and a
+		# root-owned sticky ancestor such as /tmp would be refused.
+		set -- $(stat -f '%u %p' "$component") ||
 		    fail "cannot inspect WORKDIR ancestor: $component"
 		[ "$1" -eq 0 ] || fail "WORKDIR ancestor is not root-owned"
 		if [ $((0$2 & 0022)) -ne 0 ]; then
+			# A root-owned sticky directory, notably /tmp, prevents an
+			# unprivileged caller from renaming or unlinking the
+			# root-owned 0700 WORKDIR below it.
 			[ -d "$component" ] &&
 			    [ $((0$2 & 01000)) -ne 0 ] ||
 			    fail "WORKDIR ancestor is writable without sticky protection"
