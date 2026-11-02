@@ -91,17 +91,19 @@
 #define	VTCRYPTO_GCM_IVLEN		12u
 
 /*
- * Largest data request buffers: header, IV, AAD, source and GCM tag; output
- * and GCM tag plus the status byte.  Neither is physically contiguous, so
- * each can take one segment per page it touches.
+ * Most descriptors one data request takes.  The device configuration has no
+ * segment limit (section 5.9.4) and a device may refuse a chain longer than
+ * it can map, so stay within 32, which bhyve(8) has always accepted.  A
+ * malloc(9) buffer takes one descriptor per page it touches; a request that
+ * would need more uses physically contiguous buffers, one descriptor each.
  */
-#define	VTCRYPTO_MAX_RBUFLEN		(VTCRYPTO_DATA_REQ_LEN + \
-	VTCRYPTO_AES_BLOCK + VTCRYPTO_MAX_AADLEN + VTCRYPTO_MAX_DATALEN + \
-	VTCRYPTO_GCM_TAGLEN)
-#define	VTCRYPTO_MAX_WBUFLEN		(VTCRYPTO_MAX_DATALEN + \
-	VTCRYPTO_GCM_TAGLEN + 1)
-#define	VTCRYPTO_MAX_SEGS		(howmany(VTCRYPTO_MAX_RBUFLEN, \
-	PAGE_SIZE) + howmany(VTCRYPTO_MAX_WBUFLEN, PAGE_SIZE) + 2)
+#define	VTCRYPTO_MAX_SEGS		32
+
+/*
+ * Status byte value no device writes: a request the device returns without
+ * writing its status fails instead of reading as VIRTIO_CRYPTO_S_OK.
+ */
+#define	VTCRYPTO_STATUS_UNSET		0xff
 
 /* Control requests are polled; see vtcrypto_ctrl_exec(). */
 #define	VTCRYPTO_CTRL_TIMEOUT		(10 * SBT_1S)
@@ -135,8 +137,8 @@ struct vtcrypto_dataq {
 
 /*
  * In-flight data request context; the cookie passed to virtqueue_enqueue().
- * The readable and writable wire buffers come from malloc(9) and take one
- * descriptor per physically contiguous run.
+ * The readable and writable wire buffers come from vtcrypto_alloc_buffers()
+ * and take one descriptor per physically contiguous run.
  */
 struct vtcrypto_request {
 	struct cryptop	*vcr_crp;
@@ -202,6 +204,7 @@ static void	vtcrypto_dataq_intr(void *);
 static void	vtcrypto_enable_intr(struct vtcrypto_softc *);
 static void	vtcrypto_drain(struct vtcrypto_softc *);
 static void	vtcrypto_free_request(struct vtcrypto_request *);
+static int	vtcrypto_alloc_buffers(struct vtcrypto_request *);
 static int	vtcrypto_build_request(struct cryptop *,
 		    struct vtcrypto_request **);
 static int	vtcrypto_enqueue(struct vtcrypto_dataq *,
@@ -486,11 +489,7 @@ vtcrypto_alloc_virtqueues(struct vtcrypto_softc *sc)
 		    MTX_DEF);
 		dq->vdq_mtx_init = true;
 		TAILQ_INIT(&dq->vdq_parked);
-		dq->vdq_sg = sglist_alloc(VTCRYPTO_MAX_SEGS, M_NOWAIT);
-		if (dq->vdq_sg == NULL) {
-			free(info, M_VTCRYPTO);
-			return (ENOMEM);
-		}
+		dq->vdq_sg = sglist_alloc(VTCRYPTO_MAX_SEGS, M_WAITOK);
 		VQ_ALLOC_INFO_INIT(&info[i], 0, vtcrypto_dataq_intr, dq,
 		    &dq->vdq_vq, "%s data.%d", device_get_nameunit(dev), i);
 	}
@@ -955,15 +954,21 @@ vtcrypto_freesession(device_t dev, crypto_session_t cses)
 
 /*
  * Complete one finished data request: check the device status byte, copy the
- * output back into the cryptop, and call crypto_done().
+ * output back into the cryptop, and call crypto_done().  A device that wrote
+ * nothing (used length 0) returned the request unprocessed.
  */
 static void
-vtcrypto_finish_request(struct vtcrypto_softc *sc, struct vtcrypto_request *vcr)
+vtcrypto_finish_request(struct vtcrypto_softc *sc, struct vtcrypto_request *vcr,
+    uint32_t len)
 {
 	struct cryptop *crp = vcr->vcr_crp;
 	uint8_t status;
 	int error;
 
+	if (len < 1) {
+		error = EIO;
+		goto done;
+	}
 	status = vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1];
 	error = vtcrypto_status_error(status);
 	if (error != 0)
@@ -1015,50 +1020,51 @@ vtcrypto_dataq_intr(void *xdq)
 	struct virtqueue *vq = dq->vdq_vq;
 	struct vtcrypto_request *vcr;
 	struct cryptop *crp;
-	TAILQ_HEAD(, cryptop) parked;
+	uint32_t len;
 	int error;
 
-	TAILQ_INIT(&parked);
 	mtx_lock(&dq->vdq_mtx);
 	do {
 		virtqueue_disable_intr(vq);
-		while ((vcr = virtqueue_dequeue(vq, NULL)) != NULL) {
+		while ((vcr = virtqueue_dequeue(vq, &len)) != NULL) {
 			mtx_unlock(&dq->vdq_mtx);
-			vtcrypto_finish_request(sc, vcr);
+			vtcrypto_finish_request(sc, vcr, len);
 			mtx_lock(&dq->vdq_mtx);
 		}
 	} while (virtqueue_enable_intr(vq) != 0);
-	TAILQ_CONCAT(&parked, &dq->vdq_parked, crp_next);
-	mtx_unlock(&dq->vdq_mtx);
 
 	/*
 	 * Descriptors were returned: resubmit the requests parked on this
-	 * queue, oldest first, until the ring is full again.  A request that
-	 * still does not fit is parked again, ahead of any parked meanwhile,
-	 * while the lock shows the ring full of requests whose completion
-	 * runs this handler again.
+	 * queue, oldest first, until the ring is full again.  Each stays at
+	 * the head of vdq_parked while it is built, so vtcrypto_process()
+	 * parks new requests behind it instead of taking the descriptors it
+	 * waits for.  Only this handler removes parked requests (detach
+	 * drains them after tearing the interrupt down).  A request
+	 * that still does not fit stays parked while the lock shows the ring
+	 * full of requests whose completion runs this handler again.
 	 */
-	while ((crp = TAILQ_FIRST(&parked)) != NULL) {
-		TAILQ_REMOVE(&parked, crp, crp_next);
+	while ((crp = TAILQ_FIRST(&dq->vdq_parked)) != NULL) {
+		mtx_unlock(&dq->vdq_mtx);
 		error = vtcrypto_build_request(crp, &vcr);
+		mtx_lock(&dq->vdq_mtx);
+		KASSERT(TAILQ_FIRST(&dq->vdq_parked) == crp,
+		    ("%s: parked request %p lost its place", __func__, crp));
 		if (error == 0) {
-			mtx_lock(&dq->vdq_mtx);
 			error = vtcrypto_enqueue(dq, vcr);
-			if (error == ENOSPC) {
-				TAILQ_INSERT_HEAD(&parked, crp, crp_next);
-				TAILQ_CONCAT(&parked, &dq->vdq_parked, crp_next);
-				TAILQ_CONCAT(&dq->vdq_parked, &parked, crp_next);
-			}
-			mtx_unlock(&dq->vdq_mtx);
-			if (error == 0)
-				continue;
-			vtcrypto_free_request(vcr);
-			if (error == ENOSPC)
-				break;
+			if (error != 0)
+				vtcrypto_free_request(vcr);
 		}
-		crp->crp_etype = error;
-		crypto_done(crp);
+		if (error == ENOSPC)
+			break;
+		TAILQ_REMOVE(&dq->vdq_parked, crp, crp_next);
+		if (error != 0) {
+			mtx_unlock(&dq->vdq_mtx);
+			crp->crp_etype = error;
+			crypto_done(crp);
+			mtx_lock(&dq->vdq_mtx);
+		}
 	}
+	mtx_unlock(&dq->vdq_mtx);
 }
 
 static void
@@ -1067,6 +1073,36 @@ vtcrypto_free_request(struct vtcrypto_request *vcr)
 	free(vcr->vcr_rbuf, M_VTCRYPTO);
 	free(vcr->vcr_wbuf, M_VTCRYPTO);
 	free(vcr, M_VTCRYPTO);
+}
+
+/*
+ * Allocate the readable and writable wire buffers of a data request.
+ * malloc(9) buffers take a descriptor per page they touch; when that would
+ * exceed VTCRYPTO_MAX_SEGS, use physically contiguous ones instead.
+ */
+static int
+vtcrypto_alloc_buffers(struct vtcrypto_request *vcr)
+{
+
+	vcr->vcr_rbuf = malloc(vcr->vcr_rbuf_len, M_VTCRYPTO, M_NOWAIT);
+	vcr->vcr_wbuf = malloc(vcr->vcr_wbuf_len, M_VTCRYPTO, M_NOWAIT);
+	if (vcr->vcr_rbuf != NULL && vcr->vcr_wbuf != NULL &&
+	    sglist_count(vcr->vcr_rbuf, vcr->vcr_rbuf_len) +
+	    sglist_count(vcr->vcr_wbuf, vcr->vcr_wbuf_len) >
+	    VTCRYPTO_MAX_SEGS) {
+		free(vcr->vcr_rbuf, M_VTCRYPTO);
+		free(vcr->vcr_wbuf, M_VTCRYPTO);
+		vcr->vcr_rbuf = contigmalloc(vcr->vcr_rbuf_len, M_VTCRYPTO,
+		    M_NOWAIT, 0, ~0UL, PAGE_SIZE, 0);
+		vcr->vcr_wbuf = contigmalloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
+		    M_NOWAIT, 0, ~0UL, PAGE_SIZE, 0);
+	}
+	if (vcr->vcr_rbuf == NULL || vcr->vcr_wbuf == NULL) {
+		free(vcr->vcr_rbuf, M_VTCRYPTO);
+		free(vcr->vcr_wbuf, M_VTCRYPTO);
+		return (ENOMEM);
+	}
+	return (0);
 }
 
 /*
@@ -1167,16 +1203,14 @@ vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
 
 	vcr->vcr_rbuf_len = rlen;
 	vcr->vcr_wbuf_len = (size_t)dstlen + 1;	/* + 1 status byte */
-	vcr->vcr_rbuf = malloc(rlen, M_VTCRYPTO, M_NOWAIT | M_ZERO);
-	vcr->vcr_wbuf = malloc(vcr->vcr_wbuf_len, M_VTCRYPTO,
-	    M_NOWAIT | M_ZERO);
-	if (vcr->vcr_rbuf == NULL || vcr->vcr_wbuf == NULL) {
-		error = ENOMEM;
-		goto fail_bufs;
-	}
+	error = vtcrypto_alloc_buffers(vcr);
+	if (error != 0)
+		goto fail_vcr;
+	vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = VTCRYPTO_STATUS_UNSET;
 
-	/* Common op_header. */
+	/* Common op_header; everything after it is filled in below. */
 	hdr = vcr->vcr_rbuf;
+	memset(hdr, 0, VTCRYPTO_DATA_REQ_LEN);
 	st32(hdr + VTC_DATA_OFF_OPCODE, opcode);
 	st64(hdr + VTC_DATA_OFF_SESSION_ID, sid);
 
@@ -1227,9 +1261,6 @@ vtcrypto_build_request(struct cryptop *crp, struct vtcrypto_request **vcrp)
 	*vcrp = vcr;
 	return (0);
 
-fail_bufs:
-	free(vcr->vcr_rbuf, M_VTCRYPTO);
-	free(vcr->vcr_wbuf, M_VTCRYPTO);
 fail_vcr:
 	free(vcr, M_VTCRYPTO);
 fail:
