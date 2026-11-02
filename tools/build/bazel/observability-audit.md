@@ -9831,3 +9831,7 @@ The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 27 
 ## Kernel codec/crypto built-ins (2026-11-02)
 
 The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 94 converted files. This is neither runtime coverage nor proof of missing shared hooks. See CODECS-CRYPTO-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Peripheral-device built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 9 of 90 converted files. This is neither runtime coverage nor proof of missing shared hooks. See PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.

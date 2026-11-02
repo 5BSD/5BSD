@@ -47590,3 +47590,5 @@ Authentication, family/world composition and final package production remain ope
 [ATF-ENVIRONMENT-QUALIFICATION.md](ATF-ENVIRONMENT-QUALIFICATION.md) records
 source-owned ATF process environments through RunEnvironmentInfo: two actual
 constructor-time checks and eleven reserved/malformed-key analysis tests.
+
+[PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md](PERIPHERAL-DEVICES-KERNEL-QUALIFICATION.md) records 90 additional native peripheral-device built-ins with exact machine code/CTF and checked compiler inputs/relocations; full-system and runtime gates remain open.
