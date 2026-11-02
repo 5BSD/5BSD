@@ -9583,3 +9583,154 @@ criov, crypto, cryptodev and cryptodeflate; 21 sources have none. Existing
 code/probe plumbing is preserved. Review shared hooks before adding hot-path
 events. Live provider/session, /dev/crypto, KTLS and existing known-answer tests
 remain runtime gates; see OPENCRYPTO-KERNEL-QUALIFICATION.md.
+
+## WPA private support libraries (2026-11-02)
+
+Nine private libraries retain all 418 reviewed ordinary/PIE object code and
+constant sections across actual OpenSSL/EAPOL/IPv6 selections. See
+[support qualification](WPA-SUPPORT-QUALIFICATION.md) and its source-bound scan.
+No runtime probes were introduced or disabled. Archive parity does not prove
+wired packet, authentication, RADIUS/PASN/WPS or daemon event delivery; exercise
+shared instrumentation and service logging with the completed consumers.
+
+## Native amd64 VDSO (2026-11-02)
+
+The unchanged sigtramp and VDSO wrapper assembly contain no directly recognized
+SDT/DTrace/audit calls. Full byte equality with Make preserves existing CFI and
+unwind data; live signal delivery, nested/alternate-stack signals and libexecinfo
+signal-frame unwinding still require the matching isolated kernel. Avoid adding
+hot-path code or widening the compact image to manufacture tracing coverage.
+See VDSO-QUALIFICATION.md for actual producer inputs, validation tests and limits.
+
+## WPA AP, EAP and TLS private libraries (2026-11-02)
+
+All 660 ordinary/PIE objects preserve actual Make code, constants and raw
+non-debug relocations across four OpenSSL/EAPOL configurations. The source-bound
+92-file direct-call marker scan records no recognized SDT/DTrace/audit/FIDL calls;
+shared instrumentation and event delivery remain unqualified. No probe or
+production body was removed. Authentication, TLS interoperability and wireless/
+service runtime coverage belongs with completed program consumers. See
+[the final private-library qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md).
+
+## Native wpa_cli (2026-11-02)
+
+The unchanged client source has no recognized direct SDT/DTrace/audit/FIDL
+call markers; its source hash and scan are retained in
+bazel-wpa-cli-observability-20261102.json. Four execution-bound program objects
+preserve actual Make text, constants and 9,718 raw non-debug relocations.
+Sixteen safe CLI/loader methods return before daemon connections; they do not
+prove control events, wireless/authentication behavior or shared probe delivery.
+See [the client qualification](WPA-CLI-QUALIFICATION.md) for all remaining gates.
+
+## Low-level amd64 built-ins (2026-11-02)
+
+The source-bound call-shaped scan recognizes tracing/audit markers in pmap.c
+and sys_machdep.c, with none in 30 other selected sources. Existing code/probe
+plumbing is unchanged. Machine code, allocated payloads and symbolic nondebug
+relocations are preserved; object comparison does not prove live exception,
+syscall, memory or tracing behavior. Review shared hooks before adding hot-path
+events. See AMD64-LOWLEVEL-QUALIFICATION.md for evidence and remaining gates.
+
+## x86 core built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan recognizes tracing/audit/CTR markers
+in cpu_machdep.c and mp_x86.c, with none in 20 other selected sources. Existing
+code/probe plumbing remains unchanged. Exact code/CTF and symbolic relocations
+do not prove interrupt, CPU, SMP, clock or tracing runtime behavior. Review shared
+hooks before adding hot-path events. See X86-CORE-KERNEL-QUALIFICATION.md.
+
+## Debugger built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan finds no recognized direct tracing/
+audit/CTR calls in these 22 sources. Existing code is unchanged. This does not
+establish missing shared hooks or qualify live debugger entry/commands, CTF type
+lookup, breakpoints/watchpoints or textdump behavior. Use an isolated matching
+kernel; see DDB-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## WPA access-point daemon (2026-11-02)
+
+The bounded source-bound call-shaped scan finds no recognized direct SDT/DTrace,
+audit or FIDL calls in the five hostapd program translation units. The native
+build preserves their source, macro/warning policy, raw code and nondebug
+relocations. Safe CLI/loader tests return before driver/interface setup and do
+not qualify access-point authentication, EAP, security-event/audit delivery or
+shared instrumentation. Review the shared WPA/kernel event paths before adding
+probes; no invented hot-path hooks were added. See WPA-HOSTAPD-QUALIFICATION.md.
+
+## WPA supplicant daemon (2026-11-02)
+
+The source-bound call-shaped scan finds no recognized direct SDT/DTrace/audit/
+FIDL calls in these 27 program sources. Native metadata preserves all selected
+program source, compiler policy, raw code/constants and raw nondebug relocations.
+Safe non-root CLI tests return before supplicant/driver initialization; no WLAN
+service is activated. Real association/EAP/security-event/audit delivery and
+shared hooks remain explicit runtime gates. No speculative probes were added.
+See WPA-SUPPLICANT-QUALIFICATION.md for immutable/compact evidence and limits.
+
+## ACPI platform built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan recognizes tracing/audit/CTR markers
+in acpi.c and acpi_ec.c, with none in 27 other selected sources. Existing source
+and compiled probe plumbing are preserved. Object/generator parity does not
+qualify firmware AML, EC, power/thermal events, interrupt routing, suspend/resume
+or live event delivery. Review shared hooks before adding hot-path events.
+See ACPICA-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## ACPICA engine batch (2026-11-02)
+
+156 source-hash-bound upstream engine files have no call-shaped DTrace/audit/CTR
+markers in the bounded scan. Code/probe plumbing is unchanged; absence is not a
+finding that shared kernel instrumentation is missing. AML evaluation, firmware
+events and ACPI diagnostics require isolated full-kernel/hardware qualification.
+Evidence: bazel-kernel-acpica-engine-review-r1-20261102/observability.json under
+/usr/obj/usr/src; see ACPICA-ENGINE-KERNEL-QUALIFICATION.md.
+
+## ISCI built-in batch (2026-11-02)
+
+109 source-hash-bound ISCI/SCIL files have no call-shaped DTrace/audit/CTR markers
+in the bounded scan. Absence does not prove missing shared instrumentation.
+No production instrumentation changed. Controller attach, command completion,
+reset/error recovery and disk I/O need relevant hardware/runtime qualification.
+Evidence: /usr/obj/usr/src/bazel-kernel-isci-review-r1-20261102/observability.json;
+see ISCI-KERNEL-QUALIFICATION.md for build evidence and limitations.
+
+## WPA family composition and evidence repair (2026-11-02)
+
+The aggregate retains all five programs and sixteen private source groups; no tracing/FIDL/audit instrumentation changed. Twenty-three safe methods do not qualify daemon authentication or event delivery. WPA-FAMILY-QUALIFICATION.md records immutable composition and a rejected mutated historical client capture. Fresh read-only Make/object/ELF/install checks replace unsafe one-off section-dump evidence; no old payload or receipt was rewritten.
+
+## LinuxKPI built-in batch (2026-11-02)
+
+Bounded call-shaped marker checks find existing tracing/CTR calls in
+linux_80211_fullmac.c, linux_firmware.c, linux_shrinker.c and linux_work.c among
+46 source-hash-bound files. Probe plumbing is unchanged. No matches in the other
+42 files do not establish missing shared hooks. Wireless/firmware, memory pressure,
+workers/RCU and device-compatibility runtime paths remain to be qualified.
+Evidence: /usr/obj/usr/src/bazel-kernel-linuxkpi-review-r2-20261102/observability.json;
+see LINUXKPI-KERNEL-QUALIFICATION.md for build/policy corrections and limitations.
+
+## libxo CSV encoder (2026-11-02)
+
+The original enc_csv.c has no direct recognized SDT/DTrace, FIDL or BSM audit calls. Native source/flags and encoding behavior are retained without adding probes. Five dynamic API methods cover encoding/options/loader dependencies; installed-path discovery and whole-family/system behavior remain separate gates. See LIBXO-CSV-QUALIFICATION.md.
+
+## OpenZFS built-in batch (2026-11-02)
+
+237 source-bound files include 21 with existing call-shaped tracing/CTR/audit-family
+markers (SPL DTrace, ARC/DBUF/DMU and ZFS vnode/worker paths). Production probe
+plumbing is unchanged. No matches in 216 files do not prove missing shared hooks.
+Pool/ZIL/sync/snapshot/send-receive/error-recovery workload tests and probe behavior
+remain unqualified. The recorded ZFS/filedesc WITNESS reversal remains open.
+Evidence: /usr/obj/usr/src/bazel-kernel-openzfs-review-r1-20261102/observability.json;
+see OPENZFS-KERNEL-QUALIFICATION.md for build, CTF comparison and runtime limits.
+
+## APM native leaf (2026-11-02)
+
+The original apm.c has no direct recognized SDT/DTrace, FIDL or BSM calls. Native source, warning/PIC/PIE policy and package ownership are retained. Three safe CLI/loader methods do not cover device status or power ioctls; no hardware path ran. See APM-PROGRAM-QUALIFICATION.md.
+
+## Atheros built-in batch (2026-11-02)
+
+Among 130 source-bound driver/HAL files, the bounded call-shaped scan finds existing
+tracing/CTR-family calls in if_ath.c. No matches in 129 other files do not establish
+missing shared hooks. Production instrumentation is unchanged. Radio attach,
+calibration, authentication, rate control, TX/RX and recovery remain runtime gates.
+Evidence: /usr/obj/usr/src/bazel-kernel-ath-review-r1-20261102/observability.json;
+see ATH-KERNEL-QUALIFICATION.md for build/policy and CTF comparison limits.

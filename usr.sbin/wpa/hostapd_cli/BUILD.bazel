@@ -19,4 +19,4 @@ bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
     passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
     mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
-bsd_python_test(name = "safe_cli_test", src = "safe_cli_test.py", data = [":hostapd_cli", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libutil:util_shared"] + select({OPENSSL: ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"], "//conditions:default": []}))
+bsd_python_test(name = "safe_cli_test", src = "safe_cli_test.py", data = [":hostapd_cli", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libutil:util_shared"] + select({OPENSSL: ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared", "//lib/libthr:thr_shared"], "//conditions:default": []}), visibility = ["//usr.sbin/wpa:__pkg__"])

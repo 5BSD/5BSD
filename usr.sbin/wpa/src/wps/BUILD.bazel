@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+load("//usr.sbin/wpa:common.bzl", "INET6")
+
+wpa_private_library(
+    name = "wpawps",
+    srcs = [
+        "//contrib/wpa:src/wps/http_client.c",
+        "//contrib/wpa:src/wps/httpread.c",
+        "//contrib/wpa:src/wps/http_server.c",
+        "//contrib/wpa:src/wps/upnp_xml.c",
+        "//contrib/wpa:src/wps/wps_attr_build.c",
+        "//contrib/wpa:src/wps/wps_attr_parse.c",
+        "//contrib/wpa:src/wps/wps_attr_process.c",
+        "//contrib/wpa:src/wps/wps.c",
+        "//contrib/wpa:src/wps/wps_common.c",
+        "//contrib/wpa:src/wps/wps_dev_attr.c",
+        "//contrib/wpa:src/wps/wps_enrollee.c",
+        "//contrib/wpa:src/wps/wps_registrar.c",
+        "//contrib/wpa:src/wps/wps_upnp_ap.c",
+        "//contrib/wpa:src/wps/wps_upnp.c",
+        "//contrib/wpa:src/wps/wps_upnp_event.c",
+        "//contrib/wpa:src/wps/wps_upnp_ssdp.c",
+        "//contrib/wpa:src/wps/wps_upnp_web.c",
+    ],
+    headers = ["//contrib/wpa:wps_headers"],
+    copts = select({INET6: ["-DCONFIG_IPV6"], "//conditions:default": []}),
+)

@@ -3024,11 +3024,16 @@ Conflicting input hashes, duplicate component/program records, duplicate plan
 paths and stale inputs are errors. This supports incremental graph expansion
 without re-exporting unchanged components; it does not establish coverage of
 unselected world or kernel components.
-Input formats 3 and 4 optionally accept execution-log-format as json (the
+Input formats 3, 4 and 5 optionally accept execution-log-format as json (the
 compatibility default) or compact. Both retain the complete Bazel execution log;
 the receipt binds its format, pathname, size and SHA256. Compact logs require
 Bazel's upstream execution-log converter for JSON-based action audits. Conversion
 can stream to standard output without materializing a large expanded JSON file.
+Format 5 also retains execution_log_sha256 for compatibility with existing
+receipts; execution_log records the encoding, pathname, byte size and SHA256.
+Its configured test inventory query omits both execution log flags.
+The incremental execution_log.py reader accepts a caller-owned JSON text stream
+from the upstream converter; it does not decode compact protobuf itself.
 This setting does not change test selection or replace runtime/case checks.
 Configured syscall assembly generation uses the same maintained script and
 per-output metadata as Make, with declared execution tools and output files.
@@ -5164,3 +5169,12 @@ See
 .Pa tools/build/bazel/WIRELESS-KERNEL-QUALIFICATION.md
 for code/CTF, actual input and relocation checks and remaining wireless,
 complete kernel, cross-build and performance gates.
+
+.Pp
+Native VDSO artifact qualification uses the existing format-5 explicit targets.
+The graph validates the linked image and derives its symbol-offset header before
+embedding it; the target declares its size, ELF and entry-symbol policy.
+Validator regressions use a separate host-test profile.
+See
+.Pa tools/build/bazel/VDSO-QUALIFICATION.md
+for original Make comparisons, actual producer bindings and runtime limits.

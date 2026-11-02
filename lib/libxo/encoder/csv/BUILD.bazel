@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+# Original WARNS=5 policy, with toolchain-owned PIC, SSP and DWARF.
+cc_library(
+    name = "csv_objects",
+    srcs = ["//contrib/libxo:encoder/csv/enc_csv.c"],
+    deps = ["//contrib/libxo:csv_headers", "//lib/libutil:util", "//lib/libxo/libxo:xo"],
+    copts = ["-pipe", "-fno-common", "-std=gnu17",
+        '-DXO_ENCODERDIR=\\"/usr/lib/libxo/encoder\\"',
+        "-Wno-format-zero-length", "-Wsystem-headers", "-Werror", "-Wall",
+        "-Wno-format-y2k", "-W", "-Wno-unused-parameter", "-Wstrict-prototypes",
+        "-Wmissing-prototypes", "-Wpointer-arith", "-Wreturn-type", "-Wcast-qual",
+        "-Wwrite-strings", "-Wswitch", "-Wshadow", "-Wunused-parameter",
+        "-Wcast-align", "-Wno-pointer-sign", "-Wdate-time", "-Wno-empty-body",
+        "-Wno-string-plus-int", "-Wno-unused-const-variable",
+        "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch",
+        "-Qunused-arguments"],
+    linkstatic = True,
+)
+cc_shared_library(
+    name = "csv",
+    deps = [":csv_objects"],
+    dynamic_deps = ["//lib/libutil:util_shared", "//lib/libxo/libxo:xo_shared"],
+    # rules_cc requires a recognized shared-library build suffix. The ELF
+    # SONAME and installed filename remain the original csv.enc.
+    shared_lib_name = "csv.enc.so",
+    user_link_flags = ["-Wl,-soname,csv.enc", "-Wl,-x", "-Wl,--fatal-warnings,--warn-shared-textrel"],
+    visibility = ["//visibility:public"],
+)
+bsd_debug_split(name = "debug_split", src = ":csv", binary_name = "installed/csv.enc",
+    debug_name = "installed/csv.enc.debug", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
+    objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs")
+bsd_strip_binary(name = "stripped", src = ":debug_split", output = "stripped/csv.enc",
+    strip = "@bsd_sdk//toolchain:bin/llvm-strip", strip_inputs = "@bsd_sdk//toolchain:strip_inputs")
+filegroup(name = "debug_file", srcs = [":debug_split"], output_group = "debug_files")
+bsd_install_file(name = "plugin_file", src = ":stripped", destination = "/usr/lib/libxo/encoder/csv.enc",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime"])
+bsd_install_file(name = "symbols_file", src = ":debug_file", destination = "/usr/lib/debug/usr/lib/libxo/encoder/csv.enc.debug",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=runtime", "dbg"])
+bsd_install_manifest(name = "install_manifest", entries = [":plugin_file", ":symbols_file"], visibility = ["//visibility:public"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {path: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}' for path in [
+        "/usr/lib/debug/usr", "/usr/lib/debug/usr/lib", "/usr/lib/debug/usr/lib/libxo", "/usr/lib/debug/usr/lib/libxo/encoder"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr",
+        "//etc/mtree:BSD.include.dist": "/usr/include", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+cc_binary(name = "encoder_test_driver", srcs = ["encoder_test_driver.c"],
+    deps = ["//contrib/libxo:headers", "//lib/libxo/libxo:xo", "//lib/libutil:util"],
+    dynamic_deps = ["//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared"])
+bsd_python_test(name = "encoder_test", src = "encoder_test.py", data = [":encoder_test_driver", ":csv",
+    "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libxo/libxo:xo_shared", "//lib/libutil:util_shared"])

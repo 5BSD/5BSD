@@ -4,9 +4,22 @@
 
 The saved host/SDK/reference identities were revalidated without rebinding old
 receipts. Native wpacommon and hostapd_cli now pass the bounded checks in
-[their qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). The next WPA work is
-the remaining private libraries and programs; daemon/control/wireless runtime,
-cross builds and whole-system gates are still open. The earlier paused record
+[their qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). Nine further private support libraries now pass the output/input checks in
+[their qualification](WPA-SUPPORT-QUALIFICATION.md). The final four private
+libraries now pass [their qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md),
+including all 660 object/compiler/input checks and 32 archive comparisons. All
+sixteen private directories have bounded native output qualification. The
+[wpa_cli client](WPA-CLI-QUALIFICATION.md) now passes four program configurations,
+sixteen safe CLI/loader methods and its actual link/install/input checks. Native
+[hostapd](WPA-HOSTAPD-QUALIFICATION.md) now passes two OpenSSL configurations,
+eight retained safe methods and twenty install records. The independently
+verified [AES-CTR fix](WPA-AES-CTR-QUALIFICATION.md) closes its real no-EAPOL
+link failure. Native [wpa_supplicant](WPA-SUPPLICANT-QUALIFICATION.md) now passes
+two OpenSSL configurations, 51 objects and eight safe methods. All five WPA
+programs and sixteen private directories have bounded qualification. Next is
+configured Make world coverage/aggregate reconciliation, preserving internal
+crypto feature/API, family package contexts, daemon/control/wireless, cross and
+whole-system gates. The earlier paused record
 and prepared-reference notes below are historical.
 
 ## Update at the next upgrade stopping point (2026-11-02)

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+# x86 core built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["iommu_intrmap.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_msi_headers", hdrs = ["iommu_intrmap.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

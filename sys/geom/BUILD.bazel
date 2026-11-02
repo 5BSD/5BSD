@@ -35,3 +35,9 @@ cc_library(name = "storage_module_headers", hdrs = ["geom.h", "geom_disk.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["geom.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["geom.h", "geom_disk.h", "geom_int.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_zvol_os_headers", hdrs = ["geom.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

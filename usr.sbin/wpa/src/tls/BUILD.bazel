@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+load("//usr.sbin/wpa:common.bzl", "OPENSSL")
+
+wpa_private_library(
+    name = "wpatls",
+    srcs = [
+        "//contrib/wpa:src/tls/tlsv1_server.c",
+    ] + select({OPENSSL: [], "//conditions:default": [
+        "//contrib/wpa:src/tls/asn1.c",
+        "//contrib/wpa:src/tls/bignum.c",
+        "//contrib/wpa:src/tls/pkcs1.c",
+        "//contrib/wpa:src/tls/pkcs5.c",
+        "//contrib/wpa:src/tls/pkcs8.c",
+        "//contrib/wpa:src/tls/rsa.c",
+        "//contrib/wpa:src/tls/tlsv1_client.c",
+        "//contrib/wpa:src/tls/tlsv1_client_ocsp.c",
+        "//contrib/wpa:src/tls/tlsv1_client_read.c",
+        "//contrib/wpa:src/tls/tlsv1_client_write.c",
+        "//contrib/wpa:src/tls/tlsv1_common.c",
+        "//contrib/wpa:src/tls/tlsv1_cred.c",
+        "//contrib/wpa:src/tls/tlsv1_record.c",
+        "//contrib/wpa:src/tls/tlsv1_server_read.c",
+        "//contrib/wpa:src/tls/tlsv1_server_write.c",
+        "//contrib/wpa:src/tls/x509v3.c",
+    ]}),
+    headers = select({OPENSSL: ["//contrib/wpa:tls_openssl_headers"], "//conditions:default": ["//contrib/wpa:tls_internal_headers"]}),
+    copts = select({OPENSSL: ["-DCONFIG_TLSV11", "-DCONFIG_TLSV12"], "//conditions:default": ["-DCONFIG_INTERNAL_LIBTOMMATH", "-DCONFIG_CRYPTO_INTERNAL"]}),
+)

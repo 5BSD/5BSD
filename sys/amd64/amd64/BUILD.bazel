@@ -1,2 +1,149 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["genassym.c"], visibility = ["//sys/kern:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+# Native VDSO: compile, link, validate/derive offsets, then embed the validated ELF.
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_vdso.bzl", "bsd_vdso_link", "bsd_vdso_validate")
+_VDSO_DEPS = ["//sys/amd64/conf:generic_global_headers", "//sys/sys:kernel_headers",
+    "//sys/amd64/include:kernel_headers", "//sys/x86/include:kernel_headers"]
+_VDSO_FLAGS = ["-x", "assembler-with-cpp", "-DLOCORE", "-fPIC", "-nostdinc", "-include", "opt_global.h"]
+_VDSO_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+cc_library(name = "generic_vdso_sigtramp", srcs = ["sigtramp.S"],
+    deps = _VDSO_DEPS + ["//sys/kern:generic_assym_header"], copts = _VDSO_FLAGS,
+    features = ["-opt", "-dbg", "-fastbuild"], target_compatible_with = _VDSO_PLATFORM)
+bsd_component_object(name = "generic_vdso_sigtramp_object", group = ":generic_vdso_sigtramp",
+    out = "generic_vdso/sigtramp.pico", visibility = ["//visibility:public"])
+bsd_vdso_link(name = "generic_vdso_link", objects = [":generic_vdso_sigtramp_object"],
+    script = "//sys/conf:vdso_amd64.ldscript", output = "generic_vdso_unchecked/elf-vdso.so.1",
+    linkopts = ["--shared", "-Bsymbolic", "-soname=elf-vdso.so.1", "--eh-frame-hdr", "--no-undefined",
+        "-z", "rodynamic", "-z", "norelro", "-nmagic", "--hash-style=sysv", "--fatal-warnings", "--strip-all"],
+    target_compatible_with = _VDSO_PLATFORM)
+bsd_vdso_validate(name = "generic_vdso_validate", src = ":generic_vdso_link",
+    directory = "generic_vdso", header = "vdso_offsets.h", maximum_size = 2048,
+    machine = 62, osabi = 9, symbol = "__vdso_sigcode", macro = "VDSO_SIGCODE_OFFSET",
+    soname = "elf-vdso.so.1", target_compatible_with = _VDSO_PLATFORM)
+filegroup(name = "generic_vdso_image", srcs = [":generic_vdso_validate"], output_group = "image", visibility = ["//visibility:public"])
+filegroup(name = "generic_vdso_header_file", srcs = [":generic_vdso_validate"], output_group = "header", visibility = ["//visibility:public"])
+cc_library(name = "generic_vdso_header", hdrs = [":generic_vdso_header_file"], strip_include_prefix = "generic_vdso",
+    target_compatible_with = _VDSO_PLATFORM)
+cc_library(name = "generic_vdso_wrapper", srcs = ["//sys/tools:vdso_wrap.S"], deps = _VDSO_DEPS,
+    copts = _VDSO_FLAGS + ["-DVDSO_NAME=elf_vdso_so_1", "-DVDSO_FILE=\\\"$(execpath :generic_vdso_image)\\\""],
+    additional_compiler_inputs = [":generic_vdso_image"], features = ["-opt", "-dbg", "-fastbuild"],
+    target_compatible_with = _VDSO_PLATFORM)
+bsd_component_object(name = "generic_vdso_object", group = ":generic_vdso_wrapper",
+    out = "generic_vdso/elf-vdso.so.o", visibility = ["//visibility:public"])
+
+# Low-level amd64 built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "lowlevel_kernel_exception_headers", hdrs = ["apic_vector.S"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# Native Low-level amd64 built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_lowlevel_locore", srcs = ["locore.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"], convert_ctf = False)
+amd64_generic_kernel_objects(name = "generic_lowlevel_bhyve_hypercall", srcs = ["bhyve_hypercall.S"],
+    deps = [],
+    warning_flags = KERNEL_COMMON_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-D__asm__"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_bios", srcs = ["bios.c"],
+    deps = ["//sys/vm:lowlevel_kernel_bios_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_copyout", srcs = ["copyout.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_cpu_switch", srcs = ["cpu_switch.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_db_disasm", srcs = ["db_disasm.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_db_disasm_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_db_interface", srcs = ["db_interface.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_db_interface_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_db_trace", srcs = ["db_trace.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_db_trace_headers", "//sys/vm:lowlevel_kernel_db_trace_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_efirt_machdep", srcs = ["efirt_machdep.c"],
+    deps = ["//sys/isa:lowlevel_kernel_efirt_machdep_headers", "//sys/vm:lowlevel_kernel_efirt_machdep_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_efirt_support", srcs = ["efirt_support.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_elf_machdep", srcs = ["elf_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_elf_machdep_headers", ":generic_vdso_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_exception", srcs = ["exception.S"],
+    deps = ["//sys/amd64/amd64:lowlevel_kernel_exception_headers", "//sys/amd64/conf:lowlevel_kernel_opt_atpic_header", "//sys/amd64/conf:lowlevel_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:lowlevel_kernel_opt_smp_header", "//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_exec_machdep", srcs = ["exec_machdep.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_exec_machdep_headers", "//sys/vm:lowlevel_kernel_exec_machdep_headers", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_ddb_header", "//sys/amd64/conf:lowlevel_kernel_opt_kstack_pages_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_fpu", srcs = ["fpu.c"],
+    deps = ["//sys/isa:lowlevel_kernel_fpu_headers", "//sys/vm:lowlevel_kernel_fpu_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_gdb_machdep", srcs = ["gdb_machdep.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_gdb_machdep_headers", "//sys/gdb:lowlevel_kernel_gdb_machdep_headers", "//sys/amd64/conf:lowlevel_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_initcpu", srcs = ["initcpu.c"],
+    deps = ["//sys/vm:lowlevel_kernel_initcpu_headers", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_io", srcs = ["io.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_kexec_support", srcs = ["kexec_support.c"],
+    deps = ["//sys/contrib/ck:lowlevel_kernel_kexec_support_headers", "//sys/vm:lowlevel_kernel_kexec_support_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_kexec_tramp", srcs = ["kexec_tramp.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_xen-locore", srcs = ["xen-locore.S"],
+    deps = ["//sys/contrib/xen:lowlevel_kernel_xen-locore_headers", "//sys/xen:lowlevel_kernel_xen-locore_headers", "//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE", "-g0"], convert_ctf = False)
+amd64_generic_kernel_objects(name = "generic_lowlevel_machdep", srcs = ["machdep.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_machdep_headers", "//sys/dev/smbios:lowlevel_kernel_machdep_headers", "//sys/isa:lowlevel_kernel_machdep_headers", "//sys/net:lowlevel_kernel_machdep_headers", "//sys/vm:lowlevel_kernel_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_atpic_header", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_ddb_header", "//sys/amd64/conf:lowlevel_kernel_opt_inet_header", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header", "//sys/amd64/conf:lowlevel_kernel_opt_kstack_pages_header", "//sys/amd64/conf:lowlevel_kernel_opt_maxmem_header", "//sys/amd64/conf:lowlevel_kernel_opt_pci_header", "//sys/amd64/conf:lowlevel_kernel_opt_platform_header", "//sys/amd64/conf:lowlevel_kernel_opt_sched_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_mem", srcs = ["mem.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_minidump_machdep", srcs = ["minidump_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_minidump_machdep_headers", "//sys/amd64/conf:lowlevel_kernel_opt_pmap_header", "//sys/amd64/conf:lowlevel_kernel_opt_watchdog_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_mp_machdep", srcs = ["mp_machdep.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/vm:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_acpi_header", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_ddb_header", "//sys/amd64/conf:lowlevel_kernel_opt_kstack_pages_header", "//sys/amd64/conf:lowlevel_kernel_opt_sched_header", "//sys/amd64/conf:lowlevel_kernel_opt_smp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_mpboot", srcs = ["mpboot.S"],
+    deps = ["//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_pmap", srcs = ["pmap.c"],
+    deps = ["//sys/ddb:lowlevel_kernel_pmap_headers", "//sys/vm:lowlevel_kernel_pmap_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_ddb_header", "//sys/amd64/conf:lowlevel_kernel_opt_kstack_pages_header", "//sys/amd64/conf:lowlevel_kernel_opt_pmap_header", "//sys/amd64/conf:lowlevel_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_ptrace_machdep", srcs = ["ptrace_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_ptrace_machdep_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_support", srcs = ["support.S"],
+    deps = ["//sys/amd64/conf:lowlevel_kernel_opt_ddb_header", "//sys/kern:generic_assym_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_lowlevel_sys_machdep", srcs = ["sys_machdep.c"],
+    deps = ["//sys/security/audit:lowlevel_kernel_sys_machdep_headers", "//sys/vm:lowlevel_kernel_sys_machdep_headers", "//sys/amd64/conf:lowlevel_kernel_opt_capsicum_header", "//sys/amd64/conf:lowlevel_kernel_opt_ktrace_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_trap", srcs = ["trap.c"],
+    deps = ["//sys/contrib/ck:lowlevel_kernel_trap_headers", "//sys/ddb:lowlevel_kernel_trap_headers", "//sys/dev/hwpmc:lowlevel_kernel_trap_headers", "//sys/kern:lowlevel_kernel_trap_headers", "//sys/security/audit:lowlevel_kernel_trap_headers", "//sys/security/mac:lowlevel_kernel_trap_headers", "//sys/vm:lowlevel_kernel_trap_headers", "//sys/x86/isa:lowlevel_kernel_trap_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_atpic_header", "//sys/amd64/conf:lowlevel_kernel_opt_capsicum_header", "//sys/amd64/conf:lowlevel_kernel_opt_clock_header", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header", "//sys/amd64/conf:lowlevel_kernel_opt_kdb_header", "//sys/amd64/conf:lowlevel_kernel_opt_ktrace_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_uio_machdep", srcs = ["uio_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_uio_machdep_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_lowlevel_vm_machdep", srcs = ["vm_machdep.c"],
+    deps = ["//sys/vm:lowlevel_kernel_vm_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:lowlevel_kernel_opt_cpu_header", "//sys/amd64/conf:lowlevel_kernel_opt_isa_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

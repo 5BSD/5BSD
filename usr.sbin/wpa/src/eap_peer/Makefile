@@ -22,7 +22,6 @@ SRCS=	eap.c \
 	eap_tls_common.c \
 	eap_ttls.c \
 	eap_wsc.c \
-	eap_methods.c \
 	mschapv2.c
 
 CFLAGS+=-DIEEE8021X_EAPOL

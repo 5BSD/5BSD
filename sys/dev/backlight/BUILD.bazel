@@ -34,3 +34,11 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "acpi_support_headers", hdrs = ["backlight.h"], visibility = ["//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_pci_headers", hdrs = ["backlight.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_backlight_if_header_file", srcs = [":backlight_if"], output_group = "header")
+cc_library(name = "linuxkpi_backlight_if_headers", hdrs = [":linuxkpi_backlight_if_header_file"],
+    strip_include_prefix = "backlight_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

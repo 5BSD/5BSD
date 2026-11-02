@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpaeap_common",
+    srcs = [
+        "//contrib/wpa:src/eap_common/chap.c",
+        "//contrib/wpa:src/eap_common/eap_common.c",
+        "//contrib/wpa:src/eap_common/eap_gpsk_common.c",
+        "//contrib/wpa:src/eap_common/eap_pax_common.c",
+        "//contrib/wpa:src/eap_common/eap_peap_common.c",
+        "//contrib/wpa:src/eap_common/eap_psk_common.c",
+        "//contrib/wpa:src/eap_common/eap_sake_common.c",
+        "//contrib/wpa:src/eap_common/eap_sim_common.c",
+        "//contrib/wpa:src/eap_common/eap_wsc_common.c",
+    ],
+    headers = ["//contrib/wpa:eap_common_headers"],
+)

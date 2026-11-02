@@ -14,3 +14,9 @@ cc_library(name = "cam_headers", hdrs = ["mmcreg.h", "bridge.h"], strip_include_
 # Physical source closure used by the native storage module candidates.
 cc_library(name = "storage_module_headers", hdrs = ["bridge.h", "mmcreg.h"],
     visibility = ["//sys/cam:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/ahci:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["bridge.h", "mmcreg.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])

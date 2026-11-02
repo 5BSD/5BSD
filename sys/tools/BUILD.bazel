@@ -5,3 +5,7 @@ exports_files(["vnode_if.awk"], visibility = ["//visibility:public"])
 exports_files(["usbdevs2h.awk"], visibility = ["//sys/dev/usb:__pkg__"])
 
 exports_files(["miidevs2h.awk"], visibility = ["//sys/dev/mii:__pkg__"])
+
+exports_files(["vdso_wrap.S"], visibility = ["//sys/amd64/amd64:__pkg__"])
+
+exports_files(["acpi_quirks2h.awk"], visibility = ["//sys/dev/acpica:__pkg__"])

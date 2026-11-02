@@ -5,3 +5,8 @@ cc_library(name = "bhyvectl_headers", hdrs = ["vmcs.h"], strip_include_prefix = 
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['vmcs.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+# x86 core built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["vmx_controls.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

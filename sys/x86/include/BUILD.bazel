@@ -2,7 +2,8 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-cc_library(name = "kernel_headers", hdrs = glob(["*.h"]),
+# Preserve nested architecture headers under the same logical include namespace.
+cc_library(name = "kernel_headers", hdrs = glob(["**/*.h"]),
     strip_include_prefix = ".", include_prefix = "x86", visibility = ["//visibility:public"])
 
 cc_library(name = "busdma_internal_headers", hdrs = ["busdma_impl.h"], includes = ["../.."], visibility = ["//sys/x86/x86:__pkg__"])

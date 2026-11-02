@@ -30,3 +30,9 @@ amd64_generic_module_objects(name = "krpc_module", srcs = _KRPC_SOURCES,
 [cross_generic_module_objects(arch = arch, name = "krpc_module", srcs = _KRPC_SOURCES,
     deps = _KRPC_DEPS + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_inet6", "opt_kern_tls"]])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_nvpair_headers", hdrs = ["netconfig.h", "types.h", "xdr.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

@@ -40,3 +40,9 @@ exports_files(["xo/xo.c", "xo/xo.1"], visibility = ["//usr.bin/xo:__pkg__"])
 cc_library(name = "cli_headers", hdrs = ["libxo/xo.h", "libxo/xo_explicit.h"], strip_include_prefix = "libxo", visibility = ["//usr.bin/xo:__pkg__"])
 
 exports_files(['tests/xo/xo_01.sh', 'tests/xo/saved/xo_01.H.err', 'tests/xo/saved/xo_01.H.out', 'tests/xo/saved/xo_01.HIPx.err', 'tests/xo/saved/xo_01.HIPx.out', 'tests/xo/saved/xo_01.HP.err', 'tests/xo/saved/xo_01.HP.out', 'tests/xo/saved/xo_01.J.err', 'tests/xo/saved/xo_01.J.out', 'tests/xo/saved/xo_01.JP.err', 'tests/xo/saved/xo_01.JP.out', 'tests/xo/saved/xo_01.T.err', 'tests/xo/saved/xo_01.T.out', 'tests/xo/saved/xo_01.X.err', 'tests/xo/saved/xo_01.X.out', 'tests/xo/saved/xo_01.XP.err', 'tests/xo/saved/xo_01.XP.out'], visibility = ["//usr.bin/xo/tests:__pkg__"])
+
+# CSV encoder's physical private-header context; no generated include root.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+exports_files(["encoder/csv/enc_csv.c"], visibility = ["//lib/libxo/encoder/csv:__pkg__"])
+bsd_source_headers(name = "csv_headers", hdrs = ["libxo/xo.h", "libxo/xo_encoder.h", "libxo/xo_buf.h"],
+    includes = ["libxo"], visibility = ["//lib/libxo/encoder/csv:__pkg__"])

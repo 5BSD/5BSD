@@ -2,3 +2,8 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+# x86 core built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["x86/hyperv_reg.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

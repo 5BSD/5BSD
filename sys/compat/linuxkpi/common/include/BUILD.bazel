@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/pgtable.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "asm/unaligned.h", "net/cfg80211.h", "net/if_inet6.h", "net/mac80211.h", "net/regulatory.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linuxkpi_80211_pm_headers", hdrs = ["asm-generic/io.h", "asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/memtype.h", "asm/pgtable.h", "asm/processor.h", "asm/set_memory.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "asm/unaligned.h", "net/cfg80211.h", "net/if_inet6.h", "net/mac80211.h", "net/regulatory.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["acpi/acpi_bus.h", "acpi/video.h", "asm-generic/io.h", "asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/memtype.h", "asm/pgtable.h", "asm/processor.h", "asm/set_memory.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_of_headers", hdrs = ["asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/pgtable.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_compat_headers", hdrs = ["asm-generic/io.h", "asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpu_device_id.h", "asm/cpufeature.h", "asm/fpu/api.h", "asm/intel-family.h", "asm/memtype.h", "asm/pgtable.h", "asm/processor.h", "asm/set_memory.h", "asm/smp.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h", "xen/xen.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_current_headers", hdrs = ["asm/atomic.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/pgtable.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_dmi_headers", hdrs = ["asm/types.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_eventfd_headers", hdrs = ["asm/atomic.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_fpu_headers", hdrs = ["asm/atomic.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/fpu/api.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_i2c_headers", hdrs = ["asm-generic/io.h", "asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/memtype.h", "asm/pgtable.h", "asm/processor.h", "asm/set_memory.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_mhi_headers", hdrs = ["asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/types.h", "asm/uaccess.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linuxkpi_page_pool_headers", hdrs = ["asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/pgtable.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "net/netmem.h", "net/page_pool/helpers.h", "net/page_pool/types.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_idr_headers", hdrs = ["asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_radix_headers", hdrs = ["asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_shrinker_headers", hdrs = ["asm/topology.h", "asm/types.h", "vdso/const.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_siphash_headers", hdrs = ["asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/types.h", "asm/uaccess.h", "asm/unaligned.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_usb_headers", hdrs = ["asm/atomic.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/types.h", "asm/uaccess.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_xarray_headers", hdrs = ["asm/byteorder.h", "asm/cpufeature.h", "asm/processor.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

@@ -32,6 +32,14 @@ def setting_arguments(settings):
 
 
 
+def execution_log_format(config):
+    """Select Bazel's documented complete log encodings without implicit fallback."""
+    value = config.get('execution-log-format', 'json')
+    if value not in ('json', 'compact'):
+        raise ValueError('execution-log-format must be json or compact')
+    return value
+
+
 def platform_arguments(config, target_arch):
     """Separate the execution SDK from the explicitly selected target kernel ABI."""
     kind = config.get('target-kind', 'userland')
@@ -57,7 +65,7 @@ def test_inventory_command(argv, targets, tests):
     command = list(argv[:-len(targets)])
     command[command.index('test')] = 'cquery'
     command = [a for a in command if not a.startswith((
-        '--build_event_json_file=', '--execution_log_json_file=',
+        '--build_event_json_file=', '--execution_log_json_file=', '--execution_log_compact_file=',
         '--noexecution_log_sort', '--output_groups='))]
     return command + ['--output=starlark', '--starlark:expr=json.encode(str(target.label))',
                       'tests(set(' + ' '.join(json.dumps(label) for label in tests) + '))']
@@ -111,8 +119,10 @@ def qualify(config, args):
 def _qualify(config, args, state):
     required={'format','toolchain-workspace','toolchain-receipt','java-home',
               'repository-cache','distdirs','targets','tests'}
-    if not required <= set(config) or set(config) - required - {'build-settings', 'target-kind'} or type(config['format']) is not int or config['format']!=5:
+    if not required <= set(config) or set(config) - required - {'build-settings', 'target-kind', 'execution-log-format'} or type(config['format']) is not int or config['format']!=5:
         raise ValueError('exact format-5 source graph configuration required')
+    log_format = execution_log_format(config)
+    log_path = args.output.resolve() / ('execution.' + log_format)
     settings = setting_arguments(config.get('build-settings', {}))
     platforms = platform_arguments(config, args.target_arch)
     for key in ('targets','tests'):
@@ -185,7 +195,7 @@ def _qualify(config, args, state):
               # Extend Bazel defaults so build-only test targets retain runfiles.
               '--output_groups=+metadata,+directory_metadata',
               '--symlink_prefix='+str(out/'bazel-'),'--build_event_json_file='+str(out/'events.json'),
-              '--execution_log_json_file='+str(out/'execution.json'),'--noexecution_log_sort',
+              '--execution_log_'+log_format+'_file='+str(log_path),'--noexecution_log_sort',
               *['--distdir='+str(p) for p in distdirs],*settings,*config['targets']]
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
         start=time.monotonic()
@@ -219,7 +229,8 @@ def _qualify(config, args, state):
         if bsd_toolchain.verify_distdirs(distdirs) != (distdir_digest, distdir_files):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=digest(out/'execution.json'),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        log_digest = digest(log_path)
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

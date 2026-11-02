@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpaeap_peer",
+    srcs = [
+        "//contrib/wpa:src/eap_peer/eap.c",
+        "//contrib/wpa:src/eap_peer/eap_gtc.c",
+        "//contrib/wpa:src/eap_peer/eap_leap.c",
+        "//contrib/wpa:src/eap_peer/eap_md5.c",
+        "//contrib/wpa:src/eap_peer/eap_methods.c",
+        "//contrib/wpa:src/eap_peer/eap_mschapv2.c",
+        "//contrib/wpa:src/eap_peer/eap_otp.c",
+        "//contrib/wpa:src/eap_peer/eap_peap.c",
+        "//contrib/wpa:src/eap_peer/eap_psk.c",
+        "//contrib/wpa:src/eap_peer/eap_tls.c",
+        "//contrib/wpa:src/eap_peer/eap_tls_common.c",
+        "//contrib/wpa:src/eap_peer/eap_ttls.c",
+        "//contrib/wpa:src/eap_peer/eap_wsc.c",
+        "//contrib/wpa:src/eap_peer/mschapv2.c",
+    ],
+    headers = ["//contrib/wpa:eap_peer_headers"],
+    copts = ["-DIEEE8021X_EAPOL"],
+)

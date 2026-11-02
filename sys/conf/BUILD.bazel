@@ -6,3 +6,5 @@ filegroup(name = "configuration_inputs", srcs = glob(["files*", "options*", "Mak
 exports_files(["files"], visibility = ["//visibility:public"])
 
 exports_files(["ldscript.kmod.amd64", "kmod_syms.awk"])
+
+exports_files(["vdso_amd64.ldscript"], visibility = ["//sys/amd64/amd64:__pkg__"])

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["linux/bug.h", "linux/init.h", "linux/percpu-defs.h", "linux/percpu.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_compat_headers", hdrs = ["linux/bug.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_eventfd_headers", hdrs = ["linux/percpu-defs.h", "linux/percpu.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_page_headers", hdrs = ["linux/bug.h", "linux/mempolicy.h", "linux/percpu-defs.h", "linux/percpu.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

@@ -16,6 +16,26 @@ source-owned installation. Four configurations pass twelve immutable ELF
 comparisons and sixteen safe CLI/loader methods. Remaining WPA service/control
 behavior and complete system gates remain open.
 
+The [nine WPA support libraries](WPA-SUPPORT-QUALIFICATION.md) add 47 original
+sources with explicit ordinary/PIE variants. All 38 Make configurations and
+five native profiles pass 76 archive comparisons, 418 code/policy checks and
+34,394 prerequisite hash checks. The [final four private libraries](WPA-FINAL-PRIVATE-QUALIFICATION.md)
+now add 32 archive comparisons, 660 code/policy checks and 59,912 prerequisite
+hash checks across four configurations. All sixteen private directories have
+bounded output qualification; three programs and full service/runtime/system
+gates remain open. The [wpa_cli control client](WPA-CLI-QUALIFICATION.md) now
+passes four immutable ELF/link comparisons, sixteen safe CLI/loader methods and
+its original install metadata. Three of five WPA programs had bounded native
+qualification at that checkpoint. The [hostapd daemon](WPA-HOSTAPD-QUALIFICATION.md)
+now adds two supported OpenSSL configurations, eight retained safe CLI/loader
+methods and twenty install records. The [AES-CTR dependency correction](WPA-AES-CTR-QUALIFICATION.md)
+fixes the genuine no-EAPOL link failure. The [wpa_supplicant daemon](WPA-SUPPLICANT-QUALIFICATION.md)
+now passes two supported OpenSSL configurations, 51 code/input/relocation object
+comparisons, sixteen install records and eight safe methods using complete
+compact execution logs. All five programs have bounded native qualification;
+internal-backend feature closure, family package composition and live wireless/
+authentication behavior remain open.
+
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.
@@ -47446,3 +47466,59 @@ five source-specific warning-policy corrections and remaining runtime gates.
 [OPENCRYPTO-KERNEL-QUALIFICATION.md](OPENCRYPTO-KERNEL-QUALIFICATION.md) records
 25 native amd64 GENERIC OpenCrypto built-ins, narrow libsodium ownership,
 code/CTF/input/relocation checks and remaining crypto/runtime/system gates.
+
+[VDSO-QUALIFICATION.md](VDSO-QUALIFICATION.md) records the native amd64 VDSO
+compile/link/validation/embed graph, four byte-identical Make products, 16 native
+validator regressions and remaining signal-frame/runtime/system gates.
+
+[AMD64-LOWLEVEL-QUALIFICATION.md](AMD64-LOWLEVEL-QUALIFICATION.md) records
+32 low-level amd64 built-ins, native assym/VDSO/interface dependencies,
+source-specific assembly/CTF policy, exact machine code and declared inputs,
+symbolic filename/relocation review and remaining kernel/runtime/system gates.
+
+[X86-CORE-KERNEL-QUALIFICATION.md](X86-CORE-KERNEL-QUALIFICATION.md) records
+22 x86 core built-ins, exact machine code/CTF and declared input checks,
+source-owned header boundaries with unchanged bhyve context, symbolic relocation
+review and remaining kernel/runtime/system gates.
+
+[DDB-CORE-KERNEL-QUALIFICATION.md](DDB-CORE-KERNEL-QUALIFICATION.md) records
+22 debugger built-ins, exact machine code/CTF and declared input checks,
+symbolic filename/relocation review and remaining debugger/runtime/system gates.
+
+[SOURCE-COMPACT-LOG-QUALIFICATION.md](SOURCE-COMPACT-LOG-QUALIFICATION.md)
+records opt-in format-5 compact logs through build-bsd, explicit log receipt
+bindings, configured inventory flag handling, 25 native regression methods and
+hash-verified upstream streaming conversion. JSON remains the default; full
+resource/cache/system qualification remains open.
+
+[ACPICA-CORE-KERNEL-QUALIFICATION.md](ACPICA-CORE-KERNEL-QUALIFICATION.md)
+records 29 ACPI platform built-ins, native quirk-table generation, exact code/CTF
+and declared input checks, upstream compact-log action provenance, symbolic
+relocation review and remaining firmware/runtime/system gates.
+
+[ACPICA-ENGINE-KERNEL-QUALIFICATION.md](ACPICA-ENGINE-KERNEL-QUALIFICATION.md)
+records 156 native engine objects, upstream source ownership, exact code/CTF/input
+checks, affected userland action/build/smoke checks and remaining system gates.
+
+[ISCI-KERNEL-QUALIFICATION.md](ISCI-KERNEL-QUALIFICATION.md) records 109 native
+Intel SAS built-ins, source-owned prerequisites, exact code/CTF and compiler-input
+checks, bounded filename/relocation differences and remaining controller gates.
+
+[WPA-FAMILY-QUALIFICATION.md](WPA-FAMILY-QUALIFICATION.md) records the native five-program/sixteen-private-library aggregate, 37 immutable products, distinct package contexts and 23 safe methods. It also records the rejected historical control-client capture and independent read-only reference repair; whole-world, backend and final pkg gates remain open.
+
+[LINUXKPI-KERNEL-QUALIFICATION.md](LINUXKPI-KERNEL-QUALIFICATION.md) records
+46 native compatibility built-ins, source-owned headers and generated interfaces,
+forced-include policy correction, exact code/CTF/input checks and remaining gates.
+
+[LIBXO-CSV-QUALIFICATION.md](LIBXO-CSV-QUALIFICATION.md) records conversion of a real selected world gap: native CSV plugin code/strict ELF/install checks, inherited Make context, five dynamic API methods and retained installed-path/family/pkg gates.
+
+[OPENZFS-KERNEL-QUALIFICATION.md](OPENZFS-KERNEL-QUALIFICATION.md) records
+237 native filesystem/compatibility/crypto built-ins, ordered overlay and forced
+include inputs, unchanged shared-rule defaults, exact code/CTF and bounded string
+symbol/relocation qualification, with remaining filesystem/system gates.
+
+[APM-PROGRAM-QUALIFICATION.md](APM-PROGRAM-QUALIFICATION.md) records closure of the selected APM producer/install gap, exact native code/flags/inputs, strict ELF, three safe methods and separate power/device/architecture gates.
+
+[ATH-KERNEL-QUALIFICATION.md](ATH-KERNEL-QUALIFICATION.md) records 130 native
+Atheros driver/HAL objects, source-owned headers and generated options, exact
+code/CTF/policy/input checks, bounded string/relocation proof and remaining gates.

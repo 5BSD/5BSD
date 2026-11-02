@@ -44,3 +44,64 @@ bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["pci_iov.h", "pci_
 # MII built-in prerequisites.
 bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/mii:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_legacy_headers", hdrs = ["pcireg.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_msi_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+
+# Native x86 core consumer of the existing PCI bridge interface producer.
+filegroup(name = "pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
+cc_library(name = "pcib_if_headers", hdrs = [":pcib_if_header_file"],
+    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_apei_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_cpu_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_throttle_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_headers", hdrs = ["pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pci_link_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_acpi_headers", hdrs = ["pcib_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_pci_headers", hdrs = ["pcib_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_timer_headers", hdrs = ["pcivar.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linuxkpi_80211_pm_headers", hdrs = ["pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_pci_headers", hdrs = ["pci_iov.h", "pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pci_if_header_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "linuxkpi_pci_if_headers", hdrs = [":linuxkpi_pci_if_header_file"],
+    strip_include_prefix = "pci_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
+cc_library(name = "linuxkpi_pci_iov_if_headers", hdrs = [":linuxkpi_pci_iov_if_header_file"],
+    strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
+cc_library(name = "linuxkpi_pcib_if_headers", hdrs = [":linuxkpi_pcib_if_header_file"],
+    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

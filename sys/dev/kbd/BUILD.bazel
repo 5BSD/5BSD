@@ -14,3 +14,9 @@ bsd_source_headers(name = "acpi_support_headers", hdrs = ["kbdreg.h"], visibilit
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["kbdreg.h"],
     visibility = ["//sys/kern:__pkg__"])
+
+# ACPI core built-in prerequisites.
+bsd_source_headers(name = "acpica_core_kernel_acpi_button_headers", hdrs = ["kbdreg.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])
+bsd_source_headers(name = "acpica_core_kernel_acpi_lid_headers", hdrs = ["kbdreg.h"],
+    visibility = ["//sys/dev/acpica:__pkg__"])

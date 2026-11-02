@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Own all INTERNALLIB products in src/Makefile order. Both object policies
+# are real products; program dependency edges select their required PIE groups.
+filegroup(
+    name = "private_archives",
+    srcs = ["//usr.sbin/wpa/src/" + part + ":" + variant + "_archive"
+        for part in ['ap', 'common', 'crypto', 'drivers', 'eap_common', 'eap_peer', 'eap_server', 'eapol_auth', 'eapol_supp', 'l2_packet', 'pasn', 'radius', 'rsn_supp', 'tls', 'utils', 'wps'] for variant in ["static", "pie"]],
+    visibility = ["//usr.sbin/wpa:__pkg__"],
+)

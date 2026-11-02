@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+load("//usr.sbin/wpa:common.bzl", "INET6")
+
+wpa_private_library(
+    name = "wparadius",
+    srcs = [
+        "//contrib/wpa:src/radius/radius.c",
+        "//contrib/wpa:src/radius/radius_client.c",
+        "//contrib/wpa:src/radius/radius_das.c",
+        "//contrib/wpa:src/radius/radius_server.c",
+    ],
+    headers = ["//contrib/wpa:radius_headers"],
+    copts = select({INET6: ["-DCONFIG_IPV6"], "//conditions:default": []}),
+)

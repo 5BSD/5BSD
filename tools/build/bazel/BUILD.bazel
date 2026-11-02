@@ -158,3 +158,19 @@ exports_files(["syscall_tables.lua"])
 # Binary CTF metadata equivalence and rejection of altered type associations.
 bsd_python_test(name = "ctf_semantics_test", src = "ctf_semantics-test.py",
     data = ["ctf_semantics.py"])
+
+exports_files(["vdso_validate.py"])
+
+bsd_python_test(name = "vdso_validate_test", src = "vdso_validate-test.py", data = ["vdso_validate.py"])
+
+# Complete execution evidence and configured test inventory, including compact logs.
+bsd_python_test(
+    name = "execution_log_test",
+    src = "execution-log-test.py",
+    data = ["execution_log.py"],
+)
+bsd_python_test(
+    name = "source_test_inventory_test",
+    src = "source-test-inventory-test.py",
+    data = ["source_graph.py", "bep_artifacts.py", "test_reports.py", "bsd_toolchain.py", "libmd_environment.py"],
+)

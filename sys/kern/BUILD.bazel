@@ -738,3 +738,18 @@ amd64_generic_kernel_objects(name = "generic_core_uipc_vsock", srcs = ["uipc_vso
 amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uipc_vsock_user.c"],
     deps = ["//sys/ddb:core_kernel_uipc_vsock_user_headers", "//sys/kern:core_kernel_uipc_vsock_user_headers", "//sys/security/audit:core_kernel_uipc_vsock_user_headers", "//sys/security/mac:core_kernel_uipc_vsock_user_headers", "//sys/vm:core_kernel_uipc_vsock_user_headers", "//sys/amd64/conf:core_kernel_opt_mac_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+cc_library(name = "generic_assym_header", hdrs = [":generic_assym"],
+    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["subr_syscall.c"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+
+filegroup(name = "linuxkpi_bus_if_header_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "linuxkpi_bus_if_headers", hdrs = [":linuxkpi_bus_if_header_file"],
+    strip_include_prefix = "bus_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+filegroup(name = "linuxkpi_device_if_header_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "linuxkpi_device_if_headers", hdrs = [":linuxkpi_device_if_header_file"],
+    strip_include_prefix = "device_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])

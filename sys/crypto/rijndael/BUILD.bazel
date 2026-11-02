@@ -65,3 +65,7 @@ bsd_source_headers(name = "opencrypto_kernel_xform_sha1_headers", hdrs = ["rijnd
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_xform_sha2_headers", hdrs = ["rijndael.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_crypto_os_headers", hdrs = ["rijndael.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

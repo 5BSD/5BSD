@@ -18,7 +18,41 @@ provider suffices. Make remains production/default; private archives are not
 runtime package payloads. This follows WPA-PRIVATE-QUALIFICATION.md rather than
 qualifying the remaining WPA libraries, supplicant or hostapd daemon.
 
-## Retained checks
+## Evidence correction during family composition (2026-11-02)
+
+The historical default captured hostapd_cli payload no longer matches its frozen
+manifest (333,256 bytes rather than 333,536). The resolver rejected it; it was
+not restored and its receipt was not rewritten. The other three configurations'
+program captures and both default common archives still validate. The current
+family program matches the original frozen expected SHA exactly.
+
+A disposable-copy reproduction showed that llvm-objcopy --dump-section with no
+explicit output rewrites the input, producing exactly the invalid payload hash.
+Earlier one-off object/constant/CRC inspection scripts used that unsafe form.
+Their default object/constant/input/ELF/install claims below are therefore
+historical, superseded by the independent read-only repair; do not rerun those
+scripts or treat their post-inspection hashes as original producer evidence.
+No production source or manifest was changed to accept the invalid capture.
+
+Fresh default common/utils builds, actual Make object metadata, control-client
+link and isolated installation are under bazel-wpa-common-repair-*. The program
+selects the new archives in DPADD, LDADD and its actual link. The read-only repair
+report bazel-wpa-common-repair-audit-r1-20261102/report.json confirms 23 original
+compile-output digest bindings, exact text and 41 constant sections, ordered
+macro/warning flags, 1,803 prerequisite hashes, strict program ELF/ordered NEEDED,
+five installation records, manual payload and two debug-link CRCs. Original
+compiler actions are bound to the retained execution-log SHA; common objects
+come from valid immutable family archives. The client object must match its
+actual output digest before inspection. Every inspected input is hash-checked
+afterwards. The linked program remains the original 333,536-byte artifact.
+
+Section reads use Python byte parsing. The maintained elf-artifact-check.py
+already supplies an explicit discard output to objcopy and verifies captured
+program hashes; it was not the unsafe one-off helper. Extracted installation
+files are read without rewriting them. Invalid old evidence and both disposable
+reproduction attempts remain retained. See WPA-FAMILY-QUALIFICATION.md.
+
+## Historical retained checks
 
 Paths below are under /usr/obj/usr/src.
 

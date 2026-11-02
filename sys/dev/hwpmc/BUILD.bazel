@@ -22,3 +22,11 @@ bsd_source_headers(name = "core_kernel_subr_trap_headers", hdrs = ["hwpmc_amd.h"
 # Virtual-memory built-in prerequisites.
 bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
     visibility = ["//sys/vm:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["hwpmc_amd.h", "hwpmc_core.h", "hwpmc_ibs.h", "hwpmc_perf.h", "hwpmc_rapl.h", "hwpmc_tsc.h", "hwpmc_uncore.h", "pmc_events.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

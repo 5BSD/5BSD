@@ -15,3 +15,9 @@ amd64_generic_module_objects(name = "ufs_module", srcs = ["ufs_acl.c", "ufs_bmap
 [cross_generic_module_objects(arch = arch, name = "ufs_module", srcs = ["ufs_acl.c", "ufs_bmap.c", "ufs_dirhash.c", "ufs_extattr.c", "ufs_inode.c", "ufs_lookup.c", "ufs_quota.c", "ufs_vfsops.c", "ufs_vnops.c", "//sys/ufs/ffs:ffs_alloc.c", "//sys/ufs/ffs:ffs_balloc.c", "//sys/ufs/ffs:ffs_inode.c", "//sys/ufs/ffs:ffs_rawread.c", "//sys/ufs/ffs:ffs_snapshot.c", "//sys/ufs/ffs:ffs_softdep.c", "//sys/ufs/ffs:ffs_subr.c", "//sys/ufs/ffs:ffs_suspend.c", "//sys/ufs/ffs:ffs_tables.c", "//sys/ufs/ffs:ffs_vfsops.c", "//sys/ufs/ffs:ffs_vnops.c"],
     deps = ['//sys/ddb:kernel_headers', ":filesystem_module_headers", "//sys/vm:kernel_headers", "//sys/contrib/ck:kernel_headers", "//sys/security/mac:framework_headers", "//sys/security/audit:kernel_headers", "//sys/geom:kernel_headers", "//sys/ufs/ffs:filesystem_module_headers"] + ["//sys/" + arch + "/conf:generic_" + option + "_header" for option in ["opt_ddb", "opt_directio", "opt_ffs", "opt_quota", "opt_suiddir", "opt_ufs"]], copts = [])
  for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_zfs_vfsops_headers", hdrs = ["quota.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

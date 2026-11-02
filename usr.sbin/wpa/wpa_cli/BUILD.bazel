@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+load("//usr.sbin/wpa:common.bzl", "OPENSSL", "PLATFORM", "inc_flags", "crypto_flags", "compiler_flags")
+_LIBS = select({OPENSSL: ["//secure/lib/libssl:ssl", "//secure/lib/libcrypto:crypto"], "//conditions:default": []}) + ['//usr.sbin/wpa/src/common:wpacommon_pie', '//usr.sbin/wpa/src/eap_peer:wpaeap_peer_pie', '//usr.sbin/wpa/src/eap_server:wpaeap_server_pie', '//usr.sbin/wpa/src/eapol_auth:wpaeapol_auth_pie', '//usr.sbin/wpa/src/eapol_supp:wpaeapol_supp_pie', '//usr.sbin/wpa/src/eap_common:wpaeap_common_pie', '//usr.sbin/wpa/src/l2_packet:wpal2_packet_pie', '//usr.sbin/wpa/src/radius:wparadius_pie', '//usr.sbin/wpa/src/rsn_supp:wparsn_supp_pie', '//usr.sbin/wpa/src/tls:wpatls_pie', '//usr.sbin/wpa/src/crypto:wpacrypto_pie', '//usr.sbin/wpa/src/utils:wpautils_pie', '//lib/libpcap:pcap', '//lib/libutil:util']
+_DYNAMIC = select({OPENSSL: ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) + ["//lib/libpcap:pcap_shared", "//lib/libutil:util_shared"]
+cc_binary(name = "wpa_cli", srcs = ["//contrib/wpa:wpa_supplicant/wpa_cli.c"],
+    deps = ["//contrib/wpa:wpa_cli_headers"] + _LIBS, dynamic_deps = _DYNAMIC,
+    # bsd.init.mk re-includes ../Makefile.inc after the explicit include.
+    # Preserve that real second macro/warning group, without reapplying crypto.
+    copts = ["-fpie", "-DPIC", "-fPIE"] + inc_flags() + crypto_flags() + ["-DCONFIG_TLS=openssl", "-D_DIRENT_HAVE_D_TYPE", "-DCONFIG_WPA_CLI_EDIT=y"] + inc_flags() + compiler_flags(),
+    linkopts = ["-pie"], target_compatible_with = PLATFORM, visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "wpa_cli", manual = "wpa_cli.8", package = "wpa", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=wpa","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+bsd_python_test(name = "safe_cli_test", src = "safe_cli_test.py", data = [":wpa_cli", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "//lib/libutil:util_shared", "//lib/libpcap:pcap_shared", "//lib/libthr:thr_shared"] + select({OPENSSL: ["//secure/lib/libssl:ssl_shared", "//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) + select({"//tools/build/bazel/config:ofed_enabled": ["//lib/ofed/libibverbs:ibverbs_shared", "//lib/ofed/libbnxtre:bnxtre_shared", "//lib/ofed/libmlx5:mlx5_shared"], "//conditions:default": []}), visibility = ["//usr.sbin/wpa:__pkg__"])

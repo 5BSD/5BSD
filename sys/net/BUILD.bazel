@@ -1123,3 +1123,41 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["bpf.h", 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["vnet.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["netisr.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+
+# Debugger core built-in prerequisites.
+bsd_source_headers(name = "ddb_core_kernel_db_sym_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])
+
+# Physical prerequisites for native LinuxKPI built-ins.
+bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_btcoex_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])

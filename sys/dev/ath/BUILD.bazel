@@ -1,0 +1,576 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical Atheros driver/HAL prerequisites; identical contexts share providers.
+bsd_source_headers(name = "ath_kernel_if_ath_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_ioctl.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_rx_edma.h", "if_ath_spectral.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_ath_tx_edma.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_alq_headers", hdrs = ["if_ath_alq.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_beacon_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_misc.h", "if_ath_tx.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_btcoex_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_btcoex_mci_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_btcoex.h", "if_ath_btcoex_mci.h", "if_ath_debug.h", "if_ath_descdma.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_descdma_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_keycache_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_debug.h", "if_ath_keycache.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_ioctl_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_btcoex.h", "if_ath_debug.h", "if_ath_ioctl.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_spectral.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_led_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_led.h", "if_ath_misc.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_lna_div_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_debug.h", "if_ath_lna_div.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_pci_devlist.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_tx_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_misc.h", "if_ath_tx.h", "if_ath_tx_ht.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_tx_edma_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_ath_tx_edma.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_tx_ht_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_tx.h", "if_ath_tx_ht.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_tdma_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_sysctl_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_debug.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_sysctl.h", "if_ath_tx.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_rx_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_lna_div.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_rx_edma_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "if_ath_beacon.h", "if_ath_debug.h", "if_ath_descdma.h", "if_ath_keycache.h", "if_ath_led.h", "if_ath_misc.h", "if_ath_rx.h", "if_ath_rx_edma.h", "if_ath_sysctl.h", "if_ath_tsf.h", "if_ath_tx.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_if_ath_spectral_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_ath_misc.h", "if_ath_spectral.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_debug.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9003/ar9300_devid.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_eeprom_v1_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v1.h", "ath_hal/ah_internal.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_eeprom_v3_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_eeprom_v14_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_eeprom_v4k_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_eeprom_9287_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_9287.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ah_regdomain_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ah_regdomain.h", "ath_hal/ah_regdomain/ah_rd_ctry.h", "ath_hal/ah_regdomain/ah_rd_domains.h", "ath_hal/ah_regdomain/ah_rd_freqbands.h", "ath_hal/ah_regdomain/ah_rd_regenum.h", "ath_hal/ah_regdomain/ah_rd_regmap.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v1.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210phy.h", "ath_hal/ar5210/ar5210reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_beacon_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210desc.h", "ath_hal/ar5210/ar5210reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_interrupts_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_misc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v1.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210phy.h", "ath_hal/ar5210/ar5210reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_phy_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_reset_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v1.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210phy.h", "ath_hal/ar5210/ar5210reg.h", "ath_hal/ar5210/ar5k_0007.ini"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5210_xmit_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_internal.h", "ath_hal/ar5210/ar5210.h", "ath_hal/ar5210/ar5210desc.h", "ath_hal/ar5210/ar5210phy.h", "ath_hal/ar5210/ar5210reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211phy.h", "ath_hal/ar5211/ar5211reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_beacon_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211desc.h", "ath_hal/ar5211/ar5211reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_interrupts_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_misc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211phy.h", "ath_hal/ar5211/ar5211reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_phy_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_recv_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211desc.h", "ath_hal/ar5211/ar5211reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5211_reset_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5211/ar5211.h", "ath_hal/ar5211/ar5211phy.h", "ath_hal/ar5211/ar5211reg.h", "ath_hal/ar5211/boss.ini"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_ani_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212.ini", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_beacon_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212desc.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_eeprom_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_interrupts_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_misc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_phy_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_recv_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212desc.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_reset_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5212_xmit_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212desc.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_ani_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416.ini", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_beacon_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_btcoex_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_btcoex.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416desc.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_cal_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_interrupts_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_keycache_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_misc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_recv_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416desc.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar5416_xmit_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416desc.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9160_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9001/ar9160.ini"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9280_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9280_olc.h", "ath_hal/ar9002/ar9280v1.ini", "ath_hal/ar9002/ar9280v2.ini"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9280_olc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9002phy.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9280_olc.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9280v2.ini", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285.ini", "ath_hal/ar9002/ar9285_cal.h", "ath_hal/ar9002/ar9285_diversity.h", "ath_hal/ar9002/ar9285_phy.h", "ath_hal/ar9002/ar9285v2.ini"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_btcoex_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416desc.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_reset_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9002phy.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285_diversity.h", "ath_hal/ar9002/ar9285an.h", "ath_hal/ar9002/ar9285phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_cal_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9002phy.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285_cal.h", "ath_hal/ar9002/ar9285an.h", "ath_hal/ar9002/ar9285phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_phy_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285_phy.h", "ath_hal/ar9002/ar9285phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_diversity_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9285_diversity.h", "ath_hal/ar9002/ar9285_phy.h", "ath_hal/ar9002/ar9285phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9287_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_9287.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9287.h", "ath_hal/ar9002/ar9287.ini", "ath_hal/ar9002/ar9287_cal.h", "ath_hal/ar9002/ar9287_olc.h", "ath_hal/ar9002/ar9287_reset.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9287_reset_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_9287.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9287_olc.h", "ath_hal/ar9002/ar9287_reset.h", "ath_hal/ar9002/ar9287an.h", "ath_hal/ar9002/ar9287phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9287_cal_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_eeprom_v4k.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9002phy.h", "ath_hal/ar9002/ar9285.h", "ath_hal/ar9002/ar9287_cal.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9287_olc_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_9287.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9002phy.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9287_olc.h", "ath_hal/ar9002/ar9287an.h", "ath_hal/ar9002/ar9287phy.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9300_ani_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_desc.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9300_attach_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_devid.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_internal.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar2413_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v3.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212.ini", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9280_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9285_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9280.h", "ath_hal/ar9002/ar9285.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_ar9287_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_decode.h", "ath_hal/ah_diagcodes.h", "ath_hal/ah_eeprom.h", "ath_hal/ah_eeprom_v14.h", "ath_hal/ah_internal.h", "ath_hal/ar5212/ar5212.h", "ath_hal/ar5212/ar5212phy.h", "ath_hal/ar5212/ar5212reg.h", "ath_hal/ar5416/ar5416.h", "ath_hal/ar5416/ar5416_cal.h", "ath_hal/ar5416/ar5416phy.h", "ath_hal/ar5416/ar5416reg.h", "ath_hal/ar9002/ar9287.h"],
+    includes = [".", "ath_hal"],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_sample_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "ath_rate/sample/sample.h", "ath_rate/sample/tx_schedules.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+bsd_source_headers(name = "ath_kernel_dfs_null_headers", hdrs = ["ah_osdep.h", "ath_hal/ah.h", "ath_hal/ah_btcoex.h", "ath_hal/ah_desc.h", "if_athdfs.h", "if_athioctl.h", "if_athrate.h", "if_athvar.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
+
+# Native amd64 GENERIC Atheros built-ins, using maintained per-source warnings.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_ath_if_ath", srcs = ["if_ath.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_alq", srcs = ["if_ath_alq.c"],
+    deps = ["//sys/dev/ath:ath_kernel_if_ath_alq_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_beacon", srcs = ["if_ath_beacon.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_beacon_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_btcoex", srcs = ["if_ath_btcoex.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_btcoex_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_btcoex_mci", srcs = ["if_ath_btcoex_mci.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_btcoex_mci_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_debug", srcs = ["if_ath_debug.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_debug_headers", "//sys/net:ath_kernel_if_ath_debug_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_descdma", srcs = ["if_ath_descdma.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_descdma_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_keycache", srcs = ["if_ath_keycache.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_keycache_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_keycache_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_ioctl", srcs = ["if_ath_ioctl.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_ioctl_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_led", srcs = ["if_ath_led.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_led_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_lna_div", srcs = ["if_ath_lna_div.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_lna_div_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_pci", srcs = ["if_ath_pci.c"],
+    deps = ["//sys/dev/ath:ath_kernel_if_ath_pci_headers", "//sys/dev/pci:ath_kernel_if_ath_pci_headers", "//sys/net:ath_kernel_if_ath_pci_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_keycache_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_tx", srcs = ["if_ath_tx.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_tx_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_tx_edma", srcs = ["if_ath_tx_edma.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_tx_edma_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_tx_ht", srcs = ["if_ath_tx_ht.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_tx_ht_headers", "//sys/net:ath_kernel_if_ath_debug_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_tdma", srcs = ["if_ath_tdma.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_tdma_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_sysctl", srcs = ["if_ath_sysctl.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_sysctl_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_rx", srcs = ["if_ath_rx.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_rx_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_rx_edma", srcs = ["if_ath_rx_edma.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_rx_edma_headers", "//sys/net:ath_kernel_if_ath_headers", "//sys/net80211:ath_kernel_if_ath_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_if_ath_spectral", srcs = ["if_ath_spectral.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_if_ath_spectral_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_osdep", srcs = ["ah_osdep.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_osdep_headers", "//sys/net:ath_kernel_ah_osdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah", srcs = ["ath_hal/ah.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_eeprom_v1", srcs = ["ath_hal/ah_eeprom_v1.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_eeprom_v1_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_eeprom_v3", srcs = ["ath_hal/ah_eeprom_v3.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_eeprom_v3_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_eeprom_v14", srcs = ["ath_hal/ah_eeprom_v14.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_eeprom_v14_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_eeprom_v4k", srcs = ["ath_hal/ah_eeprom_v4k.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_eeprom_v4k_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_eeprom_9287", srcs = ["ath_hal/ah_eeprom_9287.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_eeprom_9287_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ah_regdomain", srcs = ["ath_hal/ah_regdomain.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ah_regdomain_headers", "//sys/net80211:ath_kernel_ah_regdomain_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable", "-Wno-shift-count-negative", "-Wno-shift-count-overflow"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_attach", srcs = ["ath_hal/ar5210/ar5210_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_beacon", srcs = ["ath_hal/ar5210/ar5210_beacon.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_interrupts", srcs = ["ath_hal/ar5210/ar5210_interrupts.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_keycache", srcs = ["ath_hal/ar5210/ar5210_keycache.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_misc", srcs = ["ath_hal/ar5210/ar5210_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_phy", srcs = ["ath_hal/ar5210/ar5210_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_power", srcs = ["ath_hal/ar5210/ar5210_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_recv", srcs = ["ath_hal/ar5210/ar5210_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_reset", srcs = ["ath_hal/ar5210/ar5210_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5210_xmit", srcs = ["ath_hal/ar5210/ar5210_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5210_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_attach", srcs = ["ath_hal/ar5211/ar5211_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_beacon", srcs = ["ath_hal/ar5211/ar5211_beacon.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_interrupts", srcs = ["ath_hal/ar5211/ar5211_interrupts.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_keycache", srcs = ["ath_hal/ar5211/ar5211_keycache.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_misc", srcs = ["ath_hal/ar5211/ar5211_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_phy", srcs = ["ath_hal/ar5211/ar5211_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_power", srcs = ["ath_hal/ar5211/ar5211_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_recv", srcs = ["ath_hal/ar5211/ar5211_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_reset", srcs = ["ath_hal/ar5211/ar5211_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5211_xmit", srcs = ["ath_hal/ar5211/ar5211_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5211_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_ani", srcs = ["ath_hal/ar5212/ar5212_ani.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_attach", srcs = ["ath_hal/ar5212/ar5212_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_beacon", srcs = ["ath_hal/ar5212/ar5212_beacon.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_eeprom", srcs = ["ath_hal/ar5212/ar5212_eeprom.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_eeprom_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_gpio", srcs = ["ath_hal/ar5212/ar5212_gpio.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_eeprom_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_interrupts", srcs = ["ath_hal/ar5212/ar5212_interrupts.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_keycache", srcs = ["ath_hal/ar5212/ar5212_keycache.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_misc", srcs = ["ath_hal/ar5212/ar5212_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_phy", srcs = ["ath_hal/ar5212/ar5212_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_power", srcs = ["ath_hal/ar5212/ar5212_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_recv", srcs = ["ath_hal/ar5212/ar5212_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_reset", srcs = ["ath_hal/ar5212/ar5212_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_rfgain", srcs = ["ath_hal/ar5212/ar5212_rfgain.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5212_xmit", srcs = ["ath_hal/ar5212/ar5212_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5212_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_ani", srcs = ["ath_hal/ar5416/ar5416_ani.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_attach", srcs = ["ath_hal/ar5416/ar5416_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_beacon", srcs = ["ath_hal/ar5416/ar5416_beacon.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_btcoex", srcs = ["ath_hal/ar5416/ar5416_btcoex.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_btcoex_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_cal", srcs = ["ath_hal/ar5416/ar5416_cal.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_cal_iq", srcs = ["ath_hal/ar5416/ar5416_cal_iq.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_cal_adcgain", srcs = ["ath_hal/ar5416/ar5416_cal_adcgain.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_cal_adcdc", srcs = ["ath_hal/ar5416/ar5416_cal_adcdc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_eeprom", srcs = ["ath_hal/ar5416/ar5416_eeprom.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_gpio", srcs = ["ath_hal/ar5416/ar5416_gpio.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_interrupts", srcs = ["ath_hal/ar5416/ar5416_interrupts.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_keycache", srcs = ["ath_hal/ar5416/ar5416_keycache.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_keycache_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_misc", srcs = ["ath_hal/ar5416/ar5416_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_phy", srcs = ["ath_hal/ar5416/ar5416_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_keycache_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_power", srcs = ["ath_hal/ar5416/ar5416_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_interrupts_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_radar", srcs = ["ath_hal/ar5416/ar5416_radar.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_recv", srcs = ["ath_hal/ar5416/ar5416_recv.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_recv_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_reset", srcs = ["ath_hal/ar5416/ar5416_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_spectral", srcs = ["ath_hal/ar5416/ar5416_spectral.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5416_xmit", srcs = ["ath_hal/ar5416/ar5416_xmit.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_xmit_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9160_attach", srcs = ["ath_hal/ar9001/ar9160_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9160_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9280_attach", srcs = ["ath_hal/ar9002/ar9280_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9280_olc", srcs = ["ath_hal/ar9002/ar9280_olc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_olc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_attach", srcs = ["ath_hal/ar9002/ar9285_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_btcoex", srcs = ["ath_hal/ar9002/ar9285_btcoex.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_btcoex_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_reset", srcs = ["ath_hal/ar9002/ar9285_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_cal", srcs = ["ath_hal/ar9002/ar9285_cal.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_phy", srcs = ["ath_hal/ar9002/ar9285_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_phy_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285_diversity", srcs = ["ath_hal/ar9002/ar9285_diversity.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_diversity_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9287_attach", srcs = ["ath_hal/ar9002/ar9287_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9287_reset", srcs = ["ath_hal/ar9002/ar9287_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_reset_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9287_cal", srcs = ["ath_hal/ar9002/ar9287_cal.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_cal_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9287_olc", srcs = ["ath_hal/ar9002/ar9287_olc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_olc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar2413", srcs = ["ath_hal/ar5212/ar2413.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar2425", srcs = ["ath_hal/ar5212/ar2425.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5111", srcs = ["ath_hal/ar5212/ar5111.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5112", srcs = ["ath_hal/ar5212/ar5112.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar5413", srcs = ["ath_hal/ar5212/ar5413.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar2413_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar2133", srcs = ["ath_hal/ar5416/ar2133.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar5416_beacon_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9280", srcs = ["ath_hal/ar9002/ar9280.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9280_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9285", srcs = ["ath_hal/ar9002/ar9285.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9285_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_ar9287", srcs = ["ath_hal/ar9002/ar9287.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9287_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_sample", srcs = ["ath_rate/sample/sample.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_sample_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+amd64_generic_kernel_objects(name = "generic_ath_dfs_null", srcs = ["ath_dfs/null/dfs_null.c"],
+    deps = ["//sys/contrib/ck:ath_kernel_if_ath_headers", "//sys/dev/ath:ath_kernel_dfs_null_headers", "//sys/net:ath_kernel_if_ath_btcoex_headers", "//sys/net80211:ath_kernel_if_ath_btcoex_headers", "//sys/netinet:ath_kernel_if_ath_headers", "//sys/netinet6:ath_kernel_if_ath_headers", "//sys/vm:ath_kernel_if_ath_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:ath_kernel_opt_ath_header", "//sys/amd64/conf:ath_kernel_opt_inet_header", "//sys/amd64/conf:ath_kernel_opt_wlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])

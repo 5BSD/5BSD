@@ -52,3 +52,9 @@ bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["audit.h"],
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["audit.h"],
     visibility = ["//sys/net:__pkg__"])
+
+# Low-level amd64 built-in prerequisites.
+bsd_source_headers(name = "lowlevel_kernel_sys_machdep_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])
+bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/amd64/amd64:__pkg__"])

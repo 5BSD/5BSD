@@ -35,3 +35,9 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_ob
     object_names = [source[:-2] + ".o" for source in _MODULE_SOURCES],
     visibility = ["//sys/modules/nvme:__pkg__"])
  for prefix in ["", "arm64_", "riscv_"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Native ISCI built-in physical prerequisites, with identical closures shared.
+bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["nvme.h"],
+    visibility = ["//sys/dev/isci:__pkg__"])
