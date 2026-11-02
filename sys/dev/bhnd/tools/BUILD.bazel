@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The shell entry point only selects the C locale and invokes this maintained AWK program.
+exports_files(["nvram_map_gen.awk"], visibility = ["//sys/dev/bhnd/nvram:__pkg__"])

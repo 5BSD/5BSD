@@ -49,6 +49,11 @@ runtime sections and 36 install records agree. Actual compiler/input and ordered
 link audits pass. Source corrections and runtime limitations are recorded in
 [ATH-MODULES-QUALIFICATION.md](ATH-MODULES-QUALIFICATION.md).
 
+The next twelve-module Broadcom group has original Make source facts captured.
+Its two native NVRAM header producers now match original Make output bodies with
+declared AWK/map/runtime inputs; module compilation remains open. See
+[BHND-NVRAM-GENERATOR-QUALIFICATION.md](BHND-NVRAM-GENERATOR-QUALIFICATION.md).
+
 Earlier component checkpoints below are retained historical evidence.
 
 Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local

@@ -2,3 +2,21 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_device_ids.bzl", "bsd_device_ids_header")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The original kmod recipe generates these from the versioned NVRAM map.
+# Native AWK, its runtime and the input map are declared execution inputs.
+bsd_device_ids_header(name = "nvram_map_header", src = "nvram_map",
+    generator = "//sys/dev/bhnd/tools:nvram_map_gen.awk",
+    header = "bhnd_nvram_map.h", arguments = ["-h"], mnemonic = "BSDBhndNvramHeader",
+    visibility = ["//visibility:public"])
+bsd_device_ids_header(name = "nvram_map_data_header", src = "nvram_map",
+    generator = "//sys/dev/bhnd/tools:nvram_map_gen.awk",
+    header = "bhnd_nvram_map_data.h", arguments = ["-d"], mnemonic = "BSDBhndNvramData",
+    visibility = ["//visibility:public"])
+cc_library(name = "nvram_map_headers", hdrs = [":nvram_map_header"],
+    strip_include_prefix = "nvram_map_header.generated", visibility = ["//visibility:public"])
+cc_library(name = "nvram_map_data_headers", hdrs = [":nvram_map_data_header"],
+    strip_include_prefix = "nvram_map_data_header.generated", visibility = ["//visibility:public"])
