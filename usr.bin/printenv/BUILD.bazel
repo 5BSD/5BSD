@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
-cc_binary(name = "printenv", srcs = ["printenv.c"], deps = ["//lib/libcapsicum:headers"], copts = ["-fPIE"], linkopts = ["-pie"],
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+# Original Make PIE/PIC macro, C17 and ordered warning policy.
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_objects")
+cc_library(name = "objects", srcs = ["printenv.c"], deps = ["//lib/libcapsicum:headers"],
+    local_defines = ["PIC"], copts = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments', '-fPIE'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_objects(name = "compiler_outputs", group = ":objects", pic = False, visibility = ["//visibility:public"])
+cc_binary(name = "printenv", srcs = [":compiler_outputs"], linkopts = ["-pie"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 utility_installation(name = "install_manifest", program = "printenv", manual = "printenv.1", package = "utilities")
@@ -10,6 +16,7 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_archive(
     name = "install_archive",
     manifests = [":install_manifest"],
+    directories = {p: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=utilities", "dbg"]}) for p in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/bin"]},
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",
@@ -24,3 +31,14 @@ bsd_install_archive(
     python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
 )
+
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive_set")
+bsd_install_archive_set(name = "installation_archives", archives = [":install_archive"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//usr.bin/printenv/tests:install_archive"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
+filegroup(name = "all_products", srcs = [":printenv"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//usr.bin/printenv/tests:products"],
+    "//conditions:default": [],
+}), visibility = ["//visibility:public"])
+test_suite(name = "tests", tests = ["//usr.bin/printenv/tests:tests"], visibility = ["//visibility:public"])

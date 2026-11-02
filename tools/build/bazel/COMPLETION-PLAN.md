@@ -90,14 +90,25 @@ coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime an
 hardware behavior remain open. See
 [HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
 
-The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
-without one. These are source-coverage counts, not qualified builds.
+At the HID checkpoint, the 729-leaf amd64 selection had 314 local BUILD files
+and 415 leaves without one; these were source-coverage counts only.
 
 Module export tests enforce explicit ELF bindings; the source loader defaults permit
 local-symbol lookup for compatibility. Earlier claims that local-only findings
 necessarily caused default load failures are withdrawn. Explicit exports remain;
 actual VM loading under both settings is still required. See
 [MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
+
+Four crypto modules now pass 80 actual compiler/input and four ordered-link audits,
+untouched Make plain/CTF-debug comparisons and twelve install records. Assembly,
+fifteen custom SIMD compilations and 820 explicit SDK header occurrences are covered;
+48 prior HID artifacts remain byte-identical and all six provider regressions pass
+in both profiles. Existing OpenCrypto SDT descriptor/relocation sections match Make.
+Crypto runtime/known-answer/performance gates remain open. See
+[CRYPTO-MODULES-QUALIFICATION.md](CRYPTO-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 318 local BUILD files and 411 leaves
+without one. These are source-coverage counts, not qualified builds.
 
 Earlier component checkpoints below are retained historical evidence.
 
@@ -638,3 +649,87 @@ See LLDB-FAMILY-QUALIFICATION.md. Next: reconcile actual selected product/action
 and aggregate coverage. sbin/mount_virtiofs already has a native graph and
 October 26 component evidence; later recursive selection is not a missing-native
 proof. Full world/bootstrap/package ownership and debugger execution remain open.
+
+
+### printenv selected original test/package gap (2026-11-02)
+
+The selected printenv program/test graph now preserves actual Make PIC/warning
+policy, all four original cases and separate utility/debug/test installation
+contexts. Native default and TESTS-off products match eight/five Make records;
+object/program allocated sections and all 73 consumed dependency occurrences
+agree. Legal non-shell environment names exposed an original shell-variable
+oracle defect, corrected by a complete-byte comparison to native env with no
+filtering. A missing ATF tr dependency was caught after green XML and fixed
+before qualification. See PRINTENV-QUALIFICATION.md. This bounded completion
+adds no full-world, cross-architecture or final-package completion claim.
+
+## I2C/SMBus module milestone (2026-11-02)
+
+Qualified 39 selected amd64 GENERIC leaves spanning controllers, buses, devices
+and muxes: 51 actual compiles/5,089 original consumed prerequisite occurrences,
+39 ordered initial links and 117 plain/CTF-debug installation records. All plain
+artifacts are exact respective Make references: 37 untouched originals plus two
+independent canonical-filename controls whose four actual recipes differ only
+by one explicit map and whose 382 prerequisites agree. Existing SDT sections
+and relocations are exact. No runtime/Make/helper/CLI policy changed. See
+I2C-MODULES-QUALIFICATION.md. Discovery coverage is 357/729 local BUILD leaves,
+not a qualified percentage; 372 still lack local BUILD declarations in this
+selection. Remaining configurations, architectures, actual bus/controller/input/
+RTC/sensor behavior, aggregate world/pkgbase/bootstrap, VM and performance gates
+remain open. The six existing family provider regressions passing each profile
+are regression evidence, not I2C hardware execution or strict-loader proof.
+
+## Sound module milestone (2026-11-02)
+
+Closed the ten remaining local-BUILD gaps in the reviewed selected amd64 sound
+subtree: forty actual compiler actions, 6,239 original consumed prerequisites,
+ten ordered initial links and thirty plain/CTF-debug installation records pass.
+All ten plain modules match untouched Make byte for byte; CTF/debug and compiled
+PCM SDT sections/relocations match the stated contracts. Seven KOBJ and three
+existing AWK header producers remain native and declared. An initial duplicate
+computed-name header view was rejected before compilation, then corrected to
+reuse the existing providers. See SOUND-MODULES-QUALIFICATION.md.
+
+Discovery now observes 367/729 local BUILD leaves, with 362 still missing in this
+selection. This count neither qualifies every existing declaration nor replaces
+full-world/cross-architecture/module/pkgbase/bootstrap/publication gates. Audio
+playback/capture/MIDI/mixer, hotplug/error paths, live probes, hardware and
+CPU/memory/disk I/O/disk-use/cache/sandbox performance remain open. Make stays
+production/default; BIP remains excluded.
+
+
+### Internal rescue replacements (2026-11-02)
+
+Native librescue now preserves seven regular/seven PIE own objects, both internal
+archive products, Make's no-install contract and direct-object consumer interface.
+Two independent configurations match object payloads/relocations/symbols and
+1,694 consumed dependency occurrences. This closes the bounded internal library
+product gap, not full rescue: crunchgen generation, all crunched application
+variants, static linking, aliases/scripts/install and safe/guest runtime gates
+remain. HESIOD-enabled SDK/header preparation is an explicit configuration gate.
+See LIBRESCUE-QUALIFICATION.md.
+
+## USB cohort milestone and genuine Make fix (2026-11-02)
+
+Qualified 63 remaining selected amd64 USB leaves: 99 ordinary compile contexts
+and four firmware compile contexts, 13,412 consumed prerequisite occurrences,
+63 ordered initial links and 189 plain/CTF-debug file-install records pass. All
+plain files match respective Make references: 62 untouched originals plus fresh
+corrected i2ctinyusb. Its real duplicated SRCS/OBJS produced duplicate module
+registration/sysinit; original compiler argv is unchanged and corrected Make/
+native each have one entry. Old artifacts/failures are retained.
+
+Firmware blobs and registration C are produced by declared native uudecode/AWK
+actions; original firmw.S uses explicit cc_library additional_compiler_inputs
+for .incbin payloads, then the existing object-alias rule preserves .fwo names.
+Twenty previous sound artifacts remain byte-identical with the helper default.
+Actual successful partial-run compilers reused by the accepted retry are bound
+from original logs, not invented cache spawns. See
+USB-REMAINING-MODULES-QUALIFICATION.md for exact evidence and retained failures.
+
+Discovery now observes 430/729 local BUILD leaves, leaving 299 missing in this
+selection. Existing BUILD presence is not a qualified percentage. USB device/
+controller/WLAN/storage/input/video/serial/gadget and firmware runtime, live
+probes/audit, cross/KERNCONF/FDT and aggregate world/pkgbase/bootstrap/publication
+gates remain open, along with CPU/memory/disk I/O/disk-use/cache/sandbox checks.
+Make stays production/default; BIP remains excluded.

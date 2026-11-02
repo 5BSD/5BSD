@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_atf.bzl", "bsd_atf_test")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_script_wrapper")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_kyuafile")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+_CASES = ["basic", "add_delete_env", "multi", "stdout"]
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_TOOLS = ["//bin/sh:sh", "//libexec/atf/atf-sh:atf-sh", "//libexec/atf/atf-check:atf-check", "//usr.bin/printenv:printenv", "//usr.bin/env:env", "//bin/date:date", "//usr.bin/mkfifo:mkfifo", "//bin/cat:cat", "//usr.bin/dirname:dirname", "//usr.bin/basename:basename", "//usr.bin/grep:grep", "//usr.bin/sed:sed", "//usr.bin/diff:diff", "//usr.bin/tr:tr", "//bin/rm:rm", "//bin/test:test"]
+_RUNTIME = ["//lib/atf/libatf-c:atf_c_shared", "//lib/atf/libatf-c++:atf_cxx_shared", "//lib/libc++:cxx_shared", "//lib/libcxxrt:cxxrt_shared", "//lib/msun:m_shared", "//lib/libedit:edit_shared", "//lib/ncurses/tinfo:tinfo_shared", "//lib/libc:c_shared", "//lib/libsys:sys_shared", "@bsd_sdk//toolchain:sysroot/lib/libgcc_s.so.1", "//lib/libutil:util_shared", "//lib/libkvm:kvm_shared", "//lib/libelf:elf_shared", "//lib/libjail:jail_shared", "//lib/libregex:regex_shared", "//lib/libmd:md_shared", "//lib/libxo/libxo:xo_shared", "//lib/libnv:nv_shared", "//lib/libcasper/libcasper:casper_shared", "//lib/libcasper/services/cap_fileargs:cap_fileargs_shared", "//lib/libz:z_shared"]
+[bsd_atf_test(name = "native_" + case, case_name = case, body = "printenv_test.sh",
+    subr = "//libexec/atf/atf-sh:shell_library", runtime_bin = _TOOLS, runtime_lib = _RUNTIME,
+    test_environment = {"DTRACE_DOF_INIT_DISABLE": "1"}, body_timeout_seconds = 300,
+    runner = "//tools/build/bazel:atf_runner", size = "small", timeout = "long",
+    target_compatible_with = _PLATFORM + select({"//tools/build/bazel/config:tests_enabled": [], "//conditions:default": ["@platforms//:incompatible"]}),
+) for case in _CASES]
+test_suite(name = "tests", tests = [":native_" + case for case in _CASES], visibility = ["//usr.bin/printenv:__pkg__"])
+bsd_script_wrapper(name = "printenv_test", body = "printenv_test.sh", interpreter = "/usr/libexec/atf-sh",
+    cat = "@bsd_sdk//toolchain:cat", cat_runtime = ["@bsd_sdk//toolchain:cat_runtime"], redirect = "@bsd_sdk//toolchain:stdout_redirect")
+bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ["printenv_test"], interfaces = {"printenv_test": "atf"})
+filegroup(name = "products", srcs = [":printenv_test", ":kyuafile"], visibility = ["//usr.bin/printenv:__pkg__"])
+bsd_install_file(name = "install_script", src = ":printenv_test", destination = "/usr/tests/usr.bin/printenv/printenv_test",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=tests"])
+bsd_install_file(name = "install_kyuafile", src = ":kyuafile", destination = "/usr/tests/usr.bin/printenv/Kyuafile",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=tests"])
+bsd_install_manifest(name = "install_manifest", entries = [":install_script", ":install_kyuafile"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {"/usr/tests/usr.bin/printenv": json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]})},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", mtree = "@bsd_sdk//toolchain:extra_mtree", epoch = 0,
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"],
+    visibility = ["//usr.bin/printenv:__pkg__"])

@@ -10095,3 +10095,88 @@ do not emulate that runtime compatibility behavior. VM tests must record both
 leak_locals settings and qualify default/disabled lookup, dependency metadata,
 built-in providers, load/unload, probe registration and live event delivery.
 No kernel policy or host sysctl changed. See MODULE-LOADER-EXPORT-CONTRACT.md.
+
+
+### Crypto/accelerator module family (2026-11-02)
+
+Seventy-seven physical C sources, two assembly sources and one interface schema
+pass native artifact/input qualification. The bounded source scan has 39 matching
+SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR lines, retained with source hashes. Actual
+OpenCrypto SDT provider/probe/argument/tracepoint sections and relocations match
+Make exactly. This is compiled preservation, not live registration or event delivery.
+Review session/dispatch/completion/error events, hardware/FPU ownership, CPU dispatch
+and fallback, key-buffer cleanup and audit semantics without exposing secrets.
+All module export policies remain original; local-symbol fallback and strict ELF
+contract distinctions still apply. No live crypto device/session was exercised.
+See CRYPTO-MODULES-QUALIFICATION.md for exact input/artifact scope and remaining gates.
+
+
+### printenv and original environment tests (2026-11-02)
+
+Printenv source has no direct tracing/audit probe declarations; its existing
+Capsicum stdio restriction and capmode entry remain unchanged. The native
+object/program allocated payloads match Make exactly, preserving error and
+streaming behavior. Four original ATF cases pass using declared runtime tools,
+with DTRACE_DOF_INIT_DISABLE=1 before process startup. No live tracing,
+registration, debugger or host configuration operation was performed. Test
+closure and retained failure details are in PRINTENV-QUALIFICATION.md.
+
+## I2C/SMBus module review (2026-11-02)
+
+The bounded scan of 47 physical C sources and four KOBJ schemas records eleven
+existing SDT declarations/calls in iiconf.c: iicbus provider, acquire start/done
+and transfer start/done. Actual plain iicbus provider/probe/argument/tracepoint
+sections and relocations match original Make exactly; live registration/event
+delivery remains open. Evidence: bazel-i2c-modules-review-r1-20261102 under
+/usr/obj/usr/src; see I2C-MODULES-QUALIFICATION.md.
+
+Keep per-controller/device gaps on the audit queue: transaction submission/
+completion, arbitration/locking/contention, timeout/NACK/retry, mux selection,
+interrupt/polling/DMA ownership and hotplug/error cleanup. User-visible EEPROM/
+RTC/GPIO writes and sensor/input access also need security/audit review; do not
+assume every raw bus transaction should be audited or expose payload secrets.
+Static preservation proves neither hardware coverage nor comprehensive probes.
+
+## Sound module review (2026-11-02)
+
+The scan of 33 physical C sources and seven KOBJ schemas retains twelve existing
+PCM source marker matches: drain start/done, xrun, trigger, buffer-wait start/done
+and their declarations. Actual plain sound provider/probe/argument/tracepoint
+sections and relocations match untouched Make exactly. Review evidence is under
+/usr/obj/usr/src/bazel-sound-modules-review-r1-20261102; see
+SOUND-MODULES-QUALIFICATION.md. Registration and event delivery remain open.
+
+Keep controller/device observability gaps on the queue: DMA/interrupt ownership,
+stream submit/complete, channel/mixer transitions, underrun/overrun and latency,
+USB hotplug, device detach/error cleanup, MIDI and access-control/audit review.
+Avoid sample/audio payloads in telemetry. Compile-time preservation is not
+comprehensive probe coverage, live delivery or a real-time performance result.
+
+
+### Internal rescue replacements (2026-11-02)
+
+The seven rescue replacement sources include login_class's logincap probe wrapper;
+original librescue Make recipes omit WITH_DTRACE, so the native variants preserve
+that disabled-probe compilation policy. Both checked configurations have exact
+object allocated payloads, runtime relocations and symbol records. No credential,
+login/session, exec/system/popen, sysctl or shell-list function was executed.
+Future rescue runtime/error and audit coverage remains open; see
+LIBRESCUE-QUALIFICATION.md.
+
+## Remaining selected USB cohort (2026-11-02)
+
+The bounded source scan records 23 marker matches over 97 physical C files,
+firmw.S, usb_if.m and fw_stub.awk. Actual SDT provider/probe/argument/tracepoint
+sections and relocations match respective Make references in cp2112, if_mtw,
+if_run, if_uath, udbp, if_ural, if_urtw, usb and if_zyd. Evidence is under
+/usr/obj/usr/src/bazel-usb-remaining-modules-review-r1-20261102; see
+USB-REMAINING-MODULES-QUALIFICATION.md. Static preservation does not establish
+registration, event delivery or complete instrumentation.
+
+Keep USB runtime coverage on the queue: enumerate/reset/detach/hotplug, transfer
+submit/complete/cancel, controller DMA/interrupt ownership, contention/timeouts,
+HID/serial/storage/video/WLAN/gadget state and firmware registration/unregistration
+failures. Review access-control/audit paths and firmware provenance/version,
+without logging device data, input reports or packet payload secrets. Actual
+i2ctinyusb duplicate sysinit/metadata was corrected and checked statically in
+both variants; runtime controller attach/error cleanup still needs qualification.

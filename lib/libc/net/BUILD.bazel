@@ -96,3 +96,6 @@ bsd_install_manifest(name = "config_manifest", entries = [":config_" + n for n i
     ('libc_manual_sctp_send.3', 'sctp_send.3'),
     ('libc_manual_sctp_sendmsg.3', 'sctp_sendmsg.3'),
 ]]
+
+# Original rescue replacement compilation; own source files remain here.
+exports_files(["rcmdsh.c"], visibility = ["//rescue/librescue:__pkg__"])

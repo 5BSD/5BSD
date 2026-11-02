@@ -18,21 +18,21 @@ def amd64_generic_module(module, objects, exports = [], export_all = False, pack
         export_all = export_all, package = package, object_order = object_order,
         script = "//sys/conf:ldscript.kmod.amd64", emulation = "elf_x86_64_fbsd")
 
-def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = []):
+def amd64_generic_module_objects(srcs, deps = [], name = "generic_module", copts = [], textual_hdrs = [], header_overrides = [], warning_flags = None, preinclude_headers = [], local_defines = [], additional_compiler_inputs = []):
     """Compile a source group; explicit compatibility headers precede native headers."""
     # Preserve forced compatibility headers before the ordinary opt_global.h input.
     textual_hdrs = preinclude_headers + textual_hdrs
     preinclude_flags = [flag for header in preinclude_headers for flag in ["-include", "$(execpath " + header + ")"]]
     cc_library(name = name + "_objects", srcs = srcs, textual_hdrs = textual_hdrs,
         # rules_cc permits execpath expansion in copts for these inputs.
-        additional_compiler_inputs = textual_hdrs,
+        additional_compiler_inputs = textual_hdrs + additional_compiler_inputs,
         deps = header_overrides + AMD64_KERNEL_HEADER_DEPS + deps + ["//sys/kern:generic_offset_header", "//sys/kern:vnode_headers"],
         copts = preinclude_flags + [flag for flag in AMD64_KERNEL_FLAGS if flag != "-fcommon"] + ["-fno-common"] + (AMD64_KERNEL_WARNING_FLAGS if warning_flags == None else warning_flags) + AMD64_KERNEL_DEBUG_FLAGS +
             # Inline code in declared transitive headers also embeds __FILE__.
             # Use the same canonical source paths as the individual sources.
             ["-fmacro-prefix-map=sys/=/usr/src/sys/", "-fdebug-prefix-map=sys/=/usr/src/sys/"] +
             [mapping for source in srcs + textual_hdrs for mapping in module_source_path_maps(source)] + copts,
-        local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"],
+        local_defines = ["_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"] + local_defines,
         target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
     bsd_ctf_library(name = name + "_ctf", library = ":" + name + "_objects",
         converter = "//cddl/usr.bin/ctfconvert:ctfconvert",

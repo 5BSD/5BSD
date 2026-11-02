@@ -88,14 +88,25 @@ coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime an
 hardware behavior remain open. See
 [HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
 
-The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
-without one. These are source-coverage counts, not qualified builds.
+At the HID checkpoint, the 729-leaf amd64 selection had 314 local BUILD files
+and 415 leaves without one; these were source-coverage counts only.
 
 Module export tests enforce explicit ELF bindings; the source loader defaults permit
 local-symbol lookup for compatibility. Earlier claims that local-only findings
 necessarily caused default load failures are withdrawn. Explicit exports remain;
 actual VM loading under both settings is still required. See
 [MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
+
+Four crypto modules now pass 80 actual compiler/input and four ordered-link audits,
+untouched Make plain/CTF-debug comparisons and twelve install records. Assembly,
+fifteen custom SIMD compilations and 820 explicit SDK header occurrences are covered;
+48 prior HID artifacts remain byte-identical and all six provider regressions pass
+in both profiles. Existing OpenCrypto SDT descriptor/relocation sections match Make.
+Crypto runtime/known-answer/performance gates remain open. See
+[CRYPTO-MODULES-QUALIFICATION.md](CRYPTO-MODULES-QUALIFICATION.md).
+
+The current 729-leaf amd64 selection has 318 local BUILD files and 411 leaves
+without one. These are source-coverage counts, not qualified builds.
 
 Earlier component checkpoints below are retained historical evidence.
 
@@ -47788,3 +47799,57 @@ LLDB-off selects no payloads and explicitly requesting its disabled tests is
 rejected before execution. Original parent controls and fresh recursive Make
 inventory are documented in [LLDB-FAMILY-QUALIFICATION.md](LLDB-FAMILY-QUALIFICATION.md).
 World observations total 2,128 directories; they are not compiled coverage.
+
+
+## printenv program and original test installation (2026-11-02)
+
+Printenv now preserves its actual Make compiler policy and selected test/package
+installation graph. All four original ATF cases pass with declared native
+runtime tools; default eight and TESTS-off five installation records match Make.
+The object/program allocated payloads match exactly. The focused environment
+oracle portability correction, retained initial failures and runtime limits are
+recorded in [PRINTENV-QUALIFICATION.md](PRINTENV-QUALIFICATION.md).
+
+## I2C/SMBus selected module family (2026-11-02)
+
+All 39 selected amd64 GENERIC I2C subtree leaves now use native module rules.
+Their 51 objects, consumed inputs, ordered links, CTF/debug contents and 117
+installation records pass independent Make comparisons. Thirty-seven plain
+modules match untouched Make byte for byte; two match explicitly documented
+filename-policy controls. Existing IIC bus SDT sections/relocations are preserved.
+See [I2C-MODULES-QUALIFICATION.md](I2C-MODULES-QUALIFICATION.md) for exact evidence
+and configuration/hardware/runtime limits. Local BUILD presence is now 357 of
+729 reviewed amd64 selected leaves; presence is not complete qualification.
+
+## Remaining selected sound module declarations (2026-11-02)
+
+Ten selected amd64 GENERIC sound leaves now build through native Bazel rules,
+including core PCM/MIDI, HDA, USB audio and HDSP drivers. All forty actual compile
+actions and 6,239 consumed dependency occurrences pass review; ten plain modules
+match untouched Make byte for byte. CTF/debug contents and thirty installation
+records pass. See [SOUND-MODULES-QUALIFICATION.md](SOUND-MODULES-QUALIFICATION.md)
+for the corrected initial header-view collision and runtime/configuration limits.
+Local BUILD presence is 367/729 selected amd64 leaves, not full qualification.
+
+
+## Internal rescue replacement objects (2026-11-02)
+
+The seven-source internal librescue product now builds as fourteen regular/PIE
+objects and two own-object archives. Default and INET6-off/NIS-on controls match
+original Make allocated payloads, runtime relocations, symbols, archive member
+order/allocated payloads and 1,694 consumed dependency occurrences. No installed archive is
+invented; the full crunchgen rescue executable remains open. See
+[LIBRESCUE-QUALIFICATION.md](LIBRESCUE-QUALIFICATION.md), including the separate
+HESIOD-enabled SDK prerequisite and preserved initial policy rejection.
+
+## Remaining selected USB modules and firmware (2026-11-02)
+
+Closed 63 selected amd64 GENERIC USB local-BUILD gaps, including core/controllers,
+device drivers, gadgets and two firmware modules. All 63 plain modules match
+respective Make references byte for byte; CTF/debug, actual input/link and 189
+installation-record comparisons pass. An actual duplicate i2ctinyusb Make source
+was fixed, removing duplicate driver metadata/sysinit entries. Firmware decode,
+registration and .incbin inputs are native and declared. See
+[USB-REMAINING-MODULES-QUALIFICATION.md](USB-REMAINING-MODULES-QUALIFICATION.md).
+Local BUILD presence is 430/729 reviewed selected amd64 leaves, not full
+qualification. Hardware/runtime, other architectures and aggregate gates remain.

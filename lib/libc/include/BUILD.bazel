@@ -50,3 +50,9 @@ cc_library(name = "rtld_errlst_header", hdrs = ["errlst.h"], strip_include_prefi
 
 cc_library(name = "dl_private_headers", hdrs = ["namespace.h", "un-namespace.h", "libc_private.h", "reentrant.h"],
     strip_include_prefix = ".", deps = ["//lib/libsys:headers"], visibility = ["//lib/libdl:__pkg__"])
+
+# The internal rescue library recompiles libc entries without stack protection.
+cc_library(name = "rescue_headers",
+    hdrs = ["namespace.h", "un-namespace.h", "libc_private.h", "spinlock.h"],
+    strip_include_prefix = ".", deps = ["//lib/libsys:headers"],
+    visibility = ["//rescue/librescue:__pkg__"])

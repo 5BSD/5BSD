@@ -2,3 +2,35 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "i2c_module_context_0", hdrs = ["iicmux.h"], includes = [],
+    visibility = ["//sys/dev/iicbus/mux:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "iicmux_if_module_header", srcs = [":iicmux_if"], output_group = "header")
+cc_library(name = "iicmux_if_headers", hdrs = [":iicmux_if_module_header"], strip_include_prefix = "iicmux_if.generated", visibility = ["//sys/dev/iicbus/mux:__pkg__"])
+
+filegroup(name = "iicmux_if_module_source", srcs = [":iicmux_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "iicmux_iicmux_module", srcs = ["iicmux.c"],
+    deps = ["//sys/dev/iicbus:gpio_module_context_0", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "iicmux_iicmux_if_module", srcs = [":iicmux_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :iicmux_if_module_source)=iicmux_if.c", "-fdebug-prefix-map=$(execpath :iicmux_if_module_source)=iicmux_if.c"])
+
+amd64_generic_module_objects(name = "ltc430x_ltc430x_module", srcs = ["ltc430x.c"],
+    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "pca954x_pca954x_module", srcs = ["pca954x.c"],
+    deps = ["//sys/dev/iicbus:linuxkpi_kernel_linux_i2c_headers", "//sys/dev/iicbus/mux:i2c_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/iicbus:iicbus_if_headers", "//sys/dev/iicbus/mux:iicmux_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

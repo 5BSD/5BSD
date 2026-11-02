@@ -29,7 +29,7 @@ exports_files(["sha1.c"], visibility = ["//sys/netgraph:__pkg__", "//sys/netinet
 # IPv4 built-in prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha1.h"],
-    visibility = ["//sys/netinet:__pkg__"])
+    visibility = ["//sys/netinet:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__"])
 
 # Network built-in prerequisites.
 bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["sha1.h"],
@@ -161,4 +161,149 @@ amd64_generic_kernel_objects(name = "generic_simd_crypto_intel_sha256", srcs = [
 load("//tools/build/bazel:bsd_sdk_headers.bzl", "bsd_sdk_headers")
 config_setting(name = "simd_crypto_optimized", values = {"compilation_mode": "opt"})
 # Compiler resource headers and the explicit SDK SSP availability dependency.
-bsd_sdk_headers(name = "simd_crypto_sdk_headers", system_headers = ["ssp/ssp.h"])
+bsd_sdk_headers(name = "simd_crypto_sdk_headers", system_headers = ["ssp/ssp.h"], visibility = ["//sys/crypto:__pkg__", "//sys/contrib/libb2:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_5", hdrs = ["blake2/blake2_kfreebsd.h", "blake2/stddef.h", "blake2/stdint.h", "blake2/stdio.h"], includes = ["blake2"],
+    visibility = ["//sys/contrib/libb2:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_6", hdrs = ["blake2/blake2_kfreebsd.h", "blake2/config.h", "blake2/stddef.h", "blake2/stdint.h", "blake2/stdio.h", "blake2/stdlib.h", "blake2/string.h"], includes = ["blake2"],
+    visibility = ["//sys/contrib/libb2:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_7", hdrs = ["blake2/blake2_kfreebsd.h", "blake2/stddef.h", "blake2/stdint.h"], includes = ["blake2"],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_8", hdrs = ["ccp/ccp.h", "ccp/ccp_hardware.h", "sha1.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_9", hdrs = ["ccp/ccp.h", "ccp/ccp_hardware.h", "ccp/ccp_lsb.h", "sha1.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_10", hdrs = ["ccp/ccp.h", "ccp/ccp_lsb.h", "sha1.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_13", hdrs = ["des/des.h", "des/des_locl.h", "des/spr.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_14", hdrs = ["des/des.h", "des/des_locl.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_15", hdrs = ["des/des.h", "des/des_locl.h", "des/podd.h", "des/sk.h"], includes = [],
+    visibility = ["//sys/crypto:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "aesni_aesni_ghash_module", srcs = ["aesni/aesni_ghash.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ghash_headers", "//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-error=cast-qual", "-Werror"], copts = ["-mmmx", "-msse", "-msse4", "-maes", "-mpclmul", "-O3"], local_defines = [])
+
+amd64_generic_module_objects(name = "aesni_aesni_wrap_module", srcs = ["aesni/aesni_wrap.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ccm_headers", "//sys/opencrypto:codecs_crypto_kernel_aesni_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-error=cast-qual", "-Werror"], copts = ["-mmmx", "-msse", "-msse4", "-maes", "-O3"], local_defines = [])
+
+amd64_generic_module_objects(name = "aesni_aesni_ccm_module", srcs = ["aesni/aesni_ccm.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_aesni_ccm_headers", "//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Werror"], copts = ["-mmmx", "-msse", "-msse4", "-maes", "-mpclmul", "-O3"], local_defines = [])
+
+amd64_generic_module_objects(name = "aesni_intel_sha1_module", srcs = ["aesni/intel_sha1.c", "aesni/intel_sha256.c"],
+    deps = ["//sys/crypto:simd_crypto_kernel_intel_sha1_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Werror"], copts = ["-mmmx", "-msse", "-msse4", "-msha", "-O3"], local_defines = [])
+
+amd64_generic_module_objects(name = "aesni_aesni_module", srcs = ["aesni/aesni.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/crypto:codecs_crypto_kernel_aesni_headers", "//sys/opencrypto:codecs_crypto_kernel_aesni_headers", "//sys/crypto/sha2:codecs_crypto_kernel_aesni_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "aesni_aeskeys_amd64_module", srcs = ["aesni/aeskeys_amd64.S"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "blake2_blake2b-sse2_module", srcs = ["blake2/blake2b-sse2.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_0", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-msse2"], local_defines = ["SUFFIX=_sse2", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2b-ssse3_module", srcs = ["blake2/blake2b-ssse3.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_0", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse2", "-mssse3"], local_defines = ["SUFFIX=_ssse3", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2b-sse41_module", srcs = ["blake2/blake2b-sse41.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_1", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-msse2", "-mssse3", "-msse4.1"], local_defines = ["SUFFIX=_sse41", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2b-avx_module", srcs = ["blake2/blake2b-avx.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_1", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-mavx", "-msse2", "-mssse3", "-msse4.1", "-mavx"], local_defines = ["SUFFIX=_avx", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2b-xop_module", srcs = ["blake2/blake2b-xop.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_1", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-mavx", "-mxop", "-msse2", "-mssse3", "-msse4.1", "-mavx", "-mxop"], local_defines = ["SUFFIX=_xop", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2s-sse2_module", srcs = ["blake2/blake2s-sse2.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_2", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-msse2"], local_defines = ["SUFFIX=_sse2", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2s-ssse3_module", srcs = ["blake2/blake2s-ssse3.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_2", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse2", "-mssse3"], local_defines = ["SUFFIX=_ssse3", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2s-sse41_module", srcs = ["blake2/blake2s-sse41.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_3", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-msse2", "-mssse3", "-msse4.1"], local_defines = ["SUFFIX=_sse41", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2s-avx_module", srcs = ["blake2/blake2s-avx.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_3", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-mavx", "-msse2", "-mssse3", "-msse4.1", "-mavx"], local_defines = ["SUFFIX=_avx", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2s-xop_module", srcs = ["blake2/blake2s-xop.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_4", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:simd_crypto_sdk_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Werror", "-Wno-unused-function"], copts = ["-msse2", "-mssse3", "-msse4.1", "-mavx", "-mxop", "-msse2", "-mssse3", "-msse4.1", "-mavx", "-mxop"], local_defines = ["SUFFIX=_xop", "_MM_MALLOC_H_INCLUDED"])
+
+amd64_generic_module_objects(name = "blake2_blake2_cryptodev_module", srcs = ["blake2/blake2_cryptodev.c"],
+    deps = ["//sys/contrib/libb2:crypto_module_context_5", "//sys/crypto:crypto_module_context_7", "//sys/opencrypto:opencrypto_kernel_criov_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual"], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ccp_ccp_module", srcs = ["ccp/ccp.c"],
+    deps = ["//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/dev/random:codecs_crypto_kernel_random_infra_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:crypto_module_context_8", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ccp_ccp_hardware_module", srcs = ["ccp/ccp_hardware.c"],
+    deps = ["//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:crypto_module_context_9", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/opencrypto:cryptodev_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "ccp_ccp_lsb_module", srcs = ["ccp/ccp_lsb.c"],
+    deps = ["//sys/opencrypto:opencrypto_kernel_cryptosoft_headers", "//sys/crypto:crypto_module_context_10", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "crypto_des_ecb_module", srcs = ["des/des_ecb.c"],
+    deps = ["//sys/crypto:crypto_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_des_enc_module", srcs = ["des/des_enc.c"],
+    deps = ["//sys/crypto:crypto_module_context_14"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_des_setkey_module", srcs = ["des/des_setkey.c"],
+    deps = ["//sys/crypto:crypto_module_context_15"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_sha1_module", srcs = ["sha1.c"],
+    deps = ["//sys/crypto:ipv4_kernel_sctp_crc32_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_blake2-sw_module", srcs = ["blake2/blake2-sw.c"],
+    deps = ["//sys/contrib/libb2:codecs_crypto_kernel_blake2-sw_headers", "//sys/crypto:codecs_crypto_kernel_blake2-sw_headers", "//sys/opencrypto:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/sha2:opencrypto_kernel_cbc_mac_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_chacha20_poly1305_module", srcs = ["chacha20_poly1305.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_chacha20_poly1305_headers", "//sys/opencrypto:opencrypto_kernel_xform_aes_cbc_headers", "//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/crypto/camellia:opencrypto_kernel_crypto_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_randombytes_module", srcs = ["libsodium/randombytes.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_randombytes_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_utils_module", srcs = ["libsodium/utils.c"],
+    deps = ["//sys/contrib/libsodium:codecs_crypto_kernel_utils_headers", "//sys/crypto:codecs_crypto_kernel_scalarmult_curve25519_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_curve25519_module", srcs = ["curve25519.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_curve25519_headers", "//sys/contrib/libsodium:codecs_crypto_kernel_curve25519_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])

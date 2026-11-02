@@ -8,3 +8,8 @@ exports_files(["controller/nvmft_subr.c"], visibility = ["//lib/libnvmf:__pkg__"
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['nvmf.h', 'nvmf_proto.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["nvmf.h", "nvmf_proto.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])

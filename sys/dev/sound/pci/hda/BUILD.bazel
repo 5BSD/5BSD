@@ -42,3 +42,32 @@ filegroup(name = "builtin_hdac_if_source", srcs = [":hdac_if"], output_group = "
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_hdac_if", srcs = [":builtin_hdac_if_source"],
     deps = ["//sys/dev/sound/pci/hda:kobj_builtins_kernel_hdac_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "hdac_if_module_header", srcs = [":hdac_if"], output_group = "header")
+cc_library(name = "hdac_if_headers", hdrs = [":hdac_if_module_header"], strip_include_prefix = "hdac_if.generated", visibility = ["//sys/dev/sound/pci/hda:__pkg__"])
+
+filegroup(name = "hdac_if_module_source", srcs = [":hdac_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "snd_hda_hdaa_module", srcs = ["hdaa.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/pci/hda:device_io_kernel_hdaa_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pci/hda:hdac_if_headers", "//sys/dev/sound/pcm:mixer_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "snd_hda_hdaa_patches_module", srcs = ["hdaa_patches.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/pci/hda:device_io_kernel_hdaa_patches_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pci/hda:hdac_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "snd_hda_hdacc_module", srcs = ["hdacc.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/pci/hda:device_io_kernel_hdacc_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pci/hda:hdac_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "snd_hda_hdac_module", srcs = ["hdac.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/sound/pci/hda:device_io_kernel_hdac_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pci/hda:hdac_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "snd_hda_hdac_if_module", srcs = [":hdac_if_module_source"],
+    deps = ["//sys/dev/sound/pci/hda:hdac_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :hdac_if_module_source)=hdac_if.c", "-fdebug-prefix-map=$(execpath :hdac_if_module_source)=hdac_if.c"])

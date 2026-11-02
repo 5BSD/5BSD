@@ -10,7 +10,7 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 [cc_library(name = name + "_headers", hdrs = [":" + name + "_header_file"],
     strip_include_prefix = name + ".generated",
-    visibility = ["//sys/dev/virtio/sound:__pkg__"])
+    visibility = ["//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound/usb:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/virtio/sound:__pkg__"])
  for name in ["channel_if", "feeder_if", "mixer_if"]]
 
 cc_library(name = "virtio_snd_headers", hdrs = ["buffer.h", "channel.h", "dsp.h", "feeder.h", "matrix.h", "mixer.h", "sound.h"],
@@ -115,3 +115,91 @@ filegroup(name = "builtin_mixer_if_source", srcs = [":mixer_if"], output_group =
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_mixer_if", srcs = [":builtin_mixer_if_source"],
     deps = ["//sys/dev/sound/pcm:kobj_builtins_physical_ac97_if_headers", "//sys/vm:kobj_builtins_physical_ac97_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/dev/sound/pcm:kobj_builtins_kernel_channel_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/sound/pcm:kobj_builtins_kernel_mixer_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+
+
+
+
+
+
+filegroup(name = "ac97_if_module_header", srcs = [":ac97_if"], output_group = "header")
+cc_library(name = "ac97_if_headers", hdrs = [":ac97_if_module_header"], strip_include_prefix = "ac97_if.generated", visibility = ["//sys/dev/sound/pcm:__pkg__", "//sys/dev/sound:__pkg__"])
+
+
+
+
+filegroup(name = "ac97_if_module_source", srcs = [":ac97_if"], output_group = "source")
+
+filegroup(name = "channel_if_module_source", srcs = [":channel_if"], output_group = "source")
+
+filegroup(name = "feeder_if_module_source", srcs = [":feeder_if"], output_group = "source")
+
+filegroup(name = "mixer_if_module_source", srcs = [":mixer_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "sound_ac97_if_module", srcs = [":ac97_if_module_source"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/pcm:ac97_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :ac97_if_module_source)=ac97_if.c", "-fdebug-prefix-map=$(execpath :ac97_if_module_source)=ac97_if.c"])
+
+amd64_generic_module_objects(name = "sound_channel_if_module", srcs = [":channel_if_module_source"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :channel_if_module_source)=channel_if.c", "-fdebug-prefix-map=$(execpath :channel_if_module_source)=channel_if.c"])
+
+amd64_generic_module_objects(name = "sound_feeder_if_module", srcs = [":feeder_if_module_source"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :feeder_if_module_source)=feeder_if.c", "-fdebug-prefix-map=$(execpath :feeder_if_module_source)=feeder_if.c"])
+
+amd64_generic_module_objects(name = "sound_mixer_if_module", srcs = [":mixer_if_module_source"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:mixer_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :mixer_if_module_source)=mixer_if.c", "-fdebug-prefix-map=$(execpath :mixer_if_module_source)=mixer_if.c"])
+
+amd64_generic_module_objects(name = "sound_feeder_module", srcs = ["feeder.c", "feeder_chain.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_feeder_rate_module", srcs = ["feeder_rate.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_feeder_eq_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/tools/sound:feeder_rate_gen_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/tools/sound:snd_fxdiv_gen_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_feeder_volume_module", srcs = ["feeder_volume.c", "feeder_format.c", "feeder_matrix.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_feeder_eq_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/tools/sound:snd_fxdiv_gen_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_feeder_eq_module", srcs = ["feeder_eq.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_feeder_eq_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/tools/sound:feeder_eq_gen_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/tools/sound:snd_fxdiv_gen_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_feeder_mixer_module", srcs = ["feeder_mixer.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_feeder_mixer_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/tools/sound:snd_fxdiv_gen_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_ac97_module", srcs = ["ac97.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_ac97_headers", "//sys/vm:acpi_support_headers", "//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/dev/sound/pcm:ac97_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:mixer_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_buffer_module", srcs = ["buffer.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/tools/sound:snd_fxdiv_gen_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_channel_module", srcs = ["channel.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_channel_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_dsp_module", srcs = ["dsp.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_channel_headers", "//sys/vm:filesystems_rpc_kernel_cuse_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_mixer_module", srcs = ["mixer.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/dev/sound/pcm:mixer_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_sound_module", srcs = ["sound.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_sound_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound:device_io_kernel_sound_headers", "//sys/dev/sound/pcm:ac97_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_vchan_module", srcs = ["vchan.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_channel_headers", "//sys/vm:acpi_support_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

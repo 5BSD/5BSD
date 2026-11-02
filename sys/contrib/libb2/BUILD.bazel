@@ -27,3 +27,40 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_blake2b-ref", srcs = 
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_blake2s-ref", srcs = ["blake2s-ref.c"],
     deps = ["//sys/contrib/libb2:codecs_crypto_kernel_blake2b-ref_headers", "//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-DSUFFIX=_ref", "-Wno-cast-qual", "-Wno-unused-function"])
+
+bsd_source_headers(name = "crypto_module_context_0", hdrs = ["blake2-config.h", "blake2-impl.h", "blake2.h", "blake2b-load-sse2.h", "blake2b-round.h", "blake2b.c"], includes = ["."],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_1", hdrs = ["blake2-config.h", "blake2-impl.h", "blake2.h", "blake2b-load-sse41.h", "blake2b-round.h", "blake2b.c"], includes = ["."],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_2", hdrs = ["blake2-config.h", "blake2-impl.h", "blake2.h", "blake2s-load-sse2.h", "blake2s-round.h", "blake2s.c"], includes = ["."],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_3", hdrs = ["blake2-config.h", "blake2-impl.h", "blake2.h", "blake2s-load-sse41.h", "blake2s-round.h", "blake2s.c"], includes = ["."],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_4", hdrs = ["blake2-config.h", "blake2-impl.h", "blake2.h", "blake2s-load-xop.h", "blake2s-round.h", "blake2s.c"], includes = ["."],
+    visibility = ["//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_5", hdrs = ["blake2.h"], includes = ["."],
+    visibility = ["//sys/contrib/libb2:__pkg__", "//sys/crypto:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_6", hdrs = ["blake2-impl.h", "blake2.h"], includes = ["."],
+    visibility = ["//sys/contrib/libb2:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "blake2_blake2-dispatch_module", srcs = ["blake2-dispatch.c"],
+    deps = ["//sys/crypto:crypto_module_context_5", "//sys/contrib/libb2:crypto_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-unused-const-variable"], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "blake2_blake2bp_module", srcs = ["blake2bp.c", "blake2sp.c"],
+    deps = ["//sys/crypto:crypto_module_context_6", "//sys/contrib/libb2:crypto_module_context_6"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual"], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "crypto_blake2b-ref_module", srcs = ["blake2b-ref.c", "blake2s-ref.c"],
+    deps = ["//sys/crypto:codecs_crypto_kernel_blake2b-ref_headers", "//sys/contrib/libb2:codecs_crypto_kernel_blake2b-ref_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-cast-qual", "-Wno-unused-function"], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792", "SUFFIX=_ref"])

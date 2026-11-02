@@ -20,11 +20,11 @@ cc_library(name = "cam_module_headers", hdrs = ["ddb.h"], visibility = ["//sys/c
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["db_sym.h", "ddb.h"], includes = [],
-    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+    visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__", "//sys/dev/usb:__pkg__"])
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["ddb.h"],
-    visibility = ["//sys/kern:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_intr_headers", hdrs = ["db_sym.h", "ddb.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["ddb.h"],

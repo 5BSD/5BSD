@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["if_rtwn_ridx.h"], includes = [],
+    visibility = ["//sys/dev/usb:__pkg__"])

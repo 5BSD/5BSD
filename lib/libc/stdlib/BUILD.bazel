@@ -90,3 +90,6 @@ exports_files(["atexit.h"], visibility = ["//lib/libc/gen:__pkg__"])
 
 load("//libexec/rtld-elf:libc_sources.bzl", "rtld_libc_source_exports")
 rtld_libc_source_exports('lib/libc/stdlib')
+
+# Original rescue replacement compilation; own source files remain here.
+exports_files(["system.c"], visibility = ["//rescue/librescue:__pkg__"])

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "ichsmb", objects = ["//sys/dev/ichsmb:ichsmb_ichsmb_module_object_files", "//sys/dev/ichsmb:ichsmb_ichsmb_pci_module_object_files"],
+    object_order = ["ichsmb.o", "ichsmb_pci.o"], export_all = False)

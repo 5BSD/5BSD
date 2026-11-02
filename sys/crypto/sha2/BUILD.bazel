@@ -43,7 +43,7 @@ bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["sha256.h"
 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
-    visibility = ["//sys/opencrypto:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/crypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["sha224.h", "sha256.h", "sha384.h", "sha512.h"],
@@ -98,3 +98,19 @@ bsd_source_headers(name = "codecs_crypto_kernel_aesni_headers", hdrs = ["sha224.
 # Physical prerequisites for native custom-named kernel built-ins.
 bsd_source_headers(name = "custom_names_kernel_obsd_radix_headers", hdrs = ["sha256.h", "sha512.h"],
     visibility = ["//contrib/openbsd-pf/sys/net:__pkg__", "//sys/contrib/openzfs:__pkg__", "//sys/net:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_3", hdrs = ["sha224.h", "sha256.h", "sha256c_impl.h"], includes = [],
+    visibility = ["//sys/crypto/sha2:__pkg__"])
+
+bsd_source_headers(name = "crypto_module_context_4", hdrs = ["sha384.h", "sha512.h", "sha512c_impl.h", "sha512t.h"], includes = [],
+    visibility = ["//sys/crypto/sha2:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "crypto_sha256c_module", srcs = ["sha256c.c"],
+    deps = ["//sys/crypto/sha2:crypto_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
+
+amd64_generic_module_objects(name = "crypto_sha512c_module", srcs = ["sha512c.c"],
+    deps = ["//sys/crypto/sha2:crypto_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["SKEIN_ASM", "SKEIN_USE_ASM=1792"])
