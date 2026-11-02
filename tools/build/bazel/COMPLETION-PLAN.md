@@ -678,3 +678,21 @@ selection. Remaining configurations, architectures, actual bus/controller/input/
 RTC/sensor behavior, aggregate world/pkgbase/bootstrap, VM and performance gates
 remain open. The six existing family provider regressions passing each profile
 are regression evidence, not I2C hardware execution or strict-loader proof.
+
+## Sound module milestone (2026-11-02)
+
+Closed the ten remaining local-BUILD gaps in the reviewed selected amd64 sound
+subtree: forty actual compiler actions, 6,239 original consumed prerequisites,
+ten ordered initial links and thirty plain/CTF-debug installation records pass.
+All ten plain modules match untouched Make byte for byte; CTF/debug and compiled
+PCM SDT sections/relocations match the stated contracts. Seven KOBJ and three
+existing AWK header producers remain native and declared. An initial duplicate
+computed-name header view was rejected before compilation, then corrected to
+reuse the existing providers. See SOUND-MODULES-QUALIFICATION.md.
+
+Discovery now observes 367/729 local BUILD leaves, with 362 still missing in this
+selection. This count neither qualifies every existing declaration nor replaces
+full-world/cross-architecture/module/pkgbase/bootstrap/publication gates. Audio
+playback/capture/MIDI/mixer, hotplug/error paths, live probes, hardware and
+CPU/memory/disk I/O/disk-use/cache/sandbox performance remain open. Make stays
+production/default; BIP remains excluded.

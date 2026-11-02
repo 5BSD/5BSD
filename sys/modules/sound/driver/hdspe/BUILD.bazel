@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "snd_hdspe", objects = ["//sys/dev/sound:snd_hdspe_hdspe_module_object_files"],
+    object_order = ["hdspe.o", "hdspe-pcm.o"], export_all = False)

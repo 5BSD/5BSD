@@ -17,3 +17,15 @@ amd64_generic_kernel_objects(name = "generic_device_io_uaudio", srcs = ["uaudio.
     deps = ["//sys/contrib/ck:device_io_kernel_cdev_headers", "//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/dev/sound/usb:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_uaudio_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/usb:device_io_id_headers", "//sys/amd64/conf:device_io_kernel_opt_usb_header", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/dev/sound/pcm:device_io_channel_if_headers", "//sys/dev/sound/pcm:device_io_feeder_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 amd64_generic_kernel_objects(name = "generic_device_io_uaudio_pcm", srcs = ["uaudio_pcm.c"],
     deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/dev/sound/usb:device_io_kernel_uaudio_pcm_headers", "//sys/vm:device_io_kernel_hdaa_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/kern:device_io_device_if_headers", "//sys/kern:device_io_bus_if_headers", "//sys/dev/sound/pcm:device_io_channel_if_headers", "//sys/dev/sound/pcm:device_io_mixer_if_headers"], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "snd_uaudio_uaudio_pcm_module", srcs = ["uaudio_pcm.c"],
+    deps = ["//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/usb:device_io_kernel_uaudio_pcm_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:mixer_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "snd_uaudio_uaudio_module", srcs = ["uaudio.c"],
+    deps = ["//sys/dev/hid:device_io_kernel_uaudio_headers", "//sys/dev/usb:device_io_kernel_uaudio_headers", "//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/sound/pcm:device_io_kernel_hdaa_headers", "//sys/vm:acpi_support_headers", "//sys/dev/sound/usb:device_io_kernel_uaudio_headers", "//sys/kern:bus_if_headers", "//sys/dev/sound/pcm:channel_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/pcm:feeder_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

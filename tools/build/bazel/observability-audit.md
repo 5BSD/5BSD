@@ -10136,3 +10136,18 @@ interrupt/polling/DMA ownership and hotplug/error cleanup. User-visible EEPROM/
 RTC/GPIO writes and sensor/input access also need security/audit review; do not
 assume every raw bus transaction should be audited or expose payload secrets.
 Static preservation proves neither hardware coverage nor comprehensive probes.
+
+## Sound module review (2026-11-02)
+
+The scan of 33 physical C sources and seven KOBJ schemas retains twelve existing
+PCM source marker matches: drain start/done, xrun, trigger, buffer-wait start/done
+and their declarations. Actual plain sound provider/probe/argument/tracepoint
+sections and relocations match untouched Make exactly. Review evidence is under
+/usr/obj/usr/src/bazel-sound-modules-review-r1-20261102; see
+SOUND-MODULES-QUALIFICATION.md. Registration and event delivery remain open.
+
+Keep controller/device observability gaps on the queue: DMA/interrupt ownership,
+stream submit/complete, channel/mixer transitions, underrun/overrun and latency,
+USB hotplug, device detach/error cleanup, MIDI and access-control/audit review.
+Avoid sample/audio payloads in telemetry. Compile-time preservation is not
+comprehensive probe coverage, live delivery or a real-time performance result.

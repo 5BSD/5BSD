@@ -47820,3 +47820,13 @@ filename-policy controls. Existing IIC bus SDT sections/relocations are preserve
 See [I2C-MODULES-QUALIFICATION.md](I2C-MODULES-QUALIFICATION.md) for exact evidence
 and configuration/hardware/runtime limits. Local BUILD presence is now 357 of
 729 reviewed amd64 selected leaves; presence is not complete qualification.
+
+## Remaining selected sound module declarations (2026-11-02)
+
+Ten selected amd64 GENERIC sound leaves now build through native Bazel rules,
+including core PCM/MIDI, HDA, USB audio and HDSP drivers. All forty actual compile
+actions and 6,239 consumed dependency occurrences pass review; ten plain modules
+match untouched Make byte for byte. CTF/debug contents and thirty installation
+records pass. See [SOUND-MODULES-QUALIFICATION.md](SOUND-MODULES-QUALIFICATION.md)
+for the corrected initial header-view collision and runtime/configuration limits.
+Local BUILD presence is 367/729 selected amd64 leaves, not full qualification.

@@ -33,7 +33,7 @@ amd64_generic_kernel_objects(name = "generic_device_io_mpu401", srcs = ["mpu401.
 bsd_source_headers(name = "kobj_builtins_physical_mpu_if_headers", hdrs = ["midi.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
 bsd_source_headers(name = "kobj_builtins_physical_mpufoi_if_headers", hdrs = ["mpu401.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__", "//sys/dev/sound:__pkg__"])
 
 filegroup(name = "kobj_builtins_kernel_mpu_if_file", srcs = [":mpu_if"], output_group = "header")
 cc_library(name = "kobj_builtins_kernel_mpu_if_headers", hdrs = [":kobj_builtins_kernel_mpu_if_file"], strip_include_prefix = "mpu_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
@@ -50,3 +50,33 @@ filegroup(name = "builtin_mpufoi_if_source", srcs = [":mpufoi_if"], output_group
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_mpufoi_if", srcs = [":builtin_mpufoi_if_source"],
     deps = ["//sys/dev/sound/midi:kobj_builtins_physical_mpufoi_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/sound/midi:kobj_builtins_kernel_mpufoi_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "mpufoi_if_module_header", srcs = [":mpufoi_if"], output_group = "header")
+cc_library(name = "mpufoi_if_headers", hdrs = [":mpufoi_if_module_header"], strip_include_prefix = "mpufoi_if.generated", visibility = ["//sys/dev/sound/midi:__pkg__", "//sys/dev/sound:__pkg__"])
+
+filegroup(name = "mpu_if_module_header", srcs = [":mpu_if"], output_group = "header")
+cc_library(name = "mpu_if_headers", hdrs = [":mpu_if_module_header"], strip_include_prefix = "mpu_if.generated", visibility = ["//sys/dev/sound/midi:__pkg__"])
+
+filegroup(name = "mpu_if_module_source", srcs = [":mpu_if"], output_group = "source")
+
+filegroup(name = "mpufoi_if_module_source", srcs = [":mpufoi_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "sound_mpu_if_module", srcs = [":mpu_if_module_source"],
+    deps = ["//sys/dev/sound/midi:kobj_builtins_physical_mpu_if_headers", "//sys/dev/sound/midi:mpu_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :mpu_if_module_source)=mpu_if.c", "-fdebug-prefix-map=$(execpath :mpu_if_module_source)=mpu_if.c"])
+
+amd64_generic_module_objects(name = "sound_mpufoi_if_module", srcs = [":mpufoi_if_module_source"],
+    deps = ["//sys/dev/sound/midi:kobj_builtins_physical_mpufoi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/midi:mpufoi_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :mpufoi_if_module_source)=mpufoi_if.c", "-fdebug-prefix-map=$(execpath :mpufoi_if_module_source)=mpufoi_if.c"])
+
+amd64_generic_module_objects(name = "sound_midi_module", srcs = ["midi.c"],
+    deps = ["//sys/dev/sound/midi:device_io_kernel_midi_headers", "//sys/dev/sound/midi:mpu_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+amd64_generic_module_objects(name = "sound_mpu401_module", srcs = ["mpu401.c"],
+    deps = ["//sys/dev/sound/midi:device_io_kernel_mpu401_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/sound/midi:mpu_if_headers", "//sys/dev/sound/midi:mpufoi_if_headers", "//sys/amd64/conf:device_io_kernel_opt_snd_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])

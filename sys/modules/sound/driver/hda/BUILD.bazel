@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Original export policy and complete link order.
+amd64_generic_module(module = "snd_hda", objects = ["//sys/dev/sound/pci/hda:snd_hda_hdaa_module_object_files", "//sys/dev/sound/pci/hda:snd_hda_hdaa_patches_module_object_files", "//sys/dev/sound/pci/hda:snd_hda_hdacc_module_object_files", "//sys/dev/sound/pci/hda:snd_hda_hdac_module_object_files", "//sys/dev/sound/pci/hda:snd_hda_hdac_if_module_object_files"],
+    object_order = ["hdaa.o", "hdaa_patches.o", "hdacc.o", "hdac.o", "hdac_if.o"], export_all = False)

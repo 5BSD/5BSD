@@ -12,7 +12,7 @@ load("//tools/build/bazel:bsd_usbdevs.bzl", "bsd_usbdevs_header")
 exports_files(["usbdevs"])
 bsd_usbdevs_header(name = "device_ids")
 cc_library(name = "device_id_headers", hdrs = [":device_ids"],
-    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__"])
+    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/sound/usb:__pkg__"])
 filegroup(name = "usb_if_header_file", srcs = [":usb_if"], output_group = "header")
 cc_library(name = "usb_if_headers", hdrs = [":usb_if_header_file"],
     strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
