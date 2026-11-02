@@ -9806,3 +9806,7 @@ remain open; see PAM-MODULE-POLICY-QUALIFICATION.md.
 ## Virtualization built-ins (2026-11-02)
 
 The bounded source-bound scan of 60 converted Hyper-V, Xen and VirtIO files finds call-shaped tracing/CTR/audit markers in eight. It does not establish runtime probe coverage or missing hooks in the others. See VIRTUALIZATION-KERNEL-QUALIFICATION.md and the retained observability.json; existing instrumentation remains.
+
+## Storage-controller built-ins (2026-11-02)
+
+The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in five of 62 converted controller files. This is neither runtime coverage nor proof of missing shared hooks. See STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.

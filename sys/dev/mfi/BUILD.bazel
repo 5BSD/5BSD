@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_mfi_headers", hdrs = ["mfi_ioctl.h", "mfireg.h", "mfivar.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC storage controller built-ins.
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi", srcs = ["mfi.c"],
+    deps = ["//sys/contrib/ck:storage_controllers_kernel_mfi_headers", "//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_debug", srcs = ["mfi_debug.c"],
+    deps = ["//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_pci", srcs = ["mfi_pci.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/dev/pci:storage_controllers_kernel_aac_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_disk", srcs = ["mfi_disk.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/geom:storage_controllers_kernel_aac_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_aac_disk_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_syspd", srcs = ["mfi_syspd.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/geom:storage_controllers_kernel_aac_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_aac_disk_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_storage_controllers_mfi_tbolt", srcs = ["mfi_tbolt.c"],
+    deps = ["//sys/cam:storage_controllers_kernel_mfi_headers", "//sys/dev/mfi:storage_controllers_kernel_mfi_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_mfi_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Existing userland header providers retain their target/include namespace.
+exports_files(["mfi_ioctl.h", "mfireg.h"], visibility = ["//:__pkg__"])

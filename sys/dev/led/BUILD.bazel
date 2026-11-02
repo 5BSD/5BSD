@@ -27,3 +27,7 @@ bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["led.h"],
 # Physical storage core prerequisites; identical contexts share providers.
 bsd_source_headers(name = "storage_core_kernel_geom_disk_headers", hdrs = ["led.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_ahciem_headers", hdrs = ["led.h"],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])

@@ -18,3 +18,11 @@ load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_ob
     object_names = [source[:-2] + ".o" for source in _MODULE_SOURCES],
     visibility = ["//sys/modules/nvd:__pkg__"])
  for prefix in ["", "arm64_", "riscv_"]]
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC storage controller built-ins.
+amd64_generic_kernel_objects(name = "generic_storage_controllers_nvd", srcs = ["nvd.c"],
+    deps = ["//sys/dev/nvme:storage_controllers_kernel_nvd_headers", "//sys/dev/pci:storage_controllers_kernel_mpr_headers", "//sys/geom:storage_controllers_kernel_nvd_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/vm:storage_controllers_kernel_ciss_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/dev/nvme:storage_controllers_kernel_nvme_if_headers", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

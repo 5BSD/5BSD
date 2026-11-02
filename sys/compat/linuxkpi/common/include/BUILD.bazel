@@ -44,3 +44,8 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_xarray_headers", hdrs = ["asm/b
 bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["asm-generic/io.h", "asm/atomic-long.h", "asm/atomic.h", "asm/atomic64.h", "asm/barrier.h", "asm/byteorder.h", "asm/cpufeature.h", "asm/memtype.h", "asm/pgtable.h", "asm/processor.h", "asm/set_memory.h", "asm/topology.h", "asm/types.h", "asm/uaccess.h", "net/ip.h", "net/ipv6.h", "vdso/const.h"],
     includes = ["."],
     visibility = ["//sys/dev/mlx5:__pkg__"])
+
+# Physical prerequisites for native storage controller built-ins.
+bsd_source_headers(name = "storage_controllers_kernel_mpi3mr_cam_headers", hdrs = ["asm/byteorder.h", "asm/types.h", "asm/unaligned.h"],
+    includes = ["."],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ciss:__pkg__", "//sys/dev/hptiop:__pkg__", "//sys/dev/isp:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mpi3mr:__pkg__", "//sys/dev/mpr:__pkg__", "//sys/dev/mps:__pkg__", "//sys/dev/mpt:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/nvd:__pkg__", "//sys/dev/tws:__pkg__"])

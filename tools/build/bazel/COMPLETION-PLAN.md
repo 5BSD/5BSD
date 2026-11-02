@@ -360,3 +360,7 @@ APM-PROGRAM-QUALIFICATION.md records native source/ELF/install qualification of 
 ## Virtualization built-in checkpoint (2026-11-02)
 
 60 Hyper-V, Xen and VirtIO built-ins compile through the maintained frontend with exact code/CTF and checked inputs/policies/relocations. See VIRTUALIZATION-KERNEL-QUALIFICATION.md. Full kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+## Storage-controller checkpoint (2026-11-02)
+
+62 additional native storage-controller built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md. Full kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.

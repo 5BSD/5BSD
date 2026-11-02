@@ -47567,3 +47567,5 @@ and full relocation/runtime qualification remain open.
 ### Virtualization built-in kernel checkpoint (2026-11-02)
 
 [VIRTUALIZATION-KERNEL-QUALIFICATION.md](VIRTUALIZATION-KERNEL-QUALIFICATION.md) records 60 native Hyper-V, Xen and VirtIO built-ins, exact machine code/CTF and compiler-input/relocation checks, plus remaining runtime/system gates.
+
+[STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md](STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md) records 62 native storage-controller built-ins, preserved per-source warning policies, exact code/CTF and checked inputs/relocations, with runtime/system gates still open.
