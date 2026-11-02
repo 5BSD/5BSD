@@ -95,23 +95,96 @@ migration_crc32(const void *payload, size_t payload_len)
 	return ((uint32_t)checksum);
 }
 
-/* Stable, length-bound identity for reconstructed immutable ROM contents. */
+static uint64_t
+migration_rom_digest_u64(uint64_t digest, uint64_t value)
+{
+
+	for (unsigned int i = 0; i < 8; i++) {
+		digest ^= (value >> (i * 8)) & UINT64_C(0xff);
+		digest *= UINT64_C(1099511628211);
+	}
+	return (digest);
+}
+
+static bool
+migration_rom_masked(const struct migration_rom_mask *masks, size_t nmasks,
+    size_t offset)
+{
+
+	for (size_t m = 0; m < nmasks; m++) {
+		if (offset >= masks[m].offset &&
+		    offset - masks[m].offset < masks[m].length)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Stable, length-bound identity for reconstructed immutable ROM contents.
+ * Bytes inside a mask are generated per VM instance (e.g. the VM generation
+ * ID that vmgenc places in the bootrom segment) and therefore hash as zero;
+ * each mask's placement is still bound so a different layout is refused.
+ * With no masks the digest is the original whole-content digest.
+ */
 static uint64_t __unused
-migration_rom_digest(const void *payload, size_t length)
+migration_rom_digest_masked(const void *payload, size_t length,
+    const struct migration_rom_mask *masks, size_t nmasks)
 {
 	const uint8_t *bytes = payload;
 	uint64_t digest;
 
 	digest = UINT64_C(14695981039346656037);
 	for (size_t i = 0; i < length; i++) {
-		digest ^= bytes[i];
+		uint8_t byte;
+
+		byte = nmasks != 0 && migration_rom_masked(masks, nmasks, i) ?
+		    0 : bytes[i];
+		digest ^= byte;
 		digest *= UINT64_C(1099511628211);
 	}
-	for (unsigned int i = 0; i < 8; i++) {
-		digest ^= ((uint64_t)length >> (i * 8)) & UINT64_C(0xff);
-		digest *= UINT64_C(1099511628211);
+	digest = migration_rom_digest_u64(digest, (uint64_t)length);
+	for (size_t m = 0; m < nmasks; m++) {
+		digest = migration_rom_digest_u64(digest,
+		    (uint64_t)masks[m].offset);
+		digest = migration_rom_digest_u64(digest,
+		    (uint64_t)masks[m].length);
 	}
 	return (digest);
+}
+
+static uint64_t __unused
+migration_rom_digest(const void *payload, size_t length)
+{
+
+	return (migration_rom_digest_masked(payload, length, NULL, 0));
+}
+
+int
+migration_rom_identity_record(struct migration_device_record *rec,
+    const char *name, const void *base, size_t length,
+    const struct migration_rom_mask *masks, size_t nmasks)
+{
+	uint64_t digest;
+
+	if (rec == NULL || name == NULL || (base == NULL && length != 0) ||
+	    (masks == NULL && nmasks != 0))
+		return (EINVAL);
+	for (size_t i = 0; i < nmasks; i++) {
+		if (masks[i].length == 0 || masks[i].offset > length ||
+		    masks[i].length > length - masks[i].offset)
+			return (EINVAL);
+	}
+	memset(rec, 0, sizeof(*rec));
+	if (strlcpy(rec->name, name, sizeof(rec->name)) >= sizeof(rec->name))
+		return (ENAMETOOLONG);
+	digest = migration_rom_digest_masked(base, length, masks, nmasks);
+	rec->migration_flags = MIGRATION_DEVF_STATE_CODEC |
+	    MIGRATION_DEVF_COMPAT_FIXED | MIGRATION_DEVF_DMA_NONE |
+	    MIGRATION_DEVF_QUIESCE_NONE;
+	rec->compat_schema = 1;
+	rec->compat_crc32 = (uint32_t)digest;
+	rec->bar_hash = (uint32_t)(digest >> 32);
+	return (0);
 }
 
 static bool
@@ -2848,6 +2921,7 @@ fail:
 #include <vmmapi.h>
 
 #include "bhyverun.h"
+#include "bootrom.h"
 #include "checkpoint_compat.h"
 #include "checkpoint_manifest.h"
 #include "config.h"
@@ -3013,29 +3087,38 @@ static int
 migration_prod_append_rom_identity(struct vmctx *ctx,
     struct migration_topology *topo, int segid, const char *record_name)
 {
-	struct migration_device_record *rec;
+	struct migration_rom_mask masks[BOOTROM_MAX_INSTANCE_RANGES];
+	const struct bootrom_range *ranges;
 	char segment_name[128];
 	void *host_base;
-	uint64_t digest;
-	size_t length;
+	size_t length, nmasks;
+	int error;
 
 	if (vm_get_devmem_info(ctx, segid, &host_base, &length,
 	    segment_name, sizeof(segment_name)) != 0)
 		return (errno == ENOENT ? 0 : errno);
 	if (topo->device_count >= MIGRATION_MAX_DEVICES)
 		return (E2BIG);
-	rec = &topo->devices[topo->device_count];
-	if (strlcpy(rec->name, record_name, sizeof(rec->name)) >=
-	    sizeof(rec->name))
-		return (ENAMETOOLONG);
-	/* Configuration reconstructs this ROM; its complete bytes must match. */
-	digest = migration_rom_digest(host_base, length);
-	rec->migration_flags = PCI_MIGRATION_F_STATE_CODEC |
-	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
-	    PCI_MIGRATION_F_QUIESCE_NONE;
-	rec->compat_schema = 1;
-	rec->compat_crc32 = (uint32_t)digest;
-	rec->bar_hash = (uint32_t)(digest >> 32);
+	/*
+	 * Configuration reconstructs this ROM, so its bytes must match, except
+	 * the bootrom allocations that are generated per instance (the random
+	 * VM generation ID): the destination is a separately started process
+	 * and never shares those bytes with the source.
+	 */
+	nmasks = 0;
+	if (segid == VM_BOOTROM) {
+		nmasks = bootrom_instance_ranges(&ranges);
+		if (nmasks > nitems(masks))
+			return (E2BIG);
+		for (size_t i = 0; i < nmasks; i++) {
+			masks[i].offset = ranges[i].offset;
+			masks[i].length = ranges[i].length;
+		}
+	}
+	error = migration_rom_identity_record(&topo->devices[topo->device_count],
+	    record_name, host_base, length, masks, nmasks);
+	if (error != 0)
+		return (error);
 	topo->device_count++;
 	return (0);
 }

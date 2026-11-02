@@ -236,6 +236,21 @@ struct migration_topology {
 	struct migration_device_record devices[MIGRATION_MAX_DEVICES];
 };
 
+/* A per-instance byte range excluded from a fixed ROM's identity digest. */
+struct migration_rom_mask {
+	size_t offset;
+	size_t length;
+};
+
+/*
+ * Fill a fixed-ROM pseudo-device record (_vmm.bootrom, _vmm.pcirom) from the
+ * segment bytes.  Masked ranges hold per-instance contents: only their
+ * placement, never their bytes, enters compat_crc32/bar_hash.
+ */
+int	migration_rom_identity_record(struct migration_device_record *rec,
+	    const char *name, const void *base, size_t length,
+	    const struct migration_rom_mask *masks, size_t nmasks);
+
 struct migration_memgen {
 	uint32_t round;
 	uint32_t mode;

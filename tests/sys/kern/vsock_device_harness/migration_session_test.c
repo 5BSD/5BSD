@@ -1002,6 +1002,110 @@ ATF_TC_BODY(rom_content_identity_refuses_different_destination, tc)
 	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
 }
 
+/*
+ * Build the _vmm.bootrom record the way migration_prod_append_rom_identity()
+ * does for a VM named `vmname`: a bhyveload-style bootrom segment that
+ * holds no firmware file, only the vmgenc page (bootrom_alloc() from the
+ * bottom of the segment) filled with fresh random bytes per bhyve process,
+ * plus an optional firmware image at the top.
+ */
+#define	ROM_TEST_SEGMENT	(64 * 1024)
+#define	ROM_TEST_PAGE		4096
+
+static void
+rom_test_record(struct migration_topology *t, const char *vmname,
+    const uint8_t *firmware, size_t firmware_len, bool masked)
+{
+	static uint8_t segment[ROM_TEST_SEGMENT];
+	struct migration_rom_mask mask = { 0, ROM_TEST_PAGE };
+
+	memset(t, 0, sizeof(*t));
+	t->mem_size = t->lowmem = 0x40000000;
+	t->ncpus = 2;
+	t->sockets = 2;
+	t->cores = t->threads = 1;
+	t->device_count = 1;
+	memset(segment, 0, sizeof(segment));
+	/* vmgenc_init(): getentropy() into its page; differs per instance. */
+	arc4random_buf(segment, 16);
+	if (firmware_len != 0)
+		memcpy(segment + sizeof(segment) - firmware_len, firmware,
+		    firmware_len);
+	(void)vmname;	/* The VM name is not, and must not be, an input. */
+	ATF_REQUIRE_EQ(migration_rom_identity_record(&t->devices[0],
+	    "_vmm.bootrom", segment, sizeof(segment), masked ? &mask : NULL,
+	    masked ? 1 : 0), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(rom_identity_ignores_per_instance_bootrom_bytes);
+ATF_TC_BODY(rom_identity_ignores_per_instance_bootrom_bytes, tc)
+{
+	static const uint8_t firmware[ROM_TEST_PAGE] = { 0x55, 0xaa, 0x10 };
+	uint8_t other[ROM_TEST_PAGE];
+	struct migration_topology src, dst;
+	struct migration_rom_mask mask;
+	uint32_t reason;
+	uint8_t page[ROM_TEST_PAGE];
+
+	(void)tc;
+	/* bhyveload guest: no firmware file, only the vmgenc page. */
+	rom_test_record(&src, "ht-plain-src", NULL, 0, true);
+	rom_test_record(&dst, "ht-plain-dst", NULL, 0, true);
+	reason = 0;
+	ATF_CHECK_EQ_MSG(migration_topology_validate(&src, &dst, &reason), 0,
+	    "identical bhyveload configs refused (reason %u): src 0x%08x "
+	    "dst 0x%08x", reason, src.devices[0].compat_crc32,
+	    dst.devices[0].compat_crc32);
+	ATF_CHECK_EQ(src.devices[0].compat_crc32, dst.devices[0].compat_crc32);
+	ATF_CHECK_EQ(src.devices[0].bar_hash, dst.devices[0].bar_hash);
+
+	/* UEFI-style guest with the same firmware image on both ends. */
+	rom_test_record(&src, "ht-tls-src", firmware, sizeof(firmware), true);
+	rom_test_record(&dst, "ht-tls-dst", firmware, sizeof(firmware), true);
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), 0);
+
+	/* A genuinely different firmware image is still refused. */
+	memcpy(other, firmware, sizeof(other));
+	other[sizeof(other) - 1] ^= 1;
+	rom_test_record(&dst, "ht-tls-dst", other, sizeof(other), true);
+	reason = 0;
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
+
+	/* So is firmware present on one end only. */
+	rom_test_record(&dst, "ht-tls-dst", NULL, 0, true);
+	reason = 0;
+	ATF_CHECK_EQ(migration_topology_validate(&src, &dst, &reason), EINVAL);
+	ATF_CHECK_EQ(reason, MIGRATION_REASON_DEVICE);
+
+	/* A per-instance range placed differently changes the layout. */
+	memset(page, 0, sizeof(page));
+	mask.offset = 0;
+	mask.length = sizeof(page);
+	ATF_REQUIRE_EQ(migration_rom_identity_record(&src.devices[0],
+	    "_vmm.bootrom", page, sizeof(page), &mask, 1), 0);
+	mask.length = sizeof(page) / 2;
+	ATF_REQUIRE_EQ(migration_rom_identity_record(&dst.devices[0],
+	    "_vmm.bootrom", page, sizeof(page), &mask, 1), 0);
+	ATF_CHECK(src.devices[0].compat_crc32 != dst.devices[0].compat_crc32 ||
+	    src.devices[0].bar_hash != dst.devices[0].bar_hash);
+
+	/* Masks must lie inside the segment. */
+	mask.offset = sizeof(page) - 1;
+	mask.length = 2;
+	ATF_CHECK_EQ(migration_rom_identity_record(&dst.devices[0],
+	    "_vmm.bootrom", page, sizeof(page), &mask, 1), EINVAL);
+	mask.offset = 0;
+	mask.length = 0;
+	ATF_CHECK_EQ(migration_rom_identity_record(&dst.devices[0],
+	    "_vmm.bootrom", page, sizeof(page), &mask, 1), EINVAL);
+
+	/* Without masks the digest is the historical whole-content digest. */
+	ATF_REQUIRE_EQ(migration_rom_identity_record(&dst.devices[0],
+	    "_vmm.bootrom", firmware, sizeof(firmware), NULL, 0), 0);
+	ATF_CHECK_EQ(dst.devices[0].compat_crc32,
+	    (uint32_t)migration_rom_digest(firmware, sizeof(firmware)));
+}
 /* ------------------------------------------------------------------------- */
 /* Session model								     */
 /* ------------------------------------------------------------------------- */
@@ -4914,6 +5018,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, device_flags_eligibility);
 	ATF_TP_ADD_TC(tp, topology_validate_enforces_device_identity);
 	ATF_TP_ADD_TC(tp, rom_content_identity_refuses_different_destination);
+	ATF_TP_ADD_TC(tp, rom_identity_ignores_per_instance_bootrom_bytes);
 	ATF_TP_ADD_TC(tp, max_rounds_rejects_counter_wrap);
 	ATF_TP_ADD_TC(tp, session_rejects_missing_required_callbacks);
 	ATF_TP_ADD_TC(tp, disconnected_transport_returns_error);
