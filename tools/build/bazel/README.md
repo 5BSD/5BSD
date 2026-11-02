@@ -176,17 +176,18 @@ its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
-**Current module inventory (2026-11-01):** the maintained recursive amd64
-GENERIC audit selects 729 modules, with 244 direct native declarations and
-485 without them. This is source inventory, not a count of qualified builds.
-The newest qualified cohort is documented in
-[USB network qualification](USB-NETWORK-QUALIFICATION.md). Evidence:
-`/usr/obj/usr/src/bazel-fresh-kernel-module-inventory-20261101/amd64.json`.
+**Current module inventory (2026-11-02):** the maintained recursive amd64
+GENERIC audit selects 729 modules; 628 selected directories contain local BUILD
+files, leaving 101 without. This is declaration presence, not qualified-build
+coverage. The newest qualified module cohort is documented in
+[system and I/O qualification](SYSTEM-IO-MODULES-QUALIFICATION.md). Fresh selection
+evidence: `/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
 Complete native world/kernel/pkgbase and system qualification remain open.
-The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
-modules. These are selection totals, not completed conversions. See
-[module inventory context](MODULE-INVENTORY-CONTEXT.md) for the fix, regression
-checks and review of earlier native module selections.
+The corrected query context selects 627 ARM64 and 553 RISC-V64 modules, with 504
+and 476 local BUILD files respectively. A BUILD file can contain only amd64
+rules; these presence counts do not establish cross-target conversion or builds.
+See [module inventory context](MODULE-INVENTORY-CONTEXT.md) for source-context
+inputs, regression checks and selection limits.
 
 **Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.

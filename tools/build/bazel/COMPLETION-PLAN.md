@@ -1107,3 +1107,15 @@ reproduces the entire static ELF. Continue remaining actual rescue applications
 and library dependencies, selected options and original standalone tests, then
 complete rescue install/pkgbase and world/bootstrap. The full 103-program graph
 and independent full-library/installed-test parity are not closed by this subset.
+
+### Module inventory early source context (November 2, 2026)
+
+[Context and checks](MODULE-INVENTORY-CONTEXT.md): recursive audits now supply
+normal kernel SYSDIR and MODULE_TIED inputs before leaf parsing. The maintained
+Bazel test passes all 11 Python methods, including real Make under a custom
+source root. Refreshed selections remain amd64 729 / ARM64 627 / RISC-V64 553;
+amd64 local BUILD presence is 628, leaving 101 selected leaves without one.
+The pending network cohort's first six source-lookup failures are retained;
+repeat original controls with the actual kernel source context before native
+conversion. No accepted native artifacts or full-system gates are inferred from
+selection, and no build-bsd CLI/signing/publication change is required.

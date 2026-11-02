@@ -58,6 +58,8 @@ class ModuleInventoryTests(unittest.TestCase):
                 self.assertIn("MACHINE=arm64", command)
                 self.assertIn("MACHINE_ARCH=aarch64", command)
                 self.assertIn("KERN_OPTS=INET", command)
+                self.assertIn("SYSDIR=" + str(src / "sys"), command)
+                self.assertIn("MODULE_TIED=yes", command)
                 return SimpleNamespace(returncode=1 if relative == "broken" else 0,
                     stdout=graph[relative] + "arm64\naarch64\n\n", stderr="query failed" if relative == "broken" else "")
             with patch("module_inventory.subprocess.run", side_effect=query) as run:
@@ -125,6 +127,38 @@ class ModuleInventoryTests(unittest.TestCase):
             self.assertEqual(result["errors"], [])
             self.assertEqual([r["kmod"] for r in result["modules"]], ["fdt"])
             self.assertIn("OPT_FDT", result["exported_make_contexts"][1]["inherited_names"])
+
+    def test_real_make_has_source_context_before_leaf_path_expansion(self):
+        make = shutil.which("make")
+        if not make or subprocess.run([make, "-V", "MAKE_VERSION"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            self.skipTest("BSD Make required")
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp) / "custom-source"
+            root = src / "sys/modules"
+            child = root / "routing"
+            child.mkdir(parents=True)
+            (root / "Makefile").write_text("SUBDIR=routing\n")
+            source = src / "sys/netinet"
+            source.mkdir()
+            (source / "route.c").write_text("/* source lookup fixture */\n")
+            (child / "Makefile").write_text(
+                ".PATH: ${SYSDIR}/netinet\n"
+                ".if empty(.PATH:M${SYSDIR}/netinet)\n"
+                ".error kernel source path was not supplied before leaf parsing\n"
+                ".endif\n"
+                ".if ${MODULE_TIED:Uno} != yes\n"
+                ".error module query is not tied to the selected kernel\n"
+                ".endif\n"
+                "KMOD=routing\n")
+            kernel = Path(temp) / "selected-kernel"
+            kernel.mkdir()
+            result = audit(src, make, "amd64", "amd64", kernel,
+                           "/dev/null", "/dev/null", "/dev/null", jobs=2)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual([r["kmod"] for r in result["modules"]], ["routing"])
+            self.assertEqual(result["system_source_dir"], str(src / "sys"))
+            self.assertTrue(result["module_tied"])
 
     def test_rejects_duplicate_directory_with_conflicting_parent_exports(self):
         with tempfile.TemporaryDirectory() as temp:

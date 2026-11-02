@@ -88,6 +88,9 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
         relative, inherited = item
         command = [
             make, "-C", str(modules_root / relative), "SRCTOP=" + str(src),
+            # kern.post.mk supplies these before module Makefiles are parsed.
+            # Some leaves use SYSDIR in .PATH before including bsd.kmod.mk.
+            "SYSDIR=" + str(src / "sys"), "MODULE_TIED=yes",
             "TARGET=" + target, "TARGET_ARCH=" + target_arch,
             "MACHINE=" + target, "MACHINE_ARCH=" + target_arch,
             "KERNBUILDDIR=" + str(kernel_build_dir), "KERN_OPTS=" + options,
@@ -160,6 +163,8 @@ def audit(src, make, target, target_arch, kernel_build_dir, srconf, make_conf, e
         "target": target,
         "target_arch": target_arch,
         "kernel_build_dir": str(kernel_build_dir),
+        "system_source_dir": str(src / "sys"),
+        "module_tied": True,
         "source_config": srconf,
         "make_config": make_conf,
         "source_environment_config": env_conf,
