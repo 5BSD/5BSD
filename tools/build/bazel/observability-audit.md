@@ -10203,3 +10203,14 @@ instrumentation and runtime firmware lifecycle/driver behavior require separate
 review; prefer shared register/get/put/unregister/error hooks over per-image probes.
 Do not log firmware contents. Live loading, hardware, probes and audit remain
 unqualified. See FIRMWARE-MODULES-QUALIFICATION.md for immutable evidence.
+
+### Rescue direct-stub producer (November 2)
+
+Both original crunchgen actions execute freshly with unusable MAKE, empty PATH
+and DOF initialization disabled before startup. All 103 direct output digests
+match actual original Make stubs. The harmless fixture compiles real generated
+stubs and executes seven methods; nine analysis-test results are cached. Two
+fresh tool compiler records and three digest-bound prior records preserve
+explicit cache provenance and 166 original dependency checks. See
+[producer qualification](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md); no real rescue
+application execution or tracing/probe activation is claimed.

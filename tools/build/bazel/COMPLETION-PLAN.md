@@ -798,3 +798,13 @@ current proof preserves exact hash-verified recovered parameter bytes, not an
 implemented frontend capture guarantee. Make remains production/default; BIP is
 excluded. Existing format-5 build-bsd/backend inputs cover this composition; no
 CLI, signing, staging or publication policy change is needed for this cohort.
+
+### Rescue direct-stub checkpoint (November 2)
+
+Original crunchgen direct output and declared native entry-stub groups are
+qualified: 103 files equal actual original Make echo recipes, with unchanged
+default dispatcher/cache/Makefile bytes and fresh tool/install checks. See
+[direct-stub evidence](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md). Next production
+gates are genuine per-application RESCUE objects, original crunchide/relocatable
+transforms, complete static link and rescue installation/package/runtime.
+Generating 103 stubs does not count those applications as compiled.

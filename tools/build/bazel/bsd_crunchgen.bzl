@@ -71,23 +71,32 @@ def _impl(ctx):
         alias = ctx.actions.declare_file(directory + library.basename)
         ctx.actions.symlink(output = alias, target_file = library)
         aliases.append(alias)
+    stubs = [ctx.actions.declare_file(directory + program + "_stub.c")
+             for program in programs] if ctx.attr.emit_stubs else []
     args = ctx.actions.args()
     args.add_all([main.dirname, ctx.executable.tool.path, "-f", "-q", "-e", executable,
-                  "-c", main.basename, "-m", makefile.basename, config.basename])
+                  "-c", main.basename, "-m", makefile.basename])
+    if ctx.attr.emit_stubs:
+        args.add_all(["-s", "."])
+    args.add(config.basename)
     ctx.actions.run(executable = ctx.attr.runner[DefaultInfo].files_to_run,
         arguments = [args], inputs = [config] + aliases + ctx.files.libraries,
-        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [main, makefile, cache],
+        tools = [ctx.attr.tool[DefaultInfo].files_to_run], outputs = [main, makefile, cache] + stubs,
         env = {"LC_ALL": "C", "PATH": "", "LD_LIBRARY_PATH": ".",
                "MAKE": "/__crunchgen_make_discovery_disabled__", "DTRACE_DOF_INIT_DISABLE": "1"},
         use_default_shell_env = False, mnemonic = "BSDCrunchgen")
-    return [DefaultInfo(files = depset([main])),
-            OutputGroupInfo(metadata = depset([config, makefile, cache]))]
+    groups = {"metadata": depset([config, makefile, cache]), "stubs": depset(stubs)}
+    for program, stub in zip(programs, stubs):
+        ident = "".join([c for c in program.replace("-", "_").elems() if c in _IDENT_CHARS])
+        groups["stub_" + ident] = depset([stub])
+    return [DefaultInfo(files = depset([main])), OutputGroupInfo(**groups)]
 
 bsd_crunchgen = rule(implementation = _impl, attrs = {
     "programs": attr.string_list(mandatory = True),
     "object_names": attr.string_list_dict(mandatory = True),
     "aliases": attr.string_list_dict(),
     "executable_name": attr.string(mandatory = True),
+    "emit_stubs": attr.bool(default = False, doc = "Declare original crunchgen -s entry stubs."),
     "required_configuration": attr.label_keyed_string_dict(providers = [BuildSettingInfo]),
     "tool": attr.label(executable = True, cfg = "exec", default = "//usr.sbin/crunch/crunchgen:crunchgen"),
     "runner": attr.label(executable = True, cfg = "exec", default = "//tools/build/bazel:cwd_exec"),

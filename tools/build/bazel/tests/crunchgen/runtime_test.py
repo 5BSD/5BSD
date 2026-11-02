@@ -14,6 +14,16 @@ class DispatcherTests(unittest.TestCase):
         return subprocess.run([str(executable), *args], capture_output=True, text=True,
                               env=dict(os.environ, DTRACE_DOF_INIT_DISABLE="1"), timeout=15)
 
+    def test_original_stub_recipe(self):
+        directory = MINI.parent / "fixture_dispatch.generated"
+        makefile = (directory / "mini.mk").read_text()
+        recipes = [line.removeprefix('\techo "').split('" >', 1)
+                   for line in makefile.splitlines() if line.startswith('\techo "extern int main(')]
+        self.assertEqual(len(recipes), 2)
+        self.assertEqual([name for _, name in recipes], ["alpha_stub.c", "two-name_stub.c"])
+        for body, name in recipes:
+            self.assertEqual((directory / name).read_bytes(), (body + "\n").encode())
+
     def test_program(self):
         p = self.run_mini(["alpha", "payload"])
         self.assertEqual((p.returncode, p.stdout, p.stderr), (17, "alpha:2:alpha:payload\n", ""))

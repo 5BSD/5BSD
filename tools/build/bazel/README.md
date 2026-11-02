@@ -47888,3 +47888,11 @@ current proof preserves exact hash-verified recovered parameter bytes, not an
 implemented frontend capture guarantee. Make remains production/default; BIP is
 excluded. Existing format-5 build-bsd/backend inputs cover this composition; no
 CLI, signing, staging or publication policy change is needed for this cohort.
+
+### Original rescue entry-stub producer
+
+The ordinary crunchgen now has an optional direct C-stub output mode. All 103
+default rescue stubs equal actual original Make outputs; default dispatcher,
+cache and Makefile bytes are preserved. Native fixture execution uses the real
+generated stubs. [Qualification and remaining application/link gates](CRUNCHGEN-DIRECT-STUBS-QUALIFICATION.md)
+distinguish seven fresh runtime methods from nine reused analysis-test results.

@@ -96,6 +96,7 @@ static bool tempfname_initialized = false;
 static char outhdrname[MAXPATHLEN] ;	/* user-supplied header for *.mk */
 static const char *objprefix;		/* where are the objects ? */
 static const char *path_make;
+static const char *stub_directory;
 static int linenum = -1;
 static int goterror = 0;
 
@@ -145,7 +146,7 @@ main(int argc, char **argv)
 		if ((objprefix = strdup(p)) == NULL)
 			out_of_memory();
 
-	while((optc = getopt(argc, argv, "lh:m:c:e:p:foq")) != -1) {
+	while((optc = getopt(argc, argv, "lh:m:c:e:p:s:foq")) != -1) {
 		switch(optc) {
 		case 'f':
 			readcache = 0;
@@ -155,6 +156,13 @@ main(int argc, char **argv)
 			break;
 		case 'q':
 			verbose = 0;
+			break;
+
+		case 's':
+			stub_directory = optarg;
+			if (!is_dir(stub_directory))
+				errx(1, "Stub output directory does not exist: %s",
+				    stub_directory);
 			break;
 
 		case 'm':
@@ -236,7 +244,7 @@ usage(void)
 	fprintf(stderr, "%s%s\n\t%s%s\n", "usage: crunchgen [-foq] ",
 	    "[-h <makefile-header-name>] [-m <makefile>]",
 	    "[-p <obj-prefix>] [-c <c-file-name>] [-e <exec-file>] ",
-	    "<conffile>");
+	    "[-s <stub-directory>] <conffile>");
 	exit(1);
 }
 
@@ -601,6 +609,8 @@ void fillin_program(prog_t *p);
 void gen_specials_cache(void);
 void gen_output_makefile(void);
 void gen_output_cfile(void);
+static void emit_stub(FILE *, const prog_t *);
+static void gen_output_stubs(void);
 
 void fillin_program_objs(prog_t *p, char *path);
 void top_makefile_rules(FILE *outmk);
@@ -622,6 +632,8 @@ gen_outputs(void)
 	gen_specials_cache();
 	gen_output_cfile();
 	gen_output_makefile();
+	if (stub_directory != NULL)
+		gen_output_stubs();
 	status("");
 	fprintf(stderr,
 	    "Run \"%s -f %s\" to build crunched binary.\n",
@@ -1048,6 +1060,56 @@ top_makefile_rules(FILE *outmk)
 }
 
 
+/* Keep direct stubs identical to the original Makefile echo recipe. */
+static void
+emit_stub(FILE *out, const prog_t *p)
+{
+	fprintf(out,
+	    "extern int main(int argc, char **argv, char **envp); "
+	    "int _crunched_%s_stub(int argc, char **argv, char **envp);"
+	    "int _crunched_%s_stub(int argc, char **argv, char **envp)"
+	    "{return main(argc,argv,envp);}", p->ident, p->ident);
+}
+
+static void
+gen_output_stubs(void)
+{
+	prog_t *p;
+	FILE *out;
+	char path[MAXPATHLEN];
+	int n;
+
+	for (p = progs; p != NULL; p = p->next) {
+		if (strchr(p->name, '/') != NULL) {
+			warnx("Invalid program name for direct stub: %s", p->name);
+			goterror = 1;
+			continue;
+		}
+		n = snprintf(path, sizeof(path), "%s/%s_stub.c",
+		    stub_directory, p->name);
+		if (n < 0 || (size_t)n >= sizeof(path)) {
+			warnx("Stub output path is too long: %s", p->name);
+			goterror = 1;
+			continue;
+		}
+		if ((out = fopen(path, "w")) == NULL) {
+			warn("%s", path);
+			goterror = 1;
+			continue;
+		}
+		emit_stub(out, p);
+		fputc('\n', out);
+		if (ferror(out)) {
+			warnx("Cannot write stub: %s", path);
+			goterror = 1;
+		}
+		if (fclose(out) == EOF) {
+			warn("%s", path);
+			goterror = 1;
+		}
+	}
+}
+
 void
 prog_makefile_rules(FILE *outmk, prog_t *p)
 {
@@ -1114,12 +1176,9 @@ prog_makefile_rules(FILE *outmk, prog_t *p)
 	}
 
 	fprintf(outmk, "%s_stub.c:\n", p->name);
-	fprintf(outmk, "\techo \""
-	    "extern int main(int argc, char **argv, char **envp); "
-	    "int _crunched_%s_stub(int argc, char **argv, char **envp);"
-	    "int _crunched_%s_stub(int argc, char **argv, char **envp)"
-	    "{return main(argc,argv,envp);}\" >%s_stub.c\n",
-	    p->ident, p->ident, p->name);
+	fprintf(outmk, "\techo \"");
+	emit_stub(outmk, p);
+	fprintf(outmk, "\" >%s_stub.c\n", p->name);
 	fprintf(outmk, "%s.lo: %s_stub.o $(%s_OBJPATHS) %s",
 	    p->name, p->name, p->ident, outmkname);
 	if (p->libs)
