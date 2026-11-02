@@ -10,7 +10,8 @@
 BA=${BASE_ACCOUNTS:-/usr/sbin/base-accounts}
 
 # The shipped reference: an older release plus a new device group (audio),
-# a new service identity (_svc), a member list and the superuser alias.
+# a new service identity (_svc), a member list and the superuser alias.  The
+# release introduced audio and _svc.
 make_reference()
 {
 	mkdir -p ref
@@ -30,6 +31,12 @@ toor:*:0:0::0:0:Bourne-again Superuser:/root:
 operator:*:2:5::0:0:System &:/:/usr/sbin/nologin
 _svc:*:830:830::0:0:Service Identity:/var/empty:/usr/sbin/nologin
 nobody:*:65534:65533::0:0:Unprivileged user:/nonexistent:/usr/sbin/nologin
+EOF
+	cat > ref/introduced <<'EOF'
+# kind	name	release
+group	audio	16.0
+group	_svc	16.0
+user	_svc	16.0
 EOF
 }
 
@@ -205,6 +212,39 @@ removed_locally_body()
 	atf_check -o match:"^audio:" grep '^audio:' root/etc/group
 }
 
+atf_test_case first_run
+first_run_head()
+{
+	atf_set "descr" "Without a record of an earlier run, missing accounts" \
+	    "the release did not introduce are not recreated; introduced" \
+	    "ones are created"
+}
+first_run_body()
+{
+	make_reference
+	make_root
+	# The administrator removed these before base-accounts first ran.
+	sed -i '' '/^staff:/d' root/etc/group
+	sed -i '' '/^operator:/d' root/etc/master.passwd
+	pwd_mkdb -p -d root/etc root/etc/master.passwd || \
+	    atf_fail "pwd_mkdb failed"
+	atf_check -o match:"created group audio \(gid 43\)" \
+	    -o match:"created user _svc \(uid 830, gid 830\)" \
+	    -o match:"group staff was removed locally" \
+	    -o match:"user operator was removed locally" \
+	    -o not-match:"created (group staff|user operator)" \
+	    $BA -R $PWD/root -r $PWD/ref -v
+	atf_check -s exit:1 grep '^staff:' root/etc/group
+	atf_check -s exit:1 grep '^operator:' root/etc/master.passwd
+	atf_check -o match:"^g:staff$" -o match:"^u:operator$" \
+	    cat root/var/db/base-accounts
+	# Later runs keep them removed; -a creates them.
+	atf_check -o empty $BA -R $PWD/root -r $PWD/ref
+	atf_check -o match:"created group staff \(gid 20\)" \
+	    -o match:"created user operator \(uid 2, gid 5\)" \
+	    $BA -R $PWD/root -r $PWD/ref -a
+}
+
 atf_test_case privileged_never_created
 privileged_never_created_head()
 {
@@ -217,7 +257,9 @@ privileged_never_created_body()
 	make_root
 	sed -i '' '/^toor:/d' root/etc/master.passwd
 	pwd_mkdb -p -d root/etc root/etc/master.passwd
-	atf_check -o match:"not creating privileged account toor" $BA -R $PWD/root -r $PWD/ref -v
+	# -a: a first run would take toor to have been removed locally.
+	atf_check -o match:"not creating privileged account toor" \
+	    $BA -R $PWD/root -r $PWD/ref -a -v
 	atf_check -s exit:1 grep '^toor:' root/etc/master.passwd
 }
 
@@ -251,8 +293,8 @@ missing_reference_body()
 atf_test_case shipped_reference
 shipped_reference_head()
 {
-	atf_set "descr" "The installed reference parses and every base user's" \
-	    "primary group is a base group"
+	atf_set "descr" "The installed reference parses, every base user's" \
+	    "primary group is a base group and every introduced account exists"
 }
 shipped_reference_body()
 {
@@ -262,6 +304,17 @@ shipped_reference_body()
 	awk -F: '!/^#/ && NF { print $4 }' $ref/master.passwd | sort -un | \
 	    while read -r g; do
 		grep -qx "$g" gids || atf_fail "primary gid $g is not a base group"
+	done
+	# Every introduced account is a base account of the same kind.
+	awk '!/^[[:space:]]*(#|$)/ { print $1, $2 }' $ref/introduced | \
+	    while read -r kind name; do
+		case "$kind" in
+		group) file=group ;;
+		user) file=master.passwd ;;
+		*) atf_fail "introduced: unknown kind $kind" ;;
+		esac
+		grep -q "^$name:" $ref/$file || \
+		    atf_fail "introduced $kind $name is not in $file"
 	done
 	atf_check -o inline:"audio:*:43:\n" grep '^audio:' $ref/group
 }
@@ -275,6 +328,7 @@ atf_init_test_cases()
 	atf_add_test_case uid_taken
 	atf_add_test_case name_kept
 	atf_add_test_case removed_locally
+	atf_add_test_case first_run
 	atf_add_test_case privileged_never_created
 	atf_add_test_case member_must_exist
 	atf_add_test_case missing_reference
