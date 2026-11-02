@@ -47511,3 +47511,8 @@ checks, bounded filename/relocation differences and remaining controller gates.
 forced-include policy correction, exact code/CTF/input checks and remaining gates.
 
 [LIBXO-CSV-QUALIFICATION.md](LIBXO-CSV-QUALIFICATION.md) records conversion of a real selected world gap: native CSV plugin code/strict ELF/install checks, inherited Make context, five dynamic API methods and retained installed-path/family/pkg gates.
+
+[OPENZFS-KERNEL-QUALIFICATION.md](OPENZFS-KERNEL-QUALIFICATION.md) records
+237 native filesystem/compatibility/crypto built-ins, ordered overlay and forced
+include inputs, unchanged shared-rule defaults, exact code/CTF and bounded string
+symbol/relocation qualification, with remaining filesystem/system gates.

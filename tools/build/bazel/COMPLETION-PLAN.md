@@ -147,6 +147,18 @@ now has 990 source matches plus six name-only matches among 2,466 final inputs;
 1,470 remain unmatched. See LINUXKPI-KERNEL-QUALIFICATION.md. Full-system, module,
 other-architecture, runtime and performance gates remain open.
 
+## OpenZFS checkpoint (2026-11-02)
+
+237 native amd64 GENERIC built-ins pass exact code/CTF, actual compiler-policy/
+input/overlay-order and nondebug relocation checks. Per-file RPC/config exceptions
+are independently preserved. Additive macro ordering inputs leave all 999 prior
+configured compile actions unchanged. The standalone CTF checker's untyped string
+address limitation is documented alongside bounded hash-bound graph/relocation
+proof, without weakening the tool. Known graph reconciliation now has 1,227 source
+matches plus six name-only matches among 2,466 final products, leaving 1,233
+unmatched. See OPENZFS-KERNEL-QUALIFICATION.md. Full-system/module, other-architecture,
+filesystem/runtime and comparative performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

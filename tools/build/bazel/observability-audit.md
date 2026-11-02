@@ -9711,3 +9711,13 @@ see LINUXKPI-KERNEL-QUALIFICATION.md for build/policy corrections and limitation
 ## libxo CSV encoder (2026-11-02)
 
 The original enc_csv.c has no direct recognized SDT/DTrace, FIDL or BSM audit calls. Native source/flags and encoding behavior are retained without adding probes. Five dynamic API methods cover encoding/options/loader dependencies; installed-path discovery and whole-family/system behavior remain separate gates. See LIBXO-CSV-QUALIFICATION.md.
+
+## OpenZFS built-in batch (2026-11-02)
+
+237 source-bound files include 21 with existing call-shaped tracing/CTR/audit-family
+markers (SPL DTrace, ARC/DBUF/DMU and ZFS vnode/worker paths). Production probe
+plumbing is unchanged. No matches in 216 files do not prove missing shared hooks.
+Pool/ZIL/sync/snapshot/send-receive/error-recovery workload tests and probe behavior
+remain unqualified. The recorded ZFS/filedesc WITNESS reversal remains open.
+Evidence: /usr/obj/usr/src/bazel-kernel-openzfs-review-r1-20261102/observability.json;
+see OPENZFS-KERNEL-QUALIFICATION.md for build, CTF comparison and runtime limits.

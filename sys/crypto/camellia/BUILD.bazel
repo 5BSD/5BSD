@@ -26,3 +26,7 @@ bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["camel
     visibility = ["//sys/opencrypto:__pkg__"])
 bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["camellia.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_crypto_os_headers", hdrs = ["camellia.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

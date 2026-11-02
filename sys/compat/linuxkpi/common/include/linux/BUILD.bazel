@@ -92,3 +92,7 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_seq_file_headers", hdrs = ["arg
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_simple_attr_headers", hdrs = ["args.h", "array_size.h", "bitmap.h", "bitops.h", "bits.h", "bottom_half.h", "build_bug.h", "capability.h", "cleanup.h", "compat.h", "compiler.h", "compiler_attributes.h", "compiler_types.h", "completion.h", "const.h", "container_of.h", "dcache.h", "err.h", "errno.h", "fs.h", "gfp.h", "hardirq.h", "hex.h", "hrtimer.h", "instruction_pointer.h", "jiffies.h", "kconfig.h", "kernel.h", "kstrtox.h", "ktime.h", "limits.h", "list.h", "llist.h", "lockdep.h", "log2.h", "math.h", "math64.h", "minmax.h", "mm_types.h", "mount.h", "mutex.h", "nodemask.h", "overflow.h", "page.h", "pid.h", "preempt.h", "rbtree.h", "rwlock.h", "rwsem.h", "sched.h", "sched/mm.h", "semaphore.h", "slab.h", "spinlock.h", "stdarg.h", "stddef.h", "string.h", "stringify.h", "time.h", "timer.h", "topology.h", "typecheck.h", "types.h", "uaccess.h", "wait.h", "wait_bit.h", "wordpart.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_spl_misc_headers", hdrs = ["compiler.h", "compiler_attributes.h", "compiler_types.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

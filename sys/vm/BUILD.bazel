@@ -932,3 +932,17 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_usb_headers", hdrs = ["uma.h", 
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_xarray_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_param.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_spl_misc_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_spl_kmem_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_acl_common_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_spl_uio_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_spl_vm_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_zfs_ioctl_os_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_param.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

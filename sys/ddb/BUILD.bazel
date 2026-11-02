@@ -311,3 +311,7 @@ amd64_generic_kernel_objects(name = "generic_ddb_core_db_write_cmd", srcs = ["db
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_skbuff_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_zfs_handle_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

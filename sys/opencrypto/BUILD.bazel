@@ -168,3 +168,9 @@ amd64_generic_kernel_objects(name = "generic_opencrypto_xform_sha1", srcs = ["xf
 amd64_generic_kernel_objects(name = "generic_opencrypto_xform_sha2", srcs = ["xform_sha2.c"],
     deps = ["//sys/crypto:opencrypto_kernel_xform_sha2_headers", "//sys/crypto/rijndael:opencrypto_kernel_xform_sha2_headers", "//sys/crypto/sha2:opencrypto_kernel_xform_sha2_headers", "//sys/opencrypto:opencrypto_kernel_xform_sha2_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_spl_acl_headers", hdrs = ["_cryptodev.h", "cryptodev.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
+bsd_source_headers(name = "openzfs_kernel_crypto_os_headers", hdrs = ["_cryptodev.h", "cbc_mac.h", "cryptodev.h", "deflate.h", "gfmult.h", "gmac.h", "rmd160.h", "xform.h", "xform_auth.h", "xform_comp.h", "xform_enc.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

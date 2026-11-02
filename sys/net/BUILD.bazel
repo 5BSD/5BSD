@@ -1145,3 +1145,7 @@ bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = 
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])

@@ -131,3 +131,7 @@ bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["mac_framework
 # Debugger core built-in prerequisites.
 bsd_source_headers(name = "ddb_core_kernel_db_command_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/ddb:__pkg__"])
+
+# Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
+bsd_source_headers(name = "openzfs_kernel_zfs_handle_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/contrib/openzfs:__pkg__"])
