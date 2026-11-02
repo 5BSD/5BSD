@@ -55,6 +55,7 @@ int	svm_nested_npt_walk(const struct svm_nested_npt_walk *,
 	    const struct svm_nested_npt_memory *, struct svm_nested_npt_result *);
 int	svm_nested_npt_commit_ad(const struct svm_nested_npt_result *,
 	    const struct svm_nested_npt_memory *);
+bool	svm_nested_npt_result_dirty(const struct svm_nested_npt_result *);
 int	svm_nested_npt_reflect_info1(const struct svm_nested_npt_result *,
 	    uint64_t, uint64_t *);
 
