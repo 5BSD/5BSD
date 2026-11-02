@@ -1178,7 +1178,10 @@ dtrace_uaddr2str(dtrace_hdl_t *dtp, pid_t pid,
 /* A process descriptor naming the caller.  pdself(2) is capability-mode
  * only and fails with ENOTCAPABLE for an ambient process such as dtrace(1)
  * started from a shell, so an ambient caller names itself with pdopenpid(2),
- * as libservice does.  Neither call changes the caller's mode. */
+ * as libservice does.  Neither call changes the caller's mode.  A kernel
+ * without Capsicum (ENOSYS) is ambient.  open_dtraced_session() connects by
+ * path, which capability mode refuses before this runs; the pdself(2) branch
+ * is for a future caller that connects with connectat(2). */
 static int
 dtraced_self_procdesc(int *fdp)
 {

@@ -85,6 +85,18 @@ int main() {
     /* Ambient first: dtrace(1) from a shell (pdself would be ENOTCAPABLE). */
     for (birth_mock_capmode = 0; birth_mock_capmode <= 1; birth_mock_capmode++)
         run();
+    /* A kernel without Capsicum: cap_getmode(2) is ENOSYS, the caller is
+     * ambient and names itself with pdopenpid(2). */
+    birth_mock_capmode = 0;
+    birth_mock_capmode_errno = ENOSYS;
+    run();
+    /* Any other cap_getmode(2) failure gives no identity. */
+    birth_mock_capmode_errno = EFAULT;
+    birth_mock_error = 0;
+    char ident[DTRACED_FDIDENTLEN];
+    errno = 0;
+    assert(dtraced_birth_ident(ident) == -1 && errno == EFAULT);
+    puts("PASS: cap_getmode ENOSYS is ambient; another failure is refused");
 }
 '''.replace('PRODUCER', producer)
 cfile = out / 'consumer-birth-ident.c'

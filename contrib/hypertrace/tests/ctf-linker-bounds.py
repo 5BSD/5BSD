@@ -37,13 +37,14 @@ command = [
     '-I' + str(root / 'sys'),
     '-I' + str(common),
     '-I' + str(root / 'cddl/contrib/opensolaris/lib/libctf/common'),
+    '-I' + str(root / 'cddl/contrib/opensolaris/common/ctf'),
     '-I' + str(root / 'cddl/contrib/opensolaris/head'),
     '-I' + str(root / 'sys/cddl/compat/opensolaris'),
     '-I' + str(root / 'cddl/compat/opensolaris/include'),
     '-I' + str(root / 'sys/cddl/contrib/opensolaris/uts/common'),
     str(root / 'contrib/hypertrace/tests/ctf-linker-bounds.cc'),
     '-L' + str(lib), '-L' + str(execinfo),
-    '-Wl,-rpath,' + str(lib), '-ldtrace', '-o', str(out / 'ctf-linker-bounds'),
+    '-Wl,-rpath,' + str(lib), '-ldtrace', '-lctf', '-o', str(out / 'ctf-linker-bounds'),
 ]
 build = subprocess.run(command, capture_output=True, text=True)
 (out / 'build.log').write_text(build.stdout + build.stderr)
