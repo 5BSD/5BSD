@@ -498,3 +498,7 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["in6.h"],
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["in6.h"],
     visibility = ["//sys/opencrypto:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

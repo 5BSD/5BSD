@@ -9630,3 +9630,11 @@ plumbing is unchanged. Machine code, allocated payloads and symbolic nondebug
 relocations are preserved; object comparison does not prove live exception,
 syscall, memory or tracing behavior. Review shared hooks before adding hot-path
 events. See AMD64-LOWLEVEL-QUALIFICATION.md for evidence and remaining gates.
+
+## x86 core built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan recognizes tracing/audit/CTR markers
+in cpu_machdep.c and mp_x86.c, with none in 20 other selected sources. Existing
+code/probe plumbing remains unchanged. Exact code/CTF and symbolic relocations
+do not prove interrupt, CPU, SMP, clock or tracing runtime behavior. Review shared
+hooks before adding hot-path events. See X86-CORE-KERNEL-QUALIFICATION.md.

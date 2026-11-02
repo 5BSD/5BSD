@@ -181,3 +181,13 @@ bsd_source_headers(name = "lowlevel_kernel_pmap_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_dbreg_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

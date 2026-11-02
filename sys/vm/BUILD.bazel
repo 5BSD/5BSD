@@ -854,3 +854,35 @@ bsd_source_headers(name = "lowlevel_kernel_uio_machdep_headers", hdrs = ["_vm_ph
     visibility = ["//sys/amd64/amd64:__pkg__"])
 bsd_source_headers(name = "lowlevel_kernel_vm_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_bus_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_dump_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_x86_mem_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_mp_x86_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_param.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_nexus_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_dumpset.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_pvclock_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_sdt_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_stack_machdep_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_ucode_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_param.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

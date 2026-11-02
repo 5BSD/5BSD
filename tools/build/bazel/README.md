@@ -47467,3 +47467,8 @@ validator regressions and remaining signal-frame/runtime/system gates.
 32 low-level amd64 built-ins, native assym/VDSO/interface dependencies,
 source-specific assembly/CTF policy, exact machine code and declared inputs,
 symbolic filename/relocation review and remaining kernel/runtime/system gates.
+
+[X86-CORE-KERNEL-QUALIFICATION.md](X86-CORE-KERNEL-QUALIFICATION.md) records
+22 x86 core built-ins, exact machine code/CTF and declared input checks,
+source-owned header boundaries with unchanged bhyve context, symbolic relocation
+review and remaining kernel/runtime/system gates.

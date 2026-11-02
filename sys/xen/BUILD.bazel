@@ -4,3 +4,7 @@
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "lowlevel_kernel_xen-locore_headers", hdrs = ["xen-os.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["hvm.h", "hypervisor.h", "xen-os.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

@@ -4,3 +4,9 @@
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["icu.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["icu.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
+bsd_source_headers(name = "x86_core_kernel_intr_machdep_headers", hdrs = ["icu.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])

@@ -85,6 +85,15 @@ linked kernel; earlier counts above are retained snapshots. The next 22 x86
 C objects have unchanged independent Make object/recipe/dependency references
 prepared; declarations and output qualification remain to be done.
 
+The next 22 x86 C built-ins now pass native code/CTF/input/relocation review;
+see X86-CORE-KERNEL-QUALIFICATION.md. New physical header ownership preserves
+bhyve's recorded configured header context. Latest successful known-builtin
+analysis finds 628 source matches, six weaker name matches and 1,832 unmatched
+among 2,466 Make final products. These remain configured-analysis counts, not
+a full compile/link. The next 22 debugger objects have unchanged independent
+Make object/recipe/dependency references prepared; native output qualification
+is still required. Existing whole-system and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

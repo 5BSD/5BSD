@@ -449,3 +449,47 @@ cc_library(name = "lowlevel_kernel_opt_vm_header", hdrs = [":opt_vm"],
     strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
 cc_library(name = "lowlevel_kernel_opt_watchdog_header", hdrs = [":opt_watchdog"],
     strip_include_prefix = "generic_options", visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+cc_library(name = "x86_core_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_atpic_header", hdrs = [":opt_atpic"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_bootp_header", hdrs = [":opt_bootp"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_bus_header", hdrs = [":opt_bus"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_clock_header", hdrs = [":opt_clock"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_cpu_header", hdrs = [":opt_cpu"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_gdb_header", hdrs = [":opt_gdb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_iommu_header", hdrs = [":opt_iommu"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_isa_header", hdrs = [":opt_isa"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_maxmem_header", hdrs = [":opt_maxmem"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_pci_header", hdrs = [":opt_pci"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_platform_header", hdrs = [":opt_platform"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_pmap_header", hdrs = [":opt_pmap"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_sched_header", hdrs = [":opt_sched"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_smp_header", hdrs = [":opt_smp"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_stack_header", hdrs = [":opt_stack"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+cc_library(name = "x86_core_kernel_opt_watchdog_header", hdrs = [":opt_watchdog"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])

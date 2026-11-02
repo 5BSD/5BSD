@@ -6,3 +6,72 @@ amd64_generic_kernel_objects(name = "generic_busdma", srcs = ["busdma_bounce.c",
         "//sys/x86/include:busdma_internal_headers", "//sys/amd64/conf:generic_opt_acpi_header"])
 
 exports_files(["ucode_subr.c"], visibility = ["//usr.sbin/cpucontrol:__pkg__"])
+
+# Native x86 core built-ins, with source-owned prerequisites.
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_x86_core_autoconf", srcs = ["autoconf.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_autoconf_headers", "//sys/isa:x86_core_kernel_autoconf_headers", "//sys/net:x86_core_kernel_autoconf_headers", "//sys/netinet:x86_core_kernel_autoconf_headers", "//sys/netinet6:x86_core_kernel_autoconf_headers", "//sys/vm:x86_core_kernel_autoconf_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_bootp_header", "//sys/amd64/conf:x86_core_kernel_opt_bus_header", "//sys/amd64/conf:x86_core_kernel_opt_isa_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_bus_machdep", srcs = ["bus_machdep.c"],
+    deps = ["//sys/vm:x86_core_kernel_bus_machdep_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_cpu_machdep", srcs = ["cpu_machdep.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_cpu_machdep_headers", "//sys/contrib/dev/acpica/include:x86_core_kernel_cpu_machdep_headers", "//sys/dev/hwpmc:x86_core_kernel_cpu_machdep_headers", "//sys/isa:x86_core_kernel_cpu_machdep_headers", "//sys/vm:x86_core_kernel_cpu_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_atpic_header", "//sys/amd64/conf:x86_core_kernel_opt_cpu_header", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header", "//sys/amd64/conf:x86_core_kernel_opt_inet_header", "//sys/amd64/conf:x86_core_kernel_opt_isa_header", "//sys/amd64/conf:x86_core_kernel_opt_kdb_header", "//sys/amd64/conf:x86_core_kernel_opt_kstack_pages_header", "//sys/amd64/conf:x86_core_kernel_opt_maxmem_header", "//sys/amd64/conf:x86_core_kernel_opt_platform_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_dbreg", srcs = ["dbreg.c"],
+    deps = ["//sys/ddb:x86_core_kernel_dbreg_headers", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_dump_machdep", srcs = ["dump_machdep.c"],
+    deps = ["//sys/vm:x86_core_kernel_dump_machdep_headers", "//sys/amd64/conf:x86_core_kernel_opt_watchdog_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_identcpu", srcs = ["identcpu.c"],
+    deps = ["//sys/amd64/vmm/intel:x86_core_kernel_identcpu_headers", "//sys/contrib/xen:x86_core_kernel_identcpu_headers", "//sys/vm:x86_core_kernel_identcpu_headers", "//sys/x86/isa:x86_core_kernel_identcpu_headers", "//sys/xen:x86_core_kernel_identcpu_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_cpu_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_intr_machdep", srcs = ["intr_machdep.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_intr_machdep_headers", "//sys/ddb:x86_core_kernel_intr_machdep_headers", "//sys/dev/ic:x86_core_kernel_intr_machdep_headers", "//sys/isa:x86_core_kernel_intr_machdep_headers", "//sys/vm:x86_core_kernel_intr_machdep_headers", "//sys/x86/isa:x86_core_kernel_intr_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_atpic_header", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header", "//sys/amd64/conf:x86_core_kernel_opt_smp_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_legacy", srcs = ["legacy.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_legacy_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_mca", srcs = ["mca.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_mca_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_x86_mem", srcs = ["x86_mem.c"],
+    deps = ["//sys/vm:x86_core_kernel_x86_mem_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_mp_x86", srcs = ["mp_x86.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_mp_x86_headers", "//sys/contrib/dev/acpica/include:x86_core_kernel_mp_x86_headers", "//sys/dev/acpica:x86_core_kernel_mp_x86_headers", "//sys/vm:x86_core_kernel_mp_x86_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_cpu_header", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header", "//sys/amd64/conf:x86_core_kernel_opt_gdb_header", "//sys/amd64/conf:x86_core_kernel_opt_kstack_pages_header", "//sys/amd64/conf:x86_core_kernel_opt_pmap_header", "//sys/amd64/conf:x86_core_kernel_opt_sched_header", "//sys/amd64/conf:x86_core_kernel_opt_smp_header", "//sys/amd64/conf:x86_core_kernel_opt_stack_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_nexus", srcs = ["nexus.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_nexus_headers", "//sys/isa:x86_core_kernel_nexus_headers", "//sys/vm:x86_core_kernel_nexus_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/isa:isa_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_isa_header", "//sys/amd64/conf:x86_core_kernel_opt_pci_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_pvclock", srcs = ["pvclock.c"],
+    deps = ["//sys/vm:x86_core_kernel_pvclock_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_sdt_machdep", srcs = ["sdt_machdep.c"],
+    deps = ["//sys/vm:x86_core_kernel_sdt_machdep_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_stack_machdep", srcs = ["stack_machdep.c"],
+    deps = ["//sys/vm:x86_core_kernel_stack_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_stack_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_tsc", srcs = ["tsc.c"],
+    deps = ["//sys/contrib/dev/acpica/include:x86_core_kernel_tsc_headers", "//sys/dev/acpica:x86_core_kernel_tsc_headers", "//sys/kern:bus_if_headers", "//sys/kern:cpufreq_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_clock_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_ucode", srcs = ["ucode.c"],
+    deps = ["//sys/vm:x86_core_kernel_ucode_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_ucode_subr", srcs = ["ucode_subr.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_delay", srcs = ["delay.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_io_apic", srcs = ["io_apic.c"],
+    deps = ["//sys/ddb:x86_core_kernel_io_apic_headers", "//sys/dev/pci:x86_core_kernel_io_apic_headers", "//sys/vm:x86_core_kernel_io_apic_headers", "//sys/x86/iommu:x86_core_kernel_io_apic_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header", "//sys/amd64/conf:x86_core_kernel_opt_iommu_header", "//sys/amd64/conf:x86_core_kernel_opt_isa_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_local_apic", srcs = ["local_apic.c"],
+    deps = ["//sys/contrib/ck:x86_core_kernel_local_apic_headers", "//sys/contrib/xen:x86_core_kernel_local_apic_headers", "//sys/ddb:x86_core_kernel_local_apic_headers", "//sys/dev/hyperv/vmbus:x86_core_kernel_local_apic_headers", "//sys/vm:x86_core_kernel_local_apic_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_atpic_header", "//sys/amd64/conf:x86_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_x86_core_msi", srcs = ["msi.c"],
+    deps = ["//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/x86/iommu:x86_core_kernel_msi_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:x86_core_kernel_opt_acpi_header", "//sys/amd64/conf:x86_core_kernel_opt_iommu_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

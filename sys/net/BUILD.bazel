@@ -1127,3 +1127,7 @@ bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["vnet.h"
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["netisr.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# x86 core built-in prerequisites.
+bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/x86/x86:__pkg__"])
