@@ -10297,3 +10297,16 @@ preserved. Exact allocated/relocation/symbol parity and independently repeated
 whole-file producer controls pass; decoded debug filename/comp_dir differences
 remain explicit. Two new negative tests execute, ten prior results are cached;
 no production rescue runtime or full installation claim.
+
+
+### AXGBE, BNXT, BXE, CXGB and QLNX modules (2026-11-02)
+
+The bounded scan of 76 ordinary C files and one generated interface schema finds
+zero direct DTrace/SDT/CTR/audit-call candidate lines. Compiled if_bxe and if_cxgb
+still contain SDT tracepoint-set and relocation sections through included code;
+these sections agree with original Make. This demonstrates why source-only
+absence is not an instrumentation-absence conclusion. No probes added. Review
+shared driver attach/reset/recovery, queue lifecycle and RDMA completion/error
+observability before adding events; avoid per-packet logging or payload leakage.
+Live events and alternate options remain unqualified. See
+NETWORK-FAMILIES-MODULES-QUALIFICATION.md for retained inventories and exact scope.

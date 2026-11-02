@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_cxgb", objects = ["//sys/dev/cxgb:if_cxgb_cxgb_mc5_module_object_files", "//sys/dev/cxgb:if_cxgb_cxgb_vsc8211_module_object_files", "//sys/dev/cxgb:if_cxgb_cxgb_vsc7323_module_object_files", "//sys/dev/cxgb:if_cxgb_cxgb_main_module_object_files", "//sys/dev/cxgb:if_cxgb_cxgb_sge_module_object_files", "//sys/dev/cxgb:if_cxgb_uipc_mvec_module_object_files"], object_order = ["cxgb_mc5.o", "cxgb_vsc8211.o", "cxgb_ael1002.o", "cxgb_mv88e1xxx.o", "cxgb_xgmac.o", "cxgb_vsc7323.o", "cxgb_t3_hw.o", "cxgb_main.o", "cxgb_aq100x.o", "cxgb_sge.o", "cxgb_tn1010.o", "uipc_mvec.o"], export_all = False, package = "kernel")

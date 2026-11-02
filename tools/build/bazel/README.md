@@ -48032,3 +48032,30 @@ adds three genuine stub → ordered ld -r → original crunchide pipelines. All
 runtime sections/relocations/symbols match original Make; identical-input controls
 also reproduce raw/hidden whole files. Debug path differences are explicit. Full
 rescue linking, execution and installation remain open.
+
+
+## Latest network-module checkpoint (2026-11-02)
+
+Nine amd64 network/RDMA leaves now pass native compiler/input/link and artifact/
+installation reviews against eighteen original Make controls. Both profiles bind
+98 actual compilers and 27,502 original and native-consumed dependency occurrences,
+plus nine complete ordered links. Five plain modules match whole-file bytes;
+four differ only in independently reproduced 20-byte build-ID descriptors from
+original local debug compilation, with every other final byte equal. CTF/debug
+sections, CTF payloads, split-debug CRCs and eighteen installation records pass;
+nine plain installation records pass. Six existing provider tests pass per profile.
+See [NETWORK-FAMILIES-MODULES-QUALIFICATION.md](NETWORK-FAMILIES-MODULES-QUALIFICATION.md)
+for the rejected initial strict criterion and exact linker-control evidence.
+
+BUILD presence is 543/729 selected amd64 leaves (186 missing), not qualification
+percentage. Fresh parent-export-aware inventories select 627 ARM64 and 553 RISC-V
+leaves; only 216/214 have recognized cross-module declarations. Older cross
+inventories omitted twelve/ten FDT-selected leaves. Evidence and exact gaps are
+retained under `/usr/obj/usr/src/bazel-current-module-selection-20261102/`.
+The separate real static rescue dispatcher is under qualification; its bounded
+three-application result does not close the full rescue selection. Full world,
+rescue/pkgbase/hardware/bootstrap/publication, alternate options/architectures,
+VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification remain open.
+Existing build-bsd format-5 inputs and maintained rules carry these declarations;
+no new CLI/backend/security/publication policy. Make stays production/default;
+BIP remains excluded.

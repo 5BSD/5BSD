@@ -5,4 +5,19 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 # Native Mellanox physical prerequisites and ordered OFED/LinuxKPI roots.
 bsd_source_headers(name = "mlx_kernel_mlx5_alloc_headers", hdrs = ["rdma/ib_verbs.h", "rdma/signature.h", "//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h"],
     includes = [".", "uapi"],
-    visibility = ["//sys/dev/mlx5:__pkg__"])
+    visibility = ["//sys/dev/mlx5:__pkg__", "//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_0", hdrs = ["//sys/ofed/include/uapi/rdma:ib_user_ioctl_cmds.h", "//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h", "rdma/ib_addr.h", "rdma/ib_addr_freebsd.h", "rdma/ib_cache.h", "rdma/ib_mad.h", "rdma/ib_pack.h", "rdma/ib_umem.h", "rdma/ib_verbs.h", "rdma/signature.h", "rdma/uverbs_ioctl.h", "rdma/uverbs_types.h"], includes = [".", "uapi"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_1", hdrs = ["//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h", "rdma/ib_addr.h", "rdma/ib_addr_freebsd.h", "rdma/ib_mad.h", "rdma/ib_pack.h", "rdma/ib_verbs.h", "rdma/signature.h"], includes = [".", "uapi"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_3", hdrs = ["//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h", "rdma/ib_addr.h", "rdma/ib_addr_freebsd.h", "rdma/ib_cache.h", "rdma/ib_mad.h", "rdma/ib_pack.h", "rdma/ib_umem.h", "rdma/ib_verbs.h", "rdma/signature.h"], includes = [".", "uapi"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_4", hdrs = ["//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h", "rdma/ib_addr.h", "rdma/ib_addr_freebsd.h", "rdma/ib_cache.h", "rdma/ib_mad.h", "rdma/ib_pack.h", "rdma/ib_smi.h", "rdma/ib_umem.h", "rdma/ib_verbs.h", "rdma/signature.h"], includes = [".", "uapi"],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_5", hdrs = ["//sys/ofed/include/uapi/rdma:ib_user_ioctl_cmds.h", "//sys/ofed/include/uapi/rdma:ib_user_ioctl_verbs.h", "//sys/ofed/include/uapi/rdma:ib_user_mad.h", "//sys/ofed/include/uapi/rdma:ib_user_verbs.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl.h", "//sys/ofed/include/uapi/rdma:rdma_user_ioctl_cmds.h", "rdma/ib_addr.h", "rdma/ib_addr_freebsd.h", "rdma/ib_cm.h", "rdma/ib_mad.h", "rdma/ib_pack.h", "rdma/ib_sa.h", "rdma/ib_smi.h", "rdma/ib_umem.h", "rdma/ib_verbs.h", "rdma/iw_cm.h", "rdma/opa_addr.h", "rdma/opa_smi.h", "rdma/signature.h", "rdma/uverbs_ioctl.h", "rdma/uverbs_types.h"], includes = [".", "uapi"],
+    visibility = ["//sys/dev/qlnx:__pkg__"])

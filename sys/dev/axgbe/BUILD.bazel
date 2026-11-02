@@ -42,3 +42,23 @@ amd64_generic_kernel_objects(name = "generic_ethernet_xgbe-i2c", srcs = ["xgbe-i
 amd64_generic_kernel_objects(name = "generic_ethernet_xgbe-phy-v2", srcs = ["xgbe-phy-v2.c"],
     deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/axgbe:ethernet_kernel_if_axgbe_pci_headers", "//sys/dev/mii:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_platform_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_axp_if_axgbe_pci_module", srcs = ["if_axgbe_pci.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:ethernet_kernel_aq_hw_headers", "//sys/dev/mii:usb_net_uether_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/axgbe:ethernet_kernel_if_axgbe_pci_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/dev/mii:miibus_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:generic_opt_platform_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_axp_xgbe-sysctl_module", srcs = ["xgbe-sysctl.c", "xgbe-desc.c", "xgbe-drv.c", "xgbe-mdio.c", "xgbe-i2c.c", "xgbe-phy-v2.c", "xgbe-txrx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/axgbe:ethernet_kernel_if_axgbe_pci_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/dev/mii:usb_net_uether_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_axp_xgbe_osdep_module", srcs = ["xgbe_osdep.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/axgbe:ethernet_kernel_xgbe_osdep_headers", "//sys/net:ethernet_kernel_aq_media_headers", "//sys/dev/mii:usb_net_uether_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_axp_xgbe-dev_module", srcs = ["xgbe-dev.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/axgbe:ethernet_kernel_if_axgbe_pci_headers", "//sys/net:ethernet_kernel_xgbe-dev_headers", "//sys/dev/mii:usb_net_uether_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

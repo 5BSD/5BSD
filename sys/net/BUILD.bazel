@@ -224,7 +224,7 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["vnet.h"], includes = 
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llc.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "netmap.h", "netmap_legacy.h", "rss_config.h", "vnet.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
 
 filegroup(name = "ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
-cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/aq:__pkg__", "//sys/dev/vmware:__pkg__"])
+cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/aq:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bnxt:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
@@ -307,7 +307,7 @@ bsd_source_headers(
         "ifq.h",
         "vnet.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/qlnx:__pkg__"],
 )
 
 bsd_source_headers(
@@ -1142,7 +1142,7 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["if.h", "vnet.h"],
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
     visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__"])
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
@@ -1260,7 +1260,7 @@ bsd_source_headers(name = "ethernet_kernel_aq_hw_llh_headers", hdrs = ["ethernet
 bsd_source_headers(name = "ethernet_kernel_if_bce_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
 bsd_source_headers(name = "ethernet_kernel_if_bge_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
-    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
+    visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/cxgb:__pkg__"])
 bsd_source_headers(name = "ethernet_kernel_if_igc_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
     visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__"])
 bsd_source_headers(name = "ethernet_kernel_igc_api_headers", hdrs = ["ethernet.h", "if.h", "if_var.h", "iflib.h", "ifq.h", "vnet.h"],
@@ -1515,3 +1515,30 @@ bsd_source_headers(name = "storage_tcp_ktest_module_context_5", hdrs = ["bpf.h",
 
 bsd_source_headers(name = "storage_tcp_ktest_module_context_6", hdrs = ["pfkeyv2.h", "route.h", "route/nhop.h", "vnet.h"], includes = [],
     visibility = ["//sys/netinet:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_3", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_4", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_6", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "iflib.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_7", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_8", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_9", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_12", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_13", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_15", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "rss_config.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/qlnx:__pkg__"])

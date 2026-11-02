@@ -8,3 +8,5 @@ exports_files(['ib_user_cm.h', 'ib_user_sa.h', 'ib_user_verbs.h', 'rdma_user_cm.
 cc_library(name = "cm_headers", hdrs = ["ib_user_cm.h"], strip_include_prefix = ".", include_prefix = "rdma", deps = [":sa_headers"], visibility = ["//contrib/ofed/libibcm:__pkg__"])
 
 exports_files(["ib_user_ioctl_verbs.h", "ib_user_mad.h", "rdma_user_ioctl.h", "rdma_user_ioctl_cmds.h"], visibility = ["//sys/ofed/include:__pkg__"])
+
+exports_files(["ib_user_ioctl_cmds.h"], visibility = ["//sys/ofed/include:__pkg__"])

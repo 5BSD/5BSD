@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "cxgb_t3fw", objects = ["//sys/dev/cxgb:cxgb_t3fw_cxgb_t3fw_module_object_files"], object_order = ["cxgb_t3fw.o"], export_all = False, package = "kernel")

@@ -337,3 +337,6 @@ amd64_generic_kernel_objects(name = "generic_mlx_mlx5_en_port_buffer", srcs = ["
     deps = ["//sys/contrib/ck:mlx_kernel_mlx5_alloc_headers", "//sys/compat/linuxkpi/common/include/linux:mlx_kernel_mlx5_eq_headers", "//sys/dev/mlx5:mlx_kernel_mlx5_en_ethtool_headers", "//sys/dev/mlxfw:mlx_kernel_mlx5_alloc_headers", "//sys/dev/pci:mlx_kernel_mlx5_alloc_headers", "//sys/net:mlx_kernel_mlx5_eq_headers", "//sys/net80211:mlx_kernel_mlx5_alloc_headers", "//sys/netinet:mlx_kernel_mlx5_eq_headers", "//sys/netinet6:mlx_kernel_mlx5_alloc_headers", "//sys/vm:mlx_kernel_mlx5_alloc_headers", "//sys/kern:mlx_bus_if_headers", "//sys/kern:mlx_device_if_headers", "//sys/amd64/conf:mlx_kernel_opt_inet_header", "//sys/amd64/conf:mlx_kernel_opt_ratelimit_header", "//sys/amd64/conf:mlx_kernel_opt_rss_header", "//sys/dev/pci:mlx_pci_if_headers"],
     warning_flags = _MLX_WARNINGS,
     copts = ["-DCONFIG_INFINIBAND_USER_MEM", "-include", "sys/compat/linuxkpi/common/include/linux/kconfig.h"])
+
+bsd_source_headers(name = "network_families_module_context_0", hdrs = ["device.h", "doorbell.h", "driver.h", "mlx5_fpga/mlx5_ifc_fpga.h", "mlx5_ifc.h", "port.h", "srq.h", "vport.h"], includes = [],
+    visibility = ["//sys/dev/bnxt:__pkg__"])

@@ -38,3 +38,32 @@ amd64_generic_kernel_objects(name = "generic_ethernet_57711_init_values", srcs =
 amd64_generic_kernel_objects(name = "generic_ethernet_57712_init_values", srcs = ["57712_init_values.c"],
     deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/contrib/zlib:ethernet_kernel_bxe_headers", "//sys/dev/bxe:ethernet_kernel_ecore_sp_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_if_bge_headers", "//sys/netinet:ethernet_kernel_bxe_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_alc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "network_families_module_context_0", hdrs = ["57710_int_offsets.h", "57711_int_offsets.h", "57712_int_offsets.h", "bxe.h", "bxe_dcb.h", "bxe_dump.h", "bxe_elink.h", "bxe_ioctl.h", "bxe_stats.h", "ecore_fw_defs.h", "ecore_hsi.h", "ecore_init.h", "ecore_init_ops.h", "ecore_mfw_req.h", "ecore_reg.h", "ecore_sp.h"], includes = ["."],
+    visibility = ["//sys/dev/bxe:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_1", hdrs = ["bxe.h", "bxe_dcb.h", "bxe_elink.h", "bxe_stats.h", "ecore_fw_defs.h", "ecore_hsi.h", "ecore_mfw_req.h", "ecore_reg.h", "ecore_sp.h"], includes = ["."],
+    visibility = ["//sys/dev/bxe:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_2", hdrs = ["bxe.h", "bxe_dcb.h", "bxe_elink.h", "bxe_stats.h", "ecore_fw_defs.h", "ecore_hsi.h", "ecore_init.h", "ecore_mfw_req.h", "ecore_reg.h", "ecore_sp.h"], includes = ["."],
+    visibility = ["//sys/dev/bxe:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_bxe_bxe_module", srcs = ["bxe.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers", "//sys/net:ethernet_kernel_bxe_headers", "//sys/netinet:ethernet_kernel_bxe_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = ["//sys/dev/bxe:network_families_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bxe_bxe_stats_module", srcs = ["bxe_stats.c", "bxe_elink.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers", "//sys/net:ethernet_kernel_if_bge_headers", "//sys/netinet:ethernet_kernel_bxe_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = ["//sys/dev/bxe:network_families_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bxe_bxe_debug_module", srcs = ["bxe_debug.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers", "//sys/net:ethernet_kernel_if_bge_headers", "//sys/netinet:ethernet_kernel_bxe_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/ddb:ethernet_kernel_bxe_debug_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = ["//sys/dev/bxe:network_families_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_bxe_ecore_sp_module", srcs = ["ecore_sp.c", "57710_init_values.c", "57711_init_values.c", "57712_init_values.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers", "//sys/net:ethernet_kernel_if_bge_headers", "//sys/netinet:ethernet_kernel_bxe_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"], copts = [], local_defines = [], header_overrides = ["//sys/dev/bxe:network_families_module_context_2"], preinclude_headers = [], textual_hdrs = [])

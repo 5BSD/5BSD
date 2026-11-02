@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "network_families_module_context_0", hdrs = ["common/cxgb_common.h", "common/cxgb_regs.h", "cxgb_adapter.h", "cxgb_osdep.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_1", hdrs = ["common/cxgb_common.h", "common/cxgb_ctl_defs.h", "common/cxgb_firmware_exports.h", "common/cxgb_regs.h", "common/cxgb_sge_defs.h", "common/cxgb_t3_cpl.h", "common/jhash.h", "cxgb_adapter.h", "cxgb_include.h", "cxgb_ioctl.h", "cxgb_offload.h", "cxgb_osdep.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_2", hdrs = ["common/cxgb_common.h", "cxgb_adapter.h", "cxgb_osdep.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_3", hdrs = ["common/cxgb_common.h", "common/cxgb_ctl_defs.h", "common/cxgb_firmware_exports.h", "common/cxgb_regs.h", "common/cxgb_sge_defs.h", "common/cxgb_t3_cpl.h", "common/jhash.h", "cxgb_adapter.h", "cxgb_include.h", "cxgb_ioctl.h", "cxgb_offload.h", "cxgb_osdep.h", "sys/mvec.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+bsd_source_headers(name = "network_families_module_context_4", hdrs = ["cxgb_t3fw.h", "t3b_protocol_sram.h", "t3b_tp_eeprom.h", "t3c_protocol_sram.h", "t3c_tp_eeprom.h"], includes = ["."],
+    visibility = ["//sys/dev/cxgb:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_cxgb_cxgb_mc5_module", srcs = ["common/cxgb_mc5.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_12", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgb_cxgb_vsc8211_module", srcs = ["common/cxgb_vsc8211.c", "common/cxgb_ael1002.c", "common/cxgb_mv88e1xxx.c", "common/cxgb_xgmac.c", "common/cxgb_t3_hw.c", "common/cxgb_aq100x.c", "common/cxgb_tn1010.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_12", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgb_cxgb_vsc7323_module", srcs = ["common/cxgb_vsc7323.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:network_families_module_context_12", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_2"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgb_cxgb_main_module", srcs = ["cxgb_main.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:ethernet_kernel_if_bge_headers", "//sys/netinet:network_families_module_context_5", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgb_cxgb_sge_module", srcs = ["cxgb_sge.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/net:network_families_module_context_13", "//sys/vm:pci_ethernet_headers", "//sys/netinet:network_families_module_context_6", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_3"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_cxgb_uipc_mvec_module", srcs = ["sys/uipc_mvec.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:pci_ethernet_headers", "//sys/dev/mii:ethernet_kernel_if_rge_headers", "//sys/net:network_families_module_context_12", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = ["DEFAULT_JUMBO"], header_overrides = ["//sys/dev/cxgb:network_families_module_context_3"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "cxgb_t3fw_cxgb_t3fw_module", srcs = ["cxgb_t3fw.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-g", "-gdwarf-4"], local_defines = [], header_overrides = ["//sys/dev/cxgb:network_families_module_context_4"], preinclude_headers = [], textual_hdrs = [])

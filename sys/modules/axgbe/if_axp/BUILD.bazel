@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_axp", objects = ["//sys/dev/axgbe:if_axp_if_axgbe_pci_module_object_files", "//sys/dev/axgbe:if_axp_xgbe-sysctl_module_object_files", "//sys/dev/axgbe:if_axp_xgbe_osdep_module_object_files", "//sys/dev/axgbe:if_axp_xgbe-dev_module_object_files"], object_order = ["if_axgbe_pci.o", "xgbe-sysctl.o", "xgbe_osdep.o", "xgbe-desc.o", "xgbe-drv.o", "xgbe-mdio.o", "xgbe-dev.o", "xgbe-i2c.o", "xgbe-phy-v2.o", "xgbe-txrx.o"], export_all = False, package = "kernel")
