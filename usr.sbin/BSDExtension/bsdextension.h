@@ -109,15 +109,26 @@ bool sysext_policy_denied(struct sysext_policy *, const char *);
  * running kernel; otherwise, and when the kernel file was replaced in place
  * (a kernel package upgrade before the reboot), driver and root loads are
  * refused until the next boot.
+ *
+ * The manifest also delivers "/", limited to fstatat(2) at startup
+ * (sysext_root_dir_limit()): the kernel resolves the absolute path a load
+ * names from the root, not through the held /boot, so the check also
+ * requires boot beneath "/" to be the delivered /boot (a mount over /boot or
+ * a /boot renamed and replaced is refused until the next boot), and root
+ * loads compare each module path, resolved from "/", with the checked file
+ * before and after the load.
  */
+#define	SYSEXT_ROOT_DIR		"/"
 #define	SYSEXT_BOOT_DIR		"/boot"
 #define	SYSEXT_KERNEL_DIR	"/boot/kernel"	/* the usual kernel directory */
 #define	SYSEXT_BUILD_ID_MAX	129		/* hex of a 64-byte note, NUL */
 extern int sysext_boot_dirfd;
+extern int sysext_root_dirfd;		/* "/", fstatat(2) only, or -1 */
 extern int sysext_driver_dirfd;		/* the kernel directory, or -1 */
 extern char sysext_kernel_dir[];	/* its path, e.g. /boot/kernel */
 int	sysext_kernel_dir_open(void);
 int	sysext_kernel_dir_check(char *detail, size_t detaillen);
+int	sysext_root_dir_limit(int fd);
 /* Hex GNU build-id of an ELF file (the kernel), 0 or an errno. */
 int	sysext_elf_build_id(int fd, char *out, size_t outlen);
 /* The kernel file's name in the kernel directory (normally "kernel"). */
@@ -290,8 +301,8 @@ void	sysext_test_decisions_reset(void);
  * running kernel's kern.build_id.
  */
 int	sysext_test_serve_rootload(int fd, const char *client,
-	    const struct sysext_config *cfg, int bootdir, int pkgdir,
-	    const char *deny);
+	    const struct sysext_config *cfg, int rootdir, int bootdir,
+	    int pkgdir, const char *deny);
 extern int (*sysext_test_kld_load)(const char *path, int *fileid);
 extern int (*sysext_test_kld_unload)(int fileid);
 /* Fill the name and pathname of a loaded file id; an errno when none. */
@@ -303,6 +314,8 @@ extern int (*sysext_test_kld_next)(int fileid);
 extern int (*sysext_test_mod_find)(const char *name);
 extern const char *sysext_test_build_id;
 void	sysext_test_root_reset(void);
+/* Package database children forked (one per root load's plan). */
+extern int sysext_test_pkgdb_children;
 #else
 #define	SYSEXT_STATIC	static
 #endif /* BSDEXTENSION_TESTING */

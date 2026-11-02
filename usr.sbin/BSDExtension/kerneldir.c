@@ -27,11 +27,20 @@
  *    Its modules belong to another kernel; loading them into this one is
  *    never right, so driver and root loads wait for the reboot.
  *
- * A root that replaces /boot itself, or edits files in place, still defeats a
- * path-based load; mac_veriexec(4) is the control against a compromised root.
+ * The kernel resolves a load's absolute path from the root, not through the
+ * held /boot, so the check also looks up "boot" beneath the delivered "/"
+ * (limited to fstatat(2), sysext_root_dir_limit()) and requires the /boot the
+ * broker holds: a mount over /boot, or a /boot renamed and replaced, is
+ * refused until the next boot (the descriptor cannot open the new one).
+ * rootload.c compares each module's path, resolved the same way, with the
+ * checked file before and after the load.  What remains is a race: a /boot
+ * swapped after the last check and restored before the next one is not seen
+ * here.  Closing it needs the kernel to load the vnode that was checked;
+ * mac_veriexec(4) is the control against a compromised root.
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/elf.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -53,6 +62,7 @@
 #define	BUILD_ID_PHDRS_MAX	64
 
 int sysext_boot_dirfd = -1;
+int sysext_root_dirfd = -1;
 char sysext_kernel_dir[MAXPATHLEN];
 
 /* The kernel directory's name beneath /boot and the kernel file's name. */
@@ -267,15 +277,31 @@ sysext_kernel_dir_check(char *detail, size_t detaillen)
 {
 	struct stat held, now;
 	char why[384];
-	int fd, error = 0;
+	int fd = -1, error = 0;
 
 	detail[0] = '\0';
-	if (sysext_driver_dirfd < 0 || sysext_boot_dirfd < 0) {
+	if (sysext_driver_dirfd < 0 || sysext_boot_dirfd < 0 ||
+	    sysext_root_dirfd < 0) {
 		(void)snprintf(detail, detaillen, "the running kernel's module "
 		    "directory is not available");
 		return (ENOENT);
 	}
 	pthread_mutex_lock(&kernel_dir_lock);
+	/* The /boot an absolute path names is the one held. */
+	if (fstatat(sysext_root_dirfd, SYSEXT_BOOT_DIR + 1, &now, 0) == -1 ||
+	    fstat(sysext_boot_dirfd, &held) == -1) {
+		error = errno;
+		(void)snprintf(detail, detaillen, "%s: %s", SYSEXT_BOOT_DIR,
+		    strerror(error));
+		goto out;
+	}
+	if (now.st_dev != held.st_dev || now.st_ino != held.st_ino) {
+		error = ESTALE;
+		(void)snprintf(detail, detaillen, "%s was replaced or mounted "
+		    "over since the broker started; loads wait for the reboot",
+		    SYSEXT_BOOT_DIR);
+		goto out;
+	}
 	fd = open_kernel_dir();
 	if (fd == -1 || fstat(fd, &now) == -1 ||
 	    fstat(sysext_driver_dirfd, &held) == -1) {
@@ -316,6 +342,20 @@ out:
 	if (fd != -1)
 		(void)close(fd);
 	return (error);
+}
+
+/*
+ * "/" is delivered for lookups only: limited to fstatat(2), it shows what an
+ * absolute path names, as the kernel resolves it, and opens nothing.
+ */
+int
+sysext_root_dir_limit(int fd)
+{
+	cap_rights_t rights;
+
+	if (cap_rights_limit(fd, cap_rights_init(&rights, CAP_FSTATAT)) == -1)
+		return (errno);
+	return (0);
 }
 
 /* The running kernel file's name, for dependencies the kernel provides. */

@@ -1792,16 +1792,17 @@ sysext_test_serve_status(int fd, const char *client,
 
 
 /*
- * The root-load endpoint over the test's kernel and package directories.  The
- * session is given every right, ADMIN included: the endpoint alone decides
+ * The root-load endpoint over the test's root, kernel and package directories.
+ * The session is given every right, ADMIN included: the endpoint alone decides
  * what it may do.
  */
 int
 sysext_test_serve_rootload(int fd, const char *client,
-    const struct sysext_config *cfg, int bootdir, int pkgdir,
+    const struct sysext_config *cfg, int rootdir, int bootdir, int pkgdir,
     const char *deny)
 {
-	int result, saved_boot = sysext_boot_dirfd,
+	int result, saved_root = sysext_root_dirfd,
+	    saved_boot = sysext_boot_dirfd,
 	    saved_kernel = sysext_driver_dirfd, saved_pkg = sysext_pkgdb_dirfd,
 	    statedir;
 
@@ -1818,6 +1819,7 @@ sysext_test_serve_rootload(int fd, const char *client,
 		    SERVICE_RIGHTS_ADMIN) == -1)
 			return (1);
 	}
+	sysext_root_dirfd = rootdir;
 	sysext_boot_dirfd = bootdir;
 	sysext_pkgdb_dirfd = pkgdir;
 	if (sysext_kernel_dir_open() != 0)
@@ -1826,6 +1828,7 @@ sysext_test_serve_rootload(int fd, const char *client,
 	    SYSEXT_ENDPOINT_ROOTLOAD, 0x5b5d);
 	if (sysext_driver_dirfd != -1)
 		(void)close(sysext_driver_dirfd);
+	sysext_root_dirfd = saved_root;
 	sysext_boot_dirfd = saved_boot;
 	sysext_driver_dirfd = saved_kernel;
 	sysext_pkgdb_dirfd = saved_pkg;
@@ -2148,7 +2151,20 @@ main(int argc, char **argv)
 	 * delivered /boot (kerneldir.c).  Soft: without it the class grants
 	 * nothing and root loads are refused; only the allow-list applies.
 	 * Opened whatever the policy says, so a policy reload can enable either.
+	 * "/" (fstatat(2) only) shows which /boot an absolute path names.
 	 */
+	if (!conf_from_arg &&
+	    (service_resource_dir(SYSEXT_ROOT_DIR, &sysext_root_dirfd) == -1 ||
+	    (kerror = sysext_root_dir_limit(sysext_root_dirfd)) != 0)) {
+		if (sysext_root_dirfd == -1)
+			kerror = errno;
+		else
+			(void)close(sysext_root_dirfd);
+		sysext_root_dirfd = -1;
+		syslog(LOG_WARNING, "cannot use %s (%s); hardware drivers and "
+		    "root loads are refused", SYSEXT_ROOT_DIR,
+		    strerror(kerror));
+	}
 	if (!conf_from_arg &&
 	    (service_resource_dir(SYSEXT_BOOT_DIR, &sysext_boot_dirfd) == -1 ||
 	    (kerror = sysext_kernel_dir_open()) != 0)) {

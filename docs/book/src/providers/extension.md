@@ -71,7 +71,7 @@ Source: `usr.sbin/BSDExtension/capbundle/Bundle.ucl` and
 | User | `capability` |
 | Launch mode | born in capability mode (`ambient` absent) |
 | Declared gates | `capabilities { system = ["kldload", "kldunload"] }` |
-| Delivered directories | `/etc/bsdextension`, `/Capabilities/System`, `/Capabilities/Apps`, `/Capabilities/Run/live`, `/boot` (the running kernel's module directory beneath it: `linker.hints` for the hardware-driver class, module files for root loads), `/var/db/pkg` (root loads) |
+| Delivered directories | `/etc/bsdextension`, `/Capabilities/System`, `/Capabilities/Apps`, `/Capabilities/Run/live`, `/boot` (the running kernel's module directory beneath it: `linker.hints` for the hardware-driver class, module files for root loads), `/var/db/pkg` (root loads), `/` (limited to fstatat(2): which `/boot` and module file an absolute path names) |
 | Control | `core` |
 | Restart | `on-failure` |
 | Protect | `ptrace`, `signal`, `wait`, `sigkill`, `sigcont`, `sched`, `core`, `ktrace` |
@@ -267,10 +267,16 @@ Ensure, Stat, List, policy, Reload or Restore method, and the session carries
 no ADMIN right. kldload(8) from the shell stays refused by the gate.
 
 BSDExtension never root-loads a protected module: `mac_*` security policies
-(several grant privileges), the DTrace/HyperTrace/kinst/fbt/sdt/systrace/
-fasttrap/profile tracing providers, ZFS and opensolaris, pf/ipfw and vmm. It
-is the same list `sysextctl unload` refuses, kept in one function, and the
-refusal reads `protected module`; load these through loader.conf(5) or
+(several grant privileges), DTrace and its providers, HyperTrace, kinst,
+hwpmc and ksyms, ZFS and opensolaris, pf, pflog, pfsync, pflow, ipfw and its
+modules, ipdivert, dummynet, ipl, and vmm. Names match exactly (`NAME` or
+`NAME.ko`); only `mac_` is a prefix. nullfs and unionfs are not protected: a
+mount of any file system can shadow `/boot`, and a `/boot` mounted over is
+refused (see [the kernel directory](#the-kernel-directory)); nor is the Linux
+ABI (`linux*`, `linuxkpi*`), which adds system call personalities under the
+same credential and MAC checks (its tracing provider is protected). It is the
+same list `sysextctl unload` refuses, kept in one function, and the refusal
+reads `protected module`; load these through loader.conf(5) or
 rc.conf(5). Otherwise it loads `NAME.ko` from the running kernel's module
 directory (normally `/boot/kernel`; see [the kernel
 directory](#the-kernel-directory)) only when the policy sets
@@ -280,10 +286,13 @@ every file its load would bring in pass the checks below.
 
 Dependencies are resolved before anything is loaded. A forked child reads
 each file's module metadata (`MODULE_VERSION`, `MODULE_DEPEND`) with
-libkldelf, as kldxref(8) does; a dependency no loaded module provides is
-found as the kernel linker would find it, through the kernel directory's
-`linker.hints` (the preferred version, else the highest in range) or as
-`NAME`/`NAME.ko` there, and the kernel's own interfaces need nothing. A
+libkldelf, as kldxref(8) does. A dependency is met by the kernel's own
+interfaces, or by the loaded file the kernel directory's `linker.hints` names
+for its version range (the preferred version, else the highest in range, else
+`NAME`/`NAME.ko` there); otherwise that file is loaded first. A module of the
+dependency's name loaded from any other file is refused: modfind(2) reports
+no version, and the kernel, finding it out of range, would search
+`kern.module_path` itself. A
 dependency found nowhere in the kernel directory is refused:
 `kern.module_path` and `/boot/modules` are never searched. For every file:
 
@@ -299,15 +308,23 @@ dependency found nowhere in the kernel directory is refused:
 - no administrator deny names it and it is not protected;
 - a dependency provides the version range the file that needs it declares.
 
-The files are then loaded dependencies first, each by its absolute path, so
-the kernel resolves nothing itself. After every load the broker compares the
-loaded files with those before: a file it did not ask for, or a new file id
-kldstat(2) cannot report, is a hard failure (logged at `LOG_ERR`), and
-everything the request loaded is unloaded again, as when a file (device,
-inode, size, modification or change time) or the kernel directory changed
-between the check and the end of the load. Dependencies the load brought in
-are root loads too: `sysextctl unload` removes them, the module that needs
-them first.
+These checks run without the lock that serialises the broker's loads, and one
+database child answers every file of a request, so devd's driver loads do not
+wait for them. Under the lock the broker checks again only what is cheap:
+every dependency still met as planned, and every file still the one checked
+(device, inode, size, modification and change time), by name in the kernel
+directory and by its absolute path looked up from `/`. The files are then
+loaded dependencies first, each by its absolute path, so the kernel resolves
+nothing itself. After every load the broker compares the loaded files with
+those before: a file it did not ask for, a new file id kldstat(2) cannot
+report, or a file id whose path, looked up from `/`, is not the checked file
+is a hard failure (logged at `LOG_ERR`), and everything the request loaded is
+unloaded again, as when a file or the kernel directory changed between the
+check and the end of the load. Files the request did not load (another
+process's, or the module itself when someone else loaded it meanwhile,
+reported as present) are logged and left loaded. Dependencies the load
+brought in are root loads too: `sysextctl unload` removes them, the module
+that needs them first.
 
 libpkg is not part of base and the broker never runs pkg(8). The database is
 read with base's private sqlite (`libprivatesqlite3`), and module metadata
@@ -323,7 +340,10 @@ libc's allocator and stdio carry fork handlers, so it may allocate.
 `sysextctl unload NAME` removes only a module that a root load loaded since
 the broker started, while its file id still names that file, and only if no
 other client has asked for it since; it never unloads a protected module,
-and the kernel still refuses a busy module or one another module depends on.
+and the kernel still refuses a busy module. It keeps one another loaded
+module depends on although the unload succeeds; the broker checks the file id
+afterwards, reports `still loaded` (`EBUSY`) and keeps the module on its list,
+so it can be unloaded once nothing needs it.
 
 Every request is in the decision list with the client `root (uid 0)` and
 logged by the broker (`ROOT LOAD x (uid 0 session, client ..., program nonce
@@ -336,12 +356,13 @@ Refusals print their reason and exit `EX_NOPERM`:
 |---|---|
 | `not a file of an installed 5BSD base package` | no package records the file or a dependency, or it belongs to a ports package or to another repository |
 | `the file does not match the checksum its package recorded` | modified or replaced after installation; reinstall the package |
-| `no regular module file of that name in the running kernel's directory ...` | absent, a symbolic link, only in another directory, a dependency outside the kernel directory, or the directory no longer holds the running kernel (reboot after a kernel upgrade) |
+| `no regular module file of that name in the running kernel's directory ...` | absent, a symbolic link, only in another directory, a dependency outside the kernel directory, or the directory (or `/boot`) no longer holds the running kernel (reboot after a kernel upgrade) |
 | `denied by an administrator override` | the module or a dependency; `sysextctl reset NAME` removes the deny |
 | `root loads are not configured` | `root_load_repository` is absent from `bsdextension.ucl` |
 | `the package database could not be read` | `/var/db/pkg/local.sqlite` missing or unreadable |
 | `a module file changed, or the kernel loaded a file that was not checked` | the load was undone |
 | `protected module` | a security policy, tracing provider, ZFS, packet filter or vmm, or a module that needs one |
+| `a module it depends on is loaded from another file, whose version cannot be checked` | exits `EX_OSERR`; the broker log names the module and the file the kernel directory would provide |
 
 Who counts as root here is switchboard's decision from the kernel stamp's
 effective UID. The stamp has no real UID, so a set-user-ID-root program run
@@ -357,14 +378,15 @@ loading an arbitrary file, a module copied into the kernel directory by hand,
 a dependency planted in `/boot/modules`, a module modified after installation
 or a third-party module, by mistake; and every attempt is recorded. What it
 does not protect against: a compromised root. The package database and
-`/boot` are root-writable, so root can edit the database, swap a file between
-the check and the load, replace or mount over `/boot`, install a package, or
-add the module to loader.conf(5) and reboot. A dependency that is already
-loaded is accepted by module name; its version is not visible to userland,
-and if it does not satisfy the module the kernel searches `kern.module_path`
-itself; the file it loads is caught and unloaded, but its initialisation has
-run. The plane isolates `kern.module_path` (BSDSysctl, `bsdsysctl.ucl`), so
-that search stays within the loader's directories. mac_veriexec(4) is the
+`/boot` are root-writable, so root can edit the database, install a package,
+or add the module to loader.conf(5) and reboot. It can also swap a module
+file, or `/boot` itself (renamed, or mounted over), after the broker's last
+check and back before the next: every check is a lookup that is over before
+kldload(2) looks the path up again, and only the kernel could load the very
+vnode that was checked. The checks narrow that window to the load itself and
+catch any swap still in place afterwards. The plane isolates
+`kern.module_path` (BSDSysctl, `bsdsysctl.ucl`), so any search the kernel
+still makes stays within the loader's directories. mac_veriexec(4) is the
 defence against a compromised root.
 
 ### The kernel directory
@@ -379,7 +401,15 @@ kernel's GNU build-id (`kern.build_id`). Booted from `kernel.old`, the
 hardware-driver class reads `kernel.old/linker.hints`; root loads find no
 package records there and are refused.
 
-Before each hardware-driver decision and before and after every root load
+The kernel looks a load's absolute path up from the root, not through the
+`/boot` descriptor the broker holds, so the broker also receives `/`, limited
+to fstatat(2) at startup (it opens nothing through it). Before each
+hardware-driver decision and before and after every root load it looks up
+`boot` beneath `/` and refuses, until the next boot, when that is not the
+delivered directory: a `/boot` renamed and replaced, or a file system mounted
+over it.
+
+Then, as well, before each hardware-driver decision and root load
 the broker opens the directory again by name and compares it with the one it
 holds. The same directory with the running kernel is used. A different
 directory under the name (installkernel renames `kernel` to `kernel.old`; a

@@ -25,13 +25,27 @@
  *    (pkg 2 records "2$" + z-base-32 BLAKE2b-512);
  *  - no administrator override denies it and it is not a protected module
  *    (sysext_root_protected(): the same list root unloads refuse);
- *  - every dependency file provides the version the dependent asks for.
+ *  - every dependency file provides the version the dependent asks for, and
+ *    a dependency already met is met by the running kernel or by the loaded
+ *    file the kernel directory's linker.hints names for that version range
+ *    (a module of that name loaded from anywhere else may have a version the
+ *    kernel would not accept, and the kernel would then search
+ *    kern.module_path itself: refused).
  *
- * The files are then loaded dependencies first.  After each load the broker
- * compares the loaded files with the ones before: anything but the file just
- * loaded (the kernel resolved something itself) is a hard failure and every
- * file this request loaded is unloaded again, as when a file or the kernel
- * directory changed between the check and the load.
+ * All of that runs without sysext_load_lock: one package database child per
+ * request answers every file, and a hardware-driver load (devd) does not
+ * wait for it.  Under the lock the broker repeats only what is cheap: the
+ * kernel directory check, each dependency still met as planned, and each
+ * file still the one checked (device, inode, size, modification and change
+ * time of the open file, by name in the kernel directory and by its absolute
+ * path from "/").  The files are then loaded dependencies first.  After each
+ * load the broker compares the loaded files with the ones before: anything
+ * but the file just loaded (the kernel resolved something itself, or another
+ * process loaded a file meanwhile) is a hard failure, and the file id the
+ * kernel reports must name, from "/", the file that was checked.  Every file
+ * this request loaded is then unloaded again, as when a file or the kernel
+ * directory changed between the check and the load; files it did not load
+ * are logged and left alone.
  *
  * The package database and module metadata are parsed in pdfork(2)ed
  * children.  The kldload token is close-on-fork, and a child closes every
@@ -42,14 +56,12 @@
  * and untrusted schema functions disabled.
  *
  * What this is not: the package database and /boot are both writable by
- * root, so a root that edits the database, replaces a file between the check
- * and the load, or mounts over /boot defeats it, as does installing a package
- * or editing loader.conf and rebooting.  A dependency that is already loaded
- * is accepted by name (modfind(2)); if its version does not satisfy the
- * module, the kernel searches kern.module_path itself, and the result is
- * undone as above but has run its initialisation.  kern.module_path is
- * isolated by the capability plane (BSDSysctl), so that search stays within
- * the loader's directories.  It keeps a root login shell from loading
+ * root, so a root that edits the database, or swaps a file or /boot after the
+ * last check and back before the next, defeats it, as does installing a
+ * package or editing loader.conf and rebooting; only the kernel could load
+ * the very vnode that was checked.  kern.module_path is isolated by the
+ * capability plane (BSDSysctl), so any search the kernel still makes stays
+ * within the loader's directories.  It keeps a root login shell from loading
  * arbitrary or modified files by mistake and records every request;
  * mac_veriexec(4) is the control against a compromised root.
  */
@@ -109,6 +121,7 @@ int (*sysext_test_kld_unload)(int);
 int (*sysext_test_kld_stat)(int, char *, size_t, char *, size_t);
 int (*sysext_test_kld_next)(int);
 int (*sysext_test_mod_find)(const char *);
+int sysext_test_pkgdb_children;
 
 void
 sysext_test_root_reset(void)
@@ -301,15 +314,26 @@ sysext_pkg_checksum_fd(int fd, char *out, size_t outlen)
 
 /* ------------------------------------------------------ package database */
 
-/* The child's reply: fixed size, NUL-terminated strings. */
-struct pkgdb_reply {
-	int32_t	status;
+/* The child's answer for one path: fixed size, NUL-terminated strings. */
+struct pkgdb_answer {
 	int32_t	found;
 	int32_t	symlink;
 	char	checksum[SYSEXT_PKG_CHECKSUM_MAX];
 	char	package[128];
 	char	origin[160];
 	char	repository[SYSEXT_REPOSITORY_MAX];
+};
+
+/* The child's reply: one answer per path asked for, in order. */
+struct pkgdb_reply {
+	int32_t	status;
+	struct pkgdb_answer answer[SYSEXT_ROOT_FILES_MAX];
+};
+
+/* The paths one child answers (it sees them in its copy of the memory). */
+struct pkgdb_request {
+	const char *const *paths;
+	size_t	npaths;
 };
 
 static const char pkgdb_query_sql[] =
@@ -341,17 +365,50 @@ column_copy(sqlite3_stmt *stmt, int col, char *out, size_t outlen)
 	return (true);
 }
 
-/* In the child: answer one path from a private, read-only image of the db. */
+/* One path: 0 with *a filled (a->found 0 when no package records it). */
 static int
-pkgdb_query(int dirfd, const char *path, struct pkgdb_reply *reply)
+pkgdb_answer_path(sqlite3_stmt *stmt, const char *path, struct pkgdb_answer *a)
+{
+	char target[8];
+	int rc;
+
+	if (sqlite3_reset(stmt) != SQLITE_OK ||
+	    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC) != SQLITE_OK)
+		return (EIO);
+	rc = sqlite3_step(stmt);
+	if (rc == SQLITE_DONE)
+		return (0);	/* no package records the path */
+	if (rc != SQLITE_ROW)
+		return (EIO);
+	if (!column_copy(stmt, 0, a->checksum, sizeof(a->checksum)) ||
+	    !column_copy(stmt, 2, a->package, sizeof(a->package)) ||
+	    !column_copy(stmt, 3, a->origin, sizeof(a->origin)) ||
+	    !column_copy(stmt, 4, a->repository, sizeof(a->repository)))
+		return (EINVAL);
+	/* Any non-empty symlink target marks a link record. */
+	a->symlink = sqlite3_column_type(stmt, 1) != SQLITE_NULL &&
+	    (!column_copy(stmt, 1, target, sizeof(target)) || target[0] != '\0');
+	a->found = 1;
+	return (0);
+}
+
+/*
+ * In the child: answer every path of the request from one private, read-only
+ * image of the database.
+ */
+static int
+pkgdb_query(int dirfd, const struct pkgdb_request *rq,
+    struct pkgdb_reply *reply)
 {
 	sqlite3 *db = NULL;
 	sqlite3_stmt *stmt = NULL;
 	struct stat st;
 	unsigned char *image;
-	char target[8];
-	int fd, rc, error;
+	size_t i;
+	int fd, error;
 
+	if (rq->npaths > nitems(reply->answer))
+		return (E2BIG);
 	/* Refuse a non-regular file before an open that could block. */
 	if (fstatat(dirfd, SYSEXT_PKGDB_FILE, &st, AT_SYMLINK_NOFOLLOW) == -1)
 		return (errno);
@@ -394,28 +451,10 @@ pkgdb_query(int dirfd, const char *path, struct pkgdb_reply *reply)
 	    SQLITE_DESERIALIZE_READONLY) != SQLITE_OK)
 		goto out;
 	if (sqlite3_prepare_v2(db, pkgdb_query_sql, -1, &stmt, NULL) !=
-	    SQLITE_OK ||
-	    sqlite3_bind_text(stmt, 1, path, -1, SQLITE_STATIC) != SQLITE_OK)
+	    SQLITE_OK)
 		goto out;
-	rc = sqlite3_step(stmt);
-	if (rc == SQLITE_DONE) {
-		error = 0;	/* no package records the path */
-		goto out;
-	}
-	if (rc != SQLITE_ROW)
-		goto out;
-	error = EINVAL;
-	if (!column_copy(stmt, 0, reply->checksum, sizeof(reply->checksum)) ||
-	    !column_copy(stmt, 2, reply->package, sizeof(reply->package)) ||
-	    !column_copy(stmt, 3, reply->origin, sizeof(reply->origin)) ||
-	    !column_copy(stmt, 4, reply->repository,
-	    sizeof(reply->repository)))
-		goto out;
-	/* Any non-empty symlink target marks a link record. */
-	reply->symlink = sqlite3_column_type(stmt, 1) != SQLITE_NULL &&
-	    (!column_copy(stmt, 1, target, sizeof(target)) || target[0] != '\0');
-	reply->found = 1;
-	error = 0;
+	for (i = 0, error = 0; i < rq->npaths && error == 0; i++)
+		error = pkgdb_answer_path(stmt, rq->paths[i], &reply->answer[i]);
 out:
 	if (stmt != NULL)
 		(void)sqlite3_finalize(stmt);
@@ -504,37 +543,67 @@ child_read(int fd, int (*fn)(int, const void *, void *), const void *arg,
 }
 
 static int
-pkgdb_child(int dirfd, const void *path, void *reply)
+pkgdb_child(int dirfd, const void *rq, void *reply)
 {
 
-	return (pkgdb_query(dirfd, path, reply));
+	return (pkgdb_query(dirfd, rq, reply));
+}
+
+/*
+ * Look up every path in one child: the database image is read and parsed once
+ * per request, however many files it names.
+ */
+static int
+pkgdb_lookup_paths(int dirfd, const char *const *paths, size_t npaths,
+    struct sysext_pkg_record *recs)
+{
+	struct pkgdb_request rq;
+	struct pkgdb_reply *reply;
+	const struct pkgdb_answer *a;
+	size_t i;
+	int error;
+
+	memset(recs, 0, npaths * sizeof(*recs));
+	if (npaths > nitems(reply->answer))
+		return (E2BIG);
+	if ((reply = malloc(sizeof(*reply))) == NULL)
+		return (ENOMEM);
+	rq.paths = paths;
+	rq.npaths = npaths;
+#ifdef BSDEXTENSION_TESTING
+	sysext_test_pkgdb_children++;
+#endif
+	error = child_read(dirfd, pkgdb_child, &rq, reply, sizeof(*reply));
+	for (i = 0; i < npaths && error == 0; i++) {
+		a = &reply->answer[i];
+		/* The child is not trusted to terminate its strings. */
+		if (memchr(a->checksum, '\0', sizeof(a->checksum)) == NULL ||
+		    memchr(a->package, '\0', sizeof(a->package)) == NULL ||
+		    memchr(a->origin, '\0', sizeof(a->origin)) == NULL ||
+		    memchr(a->repository, '\0', sizeof(a->repository)) == NULL) {
+			error = EINVAL;
+			break;
+		}
+		(void)strlcpy(recs[i].checksum, a->checksum,
+		    sizeof(recs[i].checksum));
+		(void)strlcpy(recs[i].package, a->package,
+		    sizeof(recs[i].package));
+		(void)strlcpy(recs[i].origin, a->origin, sizeof(recs[i].origin));
+		(void)strlcpy(recs[i].repository, a->repository,
+		    sizeof(recs[i].repository));
+		recs[i].symlink = a->symlink != 0;
+		recs[i].found = a->found != 0;
+	}
+	free(reply);
+	return (error);
 }
 
 int
 sysext_pkgdb_lookup(int dirfd, const char *path,
     struct sysext_pkg_record *rec)
 {
-	struct pkgdb_reply reply;
-	int error;
 
-	memset(rec, 0, sizeof(*rec));
-	error = child_read(dirfd, pkgdb_child, path, &reply, sizeof(reply));
-	if (error != 0)
-		return (error);
-	/* The child is not trusted to terminate its strings. */
-	if (memchr(reply.checksum, '\0', sizeof(reply.checksum)) == NULL ||
-	    memchr(reply.package, '\0', sizeof(reply.package)) == NULL ||
-	    memchr(reply.origin, '\0', sizeof(reply.origin)) == NULL ||
-	    memchr(reply.repository, '\0', sizeof(reply.repository)) == NULL)
-		return (EINVAL);
-	(void)strlcpy(rec->checksum, reply.checksum, sizeof(rec->checksum));
-	(void)strlcpy(rec->package, reply.package, sizeof(rec->package));
-	(void)strlcpy(rec->origin, reply.origin, sizeof(rec->origin));
-	(void)strlcpy(rec->repository, reply.repository,
-	    sizeof(rec->repository));
-	rec->symlink = reply.symlink != 0;
-	rec->found = reply.found != 0;
-	return (0);
+	return (pkgdb_lookup_paths(dirfd, &path, 1, rec));
 }
 
 /* The metadata child's reply. */
@@ -667,19 +736,17 @@ kernel_path(const char *file, char *path, size_t pathlen)
 }
 
 /*
- * Check the kernel directory's file against the package database.  On
- * success the open descriptor and its stat are returned (the caller closes
- * it).  Returns SYSEXT_DECISION_LOADED for "acceptable", or the refusal.
+ * Open the kernel directory's file: a regular file, not a link.  On success
+ * the descriptor and its stat are returned (the plan closes it).  Returns
+ * SYSEXT_DECISION_LOADED for "acceptable", or the refusal.
  */
 static uint32_t
-verify_file(const char *repository, const char *file, int *fdp,
-    struct stat *stp, int *errorp, char *detail, size_t detaillen)
+open_file(const char *file, int *fdp, struct stat *stp, int *errorp,
+    char *detail, size_t detaillen)
 {
-	struct sysext_pkg_record rec;
-	struct stat first, again;
+	struct stat first;
 	char path[MAXPATHLEN];
-	char sum[SYSEXT_PKG_CHECKSUM_MAX];
-	int fd, error;
+	int fd;
 
 	*fdp = -1;
 	*errorp = 0;
@@ -714,58 +781,62 @@ verify_file(const char *repository, const char *file, int *fdp,
 		    "checked", path);
 		return (SYSEXT_DECISION_CHANGED);
 	}
-	error = sysext_pkgdb_lookup(sysext_pkgdb_dirfd, path, &rec);
-	if (error == 0 && !rec.found) {
-		(void)close(fd);
+	*fdp = fd;
+	return (SYSEXT_DECISION_LOADED);
+}
+
+/*
+ * Check an open kernel directory file against its package database record.
+ * Returns SYSEXT_DECISION_LOADED for "acceptable", or the refusal.
+ */
+static uint32_t
+check_package(const char *repository, const char *file, int fd,
+    const struct stat *st, const struct sysext_pkg_record *rec, int *errorp,
+    char *detail, size_t detaillen)
+{
+	struct stat again;
+	char path[MAXPATHLEN];
+	char sum[SYSEXT_PKG_CHECKSUM_MAX];
+	int error;
+
+	*errorp = 0;
+	kernel_path(file, path, sizeof(path));
+	if (!rec->found) {
 		(void)snprintf(detail, detaillen, "no installed package "
 		    "records %s", path);
 		return (SYSEXT_DECISION_NOT_PACKAGED);
 	}
-	if (error != 0) {
-		(void)close(fd);
-		*errorp = error;
-		(void)snprintf(detail, detaillen, "package database %s/%s: %s",
-		    SYSEXT_PKGDB_DIR, SYSEXT_PKGDB_FILE, strerror(error));
-		return (SYSEXT_DECISION_PKGDB);
-	}
-	if (rec.symlink || strncmp(rec.origin, "base/", 5) != 0 ||
-	    strcmp(rec.repository, repository) != 0) {
-		(void)close(fd);
+	if (rec->symlink || strncmp(rec->origin, "base/", 5) != 0 ||
+	    strcmp(rec->repository, repository) != 0) {
 		(void)snprintf(detail, detaillen, "%s belongs to %s (origin %s, "
 		    "repository %s), not a %s base package%s", path,
-		    rec.package, rec.origin,
-		    rec.repository[0] != '\0' ? rec.repository : "unknown",
-		    repository, rec.symlink ? "; recorded as a link" : "");
+		    rec->package, rec->origin,
+		    rec->repository[0] != '\0' ? rec->repository : "unknown",
+		    repository, rec->symlink ? "; recorded as a link" : "");
 		return (SYSEXT_DECISION_NOT_PACKAGED);
 	}
-	if (strncmp(rec.checksum, "2$", 2) != 0) {
-		(void)close(fd);
+	if (strncmp(rec->checksum, "2$", 2) != 0) {
 		(void)snprintf(detail, detaillen, "%s: %s records an unsupported "
-		    "checksum format", path, rec.package);
+		    "checksum format", path, rec->package);
 		return (SYSEXT_DECISION_CHECKSUM);
 	}
 	error = sysext_pkg_checksum_fd(fd, sum, sizeof(sum));
 	if (error != 0) {
-		(void)close(fd);
 		*errorp = error;
 		(void)snprintf(detail, detaillen, "%s: checksum: %s", path,
 		    strerror(error));
 		return (SYSEXT_DECISION_FAILED);
 	}
-	if (strcmp(sum, rec.checksum) != 0) {
-		(void)close(fd);
+	if (strcmp(sum, rec->checksum) != 0) {
 		(void)snprintf(detail, detaillen, "%s does not match the "
-		    "checksum %s recorded at installation", path, rec.package);
+		    "checksum %s recorded at installation", path, rec->package);
 		return (SYSEXT_DECISION_CHECKSUM);
 	}
-	if (fstat(fd, &again) == -1 || !same_file(stp, &again)) {
-		(void)close(fd);
+	if (fstat(fd, &again) == -1 || !same_file(st, &again)) {
 		(void)snprintf(detail, detaillen, "%s changed while it was "
 		    "checked", path);
 		return (SYSEXT_DECISION_CHANGED);
 	}
-	(void)snprintf(detail, detaillen, "%s from %s", path, rec.package);
-	*fdp = fd;
 	return (SYSEXT_DECISION_LOADED);
 }
 
@@ -778,6 +849,21 @@ still_same(const char *file, const struct stat *st)
 	return (fstatat(sysext_driver_dirfd, file, &now,
 	    AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(now.st_mode) &&
 	    same_file(st, &now));
+}
+
+/*
+ * The absolute path, looked up beneath "/" as the kernel resolves it for
+ * kldload(2), names the file that was checked: no mount over /boot or a
+ * directory on the way, no renamed /boot.
+ */
+static bool
+path_names(const char *path, const struct stat *st)
+{
+	struct stat now;
+
+	return (path[0] == '/' && path[1] != '\0' &&
+	    fstatat(sysext_root_dirfd, path + 1, &now, 0) == 0 &&
+	    S_ISREG(now.st_mode) && same_file(st, &now));
 }
 
 static void
@@ -809,11 +895,12 @@ root_track(const char *file, int fileid)
 }
 
 /*
- * The files one root load loads, dependencies first: each checked, open, with
- * its metadata, and its file id once loaded.
+ * The files one root load loads, dependencies first: each open, with its
+ * metadata, the file that needs it, and its file id once loaded.
  */
 struct root_file {
 	char	file[NAME_MAX + 1];
+	char	dependent[NAME_MAX + 1];	/* "" for the module */
 	int	fd;
 	int	fileid;
 	struct stat st;
@@ -853,25 +940,80 @@ provides(const struct sysext_kld_meta *meta, const char *name, int minimum,
 	return (false);
 }
 
-/* A file of that name is loaded (the kernel then loads no other). */
+/*
+ * The kernel directory's file is loaded, from that directory (the kernel then
+ * loads no other).  A file of that name loaded from elsewhere is not it.
+ */
 static bool
 file_loaded(const char *file)
 {
-	char kname[MAXPATHLEN], kpath[MAXPATHLEN];
+	char kname[MAXPATHLEN], kpath[MAXPATHLEN], path[MAXPATHLEN];
 	int id;
 
+	kernel_path(file, path, sizeof(path));
 	for (id = kld_next(0); id > 0; id = kld_next(id))
 		if (sysext_kld_stat(id, kname, sizeof(kname), kpath,
 		    sizeof(kpath)) == 0 && strcmp(kname, file) == 0)
-			return (true);
+			return (strcmp(kpath, path) == 0);
 	return (false);
 }
 
 /*
- * Check file and, first, every dependency it declares that nothing loaded
- * provides, the way linker_load_dependencies() would find them, and add them
- * to the plan in load order.  dependent names the file that needs this one
- * (NULL for the requested module).
+ * How dependency i of rf is met, the way linker_load_dependencies() would
+ * meet it.  SYSEXT_DECISION_LOADED with depfile empty: by rf itself, by the
+ * running kernel, or by the loaded file that the kernel directory's
+ * linker.hints names for the version range.  With depfile set: by that file
+ * of the kernel directory, to be checked and loaded first.  Anything else is
+ * the refusal.  modfind(2) reports no version, so a module of that name
+ * loaded from any other file is refused: the kernel compares versions
+ * (modlist_lookup2()) and, out of range, searches kern.module_path itself.
+ */
+static uint32_t
+dep_resolve(const struct root_file *rf, unsigned i, char *depfile,
+    size_t depfilelen, int *errorp, char *detail, size_t detaillen)
+{
+	const char *name = rf->meta.depend[i].name;
+	int minimum = rf->meta.depend[i].minimum;
+	int maximum = rf->meta.depend[i].maximum;
+	unsigned j;
+
+	depfile[0] = '\0';
+	/* A file's own versions satisfy its own dependencies. */
+	for (j = 0; j < rf->meta.nversion; j++)
+		if (strcmp(rf->meta.version[j].name, name) == 0)
+			return (SYSEXT_DECISION_LOADED);
+	sysext_kernel_dir_dependency(name, minimum,
+	    rf->meta.depend[i].preferred, maximum, depfile, depfilelen);
+	/* The running kernel's own interfaces (build-id checked). */
+	if (depfile[0] != '\0' &&
+	    (strcmp(depfile, sysext_kernel_file_name()) == 0 ||
+	    file_loaded(depfile))) {
+		depfile[0] = '\0';
+		return (SYSEXT_DECISION_LOADED);
+	}
+	if (mod_find(name) == 0) {
+		*errorp = EEXIST;
+		(void)snprintf(detail, detaillen, "%s depends on %s version "
+		    "%d-%d; the loaded %s module is not from %s%s%s, so its "
+		    "version is unknown and the kernel could search "
+		    "kern.module_path", rf->file, name, minimum, maximum, name,
+		    sysext_kernel_dir, depfile[0] != '\0' ? "/" : "", depfile);
+		return (SYSEXT_DECISION_FAILED);
+	}
+	if (depfile[0] == '\0') {
+		(void)snprintf(detail, detaillen, "%s depends on %s, which no "
+		    "file in %s provides", rf->file, name, sysext_kernel_dir);
+		return (SYSEXT_DECISION_NOT_KERNEL_DIR);
+	}
+	return (SYSEXT_DECISION_LOADED);
+}
+
+/*
+ * Open file and, first, every dependency it declares that is not met, the way
+ * linker_load_dependencies() would find them, and add them to the plan in
+ * load order.  dependent names the file that needs this one (NULL for the
+ * requested module).  Runs without sysext_load_lock; the package checks
+ * follow for the whole plan (plan_verify()).
  */
 static uint32_t
 plan_file(struct root_plan *plan, const char *file, const char *dependent,
@@ -881,8 +1023,7 @@ plan_file(struct root_plan *plan, const char *file, const char *dependent,
 	char why[384], depfile[NAME_MAX + 1];
 	const struct root_file *dep;
 	uint32_t result;
-	unsigned i, j;
-	bool self;
+	unsigned i;
 
 	*errorp = 0;
 	if (plan_find(plan, file) != NULL)
@@ -920,11 +1061,11 @@ plan_file(struct root_plan *plan, const char *file, const char *dependent,
 		*errorp = ENOMEM;
 		return (SYSEXT_DECISION_FAILED);
 	}
-	rf->fd = -1;
 	rf->fileid = -1;
 	(void)strlcpy(rf->file, file, sizeof(rf->file));
-	result = verify_file(plan->repository, file, &rf->fd, &rf->st, errorp,
-	    why, sizeof(why));
+	if (dependent != NULL)
+		(void)strlcpy(rf->dependent, dependent, sizeof(rf->dependent));
+	result = open_file(file, &rf->fd, &rf->st, errorp, why, sizeof(why));
 	if (result != SYSEXT_DECISION_LOADED) {
 		(void)snprintf(detail, detaillen, "%s%s%s%s", dependent !=
 		    NULL ? "dependency of " : "", dependent != NULL ?
@@ -943,40 +1084,23 @@ plan_file(struct root_plan *plan, const char *file, const char *dependent,
 	result = SYSEXT_DECISION_LOADED;
 	for (i = 0; i < rf->meta.ndepend && result == SYSEXT_DECISION_LOADED;
 	    i++) {
-		const char *name = rf->meta.depend[i].name;
-
-		/* A file's own versions satisfy its own dependencies. */
-		self = false;
-		for (j = 0; j < rf->meta.nversion && !self; j++)
-			self = strcmp(rf->meta.version[j].name, name) == 0;
-		if (self || mod_find(name) == 0)
-			continue;
-		sysext_kernel_dir_dependency(name, rf->meta.depend[i].minimum,
-		    rf->meta.depend[i].preferred, rf->meta.depend[i].maximum,
-		    depfile, sizeof(depfile));
-		if (depfile[0] == '\0') {
-			result = SYSEXT_DECISION_NOT_KERNEL_DIR;
-			(void)snprintf(detail, detaillen, "%s depends on %s, "
-			    "which no file in %s provides", file, name,
-			    sysext_kernel_dir);
-			break;
-		}
-		/* The running kernel's own interfaces (build-id checked). */
-		if (strcmp(depfile, sysext_kernel_file_name()) == 0 ||
-		    file_loaded(depfile))
+		result = dep_resolve(rf, i, depfile, sizeof(depfile), errorp,
+		    detail, detaillen);
+		if (result != SYSEXT_DECISION_LOADED || depfile[0] == '\0')
 			continue;
 		result = plan_file(plan, depfile, file, errorp, detail,
 		    detaillen);
 		if (result != SYSEXT_DECISION_LOADED)
 			break;
 		dep = plan_find(plan, depfile);
-		if (dep == NULL || !provides(&dep->meta, name,
+		if (dep == NULL || !provides(&dep->meta, rf->meta.depend[i].name,
 		    rf->meta.depend[i].minimum, rf->meta.depend[i].maximum)) {
 			result = SYSEXT_DECISION_FAILED;
 			*errorp = ENOENT;
 			(void)snprintf(detail, detaillen, "%s depends on %s "
 			    "version %d-%d, which %s/%s does not provide",
-			    file, name, rf->meta.depend[i].minimum,
+			    file, rf->meta.depend[i].name,
+			    rf->meta.depend[i].minimum,
 			    rf->meta.depend[i].maximum, sysext_kernel_dir,
 			    depfile);
 		}
@@ -988,6 +1112,91 @@ plan_file(struct root_plan *plan, const char *file, const char *dependent,
 		plan->files[plan->nfiles++] = *rf;
 	free(rf);
 	return (result);
+}
+
+/*
+ * The package checks for every planned file, answered by one package database
+ * child; the requested module's refusal is reported before its dependencies'.
+ */
+static uint32_t
+plan_verify(struct root_plan *plan, int *errorp, char *detail,
+    size_t detaillen)
+{
+	struct sysext_pkg_record *recs;
+	const char *paths[SYSEXT_ROOT_FILES_MAX];
+	char (*buf)[MAXPATHLEN], why[384];
+	const struct root_file *rf;
+	uint32_t result = SYSEXT_DECISION_LOADED;
+	size_t i;
+	int error;
+
+	recs = calloc(plan->nfiles, sizeof(*recs));
+	buf = calloc(plan->nfiles, sizeof(*buf));
+	if (recs == NULL || buf == NULL) {
+		free(recs);
+		free(buf);
+		*errorp = ENOMEM;
+		return (SYSEXT_DECISION_FAILED);
+	}
+	for (i = 0; i < plan->nfiles; i++) {
+		kernel_path(plan->files[i].file, buf[i], sizeof(buf[i]));
+		paths[i] = buf[i];
+	}
+	error = pkgdb_lookup_paths(sysext_pkgdb_dirfd, paths, plan->nfiles,
+	    recs);
+	if (error != 0) {
+		*errorp = error;
+		(void)snprintf(detail, detaillen, "package database %s/%s: %s",
+		    SYSEXT_PKGDB_DIR, SYSEXT_PKGDB_FILE, strerror(error));
+		result = SYSEXT_DECISION_PKGDB;
+	}
+	for (i = plan->nfiles; i-- > 0 && result == SYSEXT_DECISION_LOADED;) {
+		rf = &plan->files[i];
+		result = check_package(plan->repository, rf->file, rf->fd,
+		    &rf->st, &recs[i], errorp, why, sizeof(why));
+		if (result != SYSEXT_DECISION_LOADED)
+			(void)snprintf(detail, detaillen, "%s%s%s%s",
+			    rf->dependent[0] != '\0' ? "dependency of " : "",
+			    rf->dependent, rf->dependent[0] != '\0' ? ": " : "",
+			    why);
+	}
+	free(recs);
+	free(buf);
+	return (result);
+}
+
+/*
+ * With sysext_load_lock held: every dependency the plan found met is still
+ * met (another request may have unloaded one meanwhile).  The files are
+ * checked again as they are loaded (plan_load()).
+ */
+static uint32_t
+plan_hold(const struct root_plan *plan, int *errorp, char *detail,
+    size_t detaillen)
+{
+	char depfile[NAME_MAX + 1];
+	const struct root_file *rf;
+	uint32_t result;
+	size_t i;
+	unsigned j;
+
+	for (i = 0; i < plan->nfiles; i++) {
+		rf = &plan->files[i];
+		for (j = 0; j < rf->meta.ndepend; j++) {
+			result = dep_resolve(rf, j, depfile, sizeof(depfile),
+			    errorp, detail, detaillen);
+			if (result != SYSEXT_DECISION_LOADED)
+				return (result);
+			if (depfile[0] != '\0' &&
+			    plan_find(plan, depfile) == NULL) {
+				(void)snprintf(detail, detaillen, "%s, needed by "
+				    "%s, was unloaded while the request was "
+				    "checked", depfile, rf->file);
+				return (SYSEXT_DECISION_CHANGED);
+			}
+		}
+	}
+	return (SYSEXT_DECISION_LOADED);
 }
 
 static bool
@@ -1003,7 +1212,8 @@ id_known(const int *ids, size_t n, int id)
 
 /*
  * Unload what this request loaded, last first; the kernel releases what they
- * pulled in.  Called with sysext_load_lock held.
+ * pulled in.  A file that appeared meanwhile and is still loaded is another
+ * process's: it is logged, never unloaded.  Called with sysext_load_lock held.
  */
 static void
 plan_undo(struct root_plan *plan, const int *before, size_t nbefore)
@@ -1024,17 +1234,14 @@ plan_undo(struct root_plan *plan, const int *before, size_t nbefore)
 		else
 			plan->files[i].fileid = -1;
 	}
-	/* Anything still new was loaded behind the broker's back. */
 	for (id = kld_next(0); id > 0; id = kld_next(id)) {
 		if (id_known(before, nbefore, id))
 			continue;
 		if (sysext_kld_stat(id, kname, sizeof(kname), kpath,
 		    sizeof(kpath)) != 0)
 			(void)strlcpy(kpath, "?", sizeof(kpath));
-		error = kld_unload(id);
-		syslog(LOG_ERR, "root load: undo of file id %d (%s)%s%s", id,
-		    kpath, error != 0 ? " failed: " : "",
-		    error != 0 ? strerror(error) : "");
+		syslog(LOG_WARNING, "root load: file id %d (%s) appeared during "
+		    "the load and was not loaded by it; left loaded", id, kpath);
 	}
 }
 
@@ -1071,7 +1278,8 @@ plan_load(struct root_plan *plan, int *errorp, char *detail, size_t detaillen)
 			result = SYSEXT_DECISION_NOT_KERNEL_DIR;
 			break;
 		}
-		if (!still_same(rf->file, &rf->st)) {
+		if (!still_same(rf->file, &rf->st) ||
+		    !path_names(path, &rf->st)) {
 			result = SYSEXT_DECISION_CHANGED;
 			(void)snprintf(detail, detaillen, "%s changed while "
 			    "it was checked", path);
@@ -1106,37 +1314,41 @@ plan_load(struct root_plan *plan, int *errorp, char *detail, size_t detaillen)
 			syslog(LOG_ERR, "root load: %s; undoing", detail);
 			break;
 		}
-		/* The file loaded must be the file checked (S2: no skip). */
+		/*
+		 * The file loaded must be the file checked (S2: no skip): its
+		 * pathname, looked up from "/", names the checked file.
+		 */
 		if (result == SYSEXT_DECISION_LOADED &&
 		    ((error = sysext_kld_stat(fileid, kname, sizeof(kname),
-		    kpath, sizeof(kpath))) != 0 || strcmp(kpath, path) != 0)) {
+		    kpath, sizeof(kpath))) != 0 || strcmp(kpath, path) != 0 ||
+		    !path_names(kpath, &rf->st))) {
 			*errorp = error;
 			result = SYSEXT_DECISION_CHANGED;
 			(void)snprintf(detail, detaillen, "file id %d is not "
-			    "%s%s%s", fileid, path, error != 0 ? ": " : "",
-			    error != 0 ? strerror(error) : "");
+			    "the checked %s%s%s", fileid, path, error != 0 ?
+			    ": " : "", error != 0 ? strerror(error) : "");
 		}
 		if (nbefore < nitems(before))
 			before[nbefore++] = fileid;
 	}
 	/* Nothing changed under the load. */
-	for (i = 0; i < plan->nfiles && result == SYSEXT_DECISION_LOADED; i++)
-		if (!still_same(plan->files[i].file, &plan->files[i].st)) {
+	for (i = 0; i < plan->nfiles && result == SYSEXT_DECISION_LOADED;
+	    i++) {
+		kernel_path(plan->files[i].file, path, sizeof(path));
+		if (!still_same(plan->files[i].file, &plan->files[i].st) ||
+		    !path_names(path, &plan->files[i].st)) {
 			result = SYSEXT_DECISION_CHANGED;
-			kernel_path(plan->files[i].file, path, sizeof(path));
 			(void)snprintf(detail, detaillen, "%s was replaced "
 			    "during the load", path);
 		}
+	}
 	if (result == SYSEXT_DECISION_LOADED &&
 	    (error = sysext_kernel_dir_check(detail, detaillen)) != 0) {
 		*errorp = error;
 		result = SYSEXT_DECISION_NOT_KERNEL_DIR;
 	}
-	if (result != SYSEXT_DECISION_LOADED) {
-		/* before[] now also lists this request's loads; undo uses the
-		 * files' ids for those and treats the rest as unexpected. */
+	if (result != SYSEXT_DECISION_LOADED)
 		plan_undo(plan, before, nbefore);
-	}
 	return (result);
 }
 
@@ -1157,16 +1369,11 @@ sysext_root_load(const char *repository, const char *name, int *errorp,
 		*errorp = ENAMETOOLONG;
 		return (SYSEXT_DECISION_FAILED);
 	}
-	if (sysext_root_protected(file)) {
-		(void)snprintf(detail, detaillen, "%s: security, tracing, "
-		    "storage, packet filter and hypervisor modules are not "
-		    "root-loaded", file);
-		return (SYSEXT_DECISION_PROTECTED);
-	}
-	if (sysext_driver_dirfd < 0 || sysext_pkgdb_dirfd < 0) {
-		(void)snprintf(detail, detaillen, "the kernel directory or %s "
-		    "was not delivered", SYSEXT_PKGDB_DIR);
-		return (sysext_driver_dirfd < 0 ?
+	if (sysext_driver_dirfd < 0 || sysext_root_dirfd < 0 ||
+	    sysext_pkgdb_dirfd < 0) {
+		(void)snprintf(detail, detaillen, "the kernel directory, %s or "
+		    "%s was not delivered", SYSEXT_ROOT_DIR, SYSEXT_PKGDB_DIR);
+		return (sysext_pkgdb_dirfd >= 0 ?
 		    SYSEXT_DECISION_NOT_KERNEL_DIR : SYSEXT_DECISION_PKGDB);
 	}
 	if ((*errorp = sysext_kernel_dir_check(detail, detaillen)) != 0)
@@ -1179,15 +1386,23 @@ sysext_root_load(const char *repository, const char *name, int *errorp,
 		return (SYSEXT_DECISION_FAILED);
 	}
 	/*
-	 * Serialise against the broker's other loads, from the resolution on:
-	 * what is loaded decides which dependencies are needed, and the files
-	 * that appear during the load must be this load's.
+	 * Resolve and check without the load lock: the metadata and package
+	 * database children and the checksums take as long as they take, and
+	 * the broker's other loads (devd's drivers) must not wait for them.
+	 * Under the lock only what is cheap is checked again: what is loaded
+	 * still meets every dependency as planned, and each file is still the
+	 * one checked (plan_load()).
 	 */
-	pthread_mutex_lock(&sysext_load_lock);
 	result = plan_file(&plan, file, NULL, errorp, detail, detaillen);
 	if (result == SYSEXT_DECISION_LOADED)
-		result = plan_load(&plan, errorp, detail, detaillen);
-	pthread_mutex_unlock(&sysext_load_lock);
+		result = plan_verify(&plan, errorp, detail, detaillen);
+	if (result == SYSEXT_DECISION_LOADED) {
+		pthread_mutex_lock(&sysext_load_lock);
+		result = plan_hold(&plan, errorp, detail, detaillen);
+		if (result == SYSEXT_DECISION_LOADED)
+			result = plan_load(&plan, errorp, detail, detaillen);
+		pthread_mutex_unlock(&sysext_load_lock);
+	}
 	for (i = 0; i < plan.nfiles; i++) {
 		(void)close(plan.files[i].fd);
 		if (result == SYSEXT_DECISION_LOADED)
@@ -1212,21 +1427,47 @@ sysext_root_load(const char *repository, const char *name, int *errorp,
  * Security policies, tracing, storage, the packet filters and the hypervisor:
  * a root session neither loads nor unloads them.  Before root loads existed
  * the late-kldload gate refused all of them; the MAC policies grant
- * privileges (mac_ntpd, mac_portacl, mac_priority), tracing reads the kernel.
+ * privileges (mac_ntpd, mac_portacl, mac_priority), tracing and hwpmc read
+ * the kernel, ksyms exposes its symbols.  Names match exactly, NAME or
+ * NAME.ko; only "mac_", the MAC policies' namespace, is a prefix.
+ *
+ * nullfs and unionfs are not protected although a mount of either can shadow
+ * /boot: so can any file system (tmpfs, md(4)), the broker refuses a /boot
+ * mounted over (kerneldir.c), and jails and containers mount them routinely.
+ * The Linux ABI (linux*, linuxkpi*) is not protected either: it adds system
+ * call personalities under the same credential and MAC checks, and rc.d/linux
+ * loads it through the broker; its tracing provider (systrace_linux) is.
  */
 bool
 sysext_root_protected(const char *name)
 {
-	static const char *const prefixes[] = { "mac_", "dtrace", "hypertrace",
-	    "kinst", "fbt", "sdt", "systrace", "fasttrap", "profile", "vmm",
-	    "zfs", "opensolaris", "pf", "ipfw" };
-	size_t i;
+	static const char *const names[] = {
+	    /* tracing and the kernel's own memory */
+	    "dtrace", "dtraceall", "dtrace_test", "dtaudit", "dtmalloc",
+	    "dtnfscl", "dttransport", "fasttrap", "fbt", "kinst", "profile",
+	    "prototype", "sdt", "systrace", "systrace_freebsd32",
+	    "systrace_linux", "systrace_linux32", "hypertrace", "hwpmc",
+	    "ksyms",
+	    /* the hypervisor and storage */
+	    "vmm", "zfs", "opensolaris",
+	    /* the packet filters */
+	    "pf", "pflog", "pfsync", "pflow", "ipfw", "ipfw_nat", "ipfw_nat64",
+	    "ipfw_nptv6", "ipfw_pmod", "ipdivert", "dummynet", "ipl" };
+	char modname[NAME_MAX + 1];
+	size_t i, len;
 
-	for (i = 0; i < nitems(prefixes); i++)
-		if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0)
+	if (strncmp(name, "mac_", 4) == 0)
+		return (true);
+	(void)strlcpy(modname, name, sizeof(modname));
+	len = strlen(modname);
+	if (len > 3 && strcmp(modname + len - 3, ".ko") == 0)
+		modname[len - 3] = '\0';
+	for (i = 0; i < nitems(names); i++)
+		if (strcmp(modname, names[i]) == 0)
 			return (true);
 	return (false);
 }
+
 void
 sysext_root_note_shared(const char *name)
 {
@@ -1292,6 +1533,14 @@ sysext_root_unload(const char *name, int *errorp, char *detail,
 		return (SYSEXT_DECISION_NOT_ROOT_LOADED);
 	}
 	error = kld_unload(slot->fileid);
+	/*
+	 * The kernel drops the request's reference and keeps a file another
+	 * loaded file still depends on: the unload succeeded, the file did
+	 * not go.  Report it, and keep the slot.
+	 */
+	if (error == 0 && sysext_kld_stat(slot->fileid, kname, sizeof(kname),
+	    kpath, sizeof(kpath)) == 0 && strcmp(kname, file) == 0)
+		error = EBUSY;
 	if (error == 0) {
 		memset(slot, 0, sizeof(*slot));
 		result = SYSEXT_DECISION_UNLOADED;
@@ -1299,7 +1548,8 @@ sysext_root_unload(const char *name, int *errorp, char *detail,
 		*errorp = error;
 		(void)snprintf(detail, detaillen, "%s: %s%s", file,
 		    strerror(error), error == EBUSY ?
-		    " (in use, or another module depends on it)" : "");
+		    " (still referenced: in use, or another module depends "
+		    "on it)" : "");
 		result = SYSEXT_DECISION_FAILED;
 	}
 	pthread_mutex_unlock(&root_lock);

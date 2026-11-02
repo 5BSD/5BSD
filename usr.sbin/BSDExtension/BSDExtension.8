@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd November 1, 2026
+.Dd November 2, 2026
 .Dt BSDEXTENSION 8
 .Os
 .Sh NAME
@@ -320,15 +320,33 @@ does not consult the allow-list.
 It refuses a protected module outright: a security policy
 .Pq Pa mac_* ,
 a tracing provider
-.Pq DTrace, HyperTrace, kinst, fbt, sdt, systrace, fasttrap, profile ,
+.Pq DTrace and its providers, HyperTrace, kinst, hwpmc, ksyms ,
 ZFS and opensolaris, a packet filter
-.Pq Pa pf* , ipfw* ,
+.Pq pf, pflog, pfsync, pflow, ipfw and its modules, ipdivert, dummynet, ipl ,
 or vmm, the same list
 .Sy Unload
 refuses, with the result
 .Dq protected module .
 Before root loads existed the late-kldload gate refused all of them, and the
 MAC policies among them grant privileges.
+Names match exactly, with or without
+.Pa .ko ;
+only
+.Dq mac_
+is a prefix.
+.Xr nullfs 4
+and
+.Xr unionfs 4
+are not protected: a mount of any file system can shadow
+.Pa /boot ,
+and a
+.Pa /boot
+mounted over is refused
+.Pq see Sx Kernel directory .
+Neither is the Linux ABI
+.Pq Pa linux* , linuxkpi* ,
+which adds system call personalities under the same credential and MAC
+checks; its tracing provider is protected.
 Otherwise it loads
 .Ar NAME Ns Pa .ko
 (the module name with
@@ -347,17 +365,21 @@ resolves the module's dependencies
 before anything is loaded, as the kernel linker would: from the module
 metadata of each file, read by a forked child with
 libkldelf
-(below), a dependency that no loaded module provides is looked up in the
+(below).
+A dependency is met by the running kernel, or by the loaded file that the
 kernel directory's
 .Pa linker.hints
-(the record with the preferred version, else the highest version in range),
-else as
+names for its version range (the record with the preferred version, else the
+highest version in range, else
 .Ar dependency
 or
 .Ar dependency Ns Pa .ko
-in that directory, and a file of the kernel itself
-.Pq Pa kernel
-needs nothing.
+in that directory); otherwise that file is loaded first.
+A module of the dependency's name that another file provides is refused:
+.Xr modfind 2
+reports no version, and the kernel, finding it out of range, would search
+.Va kern.module_path
+itself.
 A dependency found nowhere in the kernel directory is refused; the kernel's
 search of
 .Va kern.module_path
@@ -394,6 +416,17 @@ override names it and it is not a protected module;
 a dependency provides the version range the file that needs it declares.
 .El
 .Pp
+These checks run without the lock that serialises the broker's loads, and one
+database child answers every file of a request, so a hardware-driver load
+.Pq Xr devd 8
+does not wait for them.
+Under the lock
+.Nm
+checks again only what is cheap: every dependency is still met as planned,
+and each file is still the one checked (device, inode, size, modification and
+change time), by name in the kernel directory and by its absolute path looked
+up from
+.Pa / .
 The files are then loaded dependencies first, each by its absolute path in the
 kernel directory, so the kernel resolves nothing itself.
 After each load
@@ -401,12 +434,17 @@ After each load
 compares the loaded files with those before it: any file other than the one
 just loaded, or a file id whose pathname
 .Xr kldstat 2
-cannot report, is a hard failure, logged at
+cannot report or whose pathname, looked up from
+.Pa / ,
+is not the checked file, is a hard failure, logged at
 .Dv LOG_ERR .
 Every file this request loaded is then unloaded again and the load is
-refused, as it is when a file changed (device, inode, size, modification or
-change time) or the kernel directory changed between the check and the end of
-the load.
+refused, as it is when a file changed or the kernel directory changed between
+the check and the end of the load.
+A file that appeared during the load and that this request did not load,
+another process's, is logged and left loaded, as is the module itself when
+another process loaded it meanwhile
+.Pq reported as present .
 At most 16 files are loaded for one request.
 Dependencies the load brought in are root loads in their own right: each can
 be unloaded with
@@ -439,7 +477,12 @@ names that file.
 It refuses once any other client has asked for the module
 .Pq an Sy Ensure No that found it present ,
 and never unloads a protected module.
-The kernel refuses a module that is busy or that another module depends on.
+The kernel refuses a module that is busy, and keeps one that another loaded
+module depends on although the unload succeeds:
+.Nm
+checks the file id afterwards and reports such a module as still referenced
+.Pq Er EBUSY ,
+keeping it on its list so that it can be unloaded once nothing needs it.
 .Pp
 Each root request is recorded in the decision list with the client
 .Dq root (uid 0)
@@ -480,30 +523,37 @@ does not bound what root can load this way.
 This is a guard against mistakes and an audit trail, not containment of root.
 The package database and
 .Pa /boot
-are writable by root: a root that edits the database, swaps a file between
-the check and the load, replaces or mounts over
-.Pa /boot ,
-installs a package, or edits
+are writable by root: a root that edits the database, installs a package, or
+edits
 .Xr loader.conf 5
 and reboots, defeats it.
-A dependency that is already loaded is accepted by module name
-.Pq Xr modfind 2 ;
-its version is not visible to
-.Nm ,
-and when it does not satisfy the module the kernel searches
-.Va kern.module_path
-itself; the file it loads is detected and unloaded, but its initialisation
-has run.
+So does one that swaps a module file, or
+.Pa /boot
+(renamed, or mounted over), after the last check and back before the next:
+every check is a lookup that is over before
+.Xr kldload 2
+looks the path up again, and only the kernel could load the very vnode that
+was checked.
+The checks narrow that window to the load itself and see any swap that is
+still in place afterwards.
 The capability plane isolates
 .Va kern.module_path
 .Pq Xr BSDSysctl 8 ,
-so that search stays within the loader's directories.
+so any search the kernel still makes stays within the loader's directories.
 .Xr mac_veriexec 4
 is the control against a compromised root.
 .Ss Kernel directory
 The manifest delivers
 .Pa /boot
-by descriptor.
+by descriptor, and
+.Pa /
+as well, which
+.Nm
+limits to
+.Xr fstatat 2
+at startup
+.Pq Xr cap_rights_limit 2 :
+it opens nothing through it.
 The kernel directory is the one the loader booted the running kernel from:
 the pathname
 .Xr kldstat 2
@@ -525,7 +575,23 @@ the hardware-driver class reads that directory's
 .Pa linker.hints ;
 root loads find no package records there and are refused.
 .Pp
-Before each driver-class decision and before and after every root load,
+The kernel looks up the absolute path of a load from the root, not through
+the
+.Pa /boot
+descriptor
+.Nm
+holds.
+So before each driver-class decision and before and after every root load
+.Nm
+looks up
+.Pa boot
+beneath
+.Pa /
+and refuses, until the next boot, when it is not the delivered directory: a
+.Pa /boot
+renamed and replaced, or a file system mounted over it.
+.Pp
+Then, as well,
 .Nm
 opens the directory again by name beneath
 .Pa /boot

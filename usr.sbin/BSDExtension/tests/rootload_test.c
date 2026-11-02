@@ -28,11 +28,14 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <pthread_np.h>
 #include <gelf.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <kldelf.h>
@@ -71,16 +74,27 @@ static char fake_extra[MAXPATHLEN];
 static int fake_stat_fails_from;
 /* Run during the next load (a file changed while the kernel reads it). */
 static void (*fake_during_load)(void);
+/* kldunload(2) of this file id succeeds but keeps it (it is referenced). */
+static int fake_unload_keeps;
 /* The fake kernel's module path: what kern.module_path would hold. */
 static const char *const fake_module_path[] = { "/boot/kernel",
     "/boot/modules" };
 
-/* /boot/... in the fake kernel is the fixture directory (the cwd). */
+/*
+ * /boot/... in the fake kernel is the fixture /boot, looked up by name from the
+ * fixture root, as the kernel looks it up from "/": ../boot from the working
+ * directory, which is the fixture /boot (and stays the old directory when the
+ * fixture /boot is renamed).
+ */
 static const char *
 fake_local(const char *path)
 {
+	static char local[MAXPATHLEN];
 
-	return (strncmp(path, "/boot/", 6) == 0 ? path + 6 : path);
+	if (strncmp(path, "/boot/", 6) != 0)
+		return (path);
+	(void)snprintf(local, sizeof(local), "..%s", path);
+	return (local);
 }
 
 /* The module metadata of a fixture file, read here with libkldelf. */
@@ -227,6 +241,8 @@ fake_unload(int fileid)
 {
 
 	fake_unloads++;
+	if (fileid == fake_unload_keeps)
+		return (0);
 	for (size_t i = 0; i < nitems(fake); i++) {
 		if (fake[i].id != fileid)
 			continue;
@@ -309,6 +325,7 @@ fake_reset(const char *bootpath)
 	fake_extra[0] = '\0';
 	fake_stat_fails_from = 0;
 	fake_during_load = NULL;
+	fake_unload_keeps = 0;
 	/* The kernel itself is file id 1, as in the real linker. */
 	fake[0].id = 1;
 	strlcpy(fake[0].name, "kernel", sizeof(fake[0].name));
@@ -497,7 +514,8 @@ pkg_schema(sqlite3 *db)
 }
 
 /*
- * The fixture /boot (the test's working directory) and pkg/local.sqlite:
+ * The fixture root (root/, the kernel's "/") and its boot/, the fixture /boot
+ * and the test's working directory from here on, with pkg/local.sqlite:
  *   kernel/kernel      the running kernel (build-id FIXTURE_BUILD_ID)
  *   rltest_a.ko        base package, 5BSD-base, matching checksum
  *   rltest_b.ko        on disk, recorded by no package
@@ -512,6 +530,7 @@ pkg_schema(sqlite3 *db)
  *   rltest_k.ko        base package, needs "kernel" and "rlbase"
  *   modules/rldep.ko   outside the kernel directory, recorded by no package
  *   modules/rltest_m.ko outside the kernel directory
+ *   modules/rlother.ko outside the kernel directory, also provides "rlbase" 2
  */
 static void
 fixture_files(const atf_tc_t *tc)
@@ -530,10 +549,14 @@ fixture_files(const atf_tc_t *tc)
 		{ "rlbase.ko", "rlbase.ko", 1 },
 		{ "mac_rltest.ko", "mac_rltest.ko", 1 },
 	};
-	char from[MAXPATHLEN], to[MAXPATHLEN];
-	const char *srcdir = atf_tc_get_config_var(tc, "srcdir");
+	char from[MAXPATHLEN], to[MAXPATHLEN], srcdir[MAXPATHLEN];
 	sqlite3 *db;
 
+	ATF_REQUIRE(realpath(atf_tc_get_config_var(tc, "srcdir"), srcdir) !=
+	    NULL);
+	ATF_REQUIRE_EQ(0, mkdir("root", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("root/boot", 0755));
+	ATF_REQUIRE_EQ(0, chdir("root/boot"));
 	ATF_REQUIRE_EQ(0, mkdir("kernel", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("modules", 0755));
 	ATF_REQUIRE_EQ(0, mkdir("pkg", 0755));
@@ -547,6 +570,8 @@ fixture_files(const atf_tc_t *tc)
 	snprintf(from, sizeof(from), "%s/rldep.ko", srcdir);
 	copy_file(from, "modules/rldep.ko");
 	copy_file("kernel/rltest_a.ko", "modules/rltest_m.ko");
+	snprintf(from, sizeof(from), "%s/rlother.ko", srcdir);
+	copy_file(from, "modules/rlother.ko");
 	ATF_REQUIRE_EQ(0, symlink("rltest_a.ko", "kernel/rltest_l.ko"));
 
 	ATF_REQUIRE_EQ(SQLITE_OK, sqlite3_open("pkg/local.sqlite", &db));
@@ -563,8 +588,19 @@ static void
 fixture_remove(void)
 {
 
-	ATF_REQUIRE_EQ(0, system("rm -rf kernel kernel.old modules pkg "
-	    "rl-policy-state"));
+	ATF_REQUIRE_EQ(0, chdir("../.."));
+	ATF_REQUIRE_EQ(0, system("rm -rf root"));
+}
+
+/* "/" (fstatat(2) only, as the broker holds it) and /boot for kerneldir.c. */
+static void
+fixture_root_boot(void)
+{
+
+	sysext_root_dirfd = open("..", O_DIRECTORY | O_RDONLY);
+	sysext_boot_dirfd = open(".", O_DIRECTORY | O_RDONLY);
+	ATF_REQUIRE(sysext_root_dirfd >= 0 && sysext_boot_dirfd >= 0);
+	ATF_REQUIRE_EQ(0, sysext_root_dir_limit(sysext_root_dirfd));
 }
 
 /* Point rootload.c at the fixture directories in this process. */
@@ -574,9 +610,9 @@ fixture_dirs(const atf_tc_t *tc)
 
 	fixture_files(tc);
 	fake_reset("/boot/kernel/kernel");
-	sysext_boot_dirfd = open(".", O_DIRECTORY | O_RDONLY);
+	fixture_root_boot();
 	sysext_pkgdb_dirfd = open("pkg", O_DIRECTORY | O_RDONLY);
-	ATF_REQUIRE(sysext_boot_dirfd >= 0 && sysext_pkgdb_dirfd >= 0);
+	ATF_REQUIRE(sysext_pkgdb_dirfd >= 0);
 	ATF_REQUIRE_EQ(0, sysext_kernel_dir_open());
 	ATF_REQUIRE_STREQ("/boot/kernel", sysext_kernel_dir);
 }
@@ -851,9 +887,14 @@ ATF_TC_WITHOUT_HEAD(refuse_protected);
 ATF_TC_BODY(refuse_protected, tc)
 {
 	static const char *const names[] = { "mac_portacl", "mac_ntpd.ko",
-	    "dtraceall", "dtrace", "kinst", "fbt", "sdt", "systrace", "fasttrap",
-	    "profile", "hypertrace", "vmm", "zfs", "opensolaris", "pf", "pflog",
-	    "ipfw" };
+	    "dtraceall", "dtrace", "dtmalloc", "kinst", "fbt", "sdt",
+	    "systrace", "fasttrap", "profile", "prototype", "hypertrace",
+	    "hwpmc", "ksyms.ko", "vmm", "zfs", "opensolaris", "pf", "pflog",
+	    "pfsync", "pflow", "ipfw", "ipfw_nat", "ipl" };
+	/* Exact names: no prefix but the MAC policies'; decided unprotected. */
+	static const char *const others[] = { "pfunrelated", "fbtest",
+	    "profiler", "vmmfs", "zfstest", "sdtx", "kinstall", "if_mos",
+	    "ext2fs", "nullfs", "unionfs", "linux64", "linux_common" };
 	char detail[512];
 	int error;
 
@@ -869,8 +910,9 @@ ATF_TC_BODY(refuse_protected, tc)
 		    sysext_root_unload(names[i], &error, detail,
 		    sizeof(detail)), "%s", names[i]);
 	}
-	ATF_CHECK(!sysext_root_protected("if_mos"));
-	ATF_CHECK(!sysext_root_protected("ext2fs"));
+	for (size_t i = 0; i < nitems(others); i++)
+		ATF_CHECK_MSG(!sysext_root_protected(others[i]), "%s",
+		    others[i]);
 	/* A module that needs a protected one is refused with it. */
 	ATF_CHECK_EQ(SYSEXT_DECISION_PROTECTED, load("rltest_x", &error));
 	ATF_CHECK_EQ(0, fake_loads);
@@ -1122,7 +1164,7 @@ ATF_TC_BODY(kernel_dir_from_boot_path, tc)
 	fixture_files(tc);
 	ATF_REQUIRE_EQ(0, system("cp -Rp kernel kernel.old"));
 	fake_reset("/boot/kernel.old/kernel");
-	sysext_boot_dirfd = open(".", O_DIRECTORY | O_RDONLY);
+	fixture_root_boot();
 	sysext_pkgdb_dirfd = open("pkg", O_DIRECTORY | O_RDONLY);
 	ATF_REQUIRE_EQ(0, sysext_kernel_dir_open());
 	ATF_CHECK_STREQ("/boot/kernel.old", sysext_kernel_dir);
@@ -1146,6 +1188,185 @@ ATF_TC_BODY(refuse_without_database, tc)
 	ATF_CHECK_EQ(SYSEXT_DECISION_PKGDB, load("rltest_a", &error));
 	ATF_CHECK_EQ(ENOENT, error);
 	ATF_CHECK_EQ(0, fake_loads);
+}
+
+
+/* ------------------------------------------------- races and other files */
+
+/* M2: a /boot renamed and replaced by a copy with another module file. */
+static void
+replace_boot(void)
+{
+
+	ATF_REQUIRE_EQ(0, rename("../boot", "../boot.old"));
+	ATF_REQUIRE_EQ(0, system("cp -Rp ../boot.old ../boot"));
+	tamper("../boot/kernel/rltest_a.ko");
+}
+
+/*
+ * The kernel resolves /boot/kernel/NAME.ko from "/", not through the /boot
+ * the broker holds: a /boot replaced (or mounted over) is refused, before a
+ * load and when it happens during one.
+ */
+ATF_TC_WITHOUT_HEAD(boot_replaced);
+ATF_TC_BODY(boot_replaced, tc)
+{
+	char detail[512];
+	int error;
+
+	fixture_dirs(tc);
+	replace_boot();
+	ATF_CHECK_EQ(SYSEXT_DECISION_NOT_KERNEL_DIR, load_detail("rltest_a",
+	    &error, detail, sizeof(detail)));
+	ATF_CHECK(strstr(detail, "replaced or mounted over") != NULL);
+	ATF_CHECK_EQ(ESTALE, error);
+	ATF_CHECK_EQ(0, fake_loads);
+}
+
+ATF_TC_WITHOUT_HEAD(boot_replaced_during_load);
+ATF_TC_BODY(boot_replaced_during_load, tc)
+{
+	int error;
+
+	fixture_dirs(tc);
+	fake_during_load = replace_boot;
+	ATF_CHECK_EQ(SYSEXT_DECISION_CHANGED, load("rltest_a", &error));
+	ATF_CHECK_EQ(1, fake_loads);
+	ATF_CHECK(!fake_loaded("rltest_a.ko"));
+}
+
+/*
+ * A module of the dependency's name loaded from another file (here
+ * modules/rlother.ko, "rlbase" version 2): modfind(2) finds it but reports
+ * no version, and the kernel, finding it out of range, would search
+ * kern.module_path itself.  Refused before anything is loaded.
+ */
+ATF_TC_WITHOUT_HEAD(dependency_loaded_out_of_range);
+ATF_TC_BODY(dependency_loaded_out_of_range, tc)
+{
+	char detail[512];
+	int error, id;
+
+	fixture_dirs(tc);
+	ATF_REQUIRE_EQ(0, fake_load_file("/boot/modules/rlother.ko", 0, &id));
+	ATF_CHECK_EQ(SYSEXT_DECISION_FAILED, load_detail("rltest_n", &error,
+	    detail, sizeof(detail)));
+	ATF_CHECK(strstr(detail, "kern.module_path") != NULL);
+	ATF_CHECK_EQ(0, fake_loads);
+	ATF_CHECK_MSG(!fake_ever("rlbase.ko"), "initialised: %s", fake_history);
+	ATF_CHECK(fake_loaded("rlother.ko"));
+}
+
+/* Another process loads a file while the request loads its own. */
+static void
+concurrent_load_a(void)
+{
+	int id;
+
+	ATF_REQUIRE_EQ(0, fake_load_file("/boot/kernel/rltest_a.ko", 0, &id));
+}
+
+static void
+concurrent_load_b(void)
+{
+	int id;
+
+	ATF_REQUIRE_EQ(0, fake_load_file("/boot/kernel/rltest_b.ko", 0, &id));
+}
+
+/*
+ * Undoing a request unloads only the file ids it loaded: the module loaded
+ * by someone else meanwhile (present) and a file another process loaded
+ * during the load (refused) stay loaded.
+ */
+ATF_TC_WITHOUT_HEAD(foreign_load_left_loaded);
+ATF_TC_BODY(foreign_load_left_loaded, tc)
+{
+	int error;
+
+	fixture_dirs(tc);
+	fake_during_load = concurrent_load_a;
+	ATF_CHECK_EQ(SYSEXT_DECISION_PRESENT, load("rltest_a", &error));
+	ATF_CHECK(fake_loaded("rltest_a.ko"));
+	fake_during_load = concurrent_load_b;
+	ATF_CHECK_EQ(SYSEXT_DECISION_CHANGED, load("rltest_n", &error));
+	ATF_CHECK(fake_loaded("rltest_b.ko"));
+	ATF_CHECK(!fake_loaded("rlbase.ko") && !fake_loaded("rltest_n.ko"));
+}
+
+struct load_thread_arg {
+	const char *name;
+	uint32_t result;
+};
+
+static void *
+load_thread(void *arg)
+{
+	struct load_thread_arg *a = arg;
+	int error;
+
+	a->result = load(a->name, &error);
+	return (NULL);
+}
+
+/*
+ * The package database and checksum checks run without sysext_load_lock (a
+ * devd driver load does not wait for them), and one database child answers
+ * every file of a request.
+ */
+ATF_TC_WITHOUT_HEAD(checks_outside_load_lock);
+ATF_TC_BODY(checks_outside_load_lock, tc)
+{
+	struct load_thread_arg a = { "rltest_t", 0 };
+	struct timespec deadline;
+	pthread_t t;
+	int error, joined;
+
+	fixture_dirs(tc);
+	pthread_mutex_lock(&sysext_load_lock);
+	ATF_REQUIRE_EQ(0, pthread_create(&t, NULL, load_thread, &a));
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
+	deadline.tv_sec += 5;
+	joined = pthread_timedjoin_np(t, NULL, &deadline);
+	pthread_mutex_unlock(&sysext_load_lock);
+	ATF_CHECK_EQ_MSG(0, joined, "the refusal waited for the load lock");
+	if (joined != 0)
+		ATF_REQUIRE_EQ(0, pthread_join(t, NULL));
+	ATF_CHECK_EQ(SYSEXT_DECISION_CHECKSUM, a.result);
+	sysext_test_pkgdb_children = 0;
+	ATF_CHECK_EQ(SYSEXT_DECISION_LOADED, load("rltest_n", &error));
+	ATF_CHECK_EQ(2, fake_loads);
+	ATF_CHECK_EQ(1, sysext_test_pkgdb_children);
+}
+
+/*
+ * The kernel keeps a file another loaded file depends on: kldunload(2)
+ * succeeds, the file stays.  Reported as still referenced; the slot is kept,
+ * so the file can be unloaded once its dependent is gone.
+ */
+ATF_TC_WITHOUT_HEAD(unload_still_referenced);
+ATF_TC_BODY(unload_still_referenced, tc)
+{
+	char detail[512];
+	int error;
+
+	fixture_dirs(tc);
+	ATF_REQUIRE_EQ(SYSEXT_DECISION_LOADED, load("rltest_n", &error));
+	for (size_t i = 0; i < nitems(fake); i++)
+		if (strcmp(fake[i].name, "rlbase.ko") == 0)
+			fake_unload_keeps = fake[i].id;
+	ATF_REQUIRE(fake_unload_keeps != 0);
+	ATF_CHECK_EQ(SYSEXT_DECISION_FAILED, sysext_root_unload("rlbase",
+	    &error, detail, sizeof(detail)));
+	ATF_CHECK_EQ(EBUSY, error);
+	ATF_CHECK(strstr(detail, "still referenced") != NULL);
+	ATF_CHECK(fake_loaded("rlbase.ko"));
+	fake_unload_keeps = 0;
+	ATF_CHECK_EQ(SYSEXT_DECISION_UNLOADED, sysext_root_unload("rltest_n",
+	    &error, detail, sizeof(detail)));
+	ATF_CHECK_EQ(SYSEXT_DECISION_UNLOADED, sysext_root_unload("rlbase",
+	    &error, detail, sizeof(detail)));
+	ATF_CHECK(!fake_loaded("rlbase.ko"));
 }
 
 
@@ -1239,6 +1460,7 @@ driver_round(const char *const *names, size_t n, const int *expect,
 		close(clients[1]);
 		fake_reset("/boot/kernel/kernel");
 		sysext_test_kld_load = record_ensure;
+		sysext_root_dirfd = open("..", O_DIRECTORY | O_RDONLY);
 		sysext_boot_dirfd = open(".", O_DIRECTORY | O_RDONLY);
 		if (sysext_kernel_dir_open() != 0)
 			_exit(2);
@@ -1328,16 +1550,20 @@ endpoint_start(const atf_tc_t *tc, struct endpoint *e, const char *repository,
 	e->child = fork();
 	ATF_REQUIRE(e->child >= 0);
 	if (e->child == 0) {
-		int bdir, pdir, r = 0;
+		int rdir, bdir, pdir, r = 0;
 
 		for (int i = 0; i < nload + 1; i++)
 			close(e->clients[i]);
+		rdir = open("..", O_DIRECTORY | O_RDONLY);
+		if (rdir == -1 || sysext_root_dir_limit(rdir) != 0)
+			_exit(2);
 		bdir = open(".", O_DIRECTORY | O_RDONLY);
 		pdir = open("pkg", O_DIRECTORY | O_RDONLY);
 		fake_reset("/boot/kernel/kernel");
 		for (int i = 0; i < nload; i++)
 			r |= sysext_test_serve_rootload(providers[i],
-			    "org.5bsd.user-session", &cfg, bdir, pdir, deny);
+			    "org.5bsd.user-session", &cfg, rdir, bdir, pdir,
+			    deny);
 		r |= sysext_test_serve_status(providers[nload],
 		    "org.5bsd.user-session", &cfg);
 		_exit(r);
@@ -1667,6 +1893,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, kernel_dir_from_boot_path);
 	ATF_TP_ADD_TC(tp, driver_class_ensure);
 	ATF_TP_ADD_TC(tp, refuse_without_database);
+	ATF_TP_ADD_TC(tp, boot_replaced);
+	ATF_TP_ADD_TC(tp, boot_replaced_during_load);
+	ATF_TP_ADD_TC(tp, dependency_loaded_out_of_range);
+	ATF_TP_ADD_TC(tp, foreign_load_left_loaded);
+	ATF_TP_ADD_TC(tp, checks_outside_load_lock);
+	ATF_TP_ADD_TC(tp, unload_still_referenced);
 	ATF_TP_ADD_TC(tp, endpoint_load_and_status);
 	ATF_TP_ADD_TC(tp, endpoint_policy_refusals);
 	ATF_TP_ADD_TC(tp, endpoint_has_no_policy_methods);
