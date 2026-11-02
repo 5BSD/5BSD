@@ -10500,3 +10500,12 @@ outputs. No probe was added or removed. This does not establish live delivery,
 audit completeness or absence of inherited instrumentation. Evidence:
 bazel-final-drivers-modules-review-r1-20261102/observability-review.json;
 [cohort scope](FINAL-DRIVERS-MODULES-WORK.md).
+
+### OpenSSL crypto kernel module (2026-11-02)
+
+The bounded nineteen-source scan records no direct SDT/DTrace/KTR/audit candidate
+lines under retained patterns, and neither compiled original/native inventory
+has SDT/DTrace sections. This does not establish inherited instrumentation
+absence or audit completeness. No probes were changed. Evidence:
+bazel-ossl-module-review-r1-20261102/observability-review.json;
+[module scope](OSSL-MODULE-QUALIFICATION.md).

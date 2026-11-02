@@ -85,9 +85,11 @@ hashes. The initial current-log-only observer failure is retained. This does
 not establish general incremental/cache correctness or live firmware behavior.
 Evidence: bazel-rtwn-no-ucode-modules-review-r1-20261102, including option-transition,
 per-profile dependency, option, complete-link and artifact/install reviews.
-Current local presence is 726/729 selected amd64 directories; the previous committed
+At this cohort checkpoint local presence was 726/729 selected amd64 directories; the previous committed
 cohort checkpoint was 708/729. Neither is full-system qualification.
-Linux64, OpenSSL crypto and VMM still require native declarations and their
+OpenSSL crypto is now separately qualified in
+[its module record](OSSL-MODULE-QUALIFICATION.md), bringing current local
+presence to 727/729. Linux64 and VMM still require native declarations and their
 specific generated-input/assembly work. Do not omit their original controls.
 
 Both native profiles and RTWN alternatives used maintained build-bsd format-5

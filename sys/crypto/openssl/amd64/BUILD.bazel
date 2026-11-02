@@ -4,3 +4,15 @@ exports_files([label.split(":", 1)[1] for label in AMD64_ASM_SOURCES if label.st
     visibility = ["//secure/lib/libcrypto:__pkg__"])
 
 exports_files(["e_padlock-x86_64.S"], visibility = ["//secure/lib/libcrypto/engines:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ossl_aes-gcm-avx512_module", srcs = ["aes-gcm-avx512.S", "aesni-x86_64.S", "aesni-gcm-x86_64.S", "chacha-x86_64.S", "ghash-x86_64.S", "poly1305-x86_64.S", "sha1-x86_64.S", "sha256-x86_64.S", "sha512-x86_64.S"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "ossl_ossl_aes_gcm_avx512_module", srcs = ["ossl_aes_gcm_avx512.c"],
+    deps = ["//sys/crypto/rijndael:wlan_kernel_ieee80211_crypto_ccmp_headers", "//sys/opencrypto:opencrypto_kernel_criov_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/crypto:ossl_kernel_module_context_6"], preinclude_headers = [], textual_hdrs = [])

@@ -182,8 +182,12 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 726 selected directories contain local BUILD
-files, leaving three without: linux64, ossl and vmm. The latest eighteen-driver
+GENERIC audit selects 729 modules; 727 selected directories contain local BUILD
+files, leaving two without: linux64 and vmm. The OpenSSL crypto module passes
+both profiles with nineteen actual compiler contexts, complete plain-byte
+parity, CTF/runtime, link-order and install comparisons; see
+[OpenSSL module qualification](OSSL-MODULE-QUALIFICATION.md).
+The preceding eighteen-driver
 cohort passes plain/CTF runtime-artifact, actual-input, ordered-link and install
 comparisons, plus both RTWN microcode settings; see
 [driver qualification and remaining work](FINAL-DRIVERS-MODULES-WORK.md).

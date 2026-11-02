@@ -1238,3 +1238,14 @@ nondefault configurations and full world/kernel/cross-target/pkgbase/bootstrap/
 runtime/cache/performance gates remain open. No C/shared-rule/frontend-C changes
 are required: the maintained typed setting interface carries the new RTWN flag,
 and its producer/manual are updated together. Make stays production/default.
+
+### OpenSSL crypto module runtime-artifact qualification
+
+[Qualification](OSSL-MODULE-QUALIFICATION.md): nineteen actual compiler contexts
+(ten C, nine checked-in assembly), 821 consumed occurrences and nineteen option
+headers pass per profile. Plain whole-file equality, CTF/runtime sections, debug
+CRCs, complete ordered object identities and installation manifests pass against
+original Make. Local declaration presence is 727/729; Linux64 and VMM remain.
+Separate DWARF, runtime crypto/dispatch, alternative settings, cross targets and
+full-system/cache/performance gates remain open. Existing native helpers and
+normal format-5 frontend inputs suffice; no new frontend/manual policy is added.
