@@ -37,6 +37,7 @@
 #include <vm/pmap.h>
 
 #include <machine/frame.h>
+#include <machine/md_var.h>
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
 #include <machine/bhyve_hypercall.h>
@@ -72,6 +73,62 @@ khx_do_cpuid(u_int ax, u_int *p)
 	p[1] = b;
 	p[2] = c;
 	p[3] = d;
+}
+
+/*
+ * Host CPUID with a subleaf.  With the hybrid model enabled, simulated CPUs
+ * 0-1 answer as P-cores and 2-3 as E-cores in the leaves that differ on such
+ * parts (4H, 18H, 8000_0006H, 1AH), and 8000_0026H reports each CPU's own
+ * extended APIC ID; leaf 7 reports cpuid_leaf7_ebx on every CPU (a microcode
+ * update or the TAA mitigation may change it after vmm loaded); every other
+ * leaf reads as absent.
+ */
+static int cpuid_hybrid;
+static u_int cpuid_leaf7_ebx;
+
+void
+khx_cpuid_count(u_int ax, u_int cx, u_int *p)
+{
+	u_int e;
+
+	if (!cpuid_hybrid) {
+		khx_hw_cpuid_count(ax, cx, p);
+		return;
+	}
+	e = curcpu >= 2;
+	p[0] = p[1] = p[2] = p[3] = 0;
+	switch (ax) {
+	case 0x4:
+		if (cx > (e ? 2 : 3))
+			break;
+		/* type (data, instruction, unified), level, ways and sets */
+		p[0] = (cx == 1 ? 2 : cx == 0 ? 1 : 3) | (MAX(cx, 1) << 5);
+		p[1] = e ? 0x01c0003f + cx : 0x02c0003f + (cx << 4);
+		p[2] = e ? 0x3f + cx : 0xfff + cx;
+		break;
+	case 0x18:
+		if (cx > 1)
+			break;
+		p[0] = cx == 0 ? 1 : 0;
+		p[1] = e ? 0x8 : 0x4;
+		p[3] = e ? 0x121 : 0x161;
+		break;
+	case 0x1a:
+		p[0] = (e ? 0x20U : 0x40U) << 24;
+		break;
+	case 0x80000006:
+		p[2] = e ? 0x08007040 : 0x05007040;
+		break;
+	case 0x80000026:
+		p[1] = 1;
+		p[2] = cx & 0xff;
+		p[3] = curcpu;
+		break;
+	case 0x7:
+		if (cx == 0)
+			p[1] = cpuid_leaf7_ebx;
+		break;
+	}
 }
 
 /* ---- guest layout -------------------------------------------------------- */
@@ -836,6 +893,96 @@ case_cpuid(void)
 	vm_gone(vm);
 }
 
+/*
+ * Host CPUID leaves that differ between host CPUs reach every vCPU, and the
+ * compatibility baseline, with the boot processor's values whichever host
+ * CPU executes the emulation; the per-logical-CPU leaves read as absent.
+ */
+static void
+case_cpuid_host_cpu(void)
+{
+	static const u_int leaves[][2] = {
+		{ 0x4, 0 }, { 0x4, 1 }, { 0x4, 2 }, { 0x4, 3 }, { 0x4, 4 },
+		{ 0x18, 0 }, { 0x18, 1 }, { 0x1a, 0 }, { 0x80000006, 0 },
+		{ 0x80000026, 0 }, { 0x80000026, 1 },
+	};
+	uint64_t r[2][nitems(leaves)][4], v[4];
+	u_int saved_high, saved_exthigh;
+	struct vcpu *vcpu;
+	struct vm *vm;
+	int binds, cpu, mode;
+	size_t i;
+
+	khx_host_case("cpuid_host_cpu");
+	saved_high = cpu_high;
+	saved_exthigh = cpu_exthigh;
+	cpu_high = 0x1a;
+	cpu_exthigh = 0x80000026;
+	/* MOD_LOAD reads host CPUID while a P-core model answers on CPU 0. */
+	KHX_EQ(khx_module_event("vmm", MOD_UNLOAD), 0);
+	cpuid_hybrid = 1;
+	cpuid_leaf7_ebx = CPUID_STDEXT_HLE | CPUID_STDEXT_RTM |
+	    CPUID_STDEXT_AVX2;
+	khx_set_curcpu(3);
+	binds = khx_vmm_sched_binds;
+	KHX_EQ(khx_module_event("vmm", MOD_LOAD), 0);
+	KHX_EQ(khx_vmm_sched_binds, binds + 1);	/* bound to CPU 0 */
+	vm = vm_new("hybridvm");
+	vcpu = vcpu_new(vm, 0, 0);
+	for (cpu = 0; cpu < KHX_NCPU; cpu++) {
+		khx_set_curcpu(cpu);
+		for (i = 0; i < nitems(leaves); i++) {
+			for (mode = 0; mode < 2; mode++) {
+				v[0] = leaves[i][0];
+				v[2] = leaves[i][1];
+				v[1] = v[3] = 0;
+				if (mode == 0)
+					KHX_EQ(x86_emulate_cpuid(vcpu, &v[0],
+					    &v[1], &v[2], &v[3]), 1);
+				else
+					KHX_EQ(x86_emulate_cpuid_baseline(vcpu,
+					    &v[0], &v[1], &v[2], &v[3]), 1);
+				if (cpu == 0)
+					memcpy(r[mode][i], v, sizeof(v));
+				else
+					KHX_EQ(memcmp(r[mode][i], v,
+					    sizeof(v)), 0);
+			}
+		}
+	}
+	/* The values are the boot processor's (a P-core), not zeros. */
+	KHX_EQ(r[0][0][1], 0x02c0003f);
+	KHX_EQ(r[0][3][2], 0xfff + 3);
+	KHX_EQ(r[0][4][0] | r[0][4][1] | r[0][4][2] | r[0][4][3], 0);
+	KHX_EQ(r[0][6][3], 0x161);
+	KHX_EQ(r[0][8][2], 0x05007040);
+	/* Leaves describing the executing logical CPU are absent. */
+	for (i = 0; i < nitems(leaves); i++) {
+		if (leaves[i][0] != 0x1a && leaves[i][0] != 0x80000026)
+			continue;
+		KHX_EQ(r[0][i][0] | r[0][i][1] | r[0][i][2] | r[0][i][3], 0);
+	}
+	/* Leaf 7 is read live: TSX_CPUID_CLEAR after vmm loaded hides HLE and
+	 * RTM from guests as it does from the host. */
+	for (mode = 0; mode < 2; mode++) {
+		v[0] = 7;
+		v[1] = v[2] = v[3] = 0;
+		KHX_EQ(x86_emulate_cpuid(vcpu, &v[0], &v[1], &v[2], &v[3]), 1);
+		KHX_EQ(v[1] & (CPUID_STDEXT_HLE | CPUID_STDEXT_RTM |
+		    CPUID_STDEXT_AVX2), mode == 0 ? CPUID_STDEXT_HLE |
+		    CPUID_STDEXT_RTM | CPUID_STDEXT_AVX2 : CPUID_STDEXT_AVX2);
+		cpuid_leaf7_ebx &= ~(CPUID_STDEXT_HLE | CPUID_STDEXT_RTM);
+	}
+	vm_gone(vm);
+	khx_set_curcpu(0);
+	cpuid_hybrid = 0;
+	cpuid_leaf7_ebx = 0;
+	cpu_high = saved_high;
+	cpu_exthigh = saved_exthigh;
+	KHX_EQ(khx_module_event("vmm", MOD_UNLOAD), 0);
+	KHX_EQ(khx_module_event("vmm", MOD_LOAD), 0);
+}
+
 /* ---- identity ioctls ----------------------------------------------------- */
 static void
 case_ioctls(void)
@@ -1399,6 +1546,7 @@ khx_test_main(void)
 	case_backend_asserts();
 	case_accessors();
 	case_cpuid();
+	case_cpuid_host_cpu();
 	case_ioctls();
 	case_vmmctl();
 	case_free_memseg();

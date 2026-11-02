@@ -228,31 +228,26 @@ int __wrap_clock_gettime(clockid_t id, struct timespec *ts)
 	return (r);
 }
 int __wrap_nanosleep(const struct timespec *rq, struct timespec *rm) { LIBC_FAULT("nanosleep", -1); return (__real_nanosleep(rq, rm)); }
-/* A stop_vm checkpoint exits the process on success; catch that exit so a
- * fresh stopped checkpoint can run in-process (fault enumeration). */
+/* A stop_vm checkpoint that cannot stop the source exits the process; catch
+ * that exit so a fresh stopped checkpoint can run in-process (fault
+ * enumeration). */
 static jmp_buf suspend_jmp;
 static volatile bool suspend_catch;
 void __wrap_exit(int status) __attribute__((noreturn));
 /* A stop_vm checkpoint that published but could not stop the source exits
  * with BHYVE_EXIT_ERROR (cbm-v2h); the harness reports it as this value. */
 #define CHECKPOINT_EXITED_ERROR 1000
-/* ipc.c is not linked: model the IPC acknowledgement.  A suspend that exits
- * BHYVE_EXIT_SUSPEND must have acknowledged bhyvectl first (it used to exit
- * with the request unanswered); a failed stop must not claim success. */
-static int ipc_success_replies;
+/* ipc.c is not linked: the IPC thread exits with the status a handler
+ * requested once it has sent the reply (see ipc_suspend()). */
+static int ipc_exit_status = -1;
 void
-ipc_reply_success_before_exit(void)
+ipc_exit_after_reply(int status)
 {
-	ipc_success_replies++;
+	ipc_exit_status = status;
 }
 void
 __wrap_exit(int status)
 {
-	if (status == BHYVE_EXIT_SUSPEND && ipc_success_replies != 1)
-		abort();
-	if (status == BHYVE_EXIT_ERROR && ipc_success_replies != 0)
-		abort();
-	ipc_success_replies = 0;
 	if (suspend_catch && (status == BHYVE_EXIT_SUSPEND || status == BHYVE_EXIT_ERROR)) {
 		suspend_catch = false;
 		longjmp(suspend_jmp, status == BHYVE_EXIT_SUSPEND ? 1 : 2);
@@ -390,6 +385,14 @@ struct vmctx {
 };
 static struct vmctx src_vm, dst_vm;
 
+/* pm.c is not linked: sci_retire() fences the SIGTERM power button. */
+static bool sci_retired;
+void
+sci_retire(void)
+{
+	sci_retired = true;
+}
+
 static void
 vm_init(struct vmctx *vm, const char *name, uint8_t seed)
 {
@@ -408,6 +411,7 @@ vm_init(struct vmctx *vm, const char *name, uint8_t seed)
 	vm->vmid = 5;
 	vm->epoch = 50;
 	vm->destroyed = vm->suspended = false;
+	sci_retired = false;
 	memset(vm->kern, 0, sizeof(vm->kern));
 	memset(vm->kern_len, 0, sizeof(vm->kern_len));
 	vm->session_active = false;
@@ -528,6 +532,9 @@ vm_destroy_checked(struct vmctx *ctx)
 {
 	int error = boundary("vm_destroy_checked");
 
+	/* bhyve lives until the IPC reply is sent: a SIGTERM power button
+	 * press must already be a no-op when the VM goes away. */
+	CHECK(sci_retired);
 	if (error != 0) {
 		errno = error == FAULT_NOERRNO ? 0 : error;
 		return (-1);
@@ -1053,6 +1060,76 @@ done:
 	return (ret);
 }
 
+/*
+ * VM generation device (vmgenc.c) and ACPI PM block (amd64/pm.c) per VM:
+ * the ID page the guest reads, the ACPI event registers and the GPE
+ * notifications raised.  A destination's page starts with its own random
+ * ID; a checkpoint restore's fixed-ROM copy is modelled by the test writing
+ * the checkpoint's ID there first.  The real sources are exercised by
+ * tests/sys/kern/vsock_device_harness/acpi_pm_restore_test.c.
+ */
+static bool vmgenc_present[2] = { true, true };
+static uint8_t vmgenc_page[2][VMGENC_ID_SIZE];
+static struct checkpoint_acpi_pm acpi_pm[2];
+static int vmgenc_notifies[2], vmgenc_writes[2], acpi_pm_writes[2];
+static const uint8_t *entropy_next;	/* the next scripted draw */
+static int entropy_error;	/* the next draw fails with it */
+
+int
+vmgenc_get_id(uint8_t id[VMGENC_ID_SIZE])
+{
+	if (!vmgenc_present[side])
+		return (ENOENT);
+	memcpy(id, vmgenc_page[side], VMGENC_ID_SIZE);
+	return (0);
+}
+
+void
+vmgenc_set_id(struct vmctx *ctx, const uint8_t id[VMGENC_ID_SIZE], bool notify)
+{
+	int vm = ctx == &dst_vm;
+
+	if (!vmgenc_present[vm])
+		return;
+	memcpy(vmgenc_page[vm], id, VMGENC_ID_SIZE);
+	vmgenc_writes[vm]++;
+	if (notify)
+		vmgenc_notifies[vm]++;
+}
+
+void
+acpi_pm_state_get(struct checkpoint_acpi_pm *pm)
+{
+	*pm = acpi_pm[side];
+}
+
+void
+acpi_pm_state_set(struct vmctx *ctx, const struct checkpoint_acpi_pm *pm)
+{
+	int vm = ctx == &dst_vm;
+
+	acpi_pm[vm] = *pm;
+	acpi_pm_writes[vm]++;
+}
+
+int __real_getentropy(void *, size_t);
+int
+__wrap_getentropy(void *buf, size_t len)
+{
+	LIBC_FAULT("getentropy", -1);
+	if (entropy_error != 0) {
+		errno = entropy_error;
+		entropy_error = 0;
+		return (-1);
+	}
+	if (entropy_next != NULL && len == VMGENC_ID_SIZE) {
+		memcpy(buf, entropy_next, len);
+		entropy_next = NULL;
+		return (0);
+	}
+	return (__real_getentropy(buf, len));
+}
+
 static bool fwcfg_on = true;
 bool qemu_fwcfg_enabled(void) { return (fwcfg_on); }
 
@@ -1286,6 +1363,33 @@ static nvlist_t *(*ipc_lookup(const char *name))(struct vmctx *, const nvlist_t 
 static char dir[256];
 static int dirfd_;
 
+/*
+ * bhyvectl --suspend as bhyve's IPC thread serves it: the checkpoint
+ * command, the reply, then the exit the handler requested.  Without one
+ * (a refused checkpoint) the command is answered and the process goes on.
+ */
+static void __dead2
+ipc_suspend(const char *name)
+{
+	nvlist_t *request, *reply;
+	bool failed;
+
+	request = nvlist_create(0);
+	nvlist_add_string(request, "filename", name);
+	nvlist_add_bool(request, "suspend", true);
+	nvlist_add_descriptor(request, "fddir", dirfd_);
+	ipc_exit_status = -1;
+	reply = ipc_lookup("checkpoint")(&src_vm, request);
+	failed = nvlist_exists_string(reply, "error");
+	nvlist_destroy(reply);
+	nvlist_destroy(request);
+	if (ipc_exit_status >= 0) {
+		CHECK(!failed);
+		exit(ipc_exit_status);
+	}
+	_exit(99);
+}
+
 static int
 list_dir(char names[][128], int max)
 {
@@ -1419,8 +1523,7 @@ test_stop_vm(bool fresh)
 	if (child == 0) {
 		stop_status_busy = 2;		/* the stop poll retries */
 		collectors_remaining = 1;	/* one collector step remains */
-		(void)vm_checkpoint(&src_vm, dirfd_, "vm.ckp", true);
-		_exit(99);	/* not reached on success */
+		ipc_suspend("vm.ckp");
 	}
 	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == BHYVE_EXIT_SUSPEND);
@@ -1460,8 +1563,7 @@ test_continuity_refusal(void)
 	child = fork();
 	CHECK(child >= 0);
 	if (child == 0) {
-		(void)vm_checkpoint(&src_vm, dirfd_, "vm.ckp", true);
-		_exit(99);
+		ipc_suspend("vm.ckp");
 	}
 	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == BHYVE_EXIT_SUSPEND);
@@ -1728,6 +1830,325 @@ test_migration_blob(bool fresh)
 	vtdtr_present = false;
 	printf("snapshot migration blob (fresh %d): %zu bytes, device and kernel state equal\n",
 	    fresh, len);
+}
+
+/* ------------------------------------------------- VM generation ID */
+static void
+vmgenid_seed(int vm, uint8_t seed)
+{
+	for (int i = 0; i < VMGENC_ID_SIZE; i++)
+		vmgenc_page[vm][i] = (uint8_t)(seed + i * 3);
+}
+
+static bool
+pm_equal(const struct checkpoint_acpi_pm *a, const struct checkpoint_acpi_pm *b)
+{
+	return (a->pm1_enable == b->pm1_enable && a->pm1_status == b->pm1_status &&
+	    a->pm1_control == b->pm1_control && a->gpe0_enable == b->gpe0_enable &&
+	    a->gpe0_status == b->gpe0_status && a->sci_active == b->sci_active);
+}
+
+static void
+vmgenid_dest_reset(const uint8_t *page)
+{
+	memcpy(vmgenc_page[1], page, VMGENC_ID_SIZE);
+	memset(&acpi_pm[1], 0, sizeof(acpi_pm[1]));
+	vmgenc_notifies[1] = vmgenc_writes[1] = acpi_pm_writes[1] = 0;
+}
+
+static bool
+vmgenid_dest_unchanged(const uint8_t *page)
+{
+	return (memcmp(vmgenc_page[1], page, VMGENC_ID_SIZE) == 0 &&
+	    vmgenc_writes[1] == 0 && acpi_pm_writes[1] == 0);
+}
+
+/*
+ * Edit the value of basic-metadata 'key' in a metadata text: replace its
+ * first character (after the quote of a string) by 'c'.
+ */
+static void
+metadata_edit(uint8_t *text, size_t len, const char *key, char c)
+{
+	char quoted[64];
+	uint8_t *p, *end;
+
+	snprintf(quoted, sizeof(quoted), "\"%s\"", key);
+	p = memmem(text, len, quoted, strlen(quoted));
+	CHECK(p != NULL);
+	end = text + len;
+	for (p += strlen(quoted); p < end && (*p == ':' || *p == ' ' ||
+	    *p == '"'); p++)
+		;
+	CHECK(p < end);
+	*p = (uint8_t)c;
+}
+
+/* Capture a migration blob from src_vm, apply 'edit' and commit it into
+ * dst_vm. */
+static int
+vmgenid_migrate(void (*edit)(uint8_t *, size_t))
+{
+	struct vm_snapshot_capture cap = {0};
+	uint8_t *blob = NULL;
+	size_t len = 0;
+	int error;
+
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) == 0);
+	CHECK(vm_snapshot_dev_state_finish(&src_vm, &cap, false) == 0);
+	CHECK((memmem(blob, len, "\"" JSON_VMGENID_KEY "\"",
+	    sizeof(JSON_VMGENID_KEY) + 1) != NULL) == vmgenc_present[0]);
+	if (edit != NULL)
+		edit(blob, len);
+	vm_init(&dst_vm, "dst", 0x45);
+	side = 1;
+	state = dst_state;
+	checkpoint_restore_startup_hold();
+	error = vm_migrate_commit_state(&dst_vm, blob, len);
+	if (error == 0)
+		CHECK(vm_migrate_resume(&dst_vm) == 0);
+	else
+		(void)checkpoint_restore_startup_release();
+	free(blob);
+	side = 0;
+	state = src_state;
+	return (error);
+}
+
+static void
+edit_vmgenid_hex(uint8_t *blob, size_t len)
+{
+	metadata_edit(blob, len, JSON_VMGENID_KEY, 'g');
+}
+
+static void
+edit_vmgenid_version(uint8_t *blob, size_t len)
+{
+	metadata_edit(blob, len, JSON_VMGENID_VERSION_KEY, '2');
+}
+
+static void
+edit_acpi_pm_version(uint8_t *blob, size_t len)
+{
+	metadata_edit(blob, len, JSON_ACPI_PM_VERSION_KEY, '2');
+}
+
+static void
+edit_acpi_pm1_enable(uint8_t *blob, size_t len)
+{
+	/* 0x0120 is "288"; "988" holds bits the PM block cannot. */
+	metadata_edit(blob, len, JSON_ACPI_PM1_ENABLE_KEY, '9');
+}
+
+static void
+edit_acpi_sci(uint8_t *blob, size_t len)
+{
+	metadata_edit(blob, len, JSON_ACPI_SCI_ACTIVE_KEY, '2');
+}
+
+/* An older peer: neither record (the keys renamed out of the way). */
+static void
+edit_old_peer(uint8_t *blob, size_t len)
+{
+	uint8_t *p;
+
+	p = memmem(blob, len, "\"" JSON_ACPI_PM_VERSION_KEY "\"",
+	    sizeof(JSON_ACPI_PM_VERSION_KEY) + 1);
+	CHECK(p != NULL);
+	p[1] = 'X';
+	p = memmem(blob, len, "\"" JSON_VMGENID_VERSION_KEY "\"",
+	    sizeof(JSON_VMGENID_VERSION_KEY) + 1);
+	if (p != NULL)
+		p[1] = 'X';
+}
+
+/* Restore a checkpoint whose metadata lacks 'keys', as an older one does. */
+static int
+restore_without(const char *name, const char *const *keys, size_t nkeys)
+{
+	struct restore_state rstate;
+	ucl_object_t *basic;
+	char path[400];
+	int error;
+
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	CHECK(load_restore_file(path, &rstate) == 0);
+	basic = __DECONST(ucl_object_t *, lookup_basic_metadata_object(&rstate));
+	for (size_t i = 0; i < nkeys; i++)
+		CHECK(ucl_object_delete_key(basic, keys[i]));
+	vm_init(&dst_vm, "dst", 0x99);
+	side = 1;
+	state = dst_state;
+	tpm_reading_side[1] = false;
+	checkpoint_restore_startup_hold();
+	error = vm_restore_transaction(&dst_vm, &rstate);
+	if (error != 0)
+		(void)checkpoint_restore_startup_release();
+	destroy_restore_state(&rstate);
+	side = 0;
+	state = src_state;
+	return (error);
+}
+
+static void
+test_vmgenid(void)
+{
+	static const char *const old_keys[] = { JSON_ACPI_PM_VERSION_KEY,
+	    JSON_VMGENID_VERSION_KEY };
+	static const struct {
+		void (*edit)(uint8_t *, size_t);
+	} malformed[] = {
+		{ edit_vmgenid_hex }, { edit_vmgenid_version },
+		{ edit_acpi_pm_version }, { edit_acpi_pm1_enable },
+		{ edit_acpi_sci },
+	};
+	const struct checkpoint_acpi_pm pm = { .pm1_enable = 0x0120,
+	    .pm1_status = 0x0100, .pm1_control = 0x0001, .gpe0_enable = 1,
+	    .gpe0_status = 0, .sci_active = true };
+	uint8_t ckpt[VMGENC_ID_SIZE], first[VMGENC_ID_SIZE], own[VMGENC_ID_SIZE];
+	uint8_t draw[VMGENC_ID_SIZE];
+
+	fresh_dir();
+	vm_init(&src_vm, "src", 0x21);
+	devices_init();
+	vmgenid_seed(0, 0x40);
+	acpi_pm[0] = pm;
+	vmgenc_notifies[0] = vmgenc_writes[0] = 0;
+	memcpy(ckpt, vmgenc_page[0], sizeof(ckpt));
+
+	/* A checkpoint of a running VM leaves its generation unchanged. */
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "gen.ckp", false) == 0);
+	CHECK(memcmp(vmgenc_page[0], ckpt, sizeof(ckpt)) == 0);
+	CHECK(vmgenc_notifies[0] == 0 && vmgenc_writes[0] == 0);
+
+	/* Each restore of the same checkpoint is a new generation, notified,
+	 * with the guest's ACPI event registers. */
+	for (int round = 0; round < 2; round++) {
+		vmgenid_dest_reset(ckpt);	/* the fixed-ROM restore result */
+		CHECK(restore_into_destination("gen.ckp", true) == 0);
+		CHECK(memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0);
+		CHECK(vmgenc_notifies[1] == 1 && vmgenc_writes[1] == 1);
+		CHECK(acpi_pm_writes[1] == 1 && pm_equal(&acpi_pm[1], &pm));
+		if (round == 0)
+			memcpy(first, vmgenc_page[1], sizeof(first));
+		else
+			CHECK(memcmp(first, vmgenc_page[1], sizeof(first)) != 0);
+	}
+	/* The ID is the single draw taken before the destination changed. */
+	memset(draw, 0x3c, sizeof(draw));
+	entropy_next = draw;
+	vmgenid_dest_reset(ckpt);
+	CHECK(restore_into_destination("gen.ckp", true) == 0);
+	CHECK(entropy_next == NULL &&
+	    memcmp(vmgenc_page[1], draw, sizeof(draw)) == 0);
+	/* A failed draw refuses the restore before any change, with its
+	 * errno. */
+	vmgenid_dest_reset(ckpt);
+	entropy_error = EFAULT;
+	CHECK(restore_into_destination("gen.ckp", false) == EFAULT);
+	CHECK(vmgenid_dest_unchanged(ckpt) && vmgenc_notifies[1] == 0);
+	/* A destination without a generation device keeps the ACPI state. */
+	vmgenc_present[1] = false;
+	vmgenid_dest_reset(ckpt);
+	CHECK(restore_into_destination("gen.ckp", true) == 0);
+	CHECK(vmgenc_writes[1] == 0 && acpi_pm_writes[1] == 1 &&
+	    memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) == 0);
+	vmgenc_present[1] = true;
+	/* An older checkpoint carries neither record: a new ID, but no
+	 * notification the guest could not receive. */
+	vmgenid_dest_reset(ckpt);
+	CHECK(restore_without("gen.ckp", old_keys, nitems(old_keys)) == 0);
+	CHECK(memcmp(vmgenc_page[1], ckpt, sizeof(ckpt)) != 0);
+	CHECK(vmgenc_writes[1] == 1 && vmgenc_notifies[1] == 0 &&
+	    acpi_pm_writes[1] == 0);
+	{
+		struct restore_state blank;
+
+		memset(&blank, 0, sizeof(blank));
+		CHECK(lookup_vmgenid(&blank) == EINVAL && !blank.vmgenid_present);
+		CHECK(lookup_acpi_pm(&blank) == EINVAL && !blank.acpi_pm_present);
+	}
+
+	/* Live migration presents the source's ID, without a notification. */
+	vm_init(&src_vm, "src", 0x22);
+	devices_init();
+	vmgenid_seed(0, 0x80);
+	vmgenid_seed(1, 0x10);
+	memcpy(own, vmgenc_page[1], sizeof(own));
+	vmgenid_dest_reset(own);
+	CHECK(vmgenid_migrate(NULL) == 0);
+	CHECK(memcmp(vmgenc_page[1], vmgenc_page[0], VMGENC_ID_SIZE) == 0);
+	CHECK(vmgenc_notifies[1] == 0 && acpi_pm_writes[1] == 1);
+	CHECK(pm_equal(&acpi_pm[1], &acpi_pm[0]));
+	/* A malformed record is refused before the destination changes. */
+	for (size_t i = 0; i < nitems(malformed); i++) {
+		vmgenid_dest_reset(own);
+		CHECK(vmgenid_migrate(malformed[i].edit) == EINVAL);
+		CHECK(vmgenid_dest_unchanged(own));
+	}
+	/* An older source sends neither: the destination keeps its own ID. */
+	vmgenid_dest_reset(own);
+	CHECK(vmgenid_migrate(edit_old_peer) == 0);
+	CHECK(vmgenid_dest_unchanged(own) && vmgenc_notifies[1] == 0);
+	/* A source without a generation device sends only the ACPI state. */
+	vmgenc_present[0] = false;
+	vmgenid_dest_reset(own);
+	CHECK(vmgenid_migrate(NULL) == 0);
+	CHECK(memcmp(vmgenc_page[1], own, sizeof(own)) == 0);
+	CHECK(vmgenc_writes[1] == 0 && acpi_pm_writes[1] == 1);
+	vmgenc_present[0] = true;
+	printf("vmgenid: restore renews and notifies, migration keeps the source ID, "
+	    "%zu malformed records refused\n", nitems(malformed));
+}
+
+/*
+ * A device without snapshot support (pci_passthru leaves pe_snapshot NULL)
+ * refuses a checkpoint, also a stopping one, and a migration capture by
+ * name, before the guest is paused or any file is written; the guest keeps
+ * running.
+ */
+static void
+test_unsupported_device(void)
+{
+	static struct pci_devemu emu_passthru = {
+		.pe_emu = "passthru", .pe_restore_phase = PCI_RESTORE_NORMAL,
+	};
+	struct vm_snapshot_capture cap = {0};
+	char names[16][128], err[4096];
+	uint8_t *blob = NULL;
+	size_t len = 0;
+	ssize_t n;
+	int errfd, saved;
+
+	fresh_dir();
+	vm_init(&src_vm, "src", 0x31);
+	devices_init();
+	pci_devices[0].pi_d = &emu_passthru;
+	strlcpy(pci_devices[0].pi_name, "passthru@pci.0.6.0",
+	    sizeof(pci_devices[0].pi_name));
+	errfd = openat(dirfd_, "stderr.txt", O_RDWR | O_CREAT | O_TRUNC, 0600);
+	fflush(stderr);
+	saved = dup(STDERR_FILENO);
+	CHECK(errfd >= 0 && dup2(errfd, STDERR_FILENO) == STDERR_FILENO);
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "pt.ckp", false) == ENOTSUP);
+	CHECK(vm_checkpoint(&src_vm, dirfd_, "pt.ckp", true) == ENOTSUP);
+	CHECK(vm_snapshot_dev_state_to_mem(&src_vm, &blob, &len, &cap) ==
+	    ENOTSUP && blob == NULL && !cap.active);
+	fflush(stderr);
+	dup2(saved, STDERR_FILENO);
+	close(saved);
+	n = pread(errfd, err, sizeof(err) - 1, 0);
+	close(errfd);
+	err[n < 0 ? 0 : n] = '\0';
+	CHECK(strstr(err, "Device \"passthru@pci.0.6.0\" does not support "
+	    "checkpoint or migration.") != NULL);
+	/* Nothing published or left behind: only the captured log. */
+	CHECK(list_dir(names, 16) == 1 && strcmp(names[0], "stderr.txt") == 0);
+	CHECK(!src_vm.suspended && !src_vm.destroyed && !src_vm.session_active);
+	CHECK(!src_state[0].paused && !src_state[1].paused);
+	devices_init();
+	printf("unsupported device: checkpoint and migration refused by name, "
+	    "guest running\n");
 }
 
 /* ------------------------------------------- generic device memory */
@@ -2385,7 +2806,7 @@ test_cpu_contract_codec(void)
 		random_contract(&c, 1 + rnd() % CHECKPOINT_CPU_MAX_RECORDS);
 		CHECK(checkpoint_cpu_contract_encode(&c, &text) == 0);
 		CHECK(checkpoint_cpu_contract_decode(text, &d) == 0 &&
-		    checkpoint_cpu_contract_match(&c, &d) == 0);
+		    checkpoint_cpu_contract_match(&c, &d, NULL, 0) == 0);
 		if (t < 6) {
 			size_t len = strlen(text);
 			for (size_t i = 0; i < len && i < 200; i++) {
@@ -2430,18 +2851,18 @@ test_cpu_contract_codec(void)
 	CHECK(checkpoint_cpu_contract_validate(&d) == EINVAL);
 	d = c; d.architecture = c.architecture == CHECKPOINT_CPU_ARCH_AMD64 ?
 	    CHECKPOINT_CPU_ARCH_ARM64 : CHECKPOINT_CPU_ARCH_AMD64;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EXDEV);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EXDEV);
 	d = c; d.record_count = 3;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EXDEV);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EXDEV);
 	d = c; d.records[3].values[2] ^= 1;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EXDEV);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EXDEV);
 	d = c; d.records[3].parameter += 1;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EXDEV);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EXDEV);
 	d = c; d.records[3].selector += 1;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EXDEV);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EXDEV);
 	d = c; d.version++;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) == EINVAL);
-	CHECK(checkpoint_cpu_contract_match(&d, &c) == EINVAL);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) == EINVAL);
+	CHECK(checkpoint_cpu_contract_match(&d, &c, NULL, 0) == EINVAL);
 	CHECK(checkpoint_cpu_contract_encode(&c, NULL) == EINVAL);
 	CHECK(checkpoint_cpu_contract_encode(&d, &text) == EINVAL);
 	CHECK(checkpoint_cpu_contract_decode(NULL, &e) == EINVAL);
@@ -2471,7 +2892,7 @@ test_compat_and_machine(void)
 	a.payload_crc32 = 0x12345678;
 	CHECK(checkpoint_compat_encode(&a, record, sizeof(record)) == 0);
 	CHECK(checkpoint_compat_decode(record, CHECKPOINT_COMPAT_ENVELOPE_SIZE, &b) == 0 &&
-	    checkpoint_compat_equal(&a, &b));
+	    checkpoint_compat_equal(&a, &b, NULL, 0));
 	for (size_t i = 0; i < CHECKPOINT_COMPAT_ENVELOPE_SIZE; i++) {
 		static const uint8_t subst[] = { 0x00, 0x01, 0x2c, 0xff };
 		for (size_t k = 0; k < sizeof(subst); k++) {
@@ -2496,21 +2917,21 @@ test_compat_and_machine(void)
 	CHECK(checkpoint_compat_encode(&a, NULL, sizeof(record)) == EINVAL);
 	CHECK(checkpoint_compat_encode(&a, record, 10) == EINVAL);
 	b = a; b.schema++;
-	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL && !checkpoint_compat_equal(&a, &b));
+	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL && !checkpoint_compat_equal(&a, &b, NULL, 0));
 	b = a; b.negotiated_features |= 1ULL << 63;
 	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL);
 	b = a; memset(b.queue_sizes, 'x', sizeof(b.queue_sizes));
-	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL && !checkpoint_compat_equal(&a, &b) &&
-	    !checkpoint_compat_equal(&b, &a));
+	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL && !checkpoint_compat_equal(&a, &b, NULL, 0) &&
+	    !checkpoint_compat_equal(&b, &a, NULL, 0));
 	b = a; b.queue_sizes[sizeof(b.queue_sizes) - 1] = 'x';
 	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL);
 	b = a; b.shared_memory[sizeof(b.shared_memory) - 1] = 'x';
 	CHECK(checkpoint_compat_encode(&b, record, sizeof(record)) == EINVAL &&
-	    !checkpoint_compat_equal(&a, &b) && !checkpoint_compat_equal(&b, &a));
+	    !checkpoint_compat_equal(&a, &b, NULL, 0) && !checkpoint_compat_equal(&b, &a, NULL, 0));
 	CHECK(checkpoint_compat_decode(NULL, sizeof(record), &b) == EINVAL);
 	CHECK(checkpoint_compat_decode(record, 10, &b) == EINVAL);
 	CHECK(checkpoint_compat_decode(record, sizeof(record), NULL) == EINVAL);
-	CHECK(!checkpoint_compat_equal(NULL, &a) && !checkpoint_compat_equal(&a, NULL));
+	CHECK(!checkpoint_compat_equal(NULL, &a, NULL, 0) && !checkpoint_compat_equal(&a, NULL, NULL, 0));
 	/* Each scalar participates in equality. */
 	for (int f = 0; f < 9; f++) {
 		b = a;
@@ -2525,7 +2946,7 @@ test_compat_and_machine(void)
 		case 7: b.queue_sizes[0] ^= 1; break;
 		case 8: b.shared_memory[0] = 'x'; break;
 		}
-		CHECK(!checkpoint_compat_equal(&a, &b));
+		CHECK(!checkpoint_compat_equal(&a, &b, NULL, 0));
 	}
 	CHECK(checkpoint_compat_payload_crc32(NULL, 0) == 0 &&
 	    checkpoint_compat_payload_crc32(NULL, 5) == 0 &&
@@ -2614,16 +3035,16 @@ test_topology_rules(void)
 	const char *dup[] = { "a", "a", "c" }, *empty[] = { "a", "", "c" }, *other[] = { "a", "b", "d" };
 	const char *nul[] = { "a", NULL, "c" };
 
-	CHECK(checkpoint_topology_validate(src, 3, perm, 3) == 0);
-	CHECK(checkpoint_topology_validate(NULL, 0, NULL, 0) == 0);
-	CHECK(checkpoint_topology_validate(NULL, 3, perm, 3) == EINVAL);
-	CHECK(checkpoint_topology_validate(src, 3, NULL, 3) == EINVAL);
-	CHECK(checkpoint_topology_validate(dup, 3, perm, 3) == EEXIST);
-	CHECK(checkpoint_topology_validate(src, 3, dup, 3) == EEXIST);
-	CHECK(checkpoint_topology_validate(empty, 3, perm, 3) == EINVAL);
-	CHECK(checkpoint_topology_validate(nul, 3, perm, 3) == EINVAL);
-	CHECK(checkpoint_topology_validate(src, 3, perm, 2) == ENODEV);
-	CHECK(checkpoint_topology_validate(src, 3, other, 3) == ENODEV);
+	CHECK(checkpoint_topology_validate(src, 3, perm, 3, NULL, 0) == 0);
+	CHECK(checkpoint_topology_validate(NULL, 0, NULL, 0, NULL, 0) == 0);
+	CHECK(checkpoint_topology_validate(NULL, 3, perm, 3, NULL, 0) == EINVAL);
+	CHECK(checkpoint_topology_validate(src, 3, NULL, 3, NULL, 0) == EINVAL);
+	CHECK(checkpoint_topology_validate(dup, 3, perm, 3, NULL, 0) == EEXIST);
+	CHECK(checkpoint_topology_validate(src, 3, dup, 3, NULL, 0) == EEXIST);
+	CHECK(checkpoint_topology_validate(empty, 3, perm, 3, NULL, 0) == EINVAL);
+	CHECK(checkpoint_topology_validate(nul, 3, perm, 3, NULL, 0) == EINVAL);
+	CHECK(checkpoint_topology_validate(src, 3, perm, 2, NULL, 0) == ENODEV);
+	CHECK(checkpoint_topology_validate(src, 3, other, 3, NULL, 0) == ENODEV);
 	CHECK(checkpoint_record_consumption_validate(10, 0) == 0);
 	CHECK(checkpoint_record_consumption_validate(10, 1) == EINVAL);
 	CHECK(checkpoint_record_consumption_validate(10, 11) == EINVAL);
@@ -3031,7 +3452,7 @@ destination_admits(struct restore_state *r)
 		return (error);
 	if ((error = lookup_cpu_contract(r, &source_cpu)) != 0 ||
 	    (error = checkpoint_cpu_contract_capture(fbsdrun_vcpu(0), &destination_cpu)) != 0 ||
-	    (error = checkpoint_cpu_contract_match(&source_cpu, &destination_cpu)) != 0)
+	    (error = checkpoint_cpu_contract_match(&source_cpu, &destination_cpu, NULL, 0)) != 0)
 		return (error);
 	/* bhyverun configures the destination from the checkpoint. */
 	guest_ncpus = ncpus;
@@ -3815,8 +4236,7 @@ fresh_restore_prepare(void)
 	child = fork();
 	CHECK(child >= 0);
 	if (child == 0) {
-		(void)vm_checkpoint(&src_vm, dirfd_, "vm.ckp", true);
-		_exit(99);
+		ipc_suspend("vm.ckp");
 	}
 	CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == BHYVE_EXIT_SUSPEND);
@@ -3917,23 +4337,27 @@ static void spill(const char *, const char *, size_t);
 static int
 checkpoint_stop_vm(const char *name)
 {
-	int r, jumped;
+	int r;
 
-	if ((jumped = setjmp(suspend_jmp)) != 0) {
-		/* The exit path skipped the lock release; a later shared lock in
-		 * this process (a restore) would otherwise block on it. */
-		if (held_exclusive_fd >= 0) {
-			__real_close(held_exclusive_fd);
-			held_exclusive_fd = -1;
-		}
-		/* The exiting source never resumes; this process goes on to act
-		 * as a new destination with no inherited execution fence. */
-		checkpoint_active = false;
-		return (jumped == 1 ? 0 : CHECKPOINT_EXITED_ERROR);
+	if (setjmp(suspend_jmp) != 0)
+		r = CHECKPOINT_EXITED_ERROR;
+	else {
+		suspend_catch = true;
+		r = vm_checkpoint(&src_vm, dirfd_, name, true);
+		suspend_catch = false;
+		if (r != 0)
+			return (r);
 	}
-	suspend_catch = true;
-	r = vm_checkpoint(&src_vm, dirfd_, name, true);
-	suspend_catch = false;
+	/* A stopped source returns to an exit (after the IPC reply) or
+	 * exits: its lock is never released; a later shared lock in this
+	 * process (a restore) would otherwise block on it. */
+	if (held_exclusive_fd >= 0) {
+		__real_close(held_exclusive_fd);
+		held_exclusive_fd = -1;
+	}
+	/* The exiting source never resumes; this process goes on to act as a
+	 * new destination with no inherited execution fence. */
+	checkpoint_active = false;
 	return (r);
 }
 
@@ -5515,7 +5939,7 @@ test_codec_edges(void)
 	random_contract(&c, 3);
 	d = c;
 	d.version++;
-	CHECK(checkpoint_cpu_contract_match(&c, &d) != 0);
+	CHECK(checkpoint_cpu_contract_match(&c, &d, NULL, 0) != 0);
 	CHECK(checkpoint_cpu_contract_encode(&c, &text) == 0);
 	{
 		size_t n = strlen(text);
@@ -5920,6 +6344,8 @@ main(void)
 	test_progress();
 	test_vcpu_fence();
 	test_devmem_extension();
+	test_vmgenid();
+	test_unsupported_device();
 	devmem_enabled = true;
 	for (int seg = 0; seg < 2; seg++)
 		for (int i = 0; i < 8192; i++)

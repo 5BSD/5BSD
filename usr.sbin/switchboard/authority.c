@@ -708,7 +708,6 @@ svc_authority_issue_service(struct svc_runtime *svc, int *out)
 	struct svc_domain domain = { .kind = SVC_DOMAIN_SYSTEM, .uid = (uid_t)-1 };
 	struct cap_authority_constraint constraint = { 0 };
 	struct authority_record *r;
-	struct stat st;
 	const char *what = "grant";
 	unsigned i, opened = 0;
 	int grant = -1, saved;
@@ -730,19 +729,10 @@ svc_authority_issue_service(struct svc_runtime *svc, int *out)
 	constraint.nexec = policy->nimages;
 	for (i = 0; i < policy->nimages; i++) {
 		what = policy->images[i];
-		constraint.executable_fds[i] = open(what,
-		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_VERIFY);
+		constraint.executable_fds[i] = svc_authority_open_image(what);
 		if (constraint.executable_fds[i] < 0)
 			goto fail;
 		opened++;
-		if (fstat(constraint.executable_fds[i], &st) == -1)
-			goto fail;
-		if (!S_ISREG(st.st_mode) || st.st_uid != 0 ||
-		    (st.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
-		    (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
-			errno = EPERM;
-			goto fail;
-		}
 	}
 	what = "image constraint";
 	if (authority_call(CAP_AUTH_CONSTRAIN, sd.authority_issuer_fd,

@@ -40,11 +40,24 @@ struct vmctx;
 
 void init_bootrom(struct vmctx *ctx);
 enum {
+	/*
+	 * The allocation's bytes are generated per VM instance (for example
+	 * the random VM generation ID) instead of being reconstructed from
+	 * configuration, so they are excluded from the ROM identity that live
+	 * migration compares between separately started endpoints.
+	 */
+	BOOTROM_ALLOC_INSTANCE = 0x40,
 	BOOTROM_ALLOC_TOP = 0x80,
 	_FORCE_INT = INT_MIN,
 };
+struct bootrom_range {
+	size_t	offset;		/* Offset within the VM_BOOTROM segment. */
+	size_t	length;
+};
+#define	BOOTROM_MAX_INSTANCE_RANGES	4
 int bootrom_alloc(struct vmctx *ctx, size_t len, int prot, int flags,
     char **region_out, uint64_t *gpa_out);
+size_t bootrom_instance_ranges(const struct bootrom_range **rangesp);
 bool bootrom_boot(void);
 int bootrom_loadrom(struct vmctx *ctx);
 

@@ -25,5 +25,17 @@
  * SUCH DAMAGE.
  */
 #pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define	VMGENC_ID_SIZE	16
+
+struct vmctx;
+
 void	vmgenc_init(struct vmctx *);
 void	vmgenc_write_dsdt(void);
+#ifdef BHYVE_SNAPSHOT
+int	vmgenc_get_id(uint8_t [VMGENC_ID_SIZE]);
+void	vmgenc_set_id(struct vmctx *, const uint8_t [VMGENC_ID_SIZE], bool);
+#endif

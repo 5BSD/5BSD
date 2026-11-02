@@ -27,6 +27,65 @@ NOTE TO PEOPLE WHO THINK THAT FreeBSD 16.x IS SLOW:
 	world, or to merely disable the most expensive debugging functionality
 	at runtime, run "ln -s 'abort:false,junk:false' /etc/malloc.conf".)
 
+20261102:
+	Root loads ("sysextctl load NAME" from a root login shell) now
+	resolve the module's dependencies before anything is loaded and
+	load each verified dependency by path first; a dependency outside
+	the running kernel's directory, unpackaged, modified, denied or of
+	the wrong version refuses the load, and a file the kernel loads on
+	its own is unloaded again.  Security policies (mac_*), tracing
+	providers, ZFS/opensolaris, pf/ipfw and vmm are refused for root
+	loads as they are for root unloads ("protected module"); load them
+	through loader.conf or rc.conf.  BSDExtension now receives /boot and
+	uses the directory the running kernel was booted from (kernel.old
+	after booting it), only while that directory's kernel file has the
+	running kernel's build-id: after installkernel or a kernel package
+	upgrade, driver and root loads wait for the reboot.
+	kern.module_path is isolated by the capability plane (bsdsysctl.ucl),
+	so sysctl and kldconfig(8) cannot change it while the plane runs.
+
+	ntpd is now adopted by switchboard and runs under a program-limited
+	lasting grant (service-authority.ucl); mac_ntpd's clock delegate
+	admits the ntpd user only while it runs a pinned image of that
+	grant, and security.mac.ntpd.uid cannot be changed while the plane
+	holds the clock.  Restart ntpd with "switchboardctl restart ntpd",
+	not "service ntpd restart".  Units with a lasting grant (devd,
+	ntpd) are started only when enabled in rc.conf.
+
+	base-accounts(8) no longer recreates, on its first run, base
+	accounts that an administrator removed before upgrading: without a
+	record of an earlier run it creates only the accounts listed in
+	/usr/share/base-accounts/introduced (in 16.0: groups vmm and audio,
+	group and user capability and _otel) and records the rest.  Use
+	"base-accounts -a" to create every missing base account.
+
+	The loader's required modules honour loader.conf again: a module
+	named in module_blacklist or set to NAME_load="NO" is left out, and
+	required_modules="NO" still skips the whole set.  Installation
+	media turn off only the Linux ABI, vmm and the DTrace user providers,
+	so a kernel without ZFS, DTrace or pf compiled in still gets them.
+
+	uvideo(4) is no longer compiled into amd64 GENERIC; the loader loads
+	it on every boot instead, so USB cameras work as before and
+	uvideo_load="NO" in /boot/loader.conf leaves them to webcamd(8).  To
+	hand one camera to webcamd without rebooting, run
+	"devctl detach uvideo0" and start webcamd for the camera's ugen
+	device.  intpm and ichsmb are no longer compiled in either;
+	devmatch(8) loads them at boot when the SMBus controller is present,
+	as on FreeBSD.
+
+	rc.subr load_kld sends a load through the SystemExtension broker
+	only while the broker (BSDExtension) runs, and loads directly
+	before then; it no longer starts the broker early by running
+	sysextctl after a failed direct load.
+
+	dtraced(8) now refuses to start when its control directory
+	/var/ddtrace is not owned by root or grants group or other access:
+	it logs "must be owned by uid 0 with mode 0700" and exits with
+	EX_OSERR.  A /var/ddtrace left with mode 0755 by an older dtraced
+	must be fixed once with "chmod 700 /var/ddtrace" (and
+	"chown root /var/ddtrace" if needed) before dtraced is started.
+
 20261101:
 	Root can load a kernel module of the base system from a login shell
 	again: "sysextctl load NAME" from a root login shell (effective UID

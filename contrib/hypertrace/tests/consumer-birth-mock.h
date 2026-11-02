@@ -13,7 +13,9 @@
  * caller's mode; ambient (0) is the default, as for dtrace(1) from a shell. */
 static int birth_mock_error;
 static int birth_mock_capmode;
+static int birth_mock_capmode_errno;	/* cap_getmode(2) fails with it */
 static inline int birth_mock_cap_getmode(u_int *mode) {
+    if (birth_mock_capmode_errno != 0) { errno = birth_mock_capmode_errno; return -1; }
     *mode = (u_int)birth_mock_capmode;
     return 0;
 }

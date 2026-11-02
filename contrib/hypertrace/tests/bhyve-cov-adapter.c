@@ -59,6 +59,7 @@
 #include <dev/vmm/vmm_dirty_log.h>
 
 #include "bhyverun.h"
+#include "bootrom.h"
 #include "checkpoint_compat.h"
 #include "console.h"
 #include "gdb.h"
@@ -662,6 +663,10 @@ static uint8_t bootrom[2 * 4096];
 static uint8_t bootrom_seed = 0x3c;
 static int devmem_error, devmem_error_seg = -1;
 static bool bootrom_absent;
+static struct bootrom_range bootrom_instance[BOOTROM_MAX_INSTANCE_RANGES + 1] = {
+	{ 0, 4096 },
+};
+static size_t bootrom_instance_count;
 int
 vm_get_devmem_info(struct vmctx *ctx, int segid, void **base, size_t *length,
     char *name, size_t size)
@@ -676,10 +681,21 @@ vm_get_devmem_info(struct vmctx *ctx, int segid, void **base, size_t *length,
 		return (-1);
 	}
 	memset(bootrom, bootrom_seed, sizeof(bootrom));
+	/* Like vmgenc_init(): per-instance bytes in a registered range. */
+	if (bootrom_instance_count != 0)
+		arc4random_buf(bootrom + bootrom_instance[0].offset, 16);
 	*base = bootrom;
 	*length = sizeof(bootrom);
 	strlcpy(name, "bootrom", size);
 	return (0);
+}
+
+/* bootrom.c: allocations the VM generation counter fills per instance. */
+size_t
+bootrom_instance_ranges(const struct bootrom_range **rangesp)
+{
+	*rangesp = bootrom_instance;
+	return (bootrom_instance_count);
 }
 
 /* ------------------------------------------------- active vsock model */
@@ -3104,6 +3120,61 @@ source_contracts(void)
 			CHECK(strcmp(topo->devices[3].name, "_vmm.bootrom") == 0);
 			CHECK(topo->devices[3].compat_crc32 == (uint32_t)fnv &&
 			    topo->devices[3].bar_hash == (uint32_t)(fnv >> 32));
+		}
+		/* A per-instance bootrom range (the vmgenc page) is random in
+		 * every bhyve process; two identically configured VMs still
+		 * produce one identity, and different ROM bytes still differ. */
+		{
+			struct migration_topology *other = calloc(1, sizeof(*other));
+			const struct migration_rom_mask bad[2] = {
+				{ sizeof(bootrom) - 1, 2 }, { 0, 0 },
+			};
+			uint32_t reason;
+
+			bootrom_instance_count = 1;
+			CHECK(migration_prod_fill_topology(&vm, topo) == 0);
+			CHECK(migration_prod_fill_topology(&vm, other) == 0);
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == 0);
+			bootrom_seed = 0x3d;
+			CHECK(migration_prod_fill_topology(&vm, other) == 0);
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == EINVAL &&
+			    reason == MIGRATION_REASON_DEVICE);
+			bootrom_seed = 0x3c;
+			/* A second range, placed above the first, also matches. */
+			bootrom_instance[1] = (struct bootrom_range){ 4096, 16 };
+			bootrom_instance_count = 2;
+			CHECK(migration_prod_fill_topology(&vm, topo) == 0);
+			CHECK(migration_prod_fill_topology(&vm, other) == 0);
+			CHECK(migration_topology_validate(topo, other, &reason, NULL, 0) == 0);
+			bootrom_instance_count = BOOTROM_MAX_INSTANCE_RANGES + 1;
+			CHECK(migration_prod_fill_topology(&vm, other) == E2BIG);
+			bootrom_instance[1] = (struct bootrom_range){ bad[0].offset, bad[0].length };
+			bootrom_instance_count = 2;
+			CHECK(migration_prod_fill_topology(&vm, other) == EINVAL);
+			bootrom_instance[1] = (struct bootrom_range){ 0, 0 };
+			bootrom_instance_count = 0;
+			/* The record builder validates its arguments. */
+			CHECK(migration_rom_identity_record(NULL, "r", bootrom, 1, NULL, 0) == EINVAL);
+			CHECK(migration_rom_identity_record(&other->devices[0], NULL, bootrom, 1, NULL, 0) == EINVAL);
+			CHECK(migration_rom_identity_record(&other->devices[0], "r", NULL, 1, NULL, 0) == EINVAL);
+			CHECK(migration_rom_identity_record(&other->devices[0], "r", NULL, 0, NULL, 0) == 0);
+			CHECK(migration_rom_identity_record(&other->devices[0], "r", bootrom, 1, NULL, 1) == EINVAL);
+			CHECK(migration_rom_identity_record(&other->devices[0], "r", bootrom,
+			    sizeof(bootrom), &bad[0], 1) == EINVAL);
+			CHECK(migration_rom_identity_record(&other->devices[0], "r", bootrom,
+			    sizeof(bootrom), &bad[1], 1) == EINVAL);
+			{
+				const struct migration_rom_mask beyond = { sizeof(bootrom) + 1, 1 };
+				char longname[MIGRATION_DEVICE_NAME_MAX + 1];
+
+				CHECK(migration_rom_identity_record(&other->devices[0], "r", bootrom,
+				    sizeof(bootrom), &beyond, 1) == EINVAL);
+				memset(longname, 'n', sizeof(longname) - 1);
+				longname[sizeof(longname) - 1] = '\0';
+				CHECK(migration_rom_identity_record(&other->devices[0], longname,
+				    bootrom, 1, NULL, 0) == ENAMETOOLONG);
+			}
+			free(other);
 		}
 		tpm_present = true;
 		CHECK(migration_prod_fill_topology(&vm, topo) == 0 && topo->device_count == 5);

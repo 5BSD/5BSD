@@ -1171,8 +1171,38 @@ dtt_wait_socket(state *s, int64_t deadline)
 	return (-1);
 }
 
+/*
+ * Outcome of one bridge connection attempt or session.  A session that ends
+ * in DTT_BRIDGE_RECONNECT failed one job or lost its connection: the local
+ * daemon fails that job and keeps its durable outbound token pending (the
+ * forwarder's admission rescans outbound, and listen_dttransport()'s runtime
+ * outbound scan queries and replays it), so the bridge reconnects instead of
+ * stopping the guest daemon.  DTT_BRIDGE_FATAL is reserved for conditions a
+ * reconnect cannot repair, including a malformed frame: the local daemon is
+ * this same binary, so that is a protocol violation, not a failed job.
+ */
+enum dtt_bridge_result {
+	DTT_BRIDGE_STOP,	/* shutdown or cleanup owns the exit */
+	DTT_BRIDGE_RECONNECT,	/* log, back off, re-register */
+	DTT_BRIDGE_FATAL,	/* stop the guest daemon */
+};
+
+/* Consecutive failed connection attempts to the local daemon before the
+ * bridge gives up, and the reconnect backoff bounds (doubling from the
+ * minimum). */
+static constexpr unsigned DTT_BRIDGE_SETUP_ATTEMPTS = 6;
+static constexpr int64_t DTT_BRIDGE_BACKOFF_MIN_MS = 50;
+static constexpr int64_t DTT_BRIDGE_BACKOFF_MAX_MS = 2000;
+
+static bool
+dtt_bridge_stopping(state *s)
+{
+
+	return (s->shutdown.load() || s->cleanup_in_progress.load());
+}
+
 static int
-setup_connection(state *s)
+setup_connection(state *s, bool *wait_ready, dtt_bridge_result *failure)
 {
 	dtd_initmsg_t initmsg;
 	struct sockaddr_un addr;
@@ -1181,6 +1211,24 @@ setup_connection(state *s)
 	int64_t deadline;
 
 	memset(&initmsg, 0, sizeof(initmsg));
+	*failure = DTT_BRIDGE_RECONNECT;
+
+	/* The socket thread reports readiness once; a reconnect does not
+	 * wait for it again. */
+	if (*wait_ready) {
+		deadline = dtraced_io_deadline_after(10000);
+		if (deadline < 0 || dtt_wait_socket(s, deadline) != 0) {
+			if (errno == ECANCELED || dtt_bridge_stopping(s))
+				*failure = DTT_BRIDGE_STOP;
+			else {
+				ERR("guest bridge: local daemon socket never "
+				    "became ready: %m");
+				*failure = DTT_BRIDGE_FATAL;
+			}
+			return (-1);
+		}
+		*wait_ready = false;
+	}
 
 	sockfd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
 	if (sockfd == -1) {
@@ -1194,12 +1242,6 @@ setup_connection(state *s)
 	static_assert(sizeof(DTRACED_SOCKPATH) <= sizeof(addr.sun_path),
 	    "DTRACED_SOCKPATH must fit in sun_path");
 	(void)strlcpy(addr.sun_path, DTRACED_SOCKPATH, sizeof(addr.sun_path));
-
-	deadline = dtraced_io_deadline_after(10000);
-	if (deadline < 0 || dtt_wait_socket(s, deadline) != 0) {
-		close(sockfd);
-		return (-1);
-	}
 
 	deadline = dtraced_io_deadline_after(2000);
 	if (deadline < 0) {
@@ -1215,19 +1257,22 @@ setup_connection(state *s)
 
 	if (dtraced_wire_read_init(sockfd, &initmsg,
 	    deadline, &transferred) != 0) {
-		fprintf(stderr, "Failed to read from sockfd: %m");
+		ERR("guest bridge: no hello from the local daemon: %m");
 		close(sockfd);
 		return (-1);
 	}
 
 	if (!dtraced_wire_valid_server_init(&initmsg)) {
+		/* Not a compatible dtraced: retrying cannot help. */
 		ERR("Expected dtraced kind, got %d", initmsg.kind);
+		*failure = DTT_BRIDGE_FATAL;
 		close(sockfd);
 		return (-1);
 	}
 
 	/* Valid by construction: forwarder kind, ELFWRITE only, nonempty
-	 * ident and a nonzero session (guest_forwarder_initmsg()). */
+	 * ident and a nonzero session (guest_forwarder_initmsg()).  Each
+	 * connection registers a fresh session. */
 	initmsg = guest_forwarder_initmsg(getpid());
 
 	if (dtraced_wire_write_init(sockfd, &initmsg,
@@ -1890,11 +1935,27 @@ listen_dttransport(void *_s)
 	return;
 }
 
-void
-write_dttransport(void *_s)
+/* Release the receipt slot this bridge claimed for a frame it abandons, so
+ * the next frame on a new connection is not refused as busy.  A late
+ * receipt for the abandoned delivery is ignored by dtt_host_elf(). */
+static void
+dtt_bridge_release_receipt(state *s, uint64_t delivery_id)
 {
-	__cleanup(closefd_generic) int sockfd = -1;
-	state *s = (state *)_s;
+	std::lock_guard lock(s->host_elf_mtx);
+	if (delivery_id != 0 && s->host_elf_waiting == delivery_id) {
+		s->host_elf_waiting = 0;
+		s->host_elf_accepted = false;
+	}
+}
+
+/*
+ * Serve one bridge connection: read identified ELF frames from the local
+ * daemon, write them to /dev/dttransport, wait for bhyve's receipt and ACK.
+ * Returns how the session ended; *delivered counts acknowledged frames.
+ */
+static dtt_bridge_result
+dtt_bridge_session(state *s, int sockfd, unsigned *delivered)
+{
 	dtt_entry_t e;
 	dtraced_hdr_t header;
 	size_t transferred, length, offset, fragment;
@@ -1902,14 +1963,9 @@ write_dttransport(void *_s)
 	dtraced_delivery_ack_t ack;
 	int64_t deadline;
 	ssize_t written;
+	uint64_t claimed;
 
-	sockfd = setup_connection(s);
-	if (sockfd < 0) {
-		if (!s->cleanup_in_progress.load())
-			broadcast_shutdown(*s);
-		return;
-	}
-	while (!s->shutdown.load() && !s->cleanup_in_progress.load()) {
+	while (!dtt_bridge_stopping(s)) {
 		/* Wait idle in short slices so shutdown is noticed promptly; a
 		 * frame, once started, keeps the full 10 s deadline. */
 		struct pollfd idle = { .fd = sockfd, .events = POLLIN, .revents = 0 };
@@ -1918,18 +1974,22 @@ write_dttransport(void *_s)
 			continue;
 		deadline = dtraced_io_deadline_after(10000);
 		if (deadline < 0)
-			break;
+			return (DTT_BRIDGE_FATAL);
 		unsigned char header_wire[DTRACED_MSGHDRSIZE];
 		if (dtraced_io_transfer(sockfd, header_wire, sizeof(header_wire), false,
 		    deadline, &transferred) != 0) {
 			if (errno == ETIMEDOUT && transferred == 0)
 				continue;
-			ERR("incomplete daemon ELF header: %m");
-			break;
+			/* The local daemon closes the bridge when a job to it
+			 * fails (state::kill_socket). */
+			ERR("guest bridge: connection closed before a complete "
+			    "daemon ELF header: %m; reconnecting");
+			return (DTT_BRIDGE_RECONNECT);
 		}
 		if (dtraced_wire_decode_header(&header, header_wire) != 0) {
-			ERR("invalid daemon ELF header: %m");
-			break;
+			ERR("guest bridge: invalid daemon ELF header: %m; "
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		length = header.elf.len;
 		if (header.msg_type != DTRACED_MSG_ELF ||
@@ -1939,40 +1999,48 @@ write_dttransport(void *_s)
 		    header.elf.vmid == 0 ||
 		    header.elf.vmid >= HYPERTRACE_MAX_VMS ||
 		    header.elf.epoch == 0) {
-			ERR("invalid daemon ELF frame");
-			break;
+			ERR("guest bridge: invalid daemon ELF frame; "
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		const uint8_t zero_id[DTRACED_PROGRAM_ID_LEN] = {};
 		if (memcmp(header.elf.program_id, zero_id, sizeof(zero_id)) == 0 ||
 		    memcmp(header.elf.source_id, zero_id, sizeof(zero_id)) == 0) {
-			ERR("daemon ELF has no program or source identity");
-			break;
+			ERR("guest bridge: daemon ELF has no program or source "
+			    "identity; protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		std::unique_ptr<unsigned char[]> data(new (std::nothrow) unsigned char[length]);
 		if (!data) {
 			errno = ENOMEM;
-			ERR("cannot allocate daemon ELF frame: %m");
-			break;
+			ERR("guest bridge: cannot allocate daemon ELF frame: %m; "
+			    "reconnecting");
+			return (DTT_BRIDGE_RECONNECT);
 		}
 		if (dtraced_io_transfer(sockfd, data.get(), length, false,
 		    deadline, &transferred) != 0) {
-			ERR("cannot receive complete daemon ELF: %m");
-			break;
+			ERR("guest bridge: cannot receive complete daemon ELF: "
+			    "%m; reconnecting");
+			return (DTT_BRIDGE_RECONNECT);
 		}
 		if (memcmp(data.get(), "\177ELF", 4) != 0) {
-			ERR("daemon payload is not ELF");
-			break;
+			ERR("guest bridge: daemon payload is not ELF; "
+			    "protocol violation, stopping");
+			return (DTT_BRIDGE_FATAL);
 		}
 		uint8_t expected_digest[SHA256_DIGEST_LENGTH];
 		if (SHA256(data.get(), length, expected_digest) == NULL) {
-			ERR("cannot hash daemon ELF frame");
-			break;
+			ERR("guest bridge: cannot hash daemon ELF frame");
+			return (DTT_BRIDGE_FATAL);
 		}
 		{
 			std::lock_guard lock(s->host_elf_mtx);
 			if (s->host_elf_waiting != 0) {
-				errno = EBUSY;
-				goto failed;
+				/* Only this thread claims the slot and it
+				 * releases it on every exit from a frame. */
+				ERR("guest bridge: host receipt slot is held by "
+				    "delivery %ju", (uintmax_t)s->host_elf_waiting);
+				return (DTT_BRIDGE_FATAL);
 			}
 			s->host_elf_waiting = header.elf.delivery_id;
 			memcpy(s->host_elf_program.data(), header.elf.program_id, 16);
@@ -1980,10 +2048,13 @@ write_dttransport(void *_s)
 			memcpy(s->host_elf_digest.data(), expected_digest, 32);
 			s->host_elf_accepted = false;
 		}
+		claimed = header.elf.delivery_id;
 		identifier = arc4random();
 		deadline = dtraced_io_deadline_after(10000);
-		if (deadline < 0)
-			goto failed;
+		if (deadline < 0) {
+			dtt_bridge_release_receipt(s, claimed);
+			return (DTT_BRIDGE_FATAL);
+		}
 		for (offset = 0; offset < length; offset += fragment) {
 			fragment = MIN(length - offset, DTT_MAXDATALEN);
 			memset(&e, 0, sizeof(e));
@@ -1999,16 +2070,36 @@ write_dttransport(void *_s)
 			e.u.elf.totallen = length;
 			memcpy(e.u.elf.data, data.get() + offset, fragment);
 			for (;;) {
-				if (s->shutdown.load() || s->cleanup_in_progress.load()) {
-					errno = ECANCELED;
-					goto failed;
+				if (dtt_bridge_stopping(s)) {
+					dtt_bridge_release_receipt(s, claimed);
+					return (DTT_BRIDGE_STOP);
 				}
 				int64_t now = dtraced_io_milliseconds();
-				if (now < 0)
-					goto failed;
+				if (now < 0) {
+					dtt_bridge_release_receipt(s, claimed);
+					return (DTT_BRIDGE_FATAL);
+				}
+				if (now >= deadline && offset == 0) {
+					/* The device kept refusing for lack of
+					 * queue space: fail this job only. */
+					ERR("guest bridge: dttransport stayed full "
+					    "for delivery %ju; reconnecting",
+					    (uintmax_t)claimed);
+					dtt_bridge_release_receipt(s, claimed);
+					return (DTT_BRIDGE_RECONNECT);
+				}
 				if (now >= deadline) {
-					errno = ETIMEDOUT;
-					goto failed;
+					/* bhyve holds the accepted fragments and
+					 * accepts only their continuation (same
+					 * identifier and delivery); any other
+					 * frame resets the transport. */
+					ERR("guest bridge: dttransport stayed full "
+					    "after %zu of %zu bytes of delivery "
+					    "%ju; the partial ELF cannot be "
+					    "abandoned, stopping", offset, length,
+					    (uintmax_t)claimed);
+					dtt_bridge_release_receipt(s, claimed);
+					return (DTT_BRIDGE_FATAL);
 				}
 				written = write(s->dtt_fd, &e, sizeof(e));
 				if (written == (ssize_t)sizeof(e))
@@ -2019,7 +2110,28 @@ write_dttransport(void *_s)
 					usleep(DTRACED_SLEEPTIME);
 					continue;
 				}
-				goto failed; /* Device writes are complete records. */
+				/* Device writes are complete records.  A gone
+				 * device (ENXIO, ENODEV, EBADF), revoked
+				 * transport ownership (EBUSY, EPERM, EACCES), a
+				 * partial record or another device error cannot
+				 * be repaired by reconnecting to the daemon. */
+				if (written >= 0)
+					ERR("guest bridge: dttransport accepted a "
+					    "partial record (%zd of %zu bytes); "
+					    "stopping", written, sizeof(e));
+				else if (errno == ENXIO || errno == ENODEV ||
+				    errno == EBADF)
+					ERR("guest bridge: dttransport device is "
+					    "gone: %m; stopping");
+				else if (errno == EBUSY || errno == EPERM ||
+				    errno == EACCES)
+					ERR("guest bridge: dttransport ownership "
+					    "was revoked: %m; stopping");
+				else
+					ERR("guest bridge: dttransport write "
+					    "failed: %m; stopping");
+				dtt_bridge_release_receipt(s, claimed);
+				return (DTT_BRIDGE_FATAL);
 			}
 		}
 		/* A device write is only queue acceptance. Wait for bhyve's receipt
@@ -2028,27 +2140,110 @@ write_dttransport(void *_s)
 			std::unique_lock lock(s->host_elf_mtx);
 			bool received = s->host_elf_cv.wait_for(lock,
 			    std::chrono::seconds(20), [&] {
-				return s->host_elf_accepted || s->shutdown.load() ||
-				    s->cleanup_in_progress.load();
+				return s->host_elf_accepted || dtt_bridge_stopping(s);
 			    });
-			if (!received || !s->host_elf_accepted || s->shutdown.load() ||
-			    s->cleanup_in_progress.load()) {
-				errno = received ? ECANCELED : ETIMEDOUT;
-				goto failed;
-			}
+			bool accepted = received && s->host_elf_accepted;
 			s->host_elf_waiting = 0;
 			s->host_elf_accepted = false;
+			if (dtt_bridge_stopping(s))
+				return (DTT_BRIDGE_STOP);
+			if (!accepted) {
+				/* No ACK: the daemon fails the job and keeps the
+				 * token pending; host ingress status settles it. */
+				ERR("guest bridge: no host receipt for delivery "
+				    "%ju; reconnecting", (uintmax_t)claimed);
+				return (DTT_BRIDGE_RECONNECT);
+			}
 		}
 		ack.delivery_id = header.elf.delivery_id;
 		deadline = dtraced_io_deadline_after(10000);
 		if (deadline < 0)
-			goto failed;
+			return (DTT_BRIDGE_FATAL);
 		if (dtraced_wire_write_ack(sockfd, &ack,
-		    deadline, &transferred) != 0)
-			goto failed;
+		    deadline, &transferred) != 0) {
+			ERR("guest bridge: cannot acknowledge delivery %ju: %m; "
+			    "reconnecting", (uintmax_t)claimed);
+			return (DTT_BRIDGE_RECONNECT);
+		}
+		++*delivered;
 	}
-failed:
-	if (!s->cleanup_in_progress.load())
+	return (DTT_BRIDGE_STOP);
+}
+
+/* Sleep for the reconnect backoff in short slices; false on shutdown. */
+static bool
+dtt_bridge_backoff(state *s, int64_t delay_ms)
+{
+	int64_t deadline = dtraced_io_deadline_after(delay_ms);
+
+	if (deadline < 0)
+		return (false);
+	while (!dtt_bridge_stopping(s)) {
+		int64_t now = dtraced_io_milliseconds();
+		if (now < 0)
+			return (false);
+		if (now >= deadline)
+			return (true);
+		usleep((useconds_t)MIN(deadline - now, (int64_t)50) * 1000);
+	}
+	return (false);
+}
+
+/*
+ * The guest's local forwarder: a client of this daemon's own socket that
+ * moves identified ELF frames to the host through /dev/dttransport.  One
+ * failed job or a closed connection is logged and the bridge re-registers
+ * with bounded exponential backoff.  It stops the guest daemon on a fatal
+ * device or protocol condition, or after DTT_BRIDGE_SETUP_ATTEMPTS
+ * consecutive connection attempts fail.  Sessions that end without a
+ * delivery are not counted: a stalled host fails each job (no receipt, a
+ * full device) for as long as it stalls, and the pending token is replayed
+ * once it drains.  A frame the bridge can never accept is a protocol
+ * violation, which is already fatal.
+ */
+void
+write_dttransport(void *_s)
+{
+	state *s = (state *)_s;
+	dtt_bridge_result result = DTT_BRIDGE_STOP;
+	unsigned setup_failures = 0;
+	int64_t backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
+	bool wait_ready = true;
+
+	while (!dtt_bridge_stopping(s)) {
+		dtt_bridge_result failure;
+		int sockfd = setup_connection(s, &wait_ready, &failure);
+		if (sockfd < 0) {
+			if (failure != DTT_BRIDGE_RECONNECT) {
+				result = failure;
+				break;
+			}
+			if (++setup_failures >= DTT_BRIDGE_SETUP_ATTEMPTS) {
+				ERR("guest bridge: %u consecutive connection "
+				    "attempts to the local daemon failed; "
+				    "stopping", setup_failures);
+				result = DTT_BRIDGE_FATAL;
+				break;
+			}
+		} else {
+			setup_failures = 0;
+			unsigned delivered = 0;
+			result = dtt_bridge_session(s, sockfd, &delivered);
+			close(sockfd);
+			if (result != DTT_BRIDGE_RECONNECT)
+				break;
+			if (delivered != 0)
+				backoff = DTT_BRIDGE_BACKOFF_MIN_MS;
+		}
+		WARN("guest bridge: re-registering with the local daemon in "
+		    "%jd ms", (intmax_t)backoff);
+		if (!dtt_bridge_backoff(s, backoff)) {
+			result = DTT_BRIDGE_STOP;
+			break;
+		}
+		backoff = MIN(backoff * 2, DTT_BRIDGE_BACKOFF_MAX_MS);
+	}
+	if (result == DTT_BRIDGE_FATAL && !s->cleanup_in_progress.load())
 		broadcast_shutdown(*s);
 }
 

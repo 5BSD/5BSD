@@ -52,7 +52,7 @@ ATF_TC_BODY(portable_round_trip, tc)
 	ATF_CHECK_EQ(record[47], 0xa1);
 	ATF_REQUIRE_EQ(checkpoint_compat_decode(record, sizeof(record),
 	    &decoded), 0);
-	ATF_CHECK(checkpoint_compat_equal(&source, &decoded));
+	ATF_CHECK(checkpoint_compat_equal(&source, &decoded, NULL, 0));
 
 	/*
 	 * The envelope prefixes the device-specific state in the snapshot
@@ -63,7 +63,7 @@ ATF_TC_BODY(portable_round_trip, tc)
 	memcpy(framed + sizeof(record), "dev", 3);
 	ATF_REQUIRE_EQ(checkpoint_compat_decode(framed, sizeof(framed),
 	    &decoded), 0);
-	ATF_CHECK(checkpoint_compat_equal(&source, &decoded));
+	ATF_CHECK(checkpoint_compat_equal(&source, &decoded, NULL, 0));
 }
 
 ATF_TC_WITHOUT_HEAD(payload_checksum_detects_mutation);
@@ -176,10 +176,12 @@ ATF_TC_BODY(codec_is_transactional_and_overlap_safe, tc)
 	error = checkpoint_compat_decode(storage.record,
 	    sizeof(storage.record), &storage.compat);
 	ATF_REQUIRE_MSG(error == 0, "overlapping decode returned %d", error);
-	ATF_CHECK(checkpoint_compat_equal(&storage.compat, &source));
+	ATF_CHECK(checkpoint_compat_equal(&storage.compat, &source,
+	    NULL, 0));
 	memset(storage.compat.queue_sizes, 'x',
 	    sizeof(storage.compat.queue_sizes));
-	ATF_CHECK(!checkpoint_compat_equal(&storage.compat, &source));
+	ATF_CHECK(!checkpoint_compat_equal(&storage.compat, &source,
+	    NULL, 0));
 }
 
 ATF_TC_WITHOUT_HEAD(pci_config_image_is_little_endian);
@@ -231,18 +233,19 @@ ATF_TC_BODY(restore_contract_negative_matrix, tc)
 	strlcpy(source.shared_memory, "1:4:4096:8192",
 	    sizeof(source.shared_memory));
 	destination = source;
-	ATF_REQUIRE_EQ(pci_snapshot_compat_validate(&source, &destination), 0);
+	ATF_REQUIRE_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), 0);
 
 	/* Translated DMA cannot silently become direct DMA after restore. */
 	destination.offered_features &= ~VIRTIO14_F_ACCESS_PLATFORM;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 
 	destination = source;
 	strlcpy(destination.queue_sizes, "128,256",
 	    sizeof(destination.queue_sizes));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 
 	/*
 	 * queue_count still delimits the ordinary prefix.  An administration
@@ -256,24 +259,115 @@ ATF_TC_BODY(restore_contract_negative_matrix, tc)
 	destination = source;
 	strlcpy(destination.queue_sizes, "256,256,6,2,16,32",
 	    sizeof(destination.queue_sizes));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 
 	destination = source;
 	strlcpy(destination.shared_memory, "1:4:4096:4096",
 	    sizeof(destination.shared_memory));
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    ENOTSUP);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), ENOTSUP);
 
 	destination = source;
 	source.negotiated_features |= VIRTIO14_F_RING_PACKED;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
 
 	source = destination;
 	destination.queue_sizes[strlen(destination.queue_sizes) + 1] = 1;
-	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination),
-	    EINVAL);
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination,
+	    NULL, 0), EINVAL);
+}
+
+/* A refused restore names the compatibility field and both values. */
+ATF_TC_WITHOUT_HEAD(restore_mismatch_names_the_field);
+ATF_TC_BODY(restore_mismatch_names_the_field, tc)
+{
+	struct pci_snapshot_compat destination, source;
+	char buf[160];
+
+	memset(&source, 0, sizeof(source));
+	source.schema = PCI_SNAPSHOT_COMPAT_SCHEMA;
+	source.transport = 1;
+	source.queue_count = 2;
+	source.msix_table_count = 3;
+	source.config_size = 64;
+	source.offered_features = VIRTIO14_F_VERSION_1 |
+	    VIRTIO14_F_ACCESS_PLATFORM;
+	source.negotiated_features = VIRTIO14_F_ACCESS_PLATFORM;
+	source.payload_crc32 = 0x1234;
+	strlcpy(source.queue_sizes, "256,256", sizeof(source.queue_sizes));
+	strlcpy(source.shared_memory, "1:4:4096:8192",
+	    sizeof(source.shared_memory));
+	destination = source;
+	strlcpy(buf, "stale", sizeof(buf));
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), 0);
+	ATF_CHECK_STREQ(buf, "");
+	ATF_CHECK(checkpoint_compat_equal(&source, &destination, buf,
+	    sizeof(buf)));
+	ATF_CHECK_STREQ(buf, "");
+
+	destination.queue_count = 4;
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), ENOTSUP);
+	ATF_CHECK_STREQ(buf, "queue_count: source 0x2, destination 0x4");
+
+	destination = source;
+	strlcpy(destination.queue_sizes, "256,128",
+	    sizeof(destination.queue_sizes));
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), ENOTSUP);
+	ATF_CHECK_STREQ(buf, "queue_sizes: source \"256,256\", destination "
+	    "\"256,128\"");
+
+	destination = source;
+	destination.offered_features &= ~VIRTIO14_F_ACCESS_PLATFORM;
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), ENOTSUP);
+	ATF_CHECK(strncmp(buf, "offered_features: ", 18) == 0);
+
+	/* Invalid records are refused as such, before any field compare. */
+	destination = source;
+	destination.transport++;
+	destination.queue_sizes[strlen(destination.queue_sizes) + 1] = '1';
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), EINVAL);
+	ATF_CHECK_STREQ(buf, "queue_sizes or shared_memory: not a canonical "
+	    "shape");
+	ATF_CHECK(!checkpoint_compat_equal(&source, &destination, buf,
+	    sizeof(buf)));
+	ATF_CHECK_STREQ(buf, "queue_sizes or shared_memory: not a canonical "
+	    "shape");
+	destination = source;
+	destination.schema++;
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), EINVAL);
+	ATF_CHECK_STREQ(buf, "schema: source 1, destination 2, supported 1");
+	destination = source;
+	source.negotiated_features |= VIRTIO14_F_RING_PACKED;
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), EINVAL);
+	ATF_CHECK(strncmp(buf, "negotiated_features: source negotiated ",
+	    39) == 0);
+	source = destination;
+
+	/* Destination validation ignores the payload CRC; exact does not. */
+	destination = source;
+	destination.payload_crc32 = 0x5678;
+	ATF_CHECK_EQ(pci_snapshot_compat_validate(&source, &destination, buf,
+	    sizeof(buf)), 0);
+	ATF_CHECK(!checkpoint_compat_equal(&source, &destination, buf,
+	    sizeof(buf)));
+	ATF_CHECK_STREQ(buf, "payload_crc32: source 0x1234, destination "
+	    "0x5678");
+	ATF_CHECK(!checkpoint_compat_equal(&source, &destination, NULL, 0));
+	ATF_CHECK(!checkpoint_compat_equal(NULL, &destination, buf,
+	    sizeof(buf)));
+
+	/* Truncation is safe and still refuses. */
+	ATF_CHECK(!checkpoint_compat_equal(&source, &destination, buf, 8));
+	ATF_CHECK_EQ(strlen(buf), 7);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -286,5 +380,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, codec_is_transactional_and_overlap_safe);
 	ATF_TP_ADD_TC(tp, pci_config_image_is_little_endian);
 	ATF_TP_ADD_TC(tp, restore_contract_negative_matrix);
+	ATF_TP_ADD_TC(tp, restore_mismatch_names_the_field);
 	return (atf_no_error());
 }

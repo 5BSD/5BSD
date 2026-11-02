@@ -97,26 +97,75 @@ int sysext_policy_enabled(struct sysext_policy *, struct sysext_config *);
 bool sysext_policy_denied(struct sysext_policy *, const char *);
 
 /*
- * Hardware-driver class.  The manifest delivers the kernel directory
- * (/boot/kernel) by descriptor; sysext_driver_module() reads its linker.hints
- * and reports whether name (with or without .ko) is a module file that
- * carries MDT_PNP_INFO records.  sysext_hints_pnp_module() is the bounded
- * parser over an in-memory hints image.
+ * The running kernel's module directory (kerneldir.c).  The manifest delivers
+ * /boot by descriptor.  The directory is the one the loader booted the kernel
+ * from: the pathname of kernel file id 1 (kldstat(2)), /boot/kernel/kernel or
+ * for example /boot/kernel.old/kernel, which no one can change after boot.
+ * It is opened beneath /boot (one component, no symbolic link) and used only
+ * while its "kernel" file carries the running kernel's build-id
+ * (kern.build_id).  sysext_kernel_dir_check() reopens it by name before and
+ * after every use that leads to a load: a directory replaced since (the
+ * installkernel rename to kernel.old) is adopted only when it holds the
+ * running kernel; otherwise, and when the kernel file was replaced in place
+ * (a kernel package upgrade before the reboot), driver and root loads are
+ * refused until the next boot.
+ *
+ * The manifest also delivers "/", limited to fstatat(2) at startup
+ * (sysext_root_dir_limit()): the kernel resolves the absolute path a load
+ * names from the root, not through the held /boot, so the check also
+ * requires boot beneath "/" to be the delivered /boot (a mount over /boot or
+ * a /boot renamed and replaced is refused until the next boot), and root
+ * loads compare each module path, resolved from "/", with the checked file
+ * before and after the load.
  */
-#define	SYSEXT_KERNEL_DIR	"/boot/kernel"
+#define	SYSEXT_ROOT_DIR		"/"
+#define	SYSEXT_BOOT_DIR		"/boot"
+#define	SYSEXT_KERNEL_DIR	"/boot/kernel"	/* the usual kernel directory */
+#define	SYSEXT_BUILD_ID_MAX	129		/* hex of a 64-byte note, NUL */
+extern int sysext_boot_dirfd;
+extern int sysext_root_dirfd;		/* "/", fstatat(2) only, or -1 */
+extern int sysext_driver_dirfd;		/* the kernel directory, or -1 */
+extern char sysext_kernel_dir[];	/* its path, e.g. /boot/kernel */
+int	sysext_kernel_dir_open(void);
+int	sysext_kernel_dir_check(char *detail, size_t detaillen);
+int	sysext_root_dir_limit(int fd);
+/* Hex GNU build-id of an ELF file (the kernel), 0 or an errno. */
+int	sysext_elf_build_id(int fd, char *out, size_t outlen);
+/* The kernel file's name in the kernel directory (normally "kernel"). */
+const char *sysext_kernel_file_name(void);
+
+/*
+ * Hardware-driver class.  sysext_driver_module() reads the kernel directory's
+ * linker.hints (cached while its identity, size and times are unchanged) and
+ * reports whether name (with or without .ko) is a module file that carries
+ * MDT_PNP_INFO records.  sysext_hints_pnp_module() is the bounded parser over
+ * an in-memory hints image; sysext_hints_version_file() resolves a module
+ * dependency exactly as the kernel linker does (linker_hints_lookup): the
+ * MDT_VERSION record with the preferred version, else the highest in range,
+ * else NAME.ko.
+ */
 #define	SYSEXT_HINTS_MAX	(16 * 1024 * 1024)
-extern int sysext_driver_dirfd;
 bool sysext_hints_pnp_module(const void *, size_t, const char *);
 bool sysext_driver_module(int, const char *);
+bool sysext_hints_version_file(const void *, size_t, const char *modname,
+	    int minimum, int preferred, int maximum, char *file, size_t filelen);
+/* The same over the kernel directory's linker.hints (or NAME.ko without). */
+void sysext_kernel_dir_dependency(const char *modname, int minimum,
+	    int preferred, int maximum, char *file, size_t filelen);
 
 /*
  * Root loads (rootload.c), served on system.SystemExtension.RootLoad.  The
  * manifest delivers /var/db/pkg by descriptor; the package database is parsed
  * in a forked child that holds only that directory and a reply pipe (never
  * the kldload token).  A file qualifies when the database records
- * /boot/kernel/FILE in a package whose origin is base/... and whose repository
- * annotation is the configured root_load_repository, and the file's BLAKE2b
- * checksum (pkg's "2$" format) matches the recorded one.
+ * KERNELDIR/FILE in a package whose origin is base/... and whose repository
+ * annotation is the configured root_load_repository, the file's BLAKE2b
+ * checksum (pkg's "2$" format) matches the recorded one, no administrator
+ * override denies it and it is not protected (sysext_root_protected).  The
+ * module's MODULE_DEPEND closure is resolved before anything is loaded, from
+ * the files' module metadata (read in a forked child as well) and the kernel
+ * directory's linker.hints; every file of it must qualify, and the files are
+ * loaded by absolute path, dependencies first.
  */
 #define	SYSEXT_PKGDB_DIR	"/var/db/pkg"
 #define	SYSEXT_PKGDB_FILE	"local.sqlite"
@@ -124,6 +173,7 @@ bool sysext_driver_module(int, const char *);
 #define	SYSEXT_MODULE_FILE_MAX	(512L * 1024 * 1024)	/* module size bound */
 #define	SYSEXT_PKG_CHECKSUM_MAX	160
 #define	SYSEXT_ROOT_LOADED_MAX	64	/* tracked root loads (for unload) */
+#define	SYSEXT_ROOT_FILES_MAX	16	/* files one root load may load */
 extern int sysext_pkgdb_dirfd;
 
 struct sysext_pkg_record {
@@ -142,11 +192,33 @@ int	sysext_pkgdb_lookup(int dirfd, const char *path,
 int	sysext_pkg_checksum_fd(int fd, char *out, size_t outlen);
 void	sysext_pkg_base32(const unsigned char *in, size_t inlen, char *out,
 	    size_t outlen);
+
+/* A module file's linker metadata: its MODULE_VERSION and MODULE_DEPEND. */
+#define	SYSEXT_KLD_META_MAX	32
+#define	SYSEXT_MODNAME_MAX	32	/* MAXMODNAME */
+struct sysext_kld_meta {
+	unsigned nversion;
+	unsigned ndepend;
+	struct {
+		char	name[SYSEXT_MODNAME_MAX];
+		int	version;
+	} version[SYSEXT_KLD_META_MAX];
+	struct {
+		char	name[SYSEXT_MODNAME_MAX];
+		int	minimum, preferred, maximum;
+	} depend[SYSEXT_KLD_META_MAX];
+};
+/* Read the metadata of an open module file in a forked child: 0 or errno. */
+int	sysext_kld_metadata(int fd, struct sysext_kld_meta *meta);
+/* kldstat(2) name and pathname of a loaded file id: 0 or an errno. */
+int	sysext_kld_stat(int fileid, char *name, size_t namelen, char *path,
+	    size_t pathlen);
+
 /*
  * Decide a root Load or Unload: returns SYSEXT_DECISION_*; *errorp is the
  * errno of a failed load or unload; detail receives a reason for the log.
- * The caller has already checked the name, the policy (enabled, not denied by
- * an administrator) and that the module is not loaded.
+ * The caller has already checked the name, the policy (enabled, the module
+ * not denied by an administrator) and that the module is not loaded.
  */
 uint32_t sysext_root_load(const char *repository, const char *name,
 	    int *errorp, char *detail, size_t detaillen);
@@ -154,8 +226,14 @@ uint32_t sysext_root_unload(const char *name, int *errorp, char *detail,
 	    size_t detaillen);
 /* Another client asked for name while loaded: a root unload is refused. */
 void	sysext_root_note_shared(const char *name);
-/* A module whose unload a root session may never request. */
-bool	sysext_root_unload_protected(const char *name);
+/*
+ * Security policies, tracing, storage, the packet filters and the hypervisor:
+ * a root session may neither load nor unload them (or load a module that
+ * needs one loaded).  Same list for both directions.
+ */
+bool	sysext_root_protected(const char *name);
+/* True when an administrator override denies name (bsdextension.c). */
+bool	sysext_admin_denied(const char *name);
 /* Serialises the broker's own kernel loads (rootload.c checks new files). */
 extern pthread_mutex_t sysext_load_lock;
 
@@ -216,13 +294,15 @@ int	sysext_test_serve_status(int fd, const char *client,
 /* Drop every recorded decision and restart the sequence at 1. */
 void	sysext_test_decisions_reset(void);
 /*
- * The same over the root-load endpoint (SystemExtensionRootLoad).  The kernel
- * and package directories are the test's; sysext_test_kld_* replace the
- * kernel linker calls (NULL: the real kldload/kldunload/kldstat/kldnext).
+ * The same over the root-load endpoint (SystemExtensionRootLoad).  The boot
+ * and package directories are the test's; sysext_test_kld_* and
+ * sysext_test_mod_find replace the kernel linker calls (NULL: the real
+ * kldload/kldunload/kldstat/kldnext/modfind), sysext_test_build_id the
+ * running kernel's kern.build_id.
  */
 int	sysext_test_serve_rootload(int fd, const char *client,
-	    const struct sysext_config *cfg, int kerneldir, int pkgdir,
-	    const char *deny);
+	    const struct sysext_config *cfg, int rootdir, int bootdir,
+	    int pkgdir, const char *deny);
 extern int (*sysext_test_kld_load)(const char *path, int *fileid);
 extern int (*sysext_test_kld_unload)(int fileid);
 /* Fill the name and pathname of a loaded file id; an errno when none. */
@@ -230,7 +310,12 @@ extern int (*sysext_test_kld_stat)(int fileid, char *name, size_t namelen,
 	    char *path, size_t pathlen);
 /* The first loaded file id after fileid, or 0 at the end. */
 extern int (*sysext_test_kld_next)(int fileid);
+/* 0 when a loaded file provides the module (version) name, else an errno. */
+extern int (*sysext_test_mod_find)(const char *name);
+extern const char *sysext_test_build_id;
 void	sysext_test_root_reset(void);
+/* Package database children forked (one per root load's plan). */
+extern int sysext_test_pkgdb_children;
 #else
 #define	SYSEXT_STATIC	static
 #endif /* BSDEXTENSION_TESTING */

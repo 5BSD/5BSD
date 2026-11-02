@@ -42,6 +42,7 @@ extern "C" {
 #define DTRACED_PATCH                  0
 #define DTRACED_EXTRA_IDENTIFIER       "BETA"
 
+#define	DTRACED_SOCKDIR                "/var/ddtrace"
 #define	DTRACED_SOCKPATH               "/var/ddtrace/sub.sock"
 
 #define	DTRACED_KIND_UNKNOWN           0

@@ -33,6 +33,16 @@
 	(VTDTR_WIRE_F_NODE_REKEY_V1 | VTDTR_WIRE_F_REKEY_COMMIT_V1 | \
 	VTDTR_WIRE_F_REKEY_RECEIPT_V1)
 
+/*
+ * Flow credit: a sender closes its gate after a batch holding any control
+ * other than READY (and EOF) and reopens it only on the receiver's READY.
+ * The receiver therefore owes one READY for every such batch it consumes,
+ * whatever the controls were: replies, receipts, status and identity queries
+ * included. Withholding it is allowed only while a session stop, fresh-session
+ * or rekey fence deliberately holds the queue. READY itself never consumes
+ * credit and is never answered.
+ */
+
 enum vtdtr_wire_event {
 	VTDTR_WIRE_EVENT_READY = 0x00,
 	VTDTR_WIRE_EVENT_REGISTER = 0x01,

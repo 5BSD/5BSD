@@ -1,13 +1,22 @@
 # Lasting authority for adopted rc.d services (rc_adopt.conf).
 #
-# Each entry names an adopted service.  switchboard starts that service with
+# Each entry names an adopted service.  When rc.conf enables the service
+# ("service NAME enabled" exits 0), switchboard starts it with
 # "service NAME onerestart" under a grant that reaches only the listed
-# endpoints and carries no attributes or administrative rights.  The kernel
-# keeps the grant across exec only into the listed executable images (pinned
-# when the grant is issued); exec of any other image drops it in that process.
-# The grant ends when the unit is stopped, restarted or removed.  An entry
-# whose service is not in rc_adopt.conf is inactive.  This file is separate
-# from UNIX UID 0: a root login shell holds no grant.
+# endpoints (an empty list reaches none) and carries no attributes or
+# administrative rights.  The kernel keeps the grant across exec only into the
+# listed executable images (opened and pinned each time the unit starts); exec
+# of any other image drops it in that process.  The grant ends when the unit
+# is stopped, restarted or removed.  An entry whose service is not in
+# rc_adopt.conf is inactive.  This file is separate from UNIX UID 0: a root
+# login shell holds no grant.  Every "#!/bin/sh" script the service runs keeps
+# the grant, because /bin/sh is listed; what the endpoints admit for this
+# client is the boundary.
+#
+# After a base upgrade replaces a listed image, processes started from the old
+# grant lose it at their next exec of that path; restart the unit through
+# switchboard ("switchboardctl restart NAME") or reboot to issue a new grant.
+# "service NAME restart" from a login shell starts it without a grant.
 #
 # devd: hot-plugged devices.  devd runs devmatch.conf's nomatch action
 # ("service devmatch quietstart ...") through sh, service(8) (sh and env), and
@@ -19,4 +28,16 @@ devd {
     endpoints = ["system.SystemExtension"];
     images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/sbin/devd",
         "/usr/sbin/sysextctl"];
+}
+# ntpd: clock discipline.  BSDTime claims the clock gate; mac_ntpd(4) delegates
+# the clock privileges to the ntpd user only in a process that runs one of
+# these pinned images under this grant.  rc.d/ntpd runs ntpd as user ntpd
+# through sh, limits(1) and daemon(8) -u, not su(1): su -m runs root's login
+# shell (zsh), which is not pinned here, and the grant ends at that exec.
+# ntpd needs no endpoint.  mac_ntpd must already be loaded (rc.d/ntpd loads
+# it at boot when ntpd_enable is set, or mac_ntpd_load="YES" in loader.conf).
+ntpd {
+    endpoints = [];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits",
+        "/usr/sbin/daemon", "/usr/sbin/ntpd"];
 }

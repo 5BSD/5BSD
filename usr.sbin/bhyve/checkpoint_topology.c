@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,40 +25,72 @@ checkpoint_topology_contains(const char * const *names, size_t count,
 }
 
 static int
-checkpoint_topology_names_valid(const char * const *names, size_t count)
+checkpoint_topology_names_valid(const char *side, const char * const *names,
+    size_t count, char *reason, size_t reasonlen)
 {
 
-	if (count != 0 && names == NULL)
+	if (count != 0 && names == NULL) {
+		snprintf(reason, reasonlen, "%s device list is missing", side);
 		return (EINVAL);
+	}
 	for (size_t i = 0; i < count; i++) {
-		if (names[i] == NULL || names[i][0] == '\0')
+		if (names[i] == NULL || names[i][0] == '\0') {
+			snprintf(reason, reasonlen, "%s entry %zu has no device "
+			    "name", side, i);
 			return (EINVAL);
+		}
 		for (size_t j = 0; j < i; j++) {
-			if (strcmp(names[i], names[j]) == 0)
+			if (strcmp(names[i], names[j]) == 0) {
+				snprintf(reason, reasonlen, "%s device \"%s\" is "
+				    "recorded more than once", side, names[i]);
 				return (EEXIST);
+			}
 		}
 	}
 	return (0);
 }
 
+/*
+ * On failure, reason (which may be NULL when reasonlen is 0) names the
+ * first unmatched device.  Unique source names, each present at the
+ * destination, can only leave a destination device unmatched; and a source
+ * prefix of destination_count + 1 entries always holds an unmatched or
+ * duplicated name, so a caller bounding allocation by the destination still
+ * learns which device differs.
+ */
 int
 checkpoint_topology_validate(const char * const *source, size_t source_count,
-    const char * const *destination, size_t destination_count)
+    const char * const *destination, size_t destination_count, char *reason,
+    size_t reasonlen)
 {
 	int error;
 
-	error = checkpoint_topology_names_valid(source, source_count);
+	if (reasonlen != 0)
+		reason[0] = '\0';
+	error = checkpoint_topology_names_valid("source", source, source_count,
+	    reason, reasonlen);
 	if (error != 0)
 		return (error);
-	error = checkpoint_topology_names_valid(destination, destination_count);
+	error = checkpoint_topology_names_valid("destination", destination,
+	    destination_count, reason, reasonlen);
 	if (error != 0)
 		return (error);
-	if (source_count != destination_count)
-		return (ENODEV);
 	for (size_t i = 0; i < source_count; i++) {
 		if (!checkpoint_topology_contains(destination, destination_count,
-		    source[i]))
+		    source[i])) {
+			snprintf(reason, reasonlen, "source device \"%s\" "
+			    "(entry %zu) is absent at the destination", source[i],
+			    i);
 			return (ENODEV);
+		}
+	}
+	for (size_t i = 0; i < destination_count; i++) {
+		if (!checkpoint_topology_contains(source, source_count,
+		    destination[i])) {
+			snprintf(reason, reasonlen, "destination device \"%s\" "
+			    "is absent from the checkpoint", destination[i]);
+			return (ENODEV);
+		}
 	}
 	return (0);
 }

@@ -251,10 +251,10 @@ value from
 .In sysext_proto.h :
 loaded, already present, not permitted, client limited to hardware drivers,
 administrator deny override, or failed; for root loads also not a base
-package file, checksum mismatch, no regular file in
-.Pa /boot/kernel ,
-unloaded, not loaded by a root load, root loads not configured, package
-database unavailable, or file changed during the load) and, for a failed
+package file, checksum mismatch, no regular file in the running kernel's
+directory (or a dependency outside it), unloaded, not loaded by a root load,
+root loads not configured, package database unavailable, file changed or an
+unchecked file loaded during the load, or protected module) and, for a failed
 load,
 .Fa error .
 .Pp

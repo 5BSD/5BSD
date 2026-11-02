@@ -150,6 +150,10 @@ class client_fd {
 	/* Caller holds state::deadfdsmtx, which protects cleaned_up. */
 	bool can_reap(void);
 	bool is_subscribed(unsigned long long);
+	/* A host consumer subscribed only to ELF delivery (dtrace -E's
+	 * receiver): it sends nothing but its program registration and then
+	 * delivery acknowledgments. */
+	bool elf_only_consumer(void);
 
 	bool recv(void *, size_t, int64_t = 0);
 	bool send(void *, size_t, int64_t = 0);

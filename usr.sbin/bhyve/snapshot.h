@@ -46,6 +46,7 @@
 #include "checkpoint_cpu.h"
 #include "checkpoint_manifest.h"
 #include "hypertrace_session.h"
+#include "vmgenc.h"
 
 /*
  * A source-paired build obtains this enumerator from vmm_snapshot.h.
@@ -87,6 +88,16 @@ struct restore_state {
 	const void *hypertrace_private_image;
 	size_t hypertrace_private_length;
 	struct pci_devinst *hypertrace_private_dev;
+	/*
+	 * Optional ACPI records, decoded by the restore preflight.  A checkpoint
+	 * restore replaces the saved generation ID with a new one before the
+	 * destination changes.
+	 */
+	bool acpi_pm_present;
+	struct checkpoint_acpi_pm acpi_pm;
+	bool vmgenid_present;
+	bool vmgenid_notify;
+	uint8_t vmgenid[VMGENC_ID_SIZE];
 
 	struct ucl_parser *meta_parser;
 	ucl_object_t *meta_root_obj;

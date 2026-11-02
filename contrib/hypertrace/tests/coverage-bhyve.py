@@ -277,7 +277,7 @@ OUTCOME_WAIVERS = {
         # size; the ROM record names are short literals
         ('prod_vsock_state', ['if (strlcpy(items[devices].name, pdi->pi_name,'], 7, 'T', 'type-bound'),
         ('migration_prod_fill_topology', ['if (strlcpy(rec->name, pdi->pi_name,'], 7, 'T', 'type-bound'),
-        ('migration_prod_append_rom_identity', ['if (strlcpy(rec->name, record_name, sizeof(rec->name)) >='],
+        ('migration_rom_identity_record', ['if (strlcpy(rec->name, name, sizeof(rec->name)) >= sizeof(rec->name))'],
          6, 'T', 'type-bound'),
         # encode recomputes the size that just succeeded; a captured table
         # is recorded before any later failure
@@ -586,8 +586,6 @@ OUTCOME_WAIVERS = {
         ('checkpoint_machine_topology_digest', ['if (SHA256_End(&context, staging) == NULL) {'], 6, 'T', 'libc-total'),
     ],
     BHYVE + 'checkpoint_cpu.c': [
-        # validate() requires the fixed contract version on both sides
-        ('checkpoint_cpu_contract_match', ['if (source->version != destination->version ||'], 6, 'T', 'validator-implied'),
         ('checkpoint_cpu_contract_encode', ['if (contract->record_count >'], 6, 'T', 'validator-implied'),
         ('checkpoint_cpu_contract_encode', ['if (byte_count > (SIZE_MAX - 1) / 2)'], 6, 'T', 'arith-bound'),
         # the text length was checked against twice the header first
@@ -1833,7 +1831,8 @@ register('bhyve-cov-snapshot', harness='bhyve-cov-snapshot.c',
                'lseek', 'flock', 'mmap', 'memfd_create', 'fdopen', 'fwrite', 'fread',
                'fseek', 'ftell', 'ucl_parser_new', 'ucl_parser_add_fd',
                'xo_create_to_file', 'close', 'fclose', 'fflush', 'xo_finish_h',
-               'asprintf', 'clock_gettime', 'nanosleep', 'exit', 'isatty', 'ioctl'],
+               'asprintf', 'clock_gettime', 'nanosleep', 'exit', 'isatty', 'ioctl',
+               'getentropy'],
          libs=['-lprivateucl', '-lxo', '-lnv', '-lmd', '-lutil', '-lz', '-pthread'], runs=[[]],
          timeout=1200)
 

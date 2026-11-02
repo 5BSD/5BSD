@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 2, 2026
+.Dd November 2, 2026
 .Dt KLDLOAD 8
 .Os
 .Sh NAME
@@ -64,6 +64,13 @@ The following options are available:
 Do not try to load module if already loaded, either as a module file or
 compiled into the kernel (checked by module name with
 .Xr modfind 2 ) .
+The module name is taken to be the base name of
+.Ar file
+without its
+.Pa .ko
+suffix, which is the usual convention;
+a file whose modules are named otherwise is found only when the file
+itself is loaded.
 .It Fl v
 Be more verbose.
 .It Fl q

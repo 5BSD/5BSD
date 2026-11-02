@@ -45,9 +45,9 @@
  * Data requests are submitted asynchronously: process() enqueues onto a data
  * queue and returns, and the queue interrupt handler copies results back and
  * calls crypto_done().  Control requests (session create/destroy) are
- * synchronous: the submitter blocks until the control queue interrupt reports
- * completion.  The wire layouts are defined in virtio_crypto.h and byte-match
- * the bhyve host model.
+ * synchronous and, because the crypto framework may call into the driver with
+ * a mutex held, poll the control queue without sleeping.  The wire layouts
+ * are defined in virtio_crypto.h and byte-match the bhyve host model.
  */
 
 #include <sys/param.h>
@@ -81,6 +81,10 @@
 #define	VTCRYPTO_SHA256_LEN		32u
 #define	VTCRYPTO_AES_BLOCK		16u
 #define	VTCRYPTO_GCM_IVLEN		12u
+
+/* Control requests are polled; see vtcrypto_ctrl_exec(). */
+#define	VTCRYPTO_CTRL_TIMEOUT		(10 * SBT_1S)
+#define	VTCRYPTO_CTRL_POLL_DELAY_US	10
 
 MALLOC_DEFINE(M_VTCRYPTO, "vtcrypto", "VirtIO Crypto");
 
@@ -133,10 +137,7 @@ struct vtcrypto_softc {
 	struct mtx		 vtc_mtx;	/* control queue serialization */
 	bool			 vtc_mtx_init;
 	struct virtqueue	*vtc_ctrl_vq;
-	bool			 vtc_ctrl_inuse;
-	bool			 vtc_ctrl_done;
 	bool			 vtc_ctrl_broken;	/* control queue wedged */
-	uint8_t			*vtc_ctrl_wbuf;
 
 	int			 vtc_ndataq;
 	struct vtcrypto_dataq	*vtc_dataq;
@@ -174,7 +175,6 @@ static int	vtcrypto_detach(device_t);
 static int	vtcrypto_setup_features(struct vtcrypto_softc *);
 static void	vtcrypto_read_config(struct vtcrypto_softc *);
 static int	vtcrypto_alloc_virtqueues(struct vtcrypto_softc *);
-static void	vtcrypto_ctrl_intr(void *);
 static void	vtcrypto_dataq_intr(void *);
 static void	vtcrypto_enable_intr(struct vtcrypto_softc *);
 static void	vtcrypto_drain(struct vtcrypto_softc *);
@@ -458,7 +458,7 @@ vtcrypto_alloc_virtqueues(struct vtcrypto_softc *sc)
 		VQ_ALLOC_INFO_INIT(&info[i], 0, vtcrypto_dataq_intr, dq,
 		    &dq->vdq_vq, "%s data.%d", device_get_nameunit(dev), i);
 	}
-	VQ_ALLOC_INFO_INIT(&info[sc->vtc_ndataq], 0, vtcrypto_ctrl_intr, sc,
+	VQ_ALLOC_INFO_INIT(&info[sc->vtc_ndataq], 0, NULL, NULL,
 	    &sc->vtc_ctrl_vq, "%s control", device_get_nameunit(dev));
 
 	error = virtio_alloc_virtqueues(dev, nvqs, info);
@@ -473,7 +473,6 @@ vtcrypto_enable_intr(struct vtcrypto_softc *sc)
 
 	for (i = 0; i < sc->vtc_ndataq; i++)
 		virtqueue_enable_intr(sc->vtc_dataq[i].vdq_vq);
-	virtqueue_enable_intr(sc->vtc_ctrl_vq);
 }
 
 /*
@@ -544,31 +543,14 @@ vtcrypto_status_error(uint8_t status)
 }
 
 /*
- * Control-queue interrupt: report completion of the single outstanding
- * synchronous control request to its waiter.
- */
-static void
-vtcrypto_ctrl_intr(void *xsc)
-{
-	struct vtcrypto_softc *sc = xsc;
-	struct virtqueue *vq = sc->vtc_ctrl_vq;
-	void *cookie;
-
-	mtx_lock(&sc->vtc_mtx);
-	do {
-		virtqueue_disable_intr(vq);
-		while ((cookie = virtqueue_dequeue(vq, NULL)) != NULL) {
-			sc->vtc_ctrl_done = true;
-			wakeup(&sc->vtc_ctrl_done);
-		}
-	} while (virtqueue_enable_intr(vq) != 0);
-	mtx_unlock(&sc->vtc_mtx);
-}
-
-/*
- * Issue one control request and block until it completes.  rbuf/wbuf are
+ * Issue one control request and poll until it completes.  rbuf/wbuf are
  * physically contiguous wire buffers owned by the caller.  On a create,
  * *sidp receives the new session id.
+ *
+ * This backs CRYPTODEV_NEWSESSION and CRYPTODEV_FREESESSION, which must not
+ * sleep: consumers such as geli(4) free sessions with their own mutex held.
+ * The control mutex is held across the whole exchange, as vtnet(4) does for
+ * its control queue, so the queue never has more than one request posted.
  */
 static int
 vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
@@ -576,6 +558,7 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
     bool *retainedp)
 {
 	struct sglist *sg;
+	sbintime_t deadline;
 	int error, rd, wr;
 	uint8_t status;
 
@@ -598,14 +581,6 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 		mtx_unlock(&sc->vtc_mtx);
 		return (EIO);
 	}
-	while (sc->vtc_ctrl_inuse) {
-		error = msleep(&sc->vtc_ctrl_inuse, &sc->vtc_mtx, PZERO,
-		    "vtcbsy", 0);
-	}
-	sc->vtc_ctrl_inuse = true;
-	sc->vtc_ctrl_done = false;
-	sc->vtc_ctrl_wbuf = wbuf;
-
 	sg = sglist_alloc(4, M_NOWAIT);
 	if (sg == NULL) {
 		error = ENOMEM;
@@ -630,10 +605,9 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 		goto release;
 	virtqueue_notify(sc->vtc_ctrl_vq);
 
-	while (!sc->vtc_ctrl_done) {
-		error = msleep(&sc->vtc_ctrl_done, &sc->vtc_mtx, PZERO,
-		    "vtcctl", 10 * hz);
-		if (error == EWOULDBLOCK && !sc->vtc_ctrl_done) {
+	deadline = sbinuptime() + VTCRYPTO_CTRL_TIMEOUT;
+	while (virtqueue_dequeue(sc->vtc_ctrl_vq, NULL) == NULL) {
+		if (sbinuptime() >= deadline) {
 			/*
 			 * The device never returned the descriptor; it still
 			 * owns rbuf/wbuf.  Retain (leak) them so a late DMA
@@ -646,6 +620,7 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 			error = EIO;
 			goto release;
 		}
+		DELAY(VTCRYPTO_CTRL_POLL_DELAY_US);
 	}
 
 	if (is_create) {
@@ -658,8 +633,6 @@ vtcrypto_ctrl_exec(struct vtcrypto_softc *sc, uint8_t *rbuf, size_t rlen,
 	}
 
 release:
-	sc->vtc_ctrl_inuse = false;
-	wakeup(&sc->vtc_ctrl_inuse);
 	mtx_unlock(&sc->vtc_mtx);
 	return (error);
 }

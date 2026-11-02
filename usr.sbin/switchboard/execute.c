@@ -1208,16 +1208,19 @@ svc_exec_rc(struct svc_runtime *svc, int kq)
 	 * A unit with a lasting grant (service-authority.ucl) must run under
 	 * that grant.  An instance /etc/rc started holds only rc's temporary
 	 * authority, which ends when rc exits, so restart it instead of adopting
-	 * it; "onerestart" also starts an absent instance.
+	 * it (svc_exec_rc_grant_start()).  A grant is extra authority, so the
+	 * unit starts only when its rcvar enables it: "service <label> enabled"
+	 * runs first, without the grant, and supervisor_command_exited() starts
+	 * the unit on exit 0 and leaves it stopped otherwise.
 	 */
 	if (svc_authority_service_policy(svc->manifest.label) != NULL) {
-		rc_adopt_restart_argv(svc->manifest.label, launch);
+		rc_adopt_enabled_argv(svc->manifest.label, launch);
 		for (i = 0; i < 4; i++)
 			argv[i] = (char *)(uintptr_t)launch[i];
 		svc->rc_checking = false;
-		svc->rc_service_grant = true;
 		error = svc_exec_command(svc, kq, argv, false);
-		svc->rc_service_grant = false;
+		if (error == 0)
+			svc->rc_enable_probe = true;
 		return (error);
 	}
 	rc_adopt_status_argv(svc->manifest.label, launch);
@@ -1226,6 +1229,32 @@ svc_exec_rc(struct svc_runtime *svc, int kq)
 	error = svc_exec_command(svc, kq, argv, false);
 	if (error == 0)
 		svc->rc_checking = true;
+	return (error);
+}
+
+/*
+ * Start a unit with a lasting grant (service-authority.ucl) under that grant:
+ * "onerestart" replaces an instance /etc/rc started and starts an absent one.
+ * Every launch issues a fresh grant, opening and pinning the images then, so
+ * restarting the unit through switchboard picks up images a base upgrade
+ * replaced.
+ */
+int
+svc_exec_rc_grant_start(struct svc_runtime *svc, int kq)
+{
+	const char *launch[4];
+	char *argv[4];
+	unsigned i;
+	int error;
+
+	rc_adopt_restart_argv(svc->manifest.label, launch);
+	for (i = 0; i < 4; i++)
+		argv[i] = (char *)(uintptr_t)launch[i];
+	svc->rc_checking = false;
+	svc->rc_enable_probe = false;
+	svc->rc_service_grant = true;
+	error = svc_exec_command(svc, kq, argv, false);
+	svc->rc_service_grant = false;
 	return (error);
 }
 
@@ -1270,6 +1299,7 @@ svc_exec_rc_stop(struct svc_runtime *svc, int kq)
 	rc_adopt_stop_argv(svc->manifest.label, launch);
 	for (i = 0; i < 4; i++)
 		argv[i] = (char *)(uintptr_t)launch[i];
+	svc->rc_enable_probe = false;
 	svc->rc_checking = false;
 	return (svc_exec_command(svc, kq, argv, true));
 }

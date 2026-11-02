@@ -158,6 +158,7 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/virtio_device_parts_handler_test.c" \
 	"$here/checkpoint_topology_test.c" \
 	"$here/checkpoint_numa_test.c" \
+	"$here/acpi_pm_restore_test.c" \
 	"$here/checkpoint_cpu_test.c" \
 	"$here/checkpoint_cpu_machdep_test.c" \
 	"$here/lib9p_fs_path_test.c" \
@@ -992,6 +993,16 @@ if [ "$(uname -p)" = "amd64" ]; then
 		"$work/checkpoint_cpu_machdep_test.c"
 
 	"$work/checkpoint-cpu-machdep-test"
+
+	"$cc" -g -O1 -fsanitize="$sanitizers" -DBHYVE_SNAPSHOT \
+		-I"$work/atfshim" -I"$work" \
+		-I"$srctop/sys" \
+		-I"$srctop/usr.sbin/bhyve" -I"$srctop/usr.sbin/bhyve/amd64" \
+		-I"$srctop/lib/libvmmapi" \
+		-o "$work/acpi-pm-restore-test" \
+		"$work/acpi_pm_restore_test.c"
+
+	"$work/acpi-pm-restore-test"
 fi
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \

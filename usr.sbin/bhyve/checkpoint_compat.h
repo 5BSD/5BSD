@@ -20,7 +20,7 @@ int	checkpoint_compat_decode(const void *, size_t,
 	    struct pci_snapshot_compat *);
 uint32_t checkpoint_compat_payload_crc32(const void *, size_t);
 bool	checkpoint_compat_equal(const struct pci_snapshot_compat *,
-	    const struct pci_snapshot_compat *);
+	    const struct pci_snapshot_compat *, char *, size_t);
 #endif
 
 #endif

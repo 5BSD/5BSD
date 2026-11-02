@@ -171,6 +171,7 @@ static void vtdtr_notify(struct virtio_dtrace_queue *q __unused) {}
 static void vtdtr_stop(struct vtdtr_softc *sc) {
     atomic_store_int(&sc->vtdtr_shutdown, 1);
 }
+#include "driver-assert.inc"
 #include "driver-functions.inc"
 static void *worker(void *arg) { vtdtr_run(arg); return NULL; }
 int main(void) {
@@ -357,16 +358,19 @@ int main(void) {
     sc.vtdtr_ready = 1;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming) - 1) == EINVAL);
     assert(sc.vtdtr_ready == 1);
+    /* A well-sized control other than READY or EOF closes the gate before
+     * it is validated; an invalid one stops the transport, so no READY is
+     * sent for it. */
     incoming.vd_delivery_id = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_delivery_id = 17;
     incoming.vd_epoch = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_epoch = 98;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_epoch = 99;
     receive_error = ENOBUFS;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == ENOBUFS);
@@ -390,19 +394,19 @@ int main(void) {
     sc.vtdtr_ready = 1;
     incoming.vd_pid = -1;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_pid = 0;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_pid = 123;
 	assert(vtdtr_ctrl_process_event(&sc, &incoming,
 	    sizeof(incoming)) == EINVAL);
-	assert(sc.vtdtr_ready == 1);
+	assert(sc.vtdtr_ready == 0);
 	incoming.vd_source_id[0] = 0x42;
     incoming.vd_kill_vmid = 42;
     incoming.vd_kill_epoch = 98;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == EINVAL);
-    assert(sc.vtdtr_ready == 1);
+    assert(sc.vtdtr_ready == 0);
     incoming.vd_kill_epoch = 99;
     assert(vtdtr_ctrl_process_event(&sc, &incoming, sizeof(incoming)) == 0);
     assert(sc.vtdtr_ready == 0);
@@ -1161,5 +1165,114 @@ int main(void) {
     pthread_mutex_destroy(&failed.vtdtr_rxq.vtdq_mtx.lock);
     pthread_mutex_destroy(&failed.vtdtr_ctrlmtx.lock);
     pthread_mutex_destroy(&failed.vtdtr_mtx.lock);
+    /* Credit: bhyve sends every queued control as a batch that clears its
+     * vsd_guest_ready until the guest's READY. Each host control kind the
+     * device queues (pci_vtdtr_cq_enqueue) must therefore make the real RX
+     * task queue exactly one READY; a missing READY stalls host-to-guest
+     * delivery (HOST_* receipts, the DTT_VM_IDENTITY_QUERY reply). */
+    {
+        fail_requeue = 0; /* the failure case above left it armed */
+        static const uint32_t credited[] = { VIRTIO_DTRACE_NODE_ID,
+            VIRTIO_DTRACE_HOST_INSTALLED, VIRTIO_DTRACE_HOST_UNINSTALLED,
+            VIRTIO_DTRACE_HOST_STATUS, VIRTIO_DTRACE_HOST_INGRESS_STATUS,
+            VIRTIO_DTRACE_HOST_ELF, VIRTIO_DTRACE_HOST_KILL_APPLIED,
+            VIRTIO_DTRACE_HOST_CLEANUP_APPLIED, VIRTIO_DTRACE_ELF,
+            VIRTIO_DTRACE_KILL };
+        for (size_t k = 0; k < sizeof(credited) / sizeof(credited[0]); k++) {
+            struct vtdtr_softc g = {0};
+            struct vtdtr_ctrlq gq;
+            struct virtqueue grx = {0};
+            vtdtr_cq_init(&gq);
+            g.vtdtr_ctrlq = &gq;
+            g.vtdtr_rxq.vtdq_sc = g.vtdtr_txq.vtdq_sc = &g;
+            g.vtdtr_rxq.vtdq_vq = &grx;
+            assert(pthread_mutex_init(&g.vtdtr_mtx.lock, NULL) == 0);
+            assert(pthread_mutex_init(&g.vtdtr_ctrlmtx.lock, NULL) == 0);
+            assert(pthread_mutex_init(&g.vtdtr_rxq.vtdq_mtx.lock, NULL) == 0);
+            assert(pthread_cond_init(&g.vtdtr_condvar.cond, NULL) == 0);
+            g.vtdtr_node_id = 42;
+            g.vtdtr_node_epoch = 99;
+            dtrace_node_id = 42;
+            g.vtdtr_ready = 1; /* READY for the previous batch already sent */
+            atomic_store_int(&g.vtdtr_host_ready, 1);
+            g.vtdtr_cleanup_last_accepted_id = 0x51;
+            struct virtio_dtrace_control *in = malloc(sizeof(*in),
+                M_DEVBUF, M_WAITOK | M_ZERO);
+            struct virtio_dtrace_control *eof = malloc(sizeof(*eof),
+                M_DEVBUF, M_WAITOK | M_ZERO);
+            in->vd_event = credited[k];
+            eof->vd_event = VIRTIO_DTRACE_EOF;
+            switch (credited[k]) {
+            case VIRTIO_DTRACE_NODE_ID:
+                /* bhyve's answer to an unchanged-identity query. */
+                in->vd_node_id = 42; in->vd_node_epoch = 99;
+                in->vd_node_query_id = 6;
+                break;
+            case VIRTIO_DTRACE_ELF:
+                in->vd_delivery_id = 17; in->vd_vmid = 42; in->vd_epoch = 99;
+                in->vd_program_id[0] = 1; in->vd_elf_source_id[0] = 2;
+                in->vd_identifier = 3;
+                in->vd_elflen = in->vd_totalelflen = 4;
+                memcpy(in->vd_elf, "\177ELF", 4);
+                break;
+            case VIRTIO_DTRACE_KILL:
+            case VIRTIO_DTRACE_HOST_KILL_APPLIED:
+                in->vd_pid = 77; in->vd_kill_vmid = 42; in->vd_kill_epoch = 99;
+                in->vd_source_id[0] = 5;
+                break;
+            case VIRTIO_DTRACE_HOST_CLEANUP_APPLIED:
+                /* A duplicate receipt for an already accepted cleanup. */
+                in->vd_cleanup_vmid = 42; in->vd_cleanup_epoch = 99;
+                in->vd_cleanup_delivery_id = 0x51;
+                break;
+            default:
+                in->vd_installed_delivery_id = 9;
+                in->vd_installed_vmid = 42; in->vd_installed_epoch = 99;
+                in->vd_installed_program_id[0] = 1;
+                in->vd_installed_source_id[0] = 2;
+                if (credited[k] == VIRTIO_DTRACE_HOST_STATUS ||
+                    credited[k] == VIRTIO_DTRACE_HOST_INGRESS_STATUS) {
+                    in->vd_installed_query_id = 3;
+                    in->vd_installed_phase = 'a';
+                }
+                if (credited[k] == VIRTIO_DTRACE_HOST_INGRESS_STATUS)
+                    in->vd_installed_digest[0] = 1;
+                if (credited[k] == VIRTIO_DTRACE_HOST_ELF)
+                    in->vd_installed_digest[0] = 1;
+                break;
+            }
+            grx.pending[0] = in; grx.pending[1] = eof;
+            grx.count = grx.used = 2;
+            int received_before = received;
+            vtdtr_rxq_tq_intr(&g.vtdtr_rxq, 0);
+            unsigned readies = 0;
+            struct vtdtr_ctrl_entry *qe;
+            STAILQ_FOREACH(qe, &gq.head, entries)
+                readies += qe->ctrl->vd_event == VIRTIO_DTRACE_DEVICE_READY;
+            if (atomic_load_int(&g.vtdtr_shutdown) != 0 || readies != 1) {
+                fprintf(stderr, "credit: host control %u consumed without "
+                    "READY (shutdown %d, READY %u)\n", credited[k],
+                    atomic_load_int(&g.vtdtr_shutdown), readies);
+                abort();
+            }
+            assert(g.vtdtr_ready == 1);
+            if (credited[k] != VIRTIO_DTRACE_HOST_CLEANUP_APPLIED)
+                assert(received == received_before + 1);
+            /* The RX buffers were requeued on the ring; release them. */
+            grx.used = grx.count;
+            while ((ctrl = virtqueue_dequeue(&grx, &len)) != NULL)
+                free(ctrl, M_DEVBUF);
+            while ((qe = vtdtr_cq_dequeue(&gq)) != NULL) {
+                free(qe->ctrl, M_DEVBUF);
+                free(qe, M_DEVBUF);
+            }
+            pthread_cond_destroy(&g.vtdtr_condvar.cond);
+            pthread_mutex_destroy(&g.vtdtr_rxq.vtdq_mtx.lock);
+            pthread_mutex_destroy(&g.vtdtr_ctrlmtx.lock);
+            pthread_mutex_destroy(&g.vtdtr_mtx.lock);
+        }
+        assert(live_allocations == 0);
+        puts("PASS: every credited host control is answered with READY");
+    }
     puts("PASS: guest attach, TX/RX ownership, requeue failure, ELF validation and rekey READY fence");
 }

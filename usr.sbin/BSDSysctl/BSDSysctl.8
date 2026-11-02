@@ -93,8 +93,18 @@ The bundle's
 .Va isolate
 list controls which privileged sysctl writes the kernel protects from
 ordinary UNIX callers, including root, while a covering claim remains active.
-The shipped list contains only
-.Va kern.maxfiles .
+The shipped list contains
+.Va kern.maxfiles
+and
+.Va kern.module_path ,
+the kernel linker's search path, which the loader sets: a root shell cannot
+add a directory to it with
+.Xr sysctl 8
+or
+.Xr kldconfig 8 ,
+so a module dependency the kernel resolves itself stays within the loader's
+directories
+.Pq see Xr BSDExtension 8 .
 Scoped isolation matches exact numeric OIDs, not name prefixes.
 Unlisted sysctls retain their ordinary kernel permissions.
 Reads and nodes marked

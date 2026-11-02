@@ -50,7 +50,7 @@ Launching an RC unit means running service(8), never exec'ing the daemon directl
 ### Lasting service grants
 
 `/Capabilities/Config/switchboard/service-authority.ucl` gives an adopted
-service a lasting software grant. The shipped file has one entry:
+service a lasting software grant. The shipped file has two entries:
 
 ```
 devd {
@@ -58,21 +58,48 @@ devd {
     images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits", "/sbin/devd",
         "/usr/sbin/sysextctl"];
 }
+ntpd {
+    endpoints = [];
+    images = ["/bin/sh", "/usr/bin/env", "/usr/bin/limits",
+        "/usr/sbin/daemon", "/usr/sbin/ntpd"];
+}
 ```
 
-For such a unit switchboard skips the status probe and runs
-`service devd onerestart`: an instance `/etc/rc` started holds only rc's
-temporary boot authority, which ends when rc exits, so it is replaced rather
-than adopted (the kernel queues device events while devd restarts). The
-command runs with a grant that reaches only the listed endpoints, carries no
-attributes or administrative rights, and survives exec only into the listed
-executables (the kernel pins them when the grant is issued); any other exec
-drops it in that process. The grant belongs to that launch: stopping,
-restarting or removing the unit ends it. An entry for a service that
-rc_adopt.conf does not adopt is inactive, an absent file grants nothing, and
-an invalid file grants nothing and is logged. A devd started from a login
-shell with `service devd restart` has no grant; use `switchboardctl restart
-devd`. What devd uses the grant for is in
+A grant is extra authority, so for such a unit switchboard skips the status
+probe and first runs `service devd enabled`: when rc.conf does not enable the
+service the unit stays stopped (`rc unit ntpd: not enabled in rc.conf; not
+started`), unlike the `onestart` of other adopted units. When it is enabled
+switchboard runs `service devd onerestart`: an instance `/etc/rc` started
+holds only rc's temporary boot authority, which ends when rc exits, so it is
+replaced rather than adopted. The command runs with a grant that reaches only
+the listed endpoints (none for ntpd), carries no attributes or administrative
+rights, and survives exec only into the listed executables (the kernel pins
+them when the grant is issued); any other exec drops it in that process. The
+grant belongs to that launch: stopping, restarting or removing the unit ends
+it. An entry for a service that rc_adopt.conf does not adopt is inactive, an
+absent file grants nothing, and an invalid file grants nothing and is logged.
+
+While devd restarts there is a short window with no devd. The kernel queues
+device events meanwhile (up to `hw.bus.devctl_queue`, 1000 by default) and
+the new devd reads them, so a device plugged in then still gets its driver;
+an ACPI suspend request in that window proceeds without consulting devd.
+
+The listed images bound where the grant survives, not what it is used for.
+With `/bin/sh` listed, every `#!/bin/sh` script devd runs (base and ports
+devd.conf rules alike) keeps the grant. The real limit is what the endpoints
+admit for the client: BSDExtension admits the `devd` client for hardware
+drivers only (`driver_clients`). ntpd's grant reaches no endpoint; mac_ntpd(4)
+uses it to tell the ntpd switchboard started from any other process running
+as the ntpd user (see [ntpd and the clock gate](../providers/time.md#ntpd-and-the-clock-gate)).
+
+Each launch opens and pins the image files anew. A base upgrade that replaces
+one of them (`/bin/sh`, `env`, `limits`, `daemon`, `devd`, `sysextctl`, `ntpd`)
+does not restart the unit: a process started under the old grant loses it at
+its next exec of that path, and devd's actions then fail with "cannot reach
+SystemExtension" until the unit restarts. Restart it with `switchboardctl
+restart devd` (or `ntpd`), or reboot, to issue a grant for the new files. A
+devd started from a login shell with `service devd restart` has no grant at
+all. What devd uses the grant for is in
 [system.SystemExtension](../providers/extension.md#devds-grant).
 
 The pidfile detail is the honest limit of adoption. An rc.d daemon daemonizes and reparents to init, so the process descriptor switchboard holds refers to the short-lived `onestart` wrapper, not to the daemon. Once the wrapper exits 0 the unit is `running` and switchboard has no further view of the daemon: `restart=on-failure` applies to a failed `onestart`, not to a cron that later dies. Native units are supervised through their process descriptor and channel; RC units are judged by their command's exit. That is why the adoption list is short and why the real migration path is to rewrite the daemon as a bundle (see [Migrating an rc Daemon](../develop/migrating-an-rc-daemon.md)).

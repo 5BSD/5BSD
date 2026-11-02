@@ -144,7 +144,7 @@ root_load_body()
 	    env SYSEXT_TEST=notpackaged "$bin" load linux64
 	atf_check -s exit:77 -o empty -e match:"does not match the checksum" \
 	    env SYSEXT_TEST=checksum "$bin" load linux64
-	atf_check -s exit:77 -o empty -e match:"no regular module file .* /boot/kernel" \
+	atf_check -s exit:77 -o empty -e match:"no regular module file .*running kernel.s directory" \
 	    env SYSEXT_TEST=outside "$bin" load linux64
 	atf_check -s exit:77 -o empty -e match:"administrator override" \
 	    env SYSEXT_TEST=override "$bin" load linux64
@@ -152,10 +152,21 @@ root_load_body()
 	    env SYSEXT_TEST=disabled "$bin" load linux64
 	atf_check -s exit:77 -o empty -e match:"package database" \
 	    env SYSEXT_TEST=pkgdb "$bin" load linux64
-	atf_check -s exit:77 -o empty -e match:"changed during the load" \
+	atf_check -s exit:77 -o empty \
+	    -e match:"a module file changed, or the kernel loaded a file" \
 	    env SYSEXT_TEST=changed "$bin" load linux64
+	atf_check -s exit:77 -o empty -e match:"refused: protected module" \
+	    env SYSEXT_TEST=protected "$bin" load linux64
+	atf_check -s exit:77 -o empty -e match:"refused: protected module" \
+	    env SYSEXT_TEST=protected "$bin" unload linux64
 	atf_check -s exit:71 -o empty -e match:"load failed: Device busy" \
 	    env SYSEXT_TEST=failed "$bin" load linux64
+	atf_check -s exit:71 -o empty \
+	    -e match:"depends on is loaded from another file, whose version" \
+	    env SYSEXT_TEST=version "$bin" load linux64
+	atf_check -s exit:71 -o empty \
+	    -e match:"unload failed: Device busy \(still loaded: in use" \
+	    env SYSEXT_TEST=failed "$bin" unload linux64
 	for path in /tmp/linux64.ko /boot/modules/linux64.ko ../linux64; do
 		atf_check -s exit:64 -o empty -e match:"paths are refused" \
 		    "$bin" load "$path"

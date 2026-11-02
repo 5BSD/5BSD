@@ -52,16 +52,14 @@
 
 /* One stalled controller must not monopolize the IPC command thread. */
 #define	IPC_CLIENT_TIMEOUT_SEC	30
+#define	IPC_REPLY_TIMEOUT_SEC	5
 
 #define IPC_COMMAND_FOREACH(pvar, set) SET_FOREACH(pvar, set)
 
 SET_DECLARE(ipc_cmd_set, struct ipc_command);
 
-/* The connection of the command the IPC thread is handling, so a handler
- * that ends the process can acknowledge first.  Thread-local: a handler run
- * on any other thread has no client to answer. */
-static __thread int ipc_client_fd = -1;
-static __thread bool ipc_client_replied;
+/* Exit status a handler requested for after its reply; -1 for none. */
+static int ipc_exit_status = -1;
 
 static struct ipc_thread_ctx {
 	struct vmctx *vmctx;
@@ -132,18 +130,10 @@ ipc_unwedge_vm(void)
 }
 
 void
-ipc_reply_success_before_exit(void)
+ipc_exit_after_reply(int status)
 {
-	nvlist_t *reply;
 
-	if (ipc_client_fd < 0 || ipc_client_replied)
-		return;
-	ipc_client_replied = true;
-	reply = nvlist_create(0);
-	/* Best effort: the work is already durable, and a controller that has
-	 * gone away must not keep bhyve from exiting (SO_NOSIGPIPE is set). */
-	(void)nvlist_send(ipc_client_fd, reply);
-	nvlist_destroy(reply);
+	ipc_exit_status = status;
 }
 
 static nvlist_t *
@@ -189,6 +179,7 @@ handle_message(struct vmctx *ctx, const char *cmd, nvlist_t *nvl)
 static void *
 ipc_thread(void *param)
 {
+	struct timeval send_timeout;
 	int fd, on;
 	nvlist_t *nvl, *reply;
 	const char *cmdname;
@@ -212,6 +203,16 @@ ipc_thread(void *param)
 		 */
 		on = 1;
 		(void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+		/*
+		 * Nor may a client that never reads its reply hold the IPC
+		 * thread, or keep bhyve alive after a handler ended the VM.
+		 */
+		send_timeout = (struct timeval) {
+			.tv_sec = IPC_REPLY_TIMEOUT_SEC,
+			.tv_usec = 0,
+		};
+		(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout,
+		    sizeof(send_timeout));
 
 		nvl = nvlist_recv(fd, 0);
 		if (nvl == NULL) {
@@ -228,10 +229,7 @@ ipc_thread(void *param)
 			    "missing command name");
 		} else {
 			cmdname = nvlist_get_string(nvl, "cmd");
-			ipc_client_fd = fd;
-			ipc_client_replied = false;
 			reply = handle_message(ctx->vmctx, cmdname, nvl);
-			ipc_client_fd = -1;
 			if (reply == NULL) {
 				reply = nvlist_create(0);
 				nvlist_add_stringf(reply, "error",
@@ -247,6 +245,16 @@ ipc_thread(void *param)
 		nvlist_destroy(nvl);
 		nvlist_destroy(reply);
 		close(fd);
+
+		/*
+		 * The handler's work ended the VM (a checkpoint with suspend):
+		 * end bhyve now that the client has its answer.  A client that
+		 * has gone away (SO_NOSIGPIPE) or does not read its reply
+		 * (SO_SNDTIMEO) does not keep bhyve running: exit even if the
+		 * reply could not be sent.
+		 */
+		if (ipc_exit_status >= 0)
+			exit(ipc_exit_status);
 	}
 
 	return (NULL);

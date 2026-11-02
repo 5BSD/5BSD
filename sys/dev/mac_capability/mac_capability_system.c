@@ -32,6 +32,7 @@
 #include <sys/param.h>
 #include <bsm/audit.h>
 #include <sys/systm.h>
+#include <sys/cap_authority.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -1803,11 +1804,21 @@ sys_mac_priv_grant(struct ucred *cred, int priv)
  * discipline the clock.  While a provider holds the SYS_GATE_SETTIME claim
  * (BSDTime), the hook below refuses every ambient caller, so ntpd could neither
  * step nor slew.  mac_ntpd publishes its uid here (or -1 when it is disabled or
- * unloaded); that uid alone passes the claim, for the three privileges
- * mac_ntpd grants, outside capability mode.  The value is copied, never a
- * pointer into the other policy, so unloading mac_ntpd leaves no stale
- * reference.  Root, PRIV_SETTIMEOFDAY and every other uid stay isolated, and
- * the gated SYS_OP_SETTIME/SYS_OP_ADJTIME operations still need the claim.
+ * unloaded).  The value is copied, never a pointer into the other policy, so
+ * unloading mac_ntpd leaves no stale reference.
+ *
+ * The uid alone is not enough: any root shell can become that uid (su -m ntpd).
+ * A delegated caller must also run an image pinned in the valid,
+ * switchboard-managed program-limited grant it holds
+ * (cap_authority_runs_pinned_image(); switchboard issues it to the ntpd unit
+ * per /Capabilities/Config/switchboard/service-authority.ucl).  A process that
+ * execs any other image loses that grant, and a login shell never holds one.
+ * The three privileges mac_ntpd grants pass the claim only for such a caller,
+ * outside capability mode, with real and effective uid equal to the delegate.
+ * Root, PRIV_SETTIMEOFDAY and every other caller stay isolated, and the gated
+ * SYS_OP_SETTIME/SYS_OP_ADJTIME operations still need the claim.
+ * mac_capability_clock_claimed() lets mac_ntpd refuse to widen the delegate
+ * (another uid, re-enabling) while the claim is held.
  */
 static volatile u_int sys_clock_delegate_uid = (u_int)-1;
 
@@ -1819,15 +1830,39 @@ mac_capability_clock_delegate(int uid)
 	    uid > 0 ? (u_int)uid : (u_int)-1);
 }
 
+bool
+mac_capability_clock_claimed(void)
+{
+	struct sys_claim *sc;
+	bool claimed = false;
+
+	if (sys_no_claims())
+		return (false);
+	mtx_lock(&sys_lock);
+	LIST_FOREACH(sc, &sys_claims, sc_link) {
+		if ((sc->sc_gates & SYS_GATE_SETTIME) != 0) {
+			claimed = true;
+			break;
+		}
+	}
+	mtx_unlock(&sys_lock);
+	return (claimed);
+}
+
 static bool
 sys_clock_delegated(struct ucred *cred)
 {
 	u_int uid;
 
 	uid = atomic_load_acq_int(&sys_clock_delegate_uid);
-	return (uid != (u_int)-1 && uid != 0 &&
-	    cred->cr_uid == (uid_t)uid && cred->cr_ruid == (uid_t)uid &&
-	    (cred->cr_flags & CRED_FLAG_CAPMODE) == 0);
+	if (uid == (u_int)-1 || uid == 0 ||
+	    cred->cr_uid != (uid_t)uid || cred->cr_ruid != (uid_t)uid ||
+	    (cred->cr_flags & CRED_FLAG_CAPMODE) != 0)
+		return (false);
+	/* Only the calling thread's own credential names the running image. */
+	if (cred != curthread->td_ucred)
+		return (false);
+	return (cap_authority_runs_pinned_image(curproc));
 }
 
 /* Raw clock syscalls retain normal privilege checks and explicit claim isolation.

@@ -110,22 +110,28 @@ result_text(int result, int error, char *buf, size_t len)
 		    "package recorded (modified or replaced; reinstall the "
 		    "package)");
 	case SYSEXT_DECISION_NOT_KERNEL_DIR:
-		return ("refused: no regular module file of that name in "
-		    "/boot/kernel");
+		return ("refused: no regular module file of that name in the "
+		    "running kernel's directory (the one it was booted from), a "
+		    "dependency outside it, or that directory or /boot no longer "
+		    "holds the running kernel (reboot after a kernel upgrade)");
 	case SYSEXT_DECISION_UNLOADED:
 		return ("unloaded");
 	case SYSEXT_DECISION_NOT_ROOT_LOADED:
 		return ("refused: not loaded with sysextctl load since the "
-		    "broker started, used by another client, or a protected "
-		    "module");
+		    "broker started, or used by another client");
 	case SYSEXT_DECISION_DISABLED:
 		return ("refused: root loads are not configured "
 		    "(root_load_repository in bsdextension.ucl)");
 	case SYSEXT_DECISION_PKGDB:
 		return ("refused: the package database could not be read");
 	case SYSEXT_DECISION_CHANGED:
-		return ("refused: the module file changed during the load; "
-		    "the load was undone");
+		return ("refused: a module file changed, or the kernel loaded "
+		    "a file that was not checked, during the load; the load "
+		    "was undone");
+	case SYSEXT_DECISION_PROTECTED:
+		return ("refused: protected module (security policies, "
+		    "tracing, storage, packet filters and the hypervisor are "
+		    "never loaded or unloaded from a login session)");
 	default:
 		return ("unknown");
 	}
@@ -363,9 +369,16 @@ root_request(struct extensioncmp_session *session, int load, const char *name)
 	}
 	extensioncmp_session_close(session);
 	text = result_text(outcome.result, outcome.error, buf, sizeof(buf));
+	if (load && outcome.result == SYSEXT_DECISION_FAILED &&
+	    outcome.error == EEXIST)
+		text = "refused: a module it depends on is loaded from another "
+		    "file, whose version cannot be checked (the broker's log "
+		    "names it)";
 	if (!load && outcome.result == SYSEXT_DECISION_FAILED) {
-		(void)snprintf(buf, sizeof(buf), "unload failed: %s",
-		    strerror(outcome.error));
+		(void)snprintf(buf, sizeof(buf), "unload failed: %s%s",
+		    strerror(outcome.error), outcome.error == EBUSY ?
+		    " (still loaded: in use, or another module depends on it)" :
+		    "");
 		text = buf;
 	}
 	log_root_request(load ? "load" : "unload", name, text);

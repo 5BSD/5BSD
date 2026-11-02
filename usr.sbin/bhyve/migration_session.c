@@ -95,23 +95,89 @@ migration_crc32(const void *payload, size_t payload_len)
 	return ((uint32_t)checksum);
 }
 
-/* Stable, length-bound identity for reconstructed immutable ROM contents. */
-static uint64_t __unused
-migration_rom_digest(const void *payload, size_t length)
+static uint64_t
+migration_rom_digest_u64(uint64_t digest, uint64_t value)
+{
+
+	for (unsigned int i = 0; i < 8; i++) {
+		digest ^= (value >> (i * 8)) & UINT64_C(0xff);
+		digest *= UINT64_C(1099511628211);
+	}
+	return (digest);
+}
+
+static bool
+migration_rom_masked(const struct migration_rom_mask *masks, size_t nmasks,
+    size_t offset)
+{
+
+	for (size_t m = 0; m < nmasks; m++) {
+		if (offset >= masks[m].offset &&
+		    offset - masks[m].offset < masks[m].length)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Stable, length-bound identity for reconstructed immutable ROM contents.
+ * Bytes inside a mask are generated per VM instance (e.g. the VM generation
+ * ID that vmgenc places in the bootrom segment) and therefore hash as zero;
+ * each mask's placement is still bound so a different layout is refused.
+ * With no masks the digest is the original whole-content digest.
+ */
+static uint64_t
+migration_rom_digest_masked(const void *payload, size_t length,
+    const struct migration_rom_mask *masks, size_t nmasks)
 {
 	const uint8_t *bytes = payload;
 	uint64_t digest;
 
 	digest = UINT64_C(14695981039346656037);
 	for (size_t i = 0; i < length; i++) {
-		digest ^= bytes[i];
+		uint8_t byte;
+
+		byte = nmasks != 0 && migration_rom_masked(masks, nmasks, i) ?
+		    0 : bytes[i];
+		digest ^= byte;
 		digest *= UINT64_C(1099511628211);
 	}
-	for (unsigned int i = 0; i < 8; i++) {
-		digest ^= ((uint64_t)length >> (i * 8)) & UINT64_C(0xff);
-		digest *= UINT64_C(1099511628211);
+	digest = migration_rom_digest_u64(digest, (uint64_t)length);
+	for (size_t m = 0; m < nmasks; m++) {
+		digest = migration_rom_digest_u64(digest,
+		    (uint64_t)masks[m].offset);
+		digest = migration_rom_digest_u64(digest,
+		    (uint64_t)masks[m].length);
 	}
 	return (digest);
+}
+
+int
+migration_rom_identity_record(struct migration_device_record *rec,
+    const char *name, const void *base, size_t length,
+    const struct migration_rom_mask *masks, size_t nmasks)
+{
+	uint64_t digest;
+
+	if (rec == NULL || name == NULL || (base == NULL && length != 0) ||
+	    (masks == NULL && nmasks != 0))
+		return (EINVAL);
+	for (size_t i = 0; i < nmasks; i++) {
+		if (masks[i].length == 0 || masks[i].offset > length ||
+		    masks[i].length > length - masks[i].offset)
+			return (EINVAL);
+	}
+	memset(rec, 0, sizeof(*rec));
+	if (strlcpy(rec->name, name, sizeof(rec->name)) >= sizeof(rec->name))
+		return (ENAMETOOLONG);
+	digest = migration_rom_digest_masked(base, length, masks, nmasks);
+	rec->migration_flags = MIGRATION_DEVF_STATE_CODEC |
+	    MIGRATION_DEVF_COMPAT_FIXED | MIGRATION_DEVF_DMA_NONE |
+	    MIGRATION_DEVF_QUIESCE_NONE;
+	rec->compat_schema = 1;
+	rec->compat_crc32 = (uint32_t)digest;
+	rec->bar_hash = (uint32_t)(digest >> 32);
+	return (0);
 }
 
 static bool
@@ -843,34 +909,62 @@ migration_caps_accept_validate(const struct migration_hello *source,
 	return (0);
 }
 
+/*
+ * On failure, detail (which may be NULL when detaillen is 0) names the first
+ * refused shape or device field; "source" is the remote topology.
+ */
 int
 migration_topology_validate(const struct migration_topology *local,
-    const struct migration_topology *remote, uint32_t *reason)
+    const struct migration_topology *remote, uint32_t *reason, char *detail,
+    size_t detaillen)
 {
+	const struct migration_device_record *l, *r;
+	const char *field;
+	uint64_t lvalue, rvalue;
+	uint32_t count;
 
 	migration_set_reason(reason, MIGRATION_REASON_NONE);
+	if (detaillen != 0)
+		detail[0] = '\0';
 	if (local == NULL || remote == NULL)
 		return (EINVAL);
 	if (!migration_topology_names_valid(local) ||
 	    !migration_topology_names_valid(remote)) {
 		migration_set_reason(reason, MIGRATION_REASON_TOPOLOGY);
+		snprintf(detail, detaillen, "device list is malformed: a name "
+		    "is empty, unterminated or repeated, or there are more "
+		    "than %u devices", MIGRATION_MAX_DEVICES);
 		return (EINVAL);
 	}
 	if (!migration_topology_memory_valid(local) ||
 	    !migration_topology_memory_valid(remote)) {
 		migration_set_reason(reason, MIGRATION_REASON_MEMSIZE);
+		snprintf(detail, detaillen, "memory: total is not low + high: "
+		    "source %ju/%ju/%ju, destination %ju/%ju/%ju "
+		    "(total/low/high)", (uintmax_t)remote->mem_size,
+		    (uintmax_t)remote->lowmem, (uintmax_t)remote->highmem,
+		    (uintmax_t)local->mem_size, (uintmax_t)local->lowmem,
+		    (uintmax_t)local->highmem);
 		return (EINVAL);
 	}
-	/* Guest-visible memory geometry must be identical on both hosts.  Both
+	/*
+	 * Guest-visible memory geometry must be identical on both hosts.  Both
 	 * are valid (mem_size == lowmem + highmem), so equal mem_size and
-	 * lowmem imply equal highmem. */
+	 * lowmem imply equal highmem.
+	 */
 	if (remote->mem_size != local->mem_size ||
 	    remote->lowmem != local->lowmem) {
 		migration_set_reason(reason, MIGRATION_REASON_MEMSIZE);
+		snprintf(detail, detaillen, "memory: source %ju/%ju, "
+		    "destination %ju/%ju (total/low)",
+		    (uintmax_t)remote->mem_size, (uintmax_t)remote->lowmem,
+		    (uintmax_t)local->mem_size, (uintmax_t)local->lowmem);
 		return (EINVAL);
 	}
 	if (remote->ncpus != local->ncpus) {
 		migration_set_reason(reason, MIGRATION_REASON_CPUCOUNT);
+		snprintf(detail, detaillen, "vCPUs: source %u, destination %u",
+		    remote->ncpus, local->ncpus);
 		return (EINVAL);
 	}
 	/* Same vCPU count, different sockets/cores/threads shape. */
@@ -878,6 +972,11 @@ migration_topology_validate(const struct migration_topology *local,
 	    remote->cores != local->cores ||
 	    remote->threads != local->threads) {
 		migration_set_reason(reason, MIGRATION_REASON_TOPOLOGY);
+		snprintf(detail, detaillen, "vCPUs (n/sockets/cores/threads): "
+		    "source %u/%u/%u/%u, destination %u/%u/%u/%u",
+		    remote->ncpus, remote->sockets, remote->cores,
+		    remote->threads, local->ncpus, local->sockets, local->cores,
+		    local->threads);
 		return (EINVAL);
 	}
 	/*
@@ -887,9 +986,12 @@ migration_topology_validate(const struct migration_topology *local,
 	 * refused here, before the source quiesces.
 	 */
 	for (uint32_t i = 0; i < remote->device_count; i++) {
-		if (!migration_device_flags_eligible(
-		    remote->devices[i].migration_flags)) {
+		r = &remote->devices[i];
+		if (!migration_device_flags_eligible(r->migration_flags)) {
 			migration_set_reason(reason, MIGRATION_REASON_DEVICE);
+			snprintf(detail, detaillen, "device %u (%s) has no "
+			    "migration contract: source migration_flags %#x", i,
+			    r->name, r->migration_flags);
 			return (EOPNOTSUPP);
 		}
 	}
@@ -897,105 +999,53 @@ migration_topology_validate(const struct migration_topology *local,
 	 * The destination must host the same set of devices with matching
 	 * identity (name, compat schema, compat envelope crc, and BAR-layout
 	 * hash).  Order is significant so restore consumes records in the same
-	 * order they were produced.
+	 * order they were produced.  Name a differing common device before a
+	 * differing count.
 	 */
-	if (remote->device_count != local->device_count) {
-		migration_set_reason(reason, MIGRATION_REASON_DEVICE);
-		return (EINVAL);
-	}
-	for (uint32_t i = 0; i < remote->device_count; i++) {
-		const struct migration_device_record *r, *l;
-
-		r = &remote->devices[i];
-		l = &local->devices[i];
-		if (memcmp(r->name, l->name, sizeof(r->name)) != 0 ||
-		    r->migration_flags != l->migration_flags ||
-		    r->compat_schema != l->compat_schema ||
-		    r->compat_crc32 != l->compat_crc32 ||
-		    r->bar_hash != l->bar_hash) {
-			migration_set_reason(reason, MIGRATION_REASON_DEVICE);
-			return (EINVAL);
-		}
-	}
-	return (0);
-}
-
-/*
- * Name the first shape or device field on which migration_topology_validate()
- * refused, for the destination's log.  Returns 0 when nothing differs.
- */
-int
-migration_topology_describe_mismatch(const struct migration_topology *local,
-    const struct migration_topology *remote, char *buf, size_t len)
-{
-	const struct migration_device_record *r, *l;
-	uint32_t count;
-
-	if (buf == NULL || len == 0)
-		return (EINVAL);
-	buf[0] = '\0';
-	if (local == NULL || remote == NULL)
-		return (EINVAL);
-	if (remote->mem_size != local->mem_size ||
-	    remote->lowmem != local->lowmem) {
-		snprintf(buf, len, "memory: source %ju/%ju, destination %ju/%ju "
-		    "(total/low)", (uintmax_t)remote->mem_size,
-		    (uintmax_t)remote->lowmem, (uintmax_t)local->mem_size,
-		    (uintmax_t)local->lowmem);
-		return (EXDEV);
-	}
-	if (remote->ncpus != local->ncpus ||
-	    remote->sockets != local->sockets ||
-	    remote->cores != local->cores ||
-	    remote->threads != local->threads) {
-		snprintf(buf, len, "vCPUs (n/sockets/cores/threads): source "
-		    "%u/%u/%u/%u, destination %u/%u/%u/%u", remote->ncpus,
-		    remote->sockets, remote->cores, remote->threads,
-		    local->ncpus, local->sockets, local->cores, local->threads);
-		return (EXDEV);
-	}
 	count = remote->device_count < local->device_count ?
 	    remote->device_count : local->device_count;
-	if (count > MIGRATION_MAX_DEVICES)
-		count = MIGRATION_MAX_DEVICES;
 	for (uint32_t i = 0; i < count; i++) {
 		r = &remote->devices[i];
 		l = &local->devices[i];
-		if (!migration_device_flags_eligible(r->migration_flags)) {
-			snprintf(buf, len, "device %u (%.*s) has no migration "
-			    "contract: source migration_flags %#x", i,
-			    (int)sizeof(r->name), r->name, r->migration_flags);
-			return (EXDEV);
+		if (memcmp(r->name, l->name, sizeof(r->name)) != 0) {
+			migration_set_reason(reason, MIGRATION_REASON_DEVICE);
+			snprintf(detail, detaillen, "device %u name: source "
+			    "\"%s\", destination \"%s\"", i, r->name, l->name);
+			return (EINVAL);
 		}
-		if (strncmp(r->name, l->name, sizeof(r->name)) != 0) {
-			snprintf(buf, len, "device %u name: source \"%.*s\", "
-			    "destination \"%.*s\"", i, (int)sizeof(r->name),
-			    r->name, (int)sizeof(l->name), l->name);
-			return (EXDEV);
-		}
-#define	DESCRIBE_DEVICE_FIELD(field)					\
-		if (r->field != l->field) {					\
-			snprintf(buf, len, "device %u (%.*s) " #field		\
-			    ": source %#jx, destination %#jx", i,		\
-			    (int)sizeof(r->name), r->name,			\
-			    (uintmax_t)r->field, (uintmax_t)l->field);		\
-			return (EXDEV);						\
-		}
-		DESCRIBE_DEVICE_FIELD(migration_flags)
-		DESCRIBE_DEVICE_FIELD(compat_schema)
-		DESCRIBE_DEVICE_FIELD(compat_crc32)
-		DESCRIBE_DEVICE_FIELD(bar_hash)
-#undef DESCRIBE_DEVICE_FIELD
+		if (r->migration_flags != l->migration_flags) {
+			field = "migration_flags";
+			rvalue = r->migration_flags;
+			lvalue = l->migration_flags;
+		} else if (r->compat_schema != l->compat_schema) {
+			field = "compat_schema";
+			rvalue = r->compat_schema;
+			lvalue = l->compat_schema;
+		} else if (r->compat_crc32 != l->compat_crc32) {
+			field = "compat_crc32";
+			rvalue = r->compat_crc32;
+			lvalue = l->compat_crc32;
+		} else if (r->bar_hash != l->bar_hash) {
+			field = "bar_hash";
+			rvalue = r->bar_hash;
+			lvalue = l->bar_hash;
+		} else
+			continue;
+		migration_set_reason(reason, MIGRATION_REASON_DEVICE);
+		snprintf(detail, detaillen, "device %u (%s) %s: source %#jx, "
+		    "destination %#jx", i, r->name, field, (uintmax_t)rvalue,
+		    (uintmax_t)lvalue);
+		return (EINVAL);
 	}
-	if (remote->device_count != local->device_count &&
-	    count < MIGRATION_MAX_DEVICES) {
-		snprintf(buf, len, "device count: source %u, destination %u; "
-		    "first unmatched: %s \"%.*s\"", remote->device_count,
-		    local->device_count,
+	if (remote->device_count != local->device_count) {
+		migration_set_reason(reason, MIGRATION_REASON_DEVICE);
+		snprintf(detail, detaillen, "device count: source %u, "
+		    "destination %u; first unmatched: %s \"%s\"",
+		    remote->device_count, local->device_count,
 		    remote->device_count > count ? "source" : "destination",
-		    (int)sizeof(r->name), remote->device_count > count ?
+		    remote->device_count > count ?
 		    remote->devices[count].name : local->devices[count].name);
-		return (EXDEV);
+		return (EINVAL);
 	}
 	return (0);
 }
@@ -2127,6 +2177,7 @@ migration_dest_run(const struct migration_transport *xp,
 	struct migration_commit_binding commit_binding = {0};
 	uint8_t *dev_reasm;		/* chunked DEV_STATE reassembly buffer */
 	uint8_t *vsock_reasm;		/* chunked VSOCK_STATE reassembly buffer */
+	char detail[192];
 	size_t payload_len;
 	uint64_t mem_offset;		/* next contiguous byte in a chunked gen */
 	uint64_t dev_total, dev_offset;	/* chunked DEV_STATE reassembly cursor */
@@ -2275,19 +2326,12 @@ migration_dest_run(const struct migration_transport *xp,
 	if (error != 0)
 		goto fail;
 	reason = MIGRATION_REASON_NONE;
-	error = migration_topology_validate(local_topo, remote_topo, &reason);
+	error = migration_topology_validate(local_topo, remote_topo, &reason,
+	    detail, sizeof(detail));
 	if (error != 0) {
 		out.reason = reason;
-		{
-			char detail[192];
-
-			if (migration_topology_describe_mismatch(local_topo,
-			    remote_topo, detail, sizeof(detail)) != EXDEV)
-				strlcpy(detail, "unidentified field",
-				    sizeof(detail));
-			fprintf(stderr, "Inbound migration topology refused "
-			    "(reason %u): %s\n", reason, detail);
-		}
+		fprintf(stderr, "Inbound migration topology refused (reason %u): "
+		    "%s\n", reason, detail);
 		(void)migration_send_reason(&sess, MIGRATION_MSG_TOPO_REJECT,
 		    reason, 0);
 		goto fail;
@@ -2848,6 +2892,7 @@ fail:
 #include <vmmapi.h>
 
 #include "bhyverun.h"
+#include "bootrom.h"
 #include "checkpoint_compat.h"
 #include "checkpoint_manifest.h"
 #include "config.h"
@@ -3013,29 +3058,38 @@ static int
 migration_prod_append_rom_identity(struct vmctx *ctx,
     struct migration_topology *topo, int segid, const char *record_name)
 {
-	struct migration_device_record *rec;
+	struct migration_rom_mask masks[BOOTROM_MAX_INSTANCE_RANGES];
+	const struct bootrom_range *ranges;
 	char segment_name[128];
 	void *host_base;
-	uint64_t digest;
-	size_t length;
+	size_t length, nmasks;
+	int error;
 
 	if (vm_get_devmem_info(ctx, segid, &host_base, &length,
 	    segment_name, sizeof(segment_name)) != 0)
 		return (errno == ENOENT ? 0 : errno);
 	if (topo->device_count >= MIGRATION_MAX_DEVICES)
 		return (E2BIG);
-	rec = &topo->devices[topo->device_count];
-	if (strlcpy(rec->name, record_name, sizeof(rec->name)) >=
-	    sizeof(rec->name))
-		return (ENAMETOOLONG);
-	/* Configuration reconstructs this ROM; its complete bytes must match. */
-	digest = migration_rom_digest(host_base, length);
-	rec->migration_flags = PCI_MIGRATION_F_STATE_CODEC |
-	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
-	    PCI_MIGRATION_F_QUIESCE_NONE;
-	rec->compat_schema = 1;
-	rec->compat_crc32 = (uint32_t)digest;
-	rec->bar_hash = (uint32_t)(digest >> 32);
+	/*
+	 * Configuration reconstructs this ROM, so its bytes must match, except
+	 * the bootrom allocations that are generated per instance (the random
+	 * VM generation ID): the destination is a separately started process
+	 * and never shares those bytes with the source.
+	 */
+	nmasks = 0;
+	if (segid == VM_BOOTROM) {
+		nmasks = bootrom_instance_ranges(&ranges);
+		if (nmasks > nitems(masks))
+			return (E2BIG);
+		for (size_t i = 0; i < nmasks; i++) {
+			masks[i].offset = ranges[i].offset;
+			masks[i].length = ranges[i].length;
+		}
+	}
+	error = migration_rom_identity_record(&topo->devices[topo->device_count],
+	    record_name, host_base, length, masks, nmasks);
+	if (error != 0)
+		return (error);
 	topo->device_count++;
 	return (0);
 }

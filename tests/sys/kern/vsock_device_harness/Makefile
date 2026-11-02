@@ -91,6 +91,7 @@ ATF_TESTS_C+=	checkpoint_cpu_test
 ATF_TESTS_C+=	snapshot_identity_test
 ATF_TESTS_C+=	pci_checkpoint_test
 .if ${MACHINE_ARCH} == "amd64"
+ATF_TESTS_C+=	acpi_pm_restore_test
 ATF_TESTS_C+=	checkpoint_cpu_machdep_test
 ATF_TESTS_C+=	vmm_cpu_contract_abi_test
 ATF_TESTS_C+=	x86_cpuid_topology_test
@@ -322,6 +323,7 @@ SANITIZER_HARNESS_FILES=	bhyverun.h \
 				checkpoint_machine.h \
 				checkpoint_topology_test.c \
 				checkpoint_numa_test.c \
+				acpi_pm_restore_test.c \
 				checkpoint_cpu_test.c \
 				checkpoint_cpu_machdep_test.c \
 				snapshot_identity_test.c \
@@ -469,6 +471,11 @@ CFLAGS.checkpoint_topology_test+= -I${.CURDIR} \
 CFLAGS.snapshot_identity_test+= -I${.CURDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_checkpoint_test+= -DBHYVE_SNAPSHOT -I${SRCTOP}/usr.sbin
+CFLAGS.acpi_pm_restore_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} \
+				-I${SRCTOP}/sys \
+				-I${SRCTOP}/usr.sbin/bhyve \
+				-I${SRCTOP}/usr.sbin/bhyve/amd64 \
+				-I${SRCTOP}/lib/libvmmapi
 CFLAGS.checkpoint_numa_test+= -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.checkpoint_cpu_test+= -I${.CURDIR} \

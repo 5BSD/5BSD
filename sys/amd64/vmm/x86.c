@@ -27,7 +27,13 @@
  */
 
 #include <sys/param.h>
+#include <sys/cpuset.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/pcpu.h>
+#include <sys/proc.h>
+#include <sys/sched.h>
+#include <sys/smp.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 
@@ -89,6 +95,170 @@ SYSCTL_ULONG(_hw_vmm, OID_AUTO, bhyve_xcpuids, CTLFLAG_RW, &bhyve_xcpuids, 0,
 static int cpuid_leaf_b = 1;
 SYSCTL_INT(_hw_vmm_topology, OID_AUTO, cpuid_leaf_b, CTLFLAG_RDTUN,
     &cpuid_leaf_b, 0, NULL);
+
+/*
+ * Host CPUID values that the emulation passes through or derives from are
+ * read once, on the boot processor, when vmm loads.  Executing CPUID on
+ * whichever host CPU handles the exit would make the guest's view depend on
+ * host scheduling: on hybrid Intel parts the cache (4H), TLB (18H) and L2
+ * (8000_0006H) leaves differ between P- and E-cores, and the leaves that
+ * describe the executing logical processor (1AH, 8000_0026H) differ on every
+ * CPU.  A vCPU would then see different values as it migrates and two
+ * compatibility queries on the same host would disagree.  KVM likewise
+ * serves the CPUID table that userspace configured once per vCPU.
+ *
+ * Leaves 1 and 7 are the exception: they are identical on every core of a
+ * supported CPU, and the kernel re-evaluates them at run time (a microcode
+ * update through cpuctl(4), or TSX_CPUID_CLEAR from the TAA mitigation,
+ * changes HLE, RTM and MD_CLEAR).  They are read live so that guests see
+ * the current host features.
+ *
+ * Each range keeps its first HOST_CPUID_LEAVES leaves.  A leaf whose
+ * subleaves all repeat subleaf 0 ignores ECX and is stored once; an indexed
+ * leaf keeps its subleaves up to the last non-zero one.
+ */
+#define	HOST_CPUID_LEAVES	0x40
+#define	HOST_CPUID_SUBLEAVES	32
+#define	HOST_CPUID_VALUES	1024
+
+struct host_cpuid_leaf {
+	uint16_t	first;		/* index in host_cpuid_values */
+	uint8_t		count;		/* stored subleaves, 0 if absent */
+	bool		indexed;	/* the leaf is selected by ECX */
+};
+
+static struct host_cpuid_leaf host_cpuid_leaves[2][HOST_CPUID_LEAVES];
+static u_int host_cpuid_values[HOST_CPUID_VALUES][4];
+
+/*
+ * Leaves the emulation never serves from the table: the live leaves, the
+ * synthesized topology leaves and the per-logical-CPU leaves.
+ */
+static bool
+host_cpuid_tabled(u_int func)
+{
+
+	switch (func) {
+	case CPUID_0000_0001:
+	case CPUID_0000_0007:
+	case CPUID_0000_000B:
+	case CPUID_0000_001F:
+		return (false);
+	default:
+		return (!x86_cpuid_leaf_host_cpu_local(func));
+	}
+}
+
+static void
+host_cpuid_capture(void)
+{
+	static const u_int zero[4];
+	struct host_cpuid_leaf *leaf;
+	u_int base, func, high, i, n, range, sub, used;
+	u_int regs[HOST_CPUID_SUBLEAVES + 1][4];
+	bool truncated;
+
+	used = 0;
+	truncated = false;
+	memset(host_cpuid_leaves, 0, sizeof(host_cpuid_leaves));
+	for (range = 0; range < 2; range++) {
+		base = range == 0 ? 0 : 0x80000000;
+		high = range == 0 ? cpu_high : cpu_exthigh;
+		if (high < base)
+			continue;
+		for (i = 0; i < HOST_CPUID_LEAVES && i <= high - base; i++) {
+			func = base + i;
+			if (!host_cpuid_tabled(func))
+				continue;
+			leaf = &host_cpuid_leaves[range][i];
+			for (sub = 0; sub <= HOST_CPUID_SUBLEAVES; sub++)
+				cpuid_count(func, sub, regs[sub]);
+			for (sub = 1; sub < HOST_CPUID_SUBLEAVES; sub++)
+				if (memcmp(regs[sub], regs[0],
+				    sizeof(regs[0])) != 0)
+					break;
+			leaf->indexed = sub < HOST_CPUID_SUBLEAVES;
+			n = 1;
+			if (leaf->indexed) {
+				for (n = HOST_CPUID_SUBLEAVES; n > 1; n--)
+					if (memcmp(regs[n - 1], zero,
+					    sizeof(zero)) != 0)
+						break;
+				if (n == HOST_CPUID_SUBLEAVES &&
+				    memcmp(regs[n], zero, sizeof(zero)) != 0 &&
+				    !truncated) {
+					printf("vmm: host CPUID leaf %#x has "
+					    "more than %d subleaves; the rest "
+					    "read as zero\n", func,
+					    HOST_CPUID_SUBLEAVES);
+					truncated = true;
+				}
+			}
+			if (n > HOST_CPUID_VALUES - used) {
+				if (!truncated)
+					printf("vmm: host CPUID table is full "
+					    "(%d values) at leaf %#x; omitted "
+					    "leaves read as zero\n",
+					    HOST_CPUID_VALUES, func);
+				truncated = true;
+				continue;
+			}
+			memcpy(host_cpuid_values[used], regs, n *
+			    sizeof(regs[0]));
+			leaf->first = used;
+			leaf->count = n;
+			used += n;
+		}
+	}
+}
+
+/*
+ * Capture the host CPUID values on the boot processor (CPU 0) at module
+ * load, before any guest can execute CPUID.  Binding the loading thread is
+ * enough: CPUID needs no interrupt-free section, and each CPUID exits to
+ * the hypervisor when vmm runs nested.
+ */
+void
+x86_host_cpuid_init(void)
+{
+	struct thread *td;
+
+	td = curthread;
+	thread_lock(td);
+	sched_bind(td, 0);
+	thread_unlock(td);
+	host_cpuid_capture();
+	thread_lock(td);
+	sched_unbind(td);
+	thread_unlock(td);
+}
+
+/*
+ * The boot processor's CPUID(func, param), or the current one for the live
+ * leaves; zeros for an absent leaf.
+ */
+static void
+host_cpuid(u_int func, u_int param, u_int regs[4])
+{
+	const struct host_cpuid_leaf *leaf;
+	u_int i, range;
+
+	if (func == CPUID_0000_0001 || func == CPUID_0000_0007) {
+		cpuid_count(func, param, regs);
+		return;
+	}
+	range = func >= 0x80000000 ? 1 : 0;
+	i = func - (range == 0 ? 0 : 0x80000000);
+	leaf = i < HOST_CPUID_LEAVES ? &host_cpuid_leaves[range][i] : NULL;
+	if (leaf == NULL || !leaf->indexed)
+		param = 0;
+	if (leaf == NULL || param >= leaf->count) {
+		regs[0] = regs[1] = regs[2] = regs[3] = 0;
+		return;
+	}
+	memcpy(regs, host_cpuid_values[leaf->first + param],
+	    sizeof(host_cpuid_values[0]));
+}
 
 
 /*
@@ -165,10 +335,10 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 		case CPUID_8000_0003:
 		case CPUID_8000_0004:
 		case CPUID_8000_0006:
-			cpuid_count(func, param, regs);
+			host_cpuid(func, param, regs);
 			break;
 		case CPUID_8000_0008:
-			cpuid_count(func, param, regs);
+			host_cpuid(func, param, regs);
 			/*
 			 * Variable MTRR address fields currently expose at most 52
 			 * physical-address bits.  Keep the guest's MAXPHYADDR in
@@ -230,7 +400,7 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				error = vm_get_capability(vcpu, VM_CAP_NESTED_SVM,
 				    &nested_svm);
 				if (error == 0 && nested_svm != 0) {
-					cpuid_count(func, param, regs);
+					host_cpuid(func, param, regs);
 					regs[3] &= NESTED_SVM_CPUID_NPT |
 					    NESTED_SVM_CPUID_LBRV |
 					    NESTED_SVM_CPUID_NRIPS;
@@ -241,12 +411,12 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 					regs[3] = 0;
 				}
 			} else {
-				cpuid_count(func, param, regs);
+				host_cpuid(func, param, regs);
 			}
 			break;
 
 		case CPUID_8000_0001:
-			cpuid_count(func, param, regs);
+			host_cpuid(func, param, regs);
 
 			/* Keep the SVM bit consistent with the optional backend. */
 			error = vm_get_capability(vcpu, VM_CAP_NESTED_SVM,
@@ -389,7 +559,7 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 
 		case CPUID_0000_0001:
-			do_cpuid(1, regs);
+			host_cpuid(1, 0, regs);
 
 			if (baseline)
 				x2apic_state = X2APIC_DISABLED;
@@ -503,7 +673,7 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 
 		case CPUID_0000_0004:
-			cpuid_count(func, param, regs);
+			host_cpuid(func, param, regs);
 
 			if (regs[0] || regs[1] || regs[2] || regs[3]) {
 				vm_get_topology(vm, &sockets, &cores, &threads,
@@ -533,7 +703,7 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 
 			/* leaf 0 */
 			if (param == 0) {
-				cpuid_count(func, param, regs);
+				host_cpuid(func, param, regs);
 
 				/* Only leaf 0 is supported */
 				regs[0] = 0;
@@ -630,6 +800,11 @@ x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				break;
 			}
 
+			/*
+			 * Executed live: subleaf 0 EBX reports the save area
+			 * size for the XCR0 the guest has loaded, which is
+			 * the same on every host CPU.
+			 */
 			cpuid_count(func, param, regs);
 			switch (param) {
 			case 0:
@@ -787,7 +962,7 @@ default_leaf:
 			 */
 			if (!baseline)
 				atomic_add_long(&bhyve_xcpuids, 1);
-			cpuid_count(func, param, regs);
+			host_cpuid(func, param, regs);
 			break;
 	}
 	if (nested_svm_l2)

@@ -49,6 +49,7 @@
 #ifndef WITHOUT_CAPSICUM
 #include <capsicum_helpers.h>
 #endif
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +117,7 @@
 #include "snapshot_md.h"
 #include "snapshot_portable.h"
 #include "tpm_device.h"
+#include "vmgenc.h"
 
 #include <libxo/xo.h>
 #include <ucl.h>
@@ -183,6 +185,15 @@ static sig_t old_winch_handler;
 #define	JSON_VMNAME_KEY 		"vmname"
 #define	JSON_MEMSIZE_KEY		"memsize"
 #define	JSON_MEMFLAGS_KEY		"memflags"
+#define	JSON_VMGENID_VERSION_KEY	"vmgenid_version"
+#define	JSON_VMGENID_KEY		"vmgenid"
+#define	JSON_ACPI_PM_VERSION_KEY	"acpi_pm_version"
+#define	JSON_ACPI_PM1_ENABLE_KEY	"acpi_pm1_enable"
+#define	JSON_ACPI_PM1_STATUS_KEY	"acpi_pm1_status"
+#define	JSON_ACPI_PM1_CONTROL_KEY	"acpi_pm1_control"
+#define	JSON_ACPI_GPE0_ENABLE_KEY	"acpi_gpe0_enable"
+#define	JSON_ACPI_GPE0_STATUS_KEY	"acpi_gpe0_status"
+#define	JSON_ACPI_SCI_ACTIVE_KEY	"acpi_sci_active"
 
 #define min(a,b)		\
 ({				\
@@ -865,7 +876,8 @@ vm_restore_named_topology(struct restore_state *rstate, const char *key,
 	const char **source;
 	ucl_object_iter_t iterator;
 	const char *name;
-	size_t source_capacity, source_count;
+	char reason[256];
+	size_t collect, source_capacity, source_count;
 	int error;
 
 	entries = ucl_object_lookup(rstate->meta_root_obj, key);
@@ -876,40 +888,49 @@ vm_restore_named_topology(struct restore_state *rstate, const char *key,
 	source_capacity = ucl_array_size(entries);
 	/*
 	 * The destination topology is already known and is the authoritative
-	 * bound for this array.  Reject a cardinality mismatch before allocating
-	 * storage controlled by checkpoint metadata.  Besides failing earlier,
-	 * this bounds the duplicate-name and record-layout validation which
-	 * follows to the actual machine topology.
+	 * bound for this array.  Never allocate more than one entry beyond it
+	 * from checkpoint metadata: on a cardinality mismatch, destination_count
+	 * + 1 source names always suffice to refuse the checkpoint and name the
+	 * first unmatched device.
 	 */
-	if (source_capacity != destination_count)
-		return (ENODEV);
-	if (source_capacity > SIZE_MAX / sizeof(*source))
+	if (destination_count >= SIZE_MAX / sizeof(*source))
 		return (EOVERFLOW);
-	source = calloc(source_capacity, sizeof(*source));
-	if (source_capacity != 0 && source == NULL)
+	collect = source_capacity;
+	if (collect > destination_count + 1)
+		collect = destination_count + 1;
+	source = calloc(collect != 0 ? collect : 1, sizeof(*source));
+	if (source == NULL)
 		return (ENOMEM);
 
 	iterator = NULL;
 	source_count = 0;
-	while ((object = ucl_object_iterate(entries, &iterator, true)) != NULL) {
+	error = 0;
+	while (source_count < collect &&
+	    (object = ucl_object_iterate(entries, &iterator, true)) != NULL) {
 		const ucl_object_t *field;
 
-		if (source_count == source_capacity) {
-			error = EINVAL;
-			goto done;
-		}
 		field = ucl_object_lookup(object, JSON_SNAPSHOT_REQ_KEY);
 		if (field == NULL || !ucl_object_tostring_safe(field, &name)) {
+			EPRINTLN("Checkpoint '%s' entry %zu has no device name",
+			    key, source_count);
 			error = EINVAL;
 			goto done;
 		}
 		source[source_count++] = name;
 	}
+	if (source_count != collect) {
+		error = EINVAL;
+		goto done;
+	}
 	error = checkpoint_topology_validate(source, source_count, destination,
-	    destination_count);
-	if (error != 0)
+	    destination_count, reason, sizeof(reason));
+	if (error != 0 && source_capacity != destination_count)
+		EPRINTLN("Checkpoint '%s' topology is incompatible: device "
+		    "count: source %zu, destination %zu; %s", key,
+		    source_capacity, destination_count, reason);
+	else if (error != 0)
 		EPRINTLN("Checkpoint '%s' topology is incompatible: %s", key,
-		    strerror(error));
+		    reason);
 
 done:
 	free(source);
@@ -963,6 +984,132 @@ lookup_hypertrace_handoff(struct restore_state *rstate, bool *required)
 		return (EPROTO);
 	*required = version == 1;
 	return (0);
+}
+
+/* The optional VM generation ID; absent in images from older peers. */
+static int
+lookup_vmgenid(struct restore_state *rstate)
+{
+	const ucl_object_t *basic;
+	const char *text;
+	int64_t version;
+
+	rstate->vmgenid_present = false;
+	rstate->vmgenid_notify = false;
+	basic = lookup_basic_metadata_object(rstate);
+	if (basic == NULL)
+		return (EINVAL);
+	if (ucl_object_lookup(basic, JSON_VMGENID_VERSION_KEY) == NULL)
+		return (0);
+	JSON_GET_INT_OR_RETURN(JSON_VMGENID_VERSION_KEY, basic, &version,
+	    EINVAL);
+	JSON_GET_STRING_OR_RETURN(JSON_VMGENID_KEY, basic, &text, EINVAL);
+	if (version != 1 || strlen(text) != VMGENC_ID_SIZE * 2)
+		goto malformed;
+	for (size_t i = 0; i < VMGENC_ID_SIZE; i++) {
+		char byte[3] = { text[i * 2], text[i * 2 + 1], '\0' };
+
+		if (!isxdigit((unsigned char)byte[0]) ||
+		    !isxdigit((unsigned char)byte[1]))
+			goto malformed;
+		rstate->vmgenid[i] = (uint8_t)strtoul(byte, NULL, 16);
+	}
+	rstate->vmgenid_present = true;
+	return (0);
+
+malformed:
+	EPRINTLN("Checkpoint '%s' is malformed.", JSON_VMGENID_KEY);
+	return (EINVAL);
+}
+
+/* The optional ACPI event registers; absent in images from older peers. */
+static int
+lookup_acpi_pm(struct restore_state *rstate)
+{
+	const ucl_object_t *basic;
+	int64_t version, pm1_en, pm1_sts, pm1_cnt, gpe0_en, gpe0_sts, sci;
+
+	rstate->acpi_pm_present = false;
+	basic = lookup_basic_metadata_object(rstate);
+	if (basic == NULL)
+		return (EINVAL);
+	if (ucl_object_lookup(basic, JSON_ACPI_PM_VERSION_KEY) == NULL)
+		return (0);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_PM_VERSION_KEY, basic, &version,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_PM1_ENABLE_KEY, basic, &pm1_en,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_PM1_STATUS_KEY, basic, &pm1_sts,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_PM1_CONTROL_KEY, basic, &pm1_cnt,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_GPE0_ENABLE_KEY, basic, &gpe0_en,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_GPE0_STATUS_KEY, basic, &gpe0_sts,
+	    EINVAL);
+	JSON_GET_INT_OR_RETURN(JSON_ACPI_SCI_ACTIVE_KEY, basic, &sci, EINVAL);
+	if (version != CHECKPOINT_ACPI_PM_VERSION ||
+	    (pm1_en & ~(int64_t)CHECKPOINT_ACPI_PM1_EN_MASK) != 0 ||
+	    (pm1_sts & ~(int64_t)CHECKPOINT_ACPI_PM1_STS_MASK) != 0 ||
+	    (pm1_cnt & ~(int64_t)CHECKPOINT_ACPI_PM1_CNT_MASK) != 0 ||
+	    (gpe0_en & ~(int64_t)CHECKPOINT_ACPI_GPE0_MASK) != 0 ||
+	    (gpe0_sts & ~(int64_t)CHECKPOINT_ACPI_GPE0_MASK) != 0 ||
+	    (sci != 0 && sci != 1)) {
+		EPRINTLN("Checkpoint ACPI PM registers are malformed.");
+		return (EINVAL);
+	}
+	rstate->acpi_pm = (struct checkpoint_acpi_pm) {
+		.pm1_enable = (uint16_t)pm1_en,
+		.pm1_status = (uint16_t)pm1_sts,
+		.pm1_control = (uint16_t)pm1_cnt,
+		.gpe0_enable = (uint8_t)gpe0_en,
+		.gpe0_status = (uint8_t)gpe0_sts,
+		.sci_active = sci != 0,
+	};
+	rstate->acpi_pm_present = true;
+	return (0);
+}
+
+/*
+ * Each restore of a checkpoint, also of the same one again, is a new VM
+ * generation.  Draw its ID before the destination changes, so that only
+ * no-fail work remains once the restore has committed.  The guest is
+ * notified only with the saved ACPI event enables: without them (an older
+ * checkpoint) the GPE could never reach it.
+ */
+static int
+vm_restore_vmgenid_renew(struct restore_state *rstate)
+{
+	int error;
+
+	if (getentropy(rstate->vmgenid, sizeof(rstate->vmgenid)) != 0) {
+		error = errno != 0 ? errno : EIO;
+		EPRINTLN("Could not draw a new VM generation ID: %s",
+		    strerror(error));
+		return (error);
+	}
+	rstate->vmgenid_present = true;
+	rstate->vmgenid_notify = rstate->acpi_pm_present;
+	return (0);
+}
+
+/*
+ * Present the saved ACPI event registers and the VM generation ID before any
+ * vCPU runs.  Runs once the kernel restore has committed, so that the SCI
+ * level matches the restored interrupt controllers.  Live migration keeps the
+ * source's ID, without a notification; a source that sent none leaves the
+ * destination's own ID.
+ */
+static void
+vm_restore_acpi(struct vmctx *ctx, const struct restore_state *rstate)
+{
+
+#ifdef __amd64__
+	if (rstate->acpi_pm_present)
+		acpi_pm_state_set(ctx, &rstate->acpi_pm);
+#endif
+	if (rstate->vmgenid_present)
+		vmgenc_set_id(ctx, rstate->vmgenid, rstate->vmgenid_notify);
 }
 
 const char *
@@ -1118,14 +1265,11 @@ checkpoint_restore_cpu_contract(struct restore_state *rstate,
 		    strerror(error));
 		return (error);
 	}
-	error = checkpoint_cpu_contract_match(&source, &destination);
-	if (error == EXDEV) {
-		/* Name the field so a refused restore is diagnosable. */
-		if (checkpoint_cpu_contract_describe_mismatch(&source,
-		    &destination, detail, sizeof(detail)) != EXDEV)
-			strlcpy(detail, "unidentified field", sizeof(detail));
+	error = checkpoint_cpu_contract_match(&source, &destination, detail,
+	    sizeof(detail));
+	if (error == EXDEV)
 		EPRINTLN("Checkpoint CPU contract differs at %s", detail);
-	} else if (error != 0)
+	else if (error != 0)
 		EPRINTLN("Checkpoint CPU contract is invalid: %s",
 		    strerror(error));
 	return (error);
@@ -2030,7 +2174,13 @@ vm_restore_machine_topology_digest(struct restore_state *rstate)
 	if (error != 0)
 		return (error);
 	if (strcmp(source, destination) != 0) {
-		EPRINTLN("Checkpoint machine topology is incompatible");
+		/*
+		 * vm_restore_device_compatibility() has already named any
+		 * refused PCI device contract; what remains differs in a
+		 * contract it does not compare, such as fw_cfg's.
+		 */
+		EPRINTLN("Checkpoint machine topology is incompatible (digest: "
+		    "source %s, destination %s)", source, destination);
 		return (ENOTSUP);
 	}
 	return (0);
@@ -2108,16 +2258,23 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 	int64_t version;
 	uint64_t value;
 	int error;
+	const char *stage;
+	char reason[160];
 
 	basic = lookup_basic_metadata_object(rstate);
 	if (basic == NULL)
 		return (EINVAL);
+	version = -1;
 	field = ucl_object_lookup(basic, JSON_COMPAT_VERSION_KEY);
 	if (field == NULL)
 		return (EINVAL);
 	if (!ucl_object_toint_safe(field, &version) ||
-	    version != PCI_SNAPSHOT_COMPAT_SCHEMA)
+	    version != PCI_SNAPSHOT_COMPAT_SCHEMA) {
+		EPRINTLN("Checkpoint device compatibility schema is "
+		    "unsupported: source %jd, destination %d",
+		    (intmax_t)version, PCI_SNAPSHOT_COMPAT_SCHEMA);
 		return (ENOTSUP);
+	}
 
 	pdi = NULL;
 	while ((pdi = pci_next(pdi)) != NULL) {
@@ -2128,14 +2285,26 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 		field = ucl_object_lookup(object, JSON_COMPAT_SCHEMA_KEY);
 		error = pci_snapshot_compat(pdi, &destination);
 		if (error == ENOENT) {
-			if (field != NULL)
+			if (field != NULL) {
+				EPRINTLN("Checkpoint device '%s' is "
+				    "incompatible: checkpoint carries a "
+				    "compatibility record but the destination "
+				    "device has no contract", pdi->pi_name);
 				return (ENOTSUP);
+			}
 			continue;
 		}
-		if (error != 0 || field == NULL)
+		if (error != 0 || field == NULL) {
+			EPRINTLN("Checkpoint device '%s' is incompatible: %s",
+			    pdi->pi_name, error != 0 ? "destination contract is "
+			    "unavailable" : "checkpoint has no compatibility "
+			    "record for a device that requires one");
 			return (error != 0 ? error : EINVAL);
+		}
 
 		memset(&source, 0, sizeof(source));
+		stage = NULL;
+		reason[0] = '\0';
 		error = vm_restore_compat_uint(object, JSON_COMPAT_SCHEMA_KEY,
 		    UINT32_MAX, &value);
 		if (error == 0)
@@ -2192,24 +2361,36 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 		if (error == 0)
 			error = checkpoint_compat_decode(record, record_size,
 			    &payload);
-		if (error == 0 &&
-		    payload.payload_crc32 != checkpoint_compat_payload_crc32(
-		    (const uint8_t *)record +
-		    CHECKPOINT_COMPAT_ENVELOPE_SIZE,
-		    record_size - CHECKPOINT_COMPAT_ENVELOPE_SIZE))
-			error = EINVAL;
-		if (error == 0 &&
-		    !checkpoint_compat_equal(&source, &payload))
-			error = EINVAL;
-		if (error == 0)
-			error = pci_snapshot_compat_validate(&payload,
-			    &destination);
-		if (error == 0 && pci_vtdtr_checkpoint_is_device(pdi))
-			error = pci_vtdtr_checkpoint_features_validate(
-			    payload.negotiated_features);
 		if (error != 0) {
-			EPRINTLN("Checkpoint device '%s' is incompatible: %s",
-			    pdi->pi_name, strerror(error));
+			stage = "payload envelope is unreadable";
+		} else if (payload.payload_crc32 !=
+		    checkpoint_compat_payload_crc32((const uint8_t *)record +
+		    CHECKPOINT_COMPAT_ENVELOPE_SIZE,
+		    record_size - CHECKPOINT_COMPAT_ENVELOPE_SIZE)) {
+			stage = "payload CRC32 does not match its envelope";
+			error = EINVAL;
+		} else if (!checkpoint_compat_equal(&source, &payload, reason,
+		    sizeof(reason))) {
+			/* source: checkpoint metadata; destination: payload. */
+			stage = "metadata disagrees with the payload envelope";
+			error = EINVAL;
+		} else if ((error = pci_snapshot_compat_validate(&payload,
+		    &destination, reason, sizeof(reason))) != 0) {
+			stage = "device contract differs from the destination";
+		} else if (pci_vtdtr_checkpoint_is_device(pdi) &&
+		    (error = pci_vtdtr_checkpoint_features_validate(
+		    payload.negotiated_features)) != 0) {
+			snprintf(reason, sizeof(reason),
+			    "negotiated_features %#jx",
+			    (uintmax_t)payload.negotiated_features);
+			stage = "virtio-dtrace features are not restorable";
+		}
+		if (error != 0) {
+			EPRINTLN("Checkpoint device '%s' is incompatible: %s%s%s "
+			    "(%s)", pdi->pi_name,
+			    stage != NULL ? stage : "compatibility metadata is "
+			    "invalid", reason[0] != '\0' ? ": " : "", reason,
+			    strerror(error));
 			return (error);
 		}
 	}
@@ -2500,6 +2681,9 @@ vm_restore_preflight_internal(struct restore_state *rstate,
 	error = vm_restore_kern_topology(rstate);
 	if (error == 0)
 		error = vm_restore_device_topology(rstate);
+	/* Name a refused device contract before the digest refuses it. */
+	if (error == 0)
+		error = vm_restore_device_compatibility(rstate);
 	if (error == 0)
 		error = vm_restore_machine_topology_digest(rstate);
 	if (error == 0)
@@ -2507,10 +2691,12 @@ vm_restore_preflight_internal(struct restore_state *rstate,
 	if (error == 0)
 		error = vm_restore_record_presence(rstate);
 	if (error == 0)
-		error = vm_restore_device_compatibility(rstate);
-	if (error == 0)
 		error = vm_restore_device_payloads_validate(rstate,
 		    capture_hypertrace);
+	if (error == 0)
+		error = lookup_acpi_pm(rstate);
+	if (error == 0)
+		error = lookup_vmgenid(rstate);
 	if (error != 0) {
 		rstate->hypertrace_private_image = NULL;
 		rstate->hypertrace_private_length = 0;
@@ -3111,6 +3297,9 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		EPRINTLN("Checkpoint memory layout is invalid.");
 		goto failed;
 	}
+	error = vm_restore_vmgenid_renew(rstate);
+	if (error != 0)
+		goto failed;
 	/* Complete read-only device, queue, and memory preflight before
 	 * reserving a destination ticket or staging a transfer. */
 	if (fresh_session) {
@@ -3235,6 +3424,7 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		    strerror(error));
 		goto failed;
 	}
+	vm_restore_acpi(ctx, rstate);
 	/* Trace continuity (disabled future feature): continuity images are refused above. */
 	if (handoff_required) {
 		int handoff_error = handoff_rebinding ?
@@ -3594,6 +3784,11 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	uint64_t domain_sizes[CHECKPOINT_NUMA_MAX_DOMAINS];
 	uint16_t *vcpu_domains;
 	char topology_digest[CHECKPOINT_MACHINE_DIGEST_LENGTH];
+#ifdef __amd64__
+	struct checkpoint_acpi_pm acpi_pm;
+#endif
+	uint8_t vmgenid[VMGENC_ID_SIZE];
+	char vmgenid_text[VMGENC_ID_SIZE * 2 + 1];
 	char *cpu_contract_text, *mapping_text, *sizes_text;
 	size_t domain_count;
 	int error;
@@ -3604,6 +3799,19 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	 */
 	if (ctx == NULL || xop == NULL || memsz == 0 || memsz > INT64_MAX)
 		return (memsz > INT64_MAX ? EOVERFLOW : EINVAL);
+	/*
+	 * Optional: a VM without a generation device carries no ID.  Reading
+	 * it changes nothing; a VM that keeps running keeps its generation.
+	 */
+	vmgenid_text[0] = '\0';
+	if (vmgenc_get_id(vmgenid) == 0) {
+		for (size_t i = 0; i < VMGENC_ID_SIZE; i++)
+			(void)snprintf(vmgenid_text + i * 2, 3, "%02x",
+			    vmgenid[i]);
+	}
+#ifdef __amd64__
+	acpi_pm_state_get(&acpi_pm);
+#endif
 	cpu_contract_text = NULL;
 	error = checkpoint_cpu_contract_capture(fbsdrun_vcpu(0),
 	    &cpu_contract);
@@ -3688,6 +3896,26 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	    CHECKPOINT_MACHINE_TOPOLOGY_VERSION);
 	xo_emit_h(xop, "{:" JSON_MACHINE_TOPOLOGY_DIGEST_KEY "/%s}\n",
 	    topology_digest);
+#ifdef __amd64__
+	xo_emit_h(xop, "{:" JSON_ACPI_PM_VERSION_KEY "/%u}\n",
+	    CHECKPOINT_ACPI_PM_VERSION);
+	xo_emit_h(xop, "{:" JSON_ACPI_PM1_ENABLE_KEY "/%u}\n",
+	    acpi_pm.pm1_enable);
+	xo_emit_h(xop, "{:" JSON_ACPI_PM1_STATUS_KEY "/%u}\n",
+	    acpi_pm.pm1_status);
+	xo_emit_h(xop, "{:" JSON_ACPI_PM1_CONTROL_KEY "/%u}\n",
+	    acpi_pm.pm1_control);
+	xo_emit_h(xop, "{:" JSON_ACPI_GPE0_ENABLE_KEY "/%u}\n",
+	    acpi_pm.gpe0_enable);
+	xo_emit_h(xop, "{:" JSON_ACPI_GPE0_STATUS_KEY "/%u}\n",
+	    acpi_pm.gpe0_status);
+	xo_emit_h(xop, "{:" JSON_ACPI_SCI_ACTIVE_KEY "/%u}\n",
+	    acpi_pm.sci_active ? 1U : 0U);
+#endif
+	if (vmgenid_text[0] != '\0') {
+		xo_emit_h(xop, "{:" JSON_VMGENID_VERSION_KEY "/%u}\n", 1U);
+		xo_emit_h(xop, "{:" JSON_VMGENID_KEY "/%s}\n", vmgenid_text);
+	}
 	xo_close_container_h(xop, JSON_BASIC_METADATA_KEY);
 	free(cpu_contract_text);
 	free(sizes_text);
@@ -3811,6 +4039,26 @@ vm_snapshot_device(vm_snapshot_dev_cb func, const char *dev_name,
 	if (ret != 0)
 		return (ret);
 
+	return (0);
+}
+
+/*
+ * A device without snapshot support (e.g. PCI passthrough) makes the VM's
+ * state unsaveable: refuse before the guest is paused or anything is written.
+ */
+static int
+vm_snapshot_devices_supported(void)
+{
+	struct pci_devinst *pdi;
+
+	pdi = NULL;
+	while ((pdi = pci_next(pdi)) != NULL) {
+		if (pdi->pi_d->pe_snapshot == NULL) {
+			EPRINTLN("Device \"%s\" does not support checkpoint or "
+			    "migration.", pdi->pi_name);
+			return (ENOTSUP);
+		}
+	}
 	return (0);
 }
 
@@ -4207,6 +4455,11 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	if (error != 0) {
 		EPRINTLN("TPM state is not configured for checkpoint: %s",
 		    strerror(error));
+		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, error);
+		return (error);
+	}
+	error = vm_snapshot_devices_supported();
+	if (error != 0) {
 		BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, false, error);
 		return (error);
 	}
@@ -4706,6 +4959,13 @@ done:
 		if (error == 0)
 			error = pci_vtdtr_checkpoint_stop();
 		if (error == 0) {
+#ifdef __amd64__
+			/*
+			 * bhyve lives on until the IPC reply is sent: a SIGTERM
+			 * power button press must not reach the destroyed VM.
+			 */
+			sci_retire();
+#endif
 			if (vm_destroy_checked(ctx) != 0) {
 				error = errno != 0 ? errno : EIO;
 				EPRINTLN("Could not destroy checkpoint source VM: %s",
@@ -4733,13 +4993,14 @@ done:
 						}
 					}
 				}
-				release_fd = -1;
 				BHYVE_TRACE(CHECKPOINT_RESULT, stop_vm, published, 0);
-				/* The checkpoint is published and the VM destroyed:
-				 * tell bhyvectl --suspend it succeeded before the
-				 * exit closes its connection unanswered. */
-				ipc_reply_success_before_exit();
-				exit(BHYVE_EXIT_SUSPEND);
+				/*
+				 * The checkpoint is published and the VM
+				 * destroyed: the caller ends the process, and
+				 * nothing may touch the VM or the checkpoint
+				 * resources again.
+				 */
+				return (0);
 			}
 		}
 		if (release_fd >= 0)
@@ -4923,6 +5184,8 @@ vm_snapshot_dev_state_capture(struct vmctx *ctx, const uint8_t *fresh_record,
 	    capture == NULL)
 		return (EINVAL);
 	error = tpm_device_migration_check();
+	if (error == 0)
+		error = vm_snapshot_devices_supported();
 	if (error != 0)
 		return (error);
 	if (capture->active || capture->unresolved)
@@ -5311,7 +5574,7 @@ vm_migrate_commit_state_impl(struct vmctx *ctx, const uint8_t *blob, size_t len,
 		error = rel;
 		goto out;
 	}
-	error = 0;
+	vm_restore_acpi(ctx, &rstate);
 	if (fresh)
 		*fresh_device = rstate.hypertrace_private_dev;
 
@@ -5421,6 +5684,7 @@ static nvlist_t *
 vm_do_checkpoint(struct vmctx *ctx, const nvlist_t *nvl)
 {
 	int error;
+	bool suspend;
 	nvlist_t *reply;
 
 	reply = nvlist_create(0);
@@ -5428,11 +5692,15 @@ vm_do_checkpoint(struct vmctx *ctx, const nvlist_t *nvl)
 	    !nvlist_exists_bool(nvl, "suspend") ||
 	    !nvlist_exists_descriptor(nvl, "fddir"))
 		error = EINVAL;
-	else
+	else {
+		suspend = nvlist_get_bool(nvl, "suspend");
 		error = vm_checkpoint(ctx,
 		    nvlist_get_descriptor(nvl, "fddir"),
-		    nvlist_get_string(nvl, "filename"),
-		    nvlist_get_bool(nvl, "suspend"));
+		    nvlist_get_string(nvl, "filename"), suspend);
+		/* The VM is gone: tell bhyvectl, then exit. */
+		if (error == 0 && suspend)
+			ipc_exit_after_reply(BHYVE_EXIT_SUSPEND);
+	}
 	if (error != 0)
 		nvlist_add_string(reply, "error", strerror(error));
 

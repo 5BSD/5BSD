@@ -1917,7 +1917,9 @@ pci_vtdtr_rekey_receipt_query_rx(struct pci_vtdtr_softc *sc,
 static int
 pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 {
+	static const uint8_t zero_id[16];
 	struct pci_vtdtr_control message, *ctrl = &message;
+	uint64_t current_epoch;
 	int retval;
 	size_t len;
 	unsigned char *elf;
@@ -1965,6 +1967,15 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 			vi_set_needs_reset(&sc->vsd_vs);
 		return (1);
 	}
+	/*
+	 * The guest closes its host-ready gate after every batch that carries
+	 * a control other than READY or EOF and reopens it only on READY, so
+	 * each such control is owed one.  notify_rx sends it once the batch is
+	 * processed unless a fence (stop, rekey, restored KILL) withholds it.
+	 */
+	if (ctrl->pvc_event != VTDTR_DEVICE_READY &&
+	    ctrl->pvc_event != VTDTR_DEVICE_EOF)
+		sc->vsd_ready = 0;
 	if (ctrl->pvc_event == VTDTR_DEVICE_SESSION_READY ||
 	    ctrl->pvc_event == VTDTR_DEVICE_SESSION_ACTIVE) {
 		const __typeof(ctrl->wire.uctrl.session_prepare) *reply =
@@ -2003,7 +2014,6 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 			sc->vsd_fresh_commit_queued = true;
 			sc->vsd_guest_ready = 1;
 		}
-		sc->vsd_ready = 0;
 		pthread_cond_broadcast(&sc->vsd_cond);
 		return (0);
 	}
@@ -2011,10 +2021,8 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 		if (sc->vsd_fresh_requested &&
 		    ctrl->pvc_cleanup_vmid == sc->vsd_session_stop_vmid &&
 		    ctrl->pvc_cleanup_epoch == sc->vsd_session_stop_epoch &&
-		    ctrl->pvc_cleanup_delivery_id == sc->vsd_session_stop_token) {
-			sc->vsd_ready = 0;
+		    ctrl->pvc_cleanup_delivery_id == sc->vsd_session_stop_token)
 			return (0);
-		}
 		if (!sc->vsd_session_stop_requested ||
 		    !sc->vsd_session_stop_delivered ||
 		    vm_get_identity(sc->vsd_vmctx, &vmid, &vmepoch) != 0 ||
@@ -2027,19 +2035,15 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 			return (1);
 		}
 		sc->vsd_session_stopped = true;
-		sc->vsd_guest_ready = sc->vsd_ready = 0;
+		sc->vsd_guest_ready = 0;
 		pthread_cond_broadcast(&sc->vsd_cond);
 		return (0);
 	}
 	/* Stop discards old session work. READY is needed to deliver STOP,
 	 * but cannot reopen ordinary delivery after the request is published. */
 	if (sc->vsd_session_stop_requested &&
-	    ctrl->pvc_event != VTDTR_DEVICE_READY) {
-		/* An old batch consumed the guest's outbound credit. Regrant
-		 * credit for STOPPED even though its payload is discarded. */
-		sc->vsd_ready = 0;
+	    ctrl->pvc_event != VTDTR_DEVICE_READY)
 		return (ctrl->pvc_event == VTDTR_DEVICE_EOF ? 1 : 0);
-	}
 	/* Trace continuity (disabled future feature): rekey state comes only from transfer-ticket replay, which restore refuses. */
 	if (sc->vsd_rekey_wait &&
 	    (ctrl->pvc_event == VTDTR_DEVICE_REKEY_DELIVERY_QUERY ||
@@ -2104,7 +2108,6 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 		pci_vtdtr_handoff_ticket_forget(sc);
 		/* The guest has closed its old host-ready gate. Send a fresh
 		 * READY for outbound traffic under the new incarnation. */
-		sc->vsd_ready = 0;
 		pci_vtdtr_notify_ready(sc);
 		pthread_cond_signal(&sc->vsd_cond);
 		return (0);
@@ -2125,9 +2128,7 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 		break;
 
 	case VTDTR_DEVICE_ELF:
-		sc->vsd_ready = 0;
-		const uint8_t zero_id[16] = { 0 };
-		uint64_t current_epoch = 0;
+		current_epoch = 0;
 		if (ctrl->pvc_delivery_id == 0 ||
 		    memcmp(ctrl->pvc_program_id, zero_id, 16) == 0 ||
 		    memcmp(ctrl->pvc_elf_source_id, zero_id, 16) == 0 ||
@@ -2408,7 +2409,6 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 		break;
 
 	case VTDTR_DEVICE_CLEANUP_APPLIED:
-		sc->vsd_ready = 0;
 		/* A queued retry can arrive after a later cleanup has started. */
 		if (ctrl->pvc_cleanup_delivery_id != 0 &&
 		    ctrl->pvc_cleanup_delivery_id ==
@@ -2600,8 +2600,6 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 			vi_set_needs_reset(&sc->vsd_vs);
 			return (1);
 		}
-		if (ctrl->pvc_node_query_id == 0)
-			sc->vsd_ready = 0;
 		retval = 0;
 		pci_vtdtr_node_id(sc, ctrl->pvc_node_query_id);
 		break;

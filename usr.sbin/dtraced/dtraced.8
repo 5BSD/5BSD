@@ -118,6 +118,19 @@ host's virtio-dtrace device assigns through
 without one it logs
 .Dq no VM identity from /dev/dttransport
 and exits.
+A minion's transport forwarder registers with its own daemon.
+When one delivery fails or that connection closes, the forwarder logs the
+failure and registers again, waiting from 50 ms up to 2 s between attempts.
+The failed delivery stays pending in the outbound journal and is replayed.
+The minion stops only when
+.Pa /dev/dttransport
+disappears or refuses a record, when transport ownership is revoked, when
+the device stays full after part of a delivery was written (the host
+accepts only the rest of that delivery), when the local socket does not
+answer as a compatible
+.Nm
+or sends a malformed frame, when six consecutive registration attempts
+fail, or when six consecutive registrations end without a delivery.
 .It Fl q
 Enable quiet mode, suppressing print of status updates and errors on the
 terminal.
@@ -164,14 +177,18 @@ does not change the control socket path,
 .Nm
 and its consumers are traditional privileged DTrace tools.
 Access to the control socket is limited by the permissions of
-.Pa /var/ddtrace
-(mode 0700, owned by root).
+.Pa /var/ddtrace ;
+.Nm
+refuses to start unless that directory is owned by root and grants no group
+or other access (mode 0700).
 A
 .Xr dtrace 1
 consumer that submits programs identifies itself by its process ID and its
-kernel process birth time, which
+kernel process birth time.
 .Nm
-checks against the socket peer credentials.
+checks the process ID against the socket peer credentials when the consumer
+connects, and checks the birth time against the kernel when the consumer
+binds a program with an HPI2 registration.
 libdtrace obtains that birth identity with
 .Xr pdopenpid 2
 when the consumer runs with ambient authority, as

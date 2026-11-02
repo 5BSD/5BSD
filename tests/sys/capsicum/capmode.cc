@@ -19,6 +19,13 @@
 #include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <string.h>
+#include <errno.h>
+#ifdef __FreeBSD__
+#include <sys/param.h>
+#include <sys/linker.h>
+#include <sys/module.h>
+#endif
 
 #include "capsicum.h"
 #include "syscalls.h"
@@ -305,6 +312,26 @@ FORK_TEST(Capmode, AllowedSchedSyscalls) {
   EXPECT_OK(sched_yield());
 }
 
+
+#ifdef __FreeBSD__
+FORK_TEST(Capmode, AllowedModuleQueries) {
+  // The first registered kernel module, found again by name in capability
+  // mode.  kldfind(2) and modfind(2) are read-only queries.
+  struct module_stat ms;
+  int modid = modnext(0);
+  EXPECT_OK(modid);
+  memset(&ms, 0, sizeof(ms));
+  ms.version = sizeof(ms);
+  EXPECT_OK(modstat(modid, &ms));
+  EXPECT_OK(cap_enter());  // Enter capability mode.
+  EXPECT_EQ(modid, modfind(ms.name));
+  // A missing module or file is reported as missing, not refused.
+  EXPECT_EQ(-1, modfind("capsicum_test_no_such_module"));
+  EXPECT_EQ(ENOENT, errno);
+  EXPECT_EQ(-1, kldfind("capsicum_test_no_such_file.ko"));
+  EXPECT_EQ(ENOENT, errno);
+}
+#endif
 
 FORK_TEST(Capmode, AllowedTimerSyscalls) {
   EXPECT_OK(cap_enter());  // Enter capability mode.

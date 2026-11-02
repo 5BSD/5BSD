@@ -27,14 +27,53 @@ fires the `BSDTime` DTrace provider's `clock-set` or `clock-adjust` probe.
 The gate claim refuses the clock privileges to every ambient process, root
 included, so ntpd(8) cannot use `clock_settime(2)` or `ntp_adjtime(2)`
 directly. rc.d/ntpd runs ntpd as the unprivileged `ntpd` user under
-mac_ntpd(4). mac_ntpd hands that uid to the gate, which then admits it for
+mac_ntpd(4). mac_ntpd hands that uid to the gate, which admits it for
 `PRIV_ADJTIME`, `PRIV_CLOCK_SETTIME` and `PRIV_NTP_ADJTIME` only, outside
-capability mode; mac_ntpd's own grant still decides the privilege check.
-Root, `PRIV_SETTIMEOFDAY` and every other uid stay behind the claim, and the
-gated `SYS_OP_SETTIME`/`SYS_OP_ADJTIME` operations still need the token.
-Setting `security.mac.ntpd.enabled=0` withdraws it. An ntpd running as root
-(when mac_ntpd is disabled or ntpd's options name files the ntpd user cannot
-write) is refused and logs `step-systime: Operation not permitted`.
+capability mode, and only in a process that runs an image pinned in the
+program-limited grant switchboard gave the ntpd unit
+(`/Capabilities/Config/switchboard/service-authority.ucl`, see
+[Lasting service grants](../compat/rc-and-service.md#lasting-service-grants)).
+The uid alone is not enough: a root shell can become the ntpd user with
+`su -m ntpd -c 'date ...'`, but holds no grant and is refused, as is any
+program not pinned in the grant, even run as `ntpd`. mac_ntpd's own grant
+still decides the privilege check. Root, `PRIV_SETTIMEOFDAY` and every other
+caller stay behind the claim, and the gated `SYS_OP_SETTIME`/`SYS_OP_ADJTIME`
+operations still need the token.
+
+The ntpd unit is adopted (rc_adopt.conf) and switchboard restarts it under
+the grant after `/etc/rc`, only when `ntpd_enable` is set. Its grant reaches
+no endpoint; it only identifies that ntpd. rc.d/ntpd becomes the ntpd user
+with `daemon -u ntpd` (daemon(8) sets the user context and executes ntpd
+itself), not with `su -m`, which runs root's login shell (`/bin/zsh`) and
+would end the grant before ntpd starts. mac_ntpd must already be loaded:
+rc.d/ntpd loads it at boot, or set `mac_ntpd_load="YES"` in loader.conf. An
+ntpd started from a root shell with `service ntpd start` has no grant and
+cannot discipline the clock; use `switchboardctl restart ntpd`. After a base
+upgrade replaces `/usr/sbin/ntpd`, `daemon`, `limits`, `env` or `/bin/sh`, restart
+the unit the same way (or reboot) so the grant pins the new files.
+
+While the claim is held, `security.mac.ntpd.uid` cannot be changed and
+`security.mac.ntpd.enabled` can only be set to 0 (EPERM otherwise); set them
+as loader tunables. Setting `security.mac.ntpd.enabled=0` withdraws the
+delegate. An ntpd running as root (when mac_ntpd is disabled, `ntpd_user` is
+set, or `ntpd_flags` or ntp.conf name files: `crypto`, `driftfile`, `keys`,
+`logfile`, `statsdir`) is refused and logs
+`step-systime: Operation not permitted`; rc.d/ntpd warns at start and names
+the setting. So does a setting that makes rc.subr run another program between
+the grant and ntpd (`ntpd_nice`, `ntpd_fib`, `ntpd_cpuset`, `ntpd_chroot`,
+`audit_user`, `ntpd_prepend`): that program is not pinned, the grant ends at
+its exec, and ntpd is refused. rc.d/ntpd waits up to 5 s for ntpd's pidfile
+and fails the start (`ntpd did not start`) when no ntpd is running, since
+daemon(8) detaches before ntpd starts.
+
+The grant pins programs, not their input. Root still controls what the
+granted ntpd does with the clock: `/etc/ntp.conf` (servers, `tinker`,
+`disable`), `ntpd_flags` and `ntpd_program` in rc.conf, and the leap-second
+file. A root that points ntpd at its own server, or names another program as
+`ntpd_program` (refused unless that file is pinned, but `/usr/sbin/ntpd` can
+be told to step anywhere), steers the clock within what ntpd will do. The
+grant keeps a root shell and programs other than the pinned ntpd from setting
+the clock directly; it is not containment of root.
 
 ntpd and BSDTime clients both move the same clock; they do not coordinate.
 The planned rework of the time service should make BSDTime the single

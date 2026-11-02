@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -125,30 +126,53 @@ checkpoint_compat_payload_crc32(const void *payload, size_t payload_size)
 	return ((uint32_t)checksum);
 }
 
+/*
+ * Compare two records exactly, such as the checkpoint metadata ("source")
+ * against a payload's own envelope ("destination").  When they differ,
+ * reason (which may be NULL when reasonlen is 0) names the first field.
+ */
 bool
 checkpoint_compat_equal(const struct pci_snapshot_compat *left,
-    const struct pci_snapshot_compat *right)
+    const struct pci_snapshot_compat *right, char *reason, size_t reasonlen)
 {
 
-	return (left != NULL && right != NULL &&
-	    checkpoint_compat_string_is_canonical(left->queue_sizes,
-	    sizeof(left->queue_sizes)) &&
-	    checkpoint_compat_string_is_canonical(left->shared_memory,
-	    sizeof(left->shared_memory)) &&
-	    checkpoint_compat_string_is_canonical(right->queue_sizes,
-	    sizeof(right->queue_sizes)) &&
-	    checkpoint_compat_string_is_canonical(right->shared_memory,
-	    sizeof(right->shared_memory)) &&
-	    left->schema == right->schema &&
-	    left->transport == right->transport &&
-	    left->queue_count == right->queue_count &&
-	    left->msix_table_count == right->msix_table_count &&
-	    left->config_size == right->config_size &&
-	    left->offered_features == right->offered_features &&
-	    left->negotiated_features == right->negotiated_features &&
-	    left->payload_crc32 == right->payload_crc32 &&
-	    memcmp(left->queue_sizes, right->queue_sizes,
-	    sizeof(left->queue_sizes)) == 0 &&
-	    memcmp(left->shared_memory, right->shared_memory,
-	    sizeof(left->shared_memory)) == 0);
+	if (reasonlen != 0)
+		reason[0] = '\0';
+	if (left == NULL || right == NULL)
+		return (false);
+	if (!checkpoint_compat_string_is_canonical(left->queue_sizes,
+	    sizeof(left->queue_sizes)) ||
+	    !checkpoint_compat_string_is_canonical(left->shared_memory,
+	    sizeof(left->shared_memory)) ||
+	    !checkpoint_compat_string_is_canonical(right->queue_sizes,
+	    sizeof(right->queue_sizes)) ||
+	    !checkpoint_compat_string_is_canonical(right->shared_memory,
+	    sizeof(right->shared_memory))) {
+		snprintf(reason, reasonlen, "queue_sizes or shared_memory: not "
+		    "a canonical shape");
+		return (false);
+	}
+	return (!pci_snapshot_compat_field_differs("schema", left->schema,
+	    right->schema, reason, reasonlen) &&
+	    !pci_snapshot_compat_field_differs("transport", left->transport,
+	    right->transport, reason, reasonlen) &&
+	    !pci_snapshot_compat_field_differs("queue_count",
+	    left->queue_count, right->queue_count, reason, reasonlen) &&
+	    !pci_snapshot_compat_field_differs("msix_table_count",
+	    left->msix_table_count, right->msix_table_count, reason,
+	    reasonlen) &&
+	    !pci_snapshot_compat_field_differs("config_size",
+	    left->config_size, right->config_size, reason, reasonlen) &&
+	    !pci_snapshot_compat_shape_differs("queue_sizes", left->queue_sizes,
+	    right->queue_sizes, reason, reasonlen) &&
+	    !pci_snapshot_compat_shape_differs("shared_memory",
+	    left->shared_memory, right->shared_memory, reason, reasonlen) &&
+	    !pci_snapshot_compat_field_differs("offered_features",
+	    left->offered_features, right->offered_features, reason,
+	    reasonlen) &&
+	    !pci_snapshot_compat_field_differs("negotiated_features",
+	    left->negotiated_features, right->negotiated_features, reason,
+	    reasonlen) &&
+	    !pci_snapshot_compat_field_differs("payload_crc32",
+	    left->payload_crc32, right->payload_crc32, reason, reasonlen));
 }

@@ -333,26 +333,27 @@ ATF_TC_BODY(nested_svm_contract_rejects_capability_or_schema_change, tc)
 	    UINT64_C(0x53564d0000000002);
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    NULL, 0), 0);
 
 	/* The guest CPUID image is identical; the host VNMI facility differs. */
 	mock_compat.nested_capability_signature ^= 1;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    NULL, 0), EXDEV);
 
 	mock_compat.nested_capability_signature ^= 1;
 	mock_compat.nested_schema_signature++;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    NULL, 0), EXDEV);
 
 	mock_compat.flags = 0;
 	mock_compat.nested_capability_signature = 0;
 	mock_compat.nested_schema_signature = 0;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    NULL, 0), EXDEV);
 }
 
 /*
@@ -380,10 +381,8 @@ ATF_TC_BODY(same_host_contract_ignores_host_cpu_local_leaves, tc)
 	host_local_leaf = 1;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
-	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    detail, sizeof(detail)), EXDEV);
 	ATF_CHECK_STREQ(detail, "CPUID 0x80000026.0 edx: source 0x00000000, "
 	    "destination 0x00000001");
 
@@ -393,9 +392,8 @@ ATF_TC_BODY(same_host_contract_ignores_host_cpu_local_leaves, tc)
 	host_local_masked = 1;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &source), 0);
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
-	    &destination, detail, sizeof(detail)), 0);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    detail, sizeof(detail)), 0);
 	ATF_CHECK_STREQ(detail, "");
 }
 
@@ -414,10 +412,8 @@ ATF_TC_BODY(genuine_difference_still_refuses_and_is_named, tc)
 	/* A destination lacking a structured-extended feature bit. */
 	leaf7_ebx_flip = 1U << 5;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
-	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    detail, sizeof(detail)), EXDEV);
 	ATF_CHECK_STREQ(detail, "CPUID 0x7.0 ebx: source 0x02020202, "
 	    "destination 0x02020222");
 
@@ -425,10 +421,8 @@ ATF_TC_BODY(genuine_difference_still_refuses_and_is_named, tc)
 	leaf7_ebx_flip = 0;
 	mock_compat.x2apic_state = X2APIC_DISABLED;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination),
-	    EXDEV);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
-	    &destination, detail, sizeof(detail)), EXDEV);
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source, &destination,
+	    detail, sizeof(detail)), EXDEV);
 	ATF_CHECK_STREQ(detail, "x86 platform x2apic_state: source 0x00000001, "
 	    "destination 0x00000000");
 
@@ -436,7 +430,7 @@ ATF_TC_BODY(genuine_difference_still_refuses_and_is_named, tc)
 	mock_compat.x2apic_state = X2APIC_ENABLED;
 	mock_compat.nested_schema_signature ^= UINT64_C(1) << 32;
 	ATF_REQUIRE_EQ(checkpoint_cpu_contract_capture(&vcpu, &destination), 0);
-	ATF_CHECK_EQ(checkpoint_cpu_contract_describe_mismatch(&source,
+	ATF_CHECK_EQ(checkpoint_cpu_contract_match(&source,
 	    &destination, detail, sizeof(detail)), EXDEV);
 	ATF_CHECK(strstr(detail, "x86 nested nested_schema_signature[63:32]") ==
 	    detail);

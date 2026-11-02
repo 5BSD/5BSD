@@ -78,18 +78,21 @@ main(void)
 	}
 	saved = contract;
 	assert(checkpoint_cpu_contract_validate(&saved) == 0);
-	assert(checkpoint_cpu_contract_match(&saved, &saved) == 0);
+	assert(checkpoint_cpu_contract_match(&saved, &saved, NULL, 0) == 0);
 	capability = 0;
 	assert(checkpoint_cpu_contract_capture(&vcpu, &destination) == 0);
-	assert(checkpoint_cpu_contract_match(&saved, &destination) == EXDEV);
+	assert(checkpoint_cpu_contract_match(&saved, &destination,
+	    NULL, 0) == EXDEV);
 	capability = 1;
 	timebase = 2000000;
 	assert(checkpoint_cpu_contract_capture(&vcpu, &destination) == 0);
-	assert(checkpoint_cpu_contract_match(&saved, &destination) == EXDEV);
+	assert(checkpoint_cpu_contract_match(&saved, &destination,
+	    NULL, 0) == EXDEV);
 	timebase = 1000000;
 	destination = saved;
 	destination.records[4].values[0] ^= 1;
-	assert(checkpoint_cpu_contract_match(&saved, &destination) == EXDEV);
+	assert(checkpoint_cpu_contract_match(&saved, &destination,
+	    NULL, 0) == EXDEV);
 	capability = 2;
 	assert(checkpoint_cpu_contract_capture(&vcpu, &contract) == EPROTO);
 	assert(memcmp(&saved, &contract, sizeof(saved)) == 0);

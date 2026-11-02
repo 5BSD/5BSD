@@ -25,6 +25,7 @@
 #include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/sched.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/hypertrace.h>
@@ -95,6 +96,32 @@ __mtx_unlock_spin_flags(volatile uintptr_t *c, int opts, const char *file,
 {
 	__mtx_unlock_flags(c, opts, file, line);
 	curthread->td_critnest--;
+}
+
+/* ---- scheduler binding: the bound thread runs on that CPU -------------- */
+static struct mtx khx_thread_mtx;
+
+void
+thread_lock_flags_(struct thread *td, int opts, const char *file, int line)
+{
+	if (!lock_initialized(&khx_thread_mtx.lock_object))
+		_mtx_init(&khx_thread_mtx.mtx_lock, "thread lock", NULL, 0);
+	td->td_lock = &khx_thread_mtx;
+	__mtx_lock_spin_flags(&khx_thread_mtx.mtx_lock, opts, file, line);
+}
+
+int khx_vmm_sched_binds;
+
+void
+sched_bind(struct thread *td __unused, int cpu)
+{
+	khx_vmm_sched_binds++;
+	khx_set_curcpu(cpu);
+}
+
+void
+sched_unbind(struct thread *td __unused)
+{
 }
 
 /* ---- backend (vmm_ops_intel) -------------------------------------------- */
@@ -224,6 +251,14 @@ kb_setreg(void *vcpui, int num, uint64_t val)
 		return (EINVAL);
 	kv->regs[num] = val;
 	return (0);
+}
+
+/* No optional capability (RDPID, INVPCID, nested VMX) is enabled. */
+static int
+kb_getcap(void *vcpui __unused, int num __unused, int *retval)
+{
+	*retval = 0;
+	return (ENOENT);
 }
 
 static int
@@ -391,6 +426,7 @@ const struct vmm_ops vmm_ops_intel = {
 	.getreg = kb_getreg,
 	.setreg = kb_setreg,
 	.getdesc = kb_getdesc,
+	.getcap = kb_getcap,
 	.vmspace_alloc = kb_vmspace_alloc,
 	.vmspace_free = kb_vmspace_free,
 	.vlapic_init = kb_vlapic_init,

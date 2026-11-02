@@ -54,6 +54,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include <unistd.h>
 
 #include "dtraced.h"
 #include "dtraced_config.h"
@@ -140,6 +141,38 @@ print_version(void)
 {
 
 	printf("dtraced: version %s", version());
+}
+
+/*
+ * The control socket has no access control of its own: the permissions of
+ * its directory keep other users out.  Refuse a directory that this daemon's
+ * user (root) does not own or that grants group or other access.
+ */
+static int
+check_control_dir(const char *path)
+{
+	struct stat sb;
+	int error, fd;
+
+	fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1) {
+		ERR("Failed to open %s: %m", path);
+		return (-1);
+	}
+	error = fstat(fd, &sb) != 0 ? errno : 0;
+	(void)close(fd);
+	if (error != 0) {
+		errno = error;
+		ERR("Failed to stat %s: %m", path);
+		return (-1);
+	}
+	if (sb.st_uid != geteuid() || (sb.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+		ERR("%s must be owned by uid %u with mode 0700, not uid %u "
+		    "mode %04o; refusing to start", path, (unsigned)geteuid(),
+		    (unsigned)sb.st_uid, (unsigned)(sb.st_mode & ALLPERMS));
+		return (-1);
+	}
+	return (0);
 }
 
 static void
@@ -345,6 +378,9 @@ againefd:
 		ERR("Failed to open %s: %m", elfpath);
 		return (EX_OSERR);
 	}
+
+	if (check_control_dir(DTRACED_SOCKDIR) != 0)
+		return (EX_OSERR);
 
 	setup_sighdlrs();
 

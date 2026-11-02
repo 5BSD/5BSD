@@ -7,6 +7,8 @@
  *
  *   /var/run/dtraced.pid      -> $HT_ROOT/dtraced.pid
  *   /var/ddtrace/sub.sock     -> $HT_ROOT/sub.sock (bind, remove, connect)
+ *   /var/ddtrace              -> $HT_ROOT (O_NOFOLLOW open: the control
+ *                                directory check)
  *
  * Fail-closed guards: any other open/mkdir/remove under /var, and any open
  * of a /dev node other than /dev/null (including the /dev/dtrace tree and
@@ -1262,6 +1264,10 @@ __wrap_open(const char *path, int flags, ...)
 		    O_RDONLY | O_CREAT | (flags & O_CLOEXEC), 0600);
 		return (fd);
 	}
+	/* Only the control directory check opens it with O_NOFOLLOW; the
+	 * default -D directory stays refused. */
+	if (strcmp(path, DTRACED_SOCKDIR) == 0 && (flags & O_NOFOLLOW) != 0)
+		return (__real_open(root_path(".").c_str(), flags, mode));
 	if (forbidden(path)) {
 		errno = strncmp(path, "/dev/", 5) == 0 ? ENOENT : EACCES;
 		return (-1);

@@ -236,6 +236,21 @@ struct migration_topology {
 	struct migration_device_record devices[MIGRATION_MAX_DEVICES];
 };
 
+/* A per-instance byte range excluded from a fixed ROM's identity digest. */
+struct migration_rom_mask {
+	size_t offset;
+	size_t length;
+};
+
+/*
+ * Fill a fixed-ROM pseudo-device record (_vmm.bootrom, _vmm.pcirom) from the
+ * segment bytes.  Masked ranges hold per-instance contents: only their
+ * placement, never their bytes, enters compat_crc32/bar_hash.
+ */
+int	migration_rom_identity_record(struct migration_device_record *rec,
+	    const char *name, const void *base, size_t length,
+	    const struct migration_rom_mask *masks, size_t nmasks);
+
 struct migration_memgen {
 	uint32_t round;
 	uint32_t mode;
@@ -366,14 +381,12 @@ bool	migration_device_flags_eligible(uint32_t migration_flags);
  * matching memory geometry, cpu count/topology, and per-device eligibility.
  * The destination also cross-checks that every source device is present and
  * eligible locally via a caller-supplied match callback (may be NULL for a
- * structural-only check).
+ * structural-only check).  On failure the optional detail buffer names the
+ * refused field.
  */
 int	migration_topology_validate(const struct migration_topology *local,
-	    const struct migration_topology *remote, uint32_t *reason);
-/* Describe the first field migration_topology_validate() refused (EXDEV). */
-int	migration_topology_describe_mismatch(
-	    const struct migration_topology *local,
-	    const struct migration_topology *remote, char *buf, size_t len);
+	    const struct migration_topology *remote, uint32_t *reason,
+	    char *detail, size_t detaillen);
 
 /* ---- Transport abstraction ---------------------------------------------- */
 

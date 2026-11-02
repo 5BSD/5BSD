@@ -27,6 +27,7 @@ setup()
 	sysctl() { :; }
 	devctl() { echo "devctl $*"; }
 	devmatch() { echo if_test.ko; }
+	pgrep() { return "${BROKER_RUNNING:-1}"; }
 	EOF
 }
 
@@ -81,9 +82,9 @@ devmatch_broker_body()
 	atf_check -s exit:0 -e match:'Cannot autoload' \
 	    -o inline:'devctl freeze\nbroker load if_test\ndevctl thaw\n' \
 	    env BROKER_STATUS=1 sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
-	# After rc exits its SystemExtension authority is gone (EX_UNAVAILABLE):
-	# a hotplugged device's driver is reported for the next boot.
-	atf_check -s exit:0 -e match:'Cannot autoload if_test after boot' \
+	# A caller without SystemExtension authority (EX_UNAVAILABLE) is told
+	# which processes may load drivers.
+	atf_check -s exit:0 -e match:'if_test: only rc at boot' \
 	    -o inline:'devctl freeze\nbroker load if_test\ndevctl thaw\n' \
 	    env BROKER_STATUS=69 sh -c '. ./seams.sh; . ./devmatch.sh; devmatch_start'
 	atf_check -s exit:0 -e empty \
@@ -148,49 +149,95 @@ linux_broker_body()
 	    sh -c '. ./linux-seams.sh; linux_start'
 }
 
-
-atf_test_case late_load_fallback
-late_load_fallback_head()
+atf_test_case late_load_gate
+late_load_gate_head()
 {
-	atf_set "descr" "load_kld retries a refused direct load through the" \
-	    "SystemExtension broker, only with the capability plane"
+	atf_set "descr" "load_kld asks the SystemExtension broker only while" \
+	    "it runs, and only with the capability plane"
 }
-late_load_fallback_body()
+late_load_gate_body()
 {
 	setup
 	cat > late-seams.sh <<-'EOF2'
 	. ./seams.sh
-	kldload() { echo "direct $*"; return "${DIRECT_STATUS:-1}"; }
-	sysextctl() { echo "broker $*" >&2; return "${BROKER_STATUS:-0}"; }
+	kldload() {
+		echo "direct $*"
+		[ "${DIRECT_STATUS:-0}" = 0 ] || echo "kldload: refused" >&2
+		return "${DIRECT_STATUS:-0}"
+	}
+	sysextctl() {
+		echo "broker $*"
+		[ "${BROKER_STATUS:-0}" = 0 ] || echo "sysextctl: denied" >&2
+		return "${BROKER_STATUS:-0}"
+	}
 	EOF2
-	# After the broker has started a direct load is refused (ENOEXEC);
-	# the broker loads the module.
-	atf_check -s exit:0 -o inline:'direct mac_ntpd\n' \
-	    -e inline:'broker load mac_ntpd\n' \
-	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
-	# Before the broker starts the direct load succeeds; no broker call.
+	# Before rc.d/kld starts the broker the direct load is the only path:
+	# a failure is reported with kldload's own message and sysextctl,
+	# which would start the broker early, is not run.
 	atf_check -s exit:0 -o inline:'direct mac_ntpd\n' -e empty \
-	    env DIRECT_STATUS=0 sh -c '. ./late-seams.sh; load_kld mac_ntpd'
-	# A broker refusal is final and reported.
+	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
 	atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
-	    -e match:'broker load mac_ntpd' \
+	    -e match:'kldload: refused' \
 	    -e match:'Unable to load kernel module mac_ntpd' \
-	    env BROKER_STATUS=1 sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	    -e not-match:broker env DIRECT_STATUS=1 \
+	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	# While the broker runs the load goes through it, never kldload(2);
+	# its errors are not hidden, and a refusal is final.
+	atf_check -s exit:0 -o empty -e empty env BROKER_RUNNING=0 \
+	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
+	atf_check -s exit:1 -o empty -e match:'sysextctl: denied' \
+	    -e match:'Unable to load kernel module mac_ntpd' \
+	    env BROKER_RUNNING=0 BROKER_STATUS=1 \
+	    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
 	# required_modules uses the same path.
-	atf_check -s exit:0 -o inline:'direct geom_uzip\n' \
-	    -e inline:'broker load geom_uzip\n' \
+	atf_check -s exit:0 -o inline:'direct geom_uzip\n' -e empty \
+	    sh -c '. ./late-seams.sh; required_modules=geom_uzip;
+	    check_required_after start'
+	atf_check -s exit:0 -o empty -e empty env BROKER_RUNNING=0 \
 	    sh -c '. ./late-seams.sh; required_modules=geom_uzip;
 	    check_required_after start'
 	# Without the plane, or in a jail, there is no broker to ask.
 	for plane in NO off 0; do
-		atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
-		    -e match:'Unable to load kernel module mac_ntpd' \
-		    -e not-match:broker env PLANE="$plane" \
+		atf_check -s exit:0 -o inline:'direct mac_ntpd\n' -e empty \
+		    env PLANE="$plane" BROKER_RUNNING=0 \
 		    sh -c '. ./late-seams.sh; load_kld mac_ntpd'
 	done
-	atf_check -s exit:1 -o inline:'direct mac_ntpd\n' \
-	    -e not-match:broker sh -c '. ./late-seams.sh;
+	atf_check -s exit:0 -o inline:'direct mac_ntpd\n' -e empty \
+	    env BROKER_RUNNING=0 sh -c '. ./late-seams.sh;
 	    check_jail() { return 0; }; load_kld mac_ntpd'
+}
+
+atf_test_case late_load_broker_process cleanup
+late_load_broker_process_head()
+{
+	atf_set "descr" "load_kld takes only user capability's BSDExtension for the broker"
+}
+late_load_broker_process_body()
+{
+	local expect
+
+	setup
+	# A process named BSDExtension run by the test's user, seen by the
+	# real pgrep(1), is not the broker; the host's own broker, run as
+	# user capability, is.
+	[ "$(id -un)" = capability ] && atf_skip "runs as the broker's user"
+	cp /bin/sleep BSDExtension
+	./BSDExtension 60 >/dev/null 2>&1 &
+	echo $! > broker.pid
+	if pgrep -q -x -U capability BSDExtension; then
+		expect='broker load mac_ntpd\n'
+	else
+		expect='direct mac_ntpd\n'
+	fi
+	atf_check -s exit:0 -o empty -e inline:"${expect}" \
+	    sh -c '. ./seams.sh; unset -f pgrep;
+	    sysextctl() { echo "broker $*" >&2; };
+	    kldload() { echo "direct $*" >&2; }; load_kld mac_ntpd'
+}
+late_load_broker_process_cleanup()
+{
+	[ -f broker.pid ] && kill "$(cat broker.pid)" 2>/dev/null
+	return 0
 }
 
 atf_init_test_cases()
@@ -199,5 +246,6 @@ atf_init_test_cases()
 	atf_add_test_case loaded_claim_and_denial
 	atf_add_test_case linux_broker
 	atf_add_test_case devmatch_broker
-	atf_add_test_case late_load_fallback
+	atf_add_test_case late_load_gate
+	atf_add_test_case late_load_broker_process
 }

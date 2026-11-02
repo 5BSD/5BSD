@@ -1,20 +1,35 @@
 # SPDX-License-Identifier: BSD-2-Clause
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("//tools/build/bazel:bsd_kyua.bzl", "bsd_kyua_test")
+# Module fixtures for rootload_test (Make: RLMODULES): relocatable objects with
+# real module metadata, one per setting of rlmodule.c.
+_RLMODULES = {"rltest_a": [], "rldep": [], "rlbase": [], "mac_rltest": [],
+    "rltest_d": ['DEP="rldep"', "DEPMIN=1", "DEPMAX=1"],
+    "rltest_n": ['DEP="rlbase"', "DEPMIN=1", "DEPMAX=1"],
+    "rltest_v": ['DEP="rlbase"', "DEPMIN=2", "DEPMAX=2"],
+    "rltest_x": ['DEP="mac_rltest"', "DEPMIN=1", "DEPMAX=1"],
+    "rltest_k": ['DEP="kernel"', "DEPMIN=1", "DEPMAX=1", 'DEP2="rlbase"'],
+    "rlother": ['ALSO="rlbase"', "ALSO_VERSION=2"]}
+[cc_binary(name = m + ".ko", srcs = ["rlmodule.c"],
+    local_defines = ['MOD="%s"' % m, "VERSION=1"] + defines,
+    copts = ["-O0", "-fno-common"], linkopts = ["-nostdlib", "-Wl,-r"], linkstatic = True)
+ for m, defines in _RLMODULES.items()]
 [cc_binary(name = name,
     srcs = [name + ".c", "test_policy.h", "//usr.sbin/BSDExtension:bsdextension.c",
-        "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c",
-        "//usr.sbin/BSDExtension:rootload.c"],
+        "//usr.sbin/BSDExtension:kerneldir.c", "//usr.sbin/BSDExtension:policy.c",
+        "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c"],
     deps = ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers",
         "//usr.sbin/BSDExtension:blake2b", "//sys/contrib/libb2:headers",
-        "//contrib/sqlite3:headers", "//lib/libsqlite3:sqlite3",
+        "//contrib/sqlite3:headers", "//lib/libsqlite3:sqlite3", "//lib/libkldelf:kldelf", "//lib/libelf:elf",
         "//lib/libextensioncmp:extensioncmp", "//lib/libextensioncmp:generated_headers",
         "//lib/libfidl:fidl", "//lib/libservice:service", "//lib/libchannel:channel",
         "//lib/libucl:ucl", "//lib/libcapreclaim:capreclaim", "//lib/liblogcmp:logcmp", "//lib/libthr:thr"] + (["//sys/dev/mac_capability:channel_headers", "//sys/dev/mac_capability:ioctl_headers"] if name == "provider_test" else []),
     local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
  for name in ["allowlist_test", "policy_test", "reclaim_test", "provider_test", "drivers_test", "rootload_test"]]
 [bsd_kyua_test(name = name + "_run", program = ":" + name, interface = "atf",
-    suite = "FreeBSD", kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
+    suite = "FreeBSD",
+    suite_files = {":" + m + ".ko": m + ".ko" for m in _RLMODULES} if name == "rootload_test" else {},
+    kyua = "@bsd_sdk//toolchain:extra_kyua", clean_environment = True,
     python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
     runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_kyua_runtime"],
     tags = ["manual", "requires-matching-kernel"] if name in ["provider_test", "reclaim_test"] else [],
@@ -50,11 +65,14 @@ cc_binary(name = "next_peer", srcs = ["evolution/next_peer.c"],
 
 
 _EXTENSION_LIBS = ['//lib/libextensioncmp:extensioncmp', '//lib/libfidl:fidl', '//lib/libservice:service', '//lib/libchannel:channel', '//lib/libucl:ucl', '//lib/libcapreclaim:capreclaim', '//lib/liblogcmp:logcmp', '//lib/libthr:thr', '//lib/libsqlite3:sqlite3']
-_ROOTLOAD = ["//usr.sbin/BSDExtension:blake2b", "//sys/contrib/libb2:headers", "//contrib/sqlite3:headers"]
-cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c"],
+_ROOTLOAD = ["//usr.sbin/BSDExtension:blake2b", "//sys/contrib/libb2:headers", "//contrib/sqlite3:headers",
+    "//lib/libkldelf:kldelf", "//lib/libelf:elf"]
+cc_binary(name = "evolution_test", srcs = ["evolution_test.c", "evolution_test_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c",
+        "//usr.sbin/BSDExtension:kerneldir.c"],
     deps = _EXTENSION_LIBS + _ROOTLOAD + ["//lib/atf/libatf-c:atf_c", "//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:generated_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     local_defines = ["BSDEXTENSION_TESTING"], linkstatic = True, linkopts = ["-static"])
-cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c"],
+cc_binary(name = "latency_bench", srcs = ["latency_bench.c", "latency_bench_provider.c", "//usr.sbin/BSDExtension:policy.c", "//usr.sbin/BSDExtension:reclaim.c", "//usr.sbin/BSDExtension:rootload.c",
+        "//usr.sbin/BSDExtension:kerneldir.c"],
     deps = _EXTENSION_LIBS + _ROOTLOAD + ["//usr.sbin/BSDExtension:test_headers", "//lib/libextensioncmp:client_source_headers", "//tools/build/fuchsia:daemon_bench_headers", "//lib/liblogcmp:headers", "//lib/libcapreclaim:headers"],
     dynamic_deps = [lib + "_shared" for lib in _EXTENSION_LIBS],
     local_defines = ["BSDEXTENSION_TESTING"], copts = ["-fPIE"], linkopts = ["-pie"])
@@ -92,7 +110,8 @@ bsd_kyuafile(name = "kyuafile", suite = "FreeBSD", names = ATF_PROGRAMS,
     metadata = {"evolution_test": '{"timeout":"120"}', "inherited_session_test": '{"timeout":"15"}'})
 _FILES = [(":kyuafile", TESTDIR + "/Kyuafile", "0444"),
     (":startup_test", TESTDIR + "/startup_test", "0555")] + [
-    ("//contrib/fuchsia:" + n, "/usr/share/licenses/bsdextension-tests/fuchsia/" + n, "0444") for n in ["LICENSE", "PATENTS"]]
+    ("//contrib/fuchsia:" + n, "/usr/share/licenses/bsdextension-tests/fuchsia/" + n, "0444") for n in ["LICENSE", "PATENTS"]] + [
+    (":" + m + ".ko", TESTDIR + "/" + m + ".ko", "0444") for m in _RLMODULES]
 [bsd_install_file(name = "install_file_" + str(i), src = source, destination = dest,
     owner = "root", group = "wheel", mode = mode, install_tags = ["package=bsdextension-tests"])
  for i, (source, dest, mode) in enumerate(_FILES)]

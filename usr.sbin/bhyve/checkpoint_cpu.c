@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/param.h>
 #include <sys/endian.h>
 
 #include <errno.h>
@@ -68,34 +69,6 @@ checkpoint_cpu_contract_validate(const struct checkpoint_cpu_contract *contract)
 		    (current->selector == previous->selector &&
 		    current->parameter <= previous->parameter))
 			return (EINVAL);
-	}
-	return (0);
-}
-
-int
-checkpoint_cpu_contract_match(const struct checkpoint_cpu_contract *source,
-    const struct checkpoint_cpu_contract *destination)
-{
-	int error;
-
-	error = checkpoint_cpu_contract_validate(source);
-	if (error == 0)
-		error = checkpoint_cpu_contract_validate(destination);
-	if (error != 0)
-		return (error);
-	if (source->version != destination->version ||
-	    source->architecture != destination->architecture ||
-	    source->record_count != destination->record_count)
-		return (EXDEV);
-	for (size_t i = 0; i < source->record_count; i++) {
-		if (source->records[i].selector !=
-		    destination->records[i].selector ||
-		    source->records[i].parameter !=
-		    destination->records[i].parameter ||
-		    memcmp(source->records[i].values,
-		    destination->records[i].values,
-		    sizeof(source->records[i].values)) != 0)
-			return (EXDEV);
 	}
 	return (0);
 }
@@ -267,57 +240,60 @@ describe_value(char *buf, size_t len, uint32_t architecture,
 	    record->parameter, value);
 }
 
+/*
+ * On EXDEV, reason (which may be NULL when reasonlen is 0) names the first
+ * differing leaf or register with both values.
+ */
 int
-checkpoint_cpu_contract_describe_mismatch(
-    const struct checkpoint_cpu_contract *source,
-    const struct checkpoint_cpu_contract *destination, char *buf, size_t len)
+checkpoint_cpu_contract_match(const struct checkpoint_cpu_contract *source,
+    const struct checkpoint_cpu_contract *destination, char *reason,
+    size_t reasonlen)
 {
 	const struct checkpoint_cpu_record *s, *d;
 	char field[96];
 	size_t count;
+	int error;
 
-	if (buf == NULL || len == 0)
-		return (EINVAL);
-	buf[0] = '\0';
-	if (source == NULL || destination == NULL)
-		return (EINVAL);
-	if (source->version != destination->version) {
-		snprintf(buf, len, "contract version: source %u, destination %u",
-		    source->version, destination->version);
-		return (EXDEV);
-	}
+	if (reasonlen != 0)
+		reason[0] = '\0';
+	error = checkpoint_cpu_contract_validate(source);
+	if (error == 0)
+		error = checkpoint_cpu_contract_validate(destination);
+	if (error != 0)
+		return (error);
+	/* Both versions are CHECKPOINT_CPU_CONTRACT_VERSION here. */
 	if (source->architecture != destination->architecture) {
-		snprintf(buf, len, "architecture: source %u, destination %u",
-		    source->architecture, destination->architecture);
+		snprintf(reason, reasonlen, "architecture: source %u, "
+		    "destination %u", source->architecture,
+		    destination->architecture);
 		return (EXDEV);
 	}
-	count = source->record_count < destination->record_count ?
-	    source->record_count : destination->record_count;
-	if (count > CHECKPOINT_CPU_MAX_RECORDS)
-		count = CHECKPOINT_CPU_MAX_RECORDS;
+	/* Name a differing common record before a differing count. */
+	count = MIN(source->record_count, destination->record_count);
 	for (size_t i = 0; i < count; i++) {
 		s = &source->records[i];
 		d = &destination->records[i];
 		if (s->selector != d->selector || s->parameter != d->parameter) {
-			/* Different leaf sets: name the first divergent leaf. */
-			snprintf(buf, len, "record %zu leaf: source %#x.%u, "
-			    "destination %#x.%u", i, s->selector, s->parameter,
-			    d->selector, d->parameter);
+			snprintf(reason, reasonlen, "record %zu leaf: source "
+			    "%#x.%u, destination %#x.%u", i, s->selector,
+			    s->parameter, d->selector, d->parameter);
 			return (EXDEV);
 		}
-		for (unsigned int v = 0; v < 4; v++) {
+		for (unsigned int v = 0; v < nitems(s->values); v++) {
 			if (s->values[v] == d->values[v])
 				continue;
 			describe_value(field, sizeof(field),
 			    source->architecture, s, v);
-			snprintf(buf, len, "%s: source 0x%08x, destination "
-			    "0x%08x", field, s->values[v], d->values[v]);
+			snprintf(reason, reasonlen, "%s: source 0x%08x, "
+			    "destination 0x%08x", field, s->values[v],
+			    d->values[v]);
 			return (EXDEV);
 		}
 	}
 	if (source->record_count != destination->record_count) {
-		snprintf(buf, len, "record count: source %zu, destination %zu",
-		    source->record_count, destination->record_count);
+		snprintf(reason, reasonlen, "record count: source %zu, "
+		    "destination %zu", source->record_count,
+		    destination->record_count);
 		return (EXDEV);
 	}
 	return (0);

@@ -155,7 +155,7 @@ if [ "$plane_off" = 1 ]; then
 	printf 'capability_plane="NO"\n' >> "$x/loader.conf"
 	: > "$x/loader.conf.local"
 fi
-# LOADER_EXTRA: more loader.conf lines, e.g. dtraceall_load="YES".
+# LOADER_EXTRA: more loader.conf lines, e.g. if_vxlan_load="YES".
 [ -z "${LOADER_EXTRA:-}" ] || printf '%s\n' "$LOADER_EXTRA" >> "$x/loader.conf"
 if [ -n "$extra_script" ]; then cp "$extra_script" "$x/extra.sh"; else : > "$x/extra.sh"; fi
 cat > "$x/fstab" <<'EOF'

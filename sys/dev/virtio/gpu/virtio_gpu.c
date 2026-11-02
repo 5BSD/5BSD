@@ -68,6 +68,7 @@
 /* The guest can allocate resource IDs, we only need one */
 #define	VTGPU_RESOURCE_ID	1
 #define	VTGPU_REQUEST_TIMEOUT	(10 * SBT_1S)
+#define	VTGPU_POLL_DELAY_US	10
 #define	VTGPU_MAX_FB_SIZE	(256U * 1024U * 1024U)
 
 #define	VTGPU_FLAG_DETACH	0x01
@@ -794,14 +795,26 @@ vtgpu_req_resp2(struct vtgpu_softc *sc, void *req1, size_t req1len,
 			error = ENXIO;
 			goto reset;
 		}
-		if (virtqueue_enable_intr(sc->vtgpu_ctrl_vq) != 0)
-			continue;
-		remaining = deadline - sbinuptime();
-		if (remaining <= 0) {
+		if (cold) {
+			/*
+			 * A preloaded driver attaches during autoconfiguration,
+			 * before timers work, and a timed sleep would panic.
+			 * Poll the used ring until the system is up.
+			 */
+			if (sbinuptime() < deadline) {
+				DELAY(VTGPU_POLL_DELAY_US);
+				continue;
+			}
 			error = EWOULDBLOCK;
+		} else if (virtqueue_enable_intr(sc->vtgpu_ctrl_vq) != 0) {
+			continue;
 		} else {
-			error = msleep_sbt(sc, &sc->vtgpu_mtx, 0, "vtgpurs",
-			    remaining, 0, 0);
+			remaining = deadline - sbinuptime();
+			if (remaining <= 0)
+				error = EWOULDBLOCK;
+			else
+				error = msleep_sbt(sc, &sc->vtgpu_mtx, 0,
+				    "vtgpurs", remaining, 0, 0);
 		}
 		if (error == EWOULDBLOCK) {
 			device_printf(sc->vtgpu_dev,
