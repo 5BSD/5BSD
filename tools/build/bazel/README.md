@@ -29,9 +29,12 @@ its original install metadata. Three of five WPA programs had bounded native
 qualification at that checkpoint. The [hostapd daemon](WPA-HOSTAPD-QUALIFICATION.md)
 now adds two supported OpenSSL configurations, eight retained safe CLI/loader
 methods and twenty install records. The [AES-CTR dependency correction](WPA-AES-CTR-QUALIFICATION.md)
-fixes the genuine no-EAPOL link failure. Four of five programs have bounded
-native qualification; wpa_supplicant, internal-backend feature closure and live
-wireless/authentication behavior remain open.
+fixes the genuine no-EAPOL link failure. The [wpa_supplicant daemon](WPA-SUPPLICANT-QUALIFICATION.md)
+now passes two supported OpenSSL configurations, 51 code/input/relocation object
+comparisons, sixteen install records and eight safe methods using complete
+compact execution logs. All five programs have bounded native qualification;
+internal-backend feature closure, family package composition and live wireless/
+authentication behavior remain open.
 
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.

@@ -14,8 +14,12 @@ sixteen safe CLI/loader methods and its actual link/install/input checks. Native
 [hostapd](WPA-HOSTAPD-QUALIFICATION.md) now passes two OpenSSL configurations,
 eight retained safe methods and twenty install records. The independently
 verified [AES-CTR fix](WPA-AES-CTR-QUALIFICATION.md) closes its real no-EAPOL
-link failure. Next is wpa_supplicant, followed by internal crypto feature/API
-closure and the remaining daemon/control/wireless, cross and whole-system gates. The earlier paused record
+link failure. Native [wpa_supplicant](WPA-SUPPLICANT-QUALIFICATION.md) now passes
+two OpenSSL configurations, 51 objects and eight safe methods. All five WPA
+programs and sixteen private directories have bounded qualification. Next is
+configured Make world coverage/aggregate reconciliation, preserving internal
+crypto feature/API, family package contexts, daemon/control/wireless, cross and
+whole-system gates. The earlier paused record
 and prepared-reference notes below are historical.
 
 ## Update at the next upgrade stopping point (2026-11-02)

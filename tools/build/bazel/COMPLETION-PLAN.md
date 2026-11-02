@@ -213,9 +213,13 @@ current-source baseline.
 
 The genuine AES-SIV dependency fix and native hostapd checks are recorded in
 WPA-AES-CTR-QUALIFICATION.md and WPA-HOSTAPD-QUALIFICATION.md. Four of five WPA
-programs now have bounded native qualification. Continue wpa_supplicant with
-actual source/flag/archive/install ownership, then reconcile the independent
-internal-backend SAE/EHT/crypto API failures without silently disabling features.
+programs had bounded native qualification at that checkpoint. Native
+wpa_supplicant now adds 51 actual code/input/raw-relocation checks, eight safe
+methods and sixteen install records (WPA-SUPPLICANT-QUALIFICATION.md). All five
+programs have bounded qualification. Audit configured Make world coverage and
+aggregate/install/pkg ownership next; retain shared wpa/hostapd directory package
+contexts. Reconcile the independent internal-backend SAE/EHT/crypto API failures
+without silently disabling features.
 Qualify hostapd IPv6/examples-disabled and custom build selections explicitly.
 Retain live control, root driver setup, wireless/EAP/authentication and audit
 event delivery as separate runtime gates. Archive construction and safe CLI

@@ -9656,3 +9656,13 @@ relocations. Safe CLI/loader tests return before driver/interface setup and do
 not qualify access-point authentication, EAP, security-event/audit delivery or
 shared instrumentation. Review the shared WPA/kernel event paths before adding
 probes; no invented hot-path hooks were added. See WPA-HOSTAPD-QUALIFICATION.md.
+
+## WPA supplicant daemon (2026-11-02)
+
+The source-bound call-shaped scan finds no recognized direct SDT/DTrace/audit/
+FIDL calls in these 27 program sources. Native metadata preserves all selected
+program source, compiler policy, raw code/constants and raw nondebug relocations.
+Safe non-root CLI tests return before supplicant/driver initialization; no WLAN
+service is activated. Real association/EAP/security-event/audit delivery and
+shared hooks remain explicit runtime gates. No speculative probes were added.
+See WPA-SUPPLICANT-QUALIFICATION.md for immutable/compact evidence and limits.
