@@ -5,4 +5,7 @@ KMOD=	bhnd_pci
 SRCS=	bhnd_pci.c bhnd_pcie2.c
 SRCS+=	device_if.h bus_if.h bhnd_bus_if.h
 
+# Dependent bus/bridge modules use this module's shared implementation.
+EXPORT_SYMS=	YES
+
 .include <bsd.kmod.mk>

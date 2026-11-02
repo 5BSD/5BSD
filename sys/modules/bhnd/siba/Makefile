@@ -9,4 +9,7 @@ SRCS+=	bhnd_bus_if.h bhnd_chipc_if.h \
 	bhnd_erom_if.h bhnd_pmu_if.h \
 	bhnd_pwrctl_if.h
 
+# Dependent bus/bridge modules use this module's shared implementation.
+EXPORT_SYMS=	YES
+
 .include <bsd.kmod.mk>
