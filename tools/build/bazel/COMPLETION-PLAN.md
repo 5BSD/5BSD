@@ -696,3 +696,15 @@ full-world/cross-architecture/module/pkgbase/bootstrap/publication gates. Audio
 playback/capture/MIDI/mixer, hotplug/error paths, live probes, hardware and
 CPU/memory/disk I/O/disk-use/cache/sandbox performance remain open. Make stays
 production/default; BIP remains excluded.
+
+
+### Internal rescue replacements (2026-11-02)
+
+Native librescue now preserves seven regular/seven PIE own objects, both internal
+archive products, Make's no-install contract and direct-object consumer interface.
+Two independent configurations match object payloads/relocations/symbols and
+1,694 consumed dependency occurrences. This closes the bounded internal library
+product gap, not full rescue: crunchgen generation, all crunched application
+variants, static linking, aliases/scripts/install and safe/guest runtime gates
+remain. HESIOD-enabled SDK/header preparation is an explicit configuration gate.
+See LIBRESCUE-QUALIFICATION.md.

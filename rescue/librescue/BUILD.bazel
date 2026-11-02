@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive", "bsd_component_objects")
+_PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
+_SOURCES = ["//lib/libc/gen:exec.c", "//lib/libc/gen:getusershell.c", "//lib/libutil:login_class.c", "//lib/libc/gen:popen.c", "//lib/libc/net:rcmdsh.c", "//lib/libc/gen:sysctl.c", "//lib/libc/stdlib:system.c", "//lib/libutil:logincap_probes.h"]
+# Original INTERNAL library: no installed archive, manifest or package target.
+# rescue/rescue consumes regular compiler objects before ordinary libraries.
+_DEFINES = ["RESCUE", "__DBINTERFACE_PRIVATE", "POSIX_MISTAKE", "BROKEN_DES", "PORTMAP", "DES_BUILTIN"] + select({
+    "//tools/build/bazel/config:inet6_support_enabled": ["INET6"], "//conditions:default": [],
+}) + select({"//tools/build/bazel/config:nis_enabled": ["YP"], "//conditions:default": []}) + select({
+    "//tools/build/bazel/config:hesiod_enabled": ["HESIOD"], "//conditions:default": [],
+})
+_COPTS = ["-pipe", "-fno-common", "-std=gnu17", "-Wno-format-zero-length", "-Wsystem-headers", "-Werror", "-Wall", "-Wno-format-y2k", "-W", "-Wno-unused-parameter", "-Wstrict-prototypes", "-Wmissing-prototypes", "-Wpointer-arith", "-Wno-uninitialized", "-Wno-pointer-sign", "-Wdate-time", "-Wno-empty-body", "-Wno-string-plus-int", "-Wno-unused-const-variable", "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch", "-Wno-tautological-compare", "-Wno-unused-value", "-Wno-parentheses-equality", "-Wno-unused-function", "-Wno-enum-conversion", "-Wno-unused-local-typedef", "-Wno-address-of-packed-member", "-Qunused-arguments"]
+[cc_library(name = variant + "_objects", srcs = _SOURCES,
+    deps = ["//lib/libc/include:rescue_headers", "//lib/libutil:headers"],
+    local_defines = _DEFINES + (["PIC"] if variant == "pie" else []),
+    copts = _COPTS + (["-fpie"] if variant == "pie" else []),
+    features = ["-bsd_ssp"], linkstatic = True, target_compatible_with = _PLATFORM,
+) for variant in ["regular", "pie"]]
+[bsd_component_objects(name = variant + "_compiler_outputs", group = ":" + variant + "_objects", pic = False,
+    visibility = ["//visibility:public"],
+) for variant in ["regular", "pie"]]
+[bsd_component_archive(name = variant + "_archive", groups = [":" + variant + "_objects"],
+    object_order = ["exec.o", "getusershell.o", "login_class.o", "popen.o", "rcmdsh.o", "sysctl.o", "system.o"], pic = False,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"],
+) for variant in ["regular", "pie"]]
+filegroup(name = "all_products", srcs = [":regular_compiler_outputs", ":pie_compiler_outputs", ":regular_archive", ":pie_archive"],
+    visibility = ["//visibility:public"])

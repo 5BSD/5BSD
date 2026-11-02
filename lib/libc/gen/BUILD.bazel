@@ -506,3 +506,6 @@ cc_library(name = "rtld_directory_headers", hdrs = ["gen-private.h", "telldir.h"
     strip_include_prefix = ".", visibility = ["//libexec/rtld-elf:__pkg__"])
 
 exports_files(["dlfcn.c"], visibility = ["//lib/libdl:__pkg__"])
+
+# Original rescue replacement compilation; own source files remain here.
+exports_files(["exec.c", "getusershell.c", "popen.c", "sysctl.c"], visibility = ["//rescue/librescue:__pkg__"])

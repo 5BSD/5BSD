@@ -47830,3 +47830,14 @@ match untouched Make byte for byte. CTF/debug contents and thirty installation
 records pass. See [SOUND-MODULES-QUALIFICATION.md](SOUND-MODULES-QUALIFICATION.md)
 for the corrected initial header-view collision and runtime/configuration limits.
 Local BUILD presence is 367/729 selected amd64 leaves, not full qualification.
+
+
+## Internal rescue replacement objects (2026-11-02)
+
+The seven-source internal librescue product now builds as fourteen regular/PIE
+objects and two own-object archives. Default and INET6-off/NIS-on controls match
+original Make allocated payloads, runtime relocations, symbols, archive member
+order/allocated payloads and 1,694 consumed dependency occurrences. No installed archive is
+invented; the full crunchgen rescue executable remains open. See
+[LIBRESCUE-QUALIFICATION.md](LIBRESCUE-QUALIFICATION.md), including the separate
+HESIOD-enabled SDK prerequisite and preserved initial policy rejection.

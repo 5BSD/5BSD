@@ -10151,3 +10151,14 @@ stream submit/complete, channel/mixer transitions, underrun/overrun and latency,
 USB hotplug, device detach/error cleanup, MIDI and access-control/audit review.
 Avoid sample/audio payloads in telemetry. Compile-time preservation is not
 comprehensive probe coverage, live delivery or a real-time performance result.
+
+
+### Internal rescue replacements (2026-11-02)
+
+The seven rescue replacement sources include login_class's logincap probe wrapper;
+original librescue Make recipes omit WITH_DTRACE, so the native variants preserve
+that disabled-probe compilation policy. Both checked configurations have exact
+object allocated payloads, runtime relocations and symbol records. No credential,
+login/session, exec/system/popen, sysctl or shell-list function was executed.
+Future rescue runtime/error and audit coverage remains open; see
+LIBRESCUE-QUALIFICATION.md.
