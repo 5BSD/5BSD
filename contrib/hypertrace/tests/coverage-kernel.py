@@ -134,7 +134,7 @@ VMM_CFLAGS = ['-DVMM_KEEP_STATS', '-I' + str(SYS / 'amd64/vmm'),
 SUITES['vmm_hypertrace'] = {
     'production': ['sys/amd64/vmm/vmm.c', 'sys/amd64/vmm/x86.c',
                    'sys/amd64/vmm/vmm_dev_machdep.c', 'sys/dev/vmm/vmm_dev.c'],
-    'deps': ['sys/dev/vmm/vmm_vm.c'],
+    'deps': ['sys/dev/vmm/vmm_vm.c', 'sys/amd64/vmm/x86_cpuid.c'],
     'tests': ['t_vmm_ht.c'],
     'shims': ['khx_sysctl.c'],
     'module_shims': ['khx_vmm.c', 'khx_vmm_stubs.c'],

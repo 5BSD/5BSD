@@ -69,6 +69,7 @@ struct vcpu;
  */
 #define CPUID_0000_0001_FEAT0_VMX	(1<<5)
 
+void x86_host_cpuid_init(void);
 int x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
     uint64_t *rcx, uint64_t *rdx);
 int x86_emulate_cpuid_nested_svm_l2(struct vcpu *vcpu, uint64_t guest_cr4,
