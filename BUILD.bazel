@@ -4,14 +4,14 @@ exports_files(["COPYRIGHT"])
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Explicit source-header closure for the amd64 bhyve engine.
-cc_library(name = "bhyve_engine_headers", hdrs = ["sys/amd64/vmm/io/vhpet.h", "sys/amd64/vmm/io/vioapic.h", "//sys/dev/e1000:e1000_defines.h", "//sys/dev/e1000:e1000_regs.h", "//sys/dev/ic:ns16550.h", "//sys/dev/io:iodev.h"],
+cc_library(name = "bhyve_engine_headers", hdrs = ["//sys/amd64/vmm:io/vhpet.h", "//sys/amd64/vmm:io/vioapic.h", "//sys/dev/e1000:e1000_defines.h", "//sys/dev/e1000:e1000_regs.h", "//sys/dev/ic:ns16550.h", "//sys/dev/io:iodev.h"],
     deps = ["//sys/contrib/dev/acpica/include:user_headers", "//sys/dev/evdev:bhyve_engine_headers"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 cc_library(name = "bhyve_e1000_headers", hdrs = ['//sys/dev/e1000:e1000_defines.h', '//sys/dev/e1000:e1000_regs.h'], strip_include_prefix = '/sys/dev/e1000', visibility = ["//usr.sbin/bhyve:__pkg__"])
 
-cc_library(name = "bhyve_kernemu_headers", hdrs = ['sys/amd64/vmm/io/vhpet.h', 'sys/amd64/vmm/io/vioapic.h'], strip_include_prefix = '/sys/amd64', visibility = ["//usr.sbin/bhyve:__pkg__"])
+cc_library(name = "bhyve_kernemu_headers", hdrs = ["//sys/amd64/vmm:io/vhpet.h", "//sys/amd64/vmm:io/vioapic.h"], strip_include_prefix = '/sys/amd64', visibility = ["//usr.sbin/bhyve:__pkg__"])
 
-exports_files(['sys/amd64/vmm/vmm_instruction_emul.c'], visibility = ["//usr.sbin/bhyve:__pkg__"])
+
 
 
 

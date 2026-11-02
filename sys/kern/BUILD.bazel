@@ -44,7 +44,7 @@ cc_library(name = "generic_genoffset_check", srcs = ["genoffset.c"],
     deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header"], copts = _AMD64_LAYOUT_FLAGS,
     local_defines = ["_KERNEL", "HAVE_KERNEL_OPTION_HEADERS", "OFFSET_TEST"],
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o")
+bsd_component_object(name = "generic_genoffset_check_object", group = ":generic_genoffset_check", out = "generic_layout/genoffset_test.o", visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm/amd:__pkg__"])
 
 cc_library(name = "generic_genassym", srcs = ["//sys/amd64/amd64:genassym.c"],
     deps = _AMD64_LAYOUT_DEPS + [":generic_offset_header", ":vnode_headers", "//sys/amd64/conf:generic_assym_headers",

@@ -10519,3 +10519,12 @@ has SDT/DTrace sections. This does not establish inherited instrumentation
 absence or audit completeness. No probes were changed. Evidence:
 bazel-ossl-module-review-r1-20261102/observability-review.json;
 [module scope](OSSL-MODULE-QUALIFICATION.md).
+
+### VMM kernel module (2026-11-02)
+
+The bounded 185-source inventory records 109 SDT/DTrace/KTR/audit candidate lines,
+including comments/macros. Compiled original/native VMM SDT/DTrace section
+payloads and relocations match. No probes were changed. Guest execution, live
+event delivery and audit completeness remain unqualified. Evidence:
+bazel-vmm-module-review-r1-20261102/observability-review.json;
+[module/layout/consumer scope](VMM-MODULE-QUALIFICATION.md).

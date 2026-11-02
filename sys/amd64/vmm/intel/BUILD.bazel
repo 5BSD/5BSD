@@ -10,3 +10,882 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['vmcs.h'], strip_include_prefi
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "x86_core_kernel_identcpu_headers", hdrs = ["vmx_controls.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_0", hdrs = ["ept.h", "vmx_cpufunc.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_1", hdrs = ["ept.h", "vmcs.h", "vmx.h", "vmx_cpufunc.h", "vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_2", hdrs = ["vmx_nested_bitmap.h", "vmx_nested_memory.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_3", hdrs = ["vmx_nested_caps.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_4", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_cold_ept.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_reflect.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_5", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_cold_reflect.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_6", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_7", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_8", hdrs = ["vmx_nested_caps.h", "vmx_nested_control_msr.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_9", hdrs = ["vmx_nested_compose.h", "vmx_nested_control_capabilities.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_10", hdrs = ["vmx_nested_compose.h", "vmx_nested_control_capabilities.h", "vmx_nested_control_capabilities_intel.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_11", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_checkpoint.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_continuation_state.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_state.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_link.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmcs_registry_state.h", "vmx_nested_vmcs_store.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_12", hdrs = ["vmx_nested_decode.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_13", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_14", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_entry_event.h", "vmx_nested_ept_cache.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_15", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs12.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_16", hdrs = ["vmcs.h", "vmx.h", "vmx_cpufunc.h", "vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_event.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_17", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_18", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_ept.h", "vmx_nested_ept_memory.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_19", hdrs = ["vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_20", hdrs = ["vmx_nested_ept_cache.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_21", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_exit.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_reflect.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_22", hdrs = ["vmx_nested_ept.h", "vmx_nested_ept_fault.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_23", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_ept.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_24", hdrs = ["vmx_nested_ept_memory.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_25", hdrs = ["vmx_nested_caps.h", "vmx_nested_ept.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_reflect.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_26", hdrs = ["vmx_nested_caps.h", "vmx_nested_ept.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_ept_runtime.h", "vmx_nested_reflect.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_27", hdrs = ["ept.h", "vmx_cpufunc.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_root.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_28", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_29", hdrs = ["vmx_nested_exit_capture.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_30", hdrs = ["vmx_nested_exit_flow.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_31", hdrs = ["vmx_nested_entry.h", "vmx_nested_execution.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_32", hdrs = ["vmx_nested_caps.h", "vmx_nested_exposure.h", "vmx_nested_state.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_33", hdrs = ["vmx_nested_caps.h", "vmx_nested_guest.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_34", hdrs = ["vmx_nested_guest_memory_intel.h", "vmx_nested_memory.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_35", hdrs = ["vmx_nested_attempt.h", "vmx_nested_hardware_result.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_36", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_entry.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_owner_outcome.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_37", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_entry.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_38", hdrs = ["vmx_nested_hardware_result.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_39", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_hot_ept.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_40", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_hot_exit.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_41", hdrs = ["vmx_nested_caps.h", "vmx_nested_host.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_42", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_43", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_44", hdrs = ["vmx_nested_instruction.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_45", hdrs = ["vmx_nested_caps.h", "vmx_nested_decode.h", "vmx_nested_instruction.h", "vmx_nested_instruction_capture.h", "vmx_nested_instruction_gate.h", "vmx_nested_instruction_handoff.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_46", hdrs = ["vmx_nested_caps.h", "vmx_nested_instruction_gate.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_47", hdrs = ["vmx_nested_caps.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_invalidate.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_48", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_decode.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_capture.h", "vmx_nested_instruction_handoff.h", "vmx_nested_instruction_publish.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_49", hdrs = ["vmx_nested_caps.h", "vmx_nested_ept_cache.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_instruction_runtime.h", "vmx_nested_invalidate.h", "vmx_nested_types.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_50", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_51", hdrs = ["vmx_nested_caps.h", "vmx_nested_link.h", "vmx_nested_memory.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_52", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l1_restore.h", "vmx_nested_l2_portable.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_53", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_54", hdrs = ["vmx_nested_apic_priority.h", "vmx_nested_memory.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_55", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_access.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_56", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_access.h", "vmx_nested_l2_access_intel.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_57", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_freeze.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_58", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_59", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_rebuild.h", "vmx_nested_link.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs12.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_60", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_continuation_state.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_state.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_61", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_state.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_62", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_63", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_64", hdrs = ["vmx_nested_caps.h", "vmx_nested_memory.h", "vmx_nested_msr.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_65", hdrs = ["vmx_nested_caps.h", "vmx_nested_guest.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_state_range.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_66", hdrs = ["vmx_nested_caps.h", "vmx_nested_msr.h", "vmx_nested_msr_workspace.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_67", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_68", hdrs = ["vmx_nested_caps.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_memory.h", "vmx_nested_pdpte.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_69", hdrs = ["vmx_nested_bitmap.h", "vmx_nested_entry.h", "vmx_nested_reflect.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_70", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_71", hdrs = ["vmx_nested_attempt.h", "vmx_nested_hardware_result.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_resume_result.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_72", hdrs = ["vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_entry.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze_types.h", "vmx_nested_restore_transaction.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_73", hdrs = ["vmx_nested_caps.h", "vmx_nested_control_msr.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_74", hdrs = ["vmx_nested_startup_policy.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_75", hdrs = ["vmx_nested_event.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_76", hdrs = ["vmx_nested_event.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_state_range.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_77", hdrs = ["vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_78", hdrs = ["vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_79", hdrs = ["vmx_nested_tsc_aux.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_80", hdrs = ["vmx_nested_caps.h", "vmx_nested_types.h", "vmx_nested_validate.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_81", hdrs = ["vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_82", hdrs = ["vmx_nested_caps.h", "vmx_nested_types.h", "vmx_nested_vmcs.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_83", hdrs = ["vmcs.h", "vmx_nested_guest.h", "vmx_nested_types.h", "vmx_nested_vmcs_fields.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_84", hdrs = ["vmcs.h", "vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_memory.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_fields.h", "vmx_nested_vmcs_store.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_85", hdrs = ["vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_validate.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_86", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_87", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_88", hdrs = ["vmcs.h", "vmx_controls.h", "vmx_cpufunc.h", "vmx_msr.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_exit_capture.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs_fields.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_89", hdrs = ["vmx_nested_types.h", "vmx_nested_vmcs_launch.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_90", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_91", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_lease_intel.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_92", hdrs = ["vmcs.h", "vmx_controls.h", "vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_93", hdrs = ["vmcs.h", "vmx.h", "vmx_nested_attempt.h", "vmx_nested_bitmap.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_memory.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_lease_intel.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs02_resources_intel.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_94", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmcs_store.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_95", hdrs = ["vmx_nested_caps.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmcs_registry_state.h", "vmx_nested_vmcs_store.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_96", hdrs = ["vmcs.h", "vmx_nested_caps.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_types.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs_fields.h", "vmx_nested_vmcs_store.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_97", hdrs = ["vmx_nested_caps.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_validate.h", "vmx_nested_vmexit.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_98", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_99", hdrs = ["vmx_nested_compose.h", "vmx_nested_entry.h", "vmx_nested_ept_cache.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_invalidate.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_runtime.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_100", hdrs = ["vmx_nested_caps.h", "vmx_nested_entry.h", "vmx_nested_guest.h", "vmx_nested_host.h", "vmx_nested_link.h", "vmx_nested_memory.h", "vmx_nested_msr.h", "vmx_nested_pdpte.h", "vmx_nested_state_range.h", "vmx_nested_types.h", "vmx_nested_vmentry.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_101", hdrs = ["vmcs.h", "vmx.h", "vmx_msr.h", "vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_102", hdrs = ["ept.h", "vmcs.h", "vmx.h", "vmx_controls.h", "vmx_cpufunc.h", "vmx_msr.h", "vmx_nested_apic_priority.h", "vmx_nested_attempt.h", "vmx_nested_bitmap.h", "vmx_nested_caps.h", "vmx_nested_checkpoint.h", "vmx_nested_cold_ept.h", "vmx_nested_cold_reflect.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_capabilities_intel.h", "vmx_nested_control_msr.h", "vmx_nested_decode.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_event.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_ept_runtime.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_exposure.h", "vmx_nested_guest.h", "vmx_nested_guest_memory_intel.h", "vmx_nested_hardware_entry.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_hot_ept.h", "vmx_nested_hot_exit.h", "vmx_nested_instruction.h", "vmx_nested_instruction_capture.h", "vmx_nested_instruction_gate.h", "vmx_nested_instruction_handoff.h", "vmx_nested_instruction_publish.h", "vmx_nested_instruction_runtime.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l1_restore.h", "vmx_nested_l2_access.h", "vmx_nested_l2_access_intel.h", "vmx_nested_l2_continuation_state.h", "vmx_nested_l2_freeze.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_rebuild.h", "vmx_nested_l2_state.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_memory.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_owner_outcome.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_restore_transaction.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs02_resources_intel.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmcs_registry_state.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "vmm_ept_module", srcs = ["ept.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers", "//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_0", "//sys/amd64/vmm/intel:vmm_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmcs_module", srcs = ["vmcs.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/amd64/conf:final_drivers_module_opt_bhyve_snapshot_header", "//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_29", "//sys/amd64/vmm/intel:vmm_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_bitmap_module", srcs = ["vmx_nested_bitmap.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_1", "//sys/amd64/vmm/intel:vmm_module_context_2"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_caps_module", srcs = ["vmx_nested_caps.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_2", "//sys/amd64/vmm/intel:vmm_module_context_3"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_cold_ept_module", srcs = ["vmx_nested_cold_ept.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_3", "//sys/amd64/vmm/intel:vmm_module_context_4"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_cold_reflect_module", srcs = ["vmx_nested_cold_reflect.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_4", "//sys/amd64/vmm/intel:vmm_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_compose_module", srcs = ["vmx_nested_compose.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_5", "//sys/amd64/vmm/intel:vmm_module_context_6"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_continuation_module", srcs = ["vmx_nested_continuation.c", "vmx_nested_continuation_handoff.c", "vmx_nested_context.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_6", "//sys/amd64/vmm:vmm_include_namespace_7", "//sys/amd64/vmm:vmm_include_namespace_11", "//sys/amd64/vmm/intel:vmm_module_context_7"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_control_msr_module", srcs = ["vmx_nested_control_msr.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_8", "//sys/amd64/vmm/intel:vmm_module_context_8"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_control_capabilities_module", srcs = ["vmx_nested_control_capabilities.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_9", "//sys/amd64/vmm/intel:vmm_module_context_9"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_control_capabilities_intel_module", srcs = ["vmx_nested_control_capabilities_intel.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_10", "//sys/amd64/vmm/intel:vmm_module_context_10"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_checkpoint_module", srcs = ["vmx_nested_checkpoint.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_12", "//sys/amd64/vmm/intel:vmm_module_context_11"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_decode_module", srcs = ["vmx_nested_decode.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_13", "//sys/amd64/vmm/intel:vmm_module_context_12"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_entry_module", srcs = ["vmx_nested_entry.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_14", "//sys/amd64/vmm/intel:vmm_module_context_13"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_entry_event_module", srcs = ["vmx_nested_entry_event.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_24"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_15", "//sys/amd64/vmm/intel:vmm_module_context_14"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_entry_environment_module", srcs = ["vmx_nested_entry_environment.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_16", "//sys/amd64/vmm/intel:vmm_module_context_15"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_entry_environment_intel_module", srcs = ["vmx_nested_entry_environment_intel.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/vmm:vmm_module_context_33"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_30", "//sys/amd64/vmm/intel:vmm_module_context_16"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_entry_runtime_module", srcs = ["vmx_nested_entry_runtime.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_17", "//sys/amd64/vmm/intel:vmm_module_context_17"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_module", srcs = ["vmx_nested_ept.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_18", "//sys/amd64/vmm/intel:vmm_module_context_18"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_binding_module", srcs = ["vmx_nested_ept_binding.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_19", "//sys/amd64/vmm/intel:vmm_module_context_19"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_cache_module", srcs = ["vmx_nested_ept_cache.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_20", "//sys/amd64/vmm/intel:vmm_module_context_20"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_exit_module", srcs = ["vmx_nested_ept_exit.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_21", "//sys/amd64/vmm/intel:vmm_module_context_21"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_fault_module", srcs = ["vmx_nested_ept_fault.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_22", "//sys/amd64/vmm/intel:vmm_module_context_22"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_handoff_module", srcs = ["vmx_nested_ept_handoff.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_23", "//sys/amd64/vmm/intel:vmm_module_context_23"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_memory_module", srcs = ["vmx_nested_ept_memory.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_24", "//sys/amd64/vmm/intel:vmm_module_context_24"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_reflect_module", srcs = ["vmx_nested_ept_reflect.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_25", "//sys/amd64/vmm/intel:vmm_module_context_25"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_runtime_module", srcs = ["vmx_nested_ept_runtime.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_31", "//sys/vm:core_kernel_imgact_shell_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_26", "//sys/amd64/vmm/intel:vmm_module_context_26"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_ept_root_module", srcs = ["vmx_nested_ept_root.c"],
+    deps = ["//sys/vm:lowlevel_kernel_exec_machdep_headers", "//sys/dev/vmm:vmm_module_context_33"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_27", "//sys/amd64/vmm/intel:vmm_module_context_27"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_event_module", srcs = ["vmx_nested_event.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_28", "//sys/amd64/vmm/intel:vmm_module_context_28"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_exit_capture_module", srcs = ["vmx_nested_exit_capture.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_29", "//sys/amd64/vmm/intel:vmm_module_context_29"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_exit_flow_module", srcs = ["vmx_nested_exit_flow.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_30", "//sys/amd64/vmm/intel:vmm_module_context_30"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_execution_module", srcs = ["vmx_nested_execution.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_31", "//sys/amd64/vmm/intel:vmm_module_context_31"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_exposure_module", srcs = ["vmx_nested_exposure.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_32", "//sys/amd64/vmm/intel:vmm_module_context_32"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_guest_module", srcs = ["vmx_nested_guest.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_33", "//sys/amd64/vmm/intel:vmm_module_context_33"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_guest_memory_intel_module", srcs = ["vmx_nested_guest_memory_intel.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/vmm:vmm_module_context_31"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_34", "//sys/amd64/vmm/intel:vmm_module_context_34"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_attempt_module", srcs = ["vmx_nested_attempt.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_35", "//sys/amd64/vmm/intel:vmm_module_context_35"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_owner_outcome_module", srcs = ["vmx_nested_owner_outcome.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_36", "//sys/amd64/vmm/intel:vmm_module_context_36"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_hardware_entry_module", srcs = ["vmx_nested_hardware_entry.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_37", "//sys/amd64/vmm/intel:vmm_module_context_37"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_hardware_result_module", srcs = ["vmx_nested_hardware_result.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_38", "//sys/amd64/vmm/intel:vmm_module_context_38"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_hot_ept_module", srcs = ["vmx_nested_hot_ept.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_39", "//sys/amd64/vmm/intel:vmm_module_context_39"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_hot_exit_module", srcs = ["vmx_nested_hot_exit.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_40", "//sys/amd64/vmm/intel:vmm_module_context_40"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_host_module", srcs = ["vmx_nested_host.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_41", "//sys/amd64/vmm/intel:vmm_module_context_41"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_refreeze_module", srcs = ["vmx_nested_refreeze.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_42", "//sys/amd64/vmm/intel:vmm_module_context_42"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_invalidate_module", srcs = ["vmx_nested_invalidate.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_43", "//sys/amd64/vmm/intel:vmm_module_context_43"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_module", srcs = ["vmx_nested_instruction.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_44", "//sys/amd64/vmm/intel:vmm_module_context_44"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_capture_module", srcs = ["vmx_nested_instruction_capture.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_45", "//sys/amd64/vmm/intel:vmm_module_context_45"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_gate_module", srcs = ["vmx_nested_instruction_gate.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_46", "//sys/amd64/vmm/intel:vmm_module_context_46"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_handoff_module", srcs = ["vmx_nested_instruction_handoff.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_47", "//sys/amd64/vmm/intel:vmm_module_context_47"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_publish_module", srcs = ["vmx_nested_instruction_publish.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_48", "//sys/amd64/vmm/intel:vmm_module_context_48"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_instruction_runtime_module", srcs = ["vmx_nested_instruction_runtime.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/vmm:vmm_module_context_31"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_49", "//sys/amd64/vmm/intel:vmm_module_context_49"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_internal_module", srcs = ["vmx_nested_internal.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_50", "//sys/amd64/vmm/intel:vmm_module_context_50"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_link_module", srcs = ["vmx_nested_link.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_51", "//sys/amd64/vmm/intel:vmm_module_context_51"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l1_restore_module", srcs = ["vmx_nested_l1_restore.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_52", "//sys/amd64/vmm/intel:vmm_module_context_52"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_late_entry_module", srcs = ["vmx_nested_late_entry.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_53", "//sys/amd64/vmm/intel:vmm_module_context_53"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_apic_priority_module", srcs = ["vmx_nested_apic_priority.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_54", "//sys/amd64/vmm/intel:vmm_module_context_54"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_access_module", srcs = ["vmx_nested_l2_access.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_55", "//sys/amd64/vmm/intel:vmm_module_context_55"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_access_intel_module", srcs = ["vmx_nested_l2_access_intel.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_24"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_56", "//sys/amd64/vmm/intel:vmm_module_context_56"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_freeze_module", srcs = ["vmx_nested_l2_freeze.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_57", "//sys/amd64/vmm/intel:vmm_module_context_57"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_portable_module", srcs = ["vmx_nested_l2_portable.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_58", "//sys/amd64/vmm/intel:vmm_module_context_58"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_rebuild_module", srcs = ["vmx_nested_l2_rebuild.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_59", "//sys/amd64/vmm/intel:vmm_module_context_59"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_continuation_state_module", srcs = ["vmx_nested_l2_continuation_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_60", "//sys/amd64/vmm/intel:vmm_module_context_60"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_state_module", srcs = ["vmx_nested_l2_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_61", "//sys/amd64/vmm/intel:vmm_module_context_61"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_thaw_module", srcs = ["vmx_nested_l2_thaw.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_62", "//sys/amd64/vmm/intel:vmm_module_context_62"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_l2_thaw_staged_module", srcs = ["vmx_nested_l2_thaw_staged.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_63", "//sys/amd64/vmm/intel:vmm_module_context_63"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_msr_module", srcs = ["vmx_nested_msr.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_64", "//sys/amd64/vmm/intel:vmm_module_context_64"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_msr_state_module", srcs = ["vmx_nested_msr_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_65", "//sys/amd64/vmm/intel:vmm_module_context_65"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_msr_workspace_module", srcs = ["vmx_nested_msr_workspace.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_66", "//sys/amd64/vmm/intel:vmm_module_context_66"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_mtf_owner_module", srcs = ["vmx_nested_mtf_owner.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_67", "//sys/amd64/vmm/intel:vmm_module_context_67"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_pdpte_module", srcs = ["vmx_nested_pdpte.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_68", "//sys/amd64/vmm/intel:vmm_module_context_68"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_reflect_module", srcs = ["vmx_nested_reflect.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_69", "//sys/amd64/vmm/intel:vmm_module_context_69"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_run_module", srcs = ["vmx_nested_run.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_70", "//sys/amd64/vmm/intel:vmm_module_context_70"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_resume_result_module", srcs = ["vmx_nested_resume_result.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_71", "//sys/amd64/vmm/intel:vmm_module_context_71"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_restore_transaction_module", srcs = ["vmx_nested_restore_transaction.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_72", "//sys/amd64/vmm/intel:vmm_module_context_72"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_state_module", srcs = ["vmx_nested_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_73", "//sys/amd64/vmm/intel:vmm_module_context_73"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_startup_policy_module", srcs = ["vmx_nested_startup_policy.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_34"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_6", "//sys/amd64/vmm/intel:vmm_module_context_74"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_startup_transaction_module", srcs = ["vmx_nested_startup_transaction.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_7"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_6", "//sys/amd64/vmm/intel:vmm_module_context_75"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_startup_dispatch_module", srcs = ["vmx_nested_startup_dispatch.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_7"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_6", "//sys/amd64/vmm/intel:vmm_module_context_76"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_timer_module", srcs = ["vmx_nested_timer.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_74", "//sys/amd64/vmm/intel:vmm_module_context_77"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_tsc_module", srcs = ["vmx_nested_tsc.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_75", "//sys/amd64/vmm/intel:vmm_module_context_78"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_tsc_aux_module", srcs = ["vmx_nested_tsc_aux.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_76", "//sys/amd64/vmm/intel:vmm_module_context_79"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_validate_module", srcs = ["vmx_nested_validate.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_77", "//sys/amd64/vmm/intel:vmm_module_context_80"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vpid_owner_module", srcs = ["vmx_nested_vpid_owner.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_78", "//sys/amd64/vmm/intel:vmm_module_context_81"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_module", srcs = ["vmx_nested_vmcs.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_79", "//sys/amd64/vmm/intel:vmm_module_context_82"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_fields_module", srcs = ["vmx_nested_vmcs_fields.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_80", "//sys/amd64/vmm/intel:vmm_module_context_83"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs12_module", srcs = ["vmx_nested_vmcs12.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_81", "//sys/amd64/vmm/intel:vmm_module_context_84"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_module", srcs = ["vmx_nested_vmcs02.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_82", "//sys/amd64/vmm/intel:vmm_module_context_85"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_apply_module", srcs = ["vmx_nested_vmcs02_apply.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_83", "//sys/amd64/vmm/intel:vmm_module_context_86"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_bind_module", srcs = ["vmx_nested_vmcs02_bind.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_84", "//sys/amd64/vmm/intel:vmm_module_context_87"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_intel_module", srcs = ["vmx_nested_vmcs02_intel.c"],
+    deps = ["//sys/vm:acpi_support_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_85", "//sys/amd64/vmm/intel:vmm_module_context_88"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_launch_module", srcs = ["vmx_nested_vmcs_launch.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_86", "//sys/amd64/vmm/intel:vmm_module_context_89"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_lease_module", srcs = ["vmx_nested_vmcs02_lease.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_87", "//sys/amd64/vmm/intel:vmm_module_context_90"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_lease_intel_module", srcs = ["vmx_nested_vmcs02_lease_intel.c"],
+    deps = ["//sys/vm:virtualization_kernel_balloon_headers", "//sys/dev/vmm:vmm_module_context_31"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_88", "//sys/amd64/vmm/intel:vmm_module_context_91"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_program_module", srcs = ["vmx_nested_vmcs02_program.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_89", "//sys/amd64/vmm/intel:vmm_module_context_92"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs02_resources_intel_module", srcs = ["vmx_nested_vmcs02_resources_intel.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/vmm:vmm_module_context_33"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_30", "//sys/amd64/vmm/intel:vmm_module_context_93"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_registry_module", srcs = ["vmx_nested_vmcs_registry.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_90", "//sys/amd64/vmm/intel:vmm_module_context_94"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_registry_state_module", srcs = ["vmx_nested_vmcs_registry_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_91", "//sys/amd64/vmm/intel:vmm_module_context_95"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmcs_store_module", srcs = ["vmx_nested_vmcs_store.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_92", "//sys/amd64/vmm/intel:vmm_module_context_96"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmexit_module", srcs = ["vmx_nested_vmexit.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_93", "//sys/amd64/vmm/intel:vmm_module_context_97"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmexit_handoff_module", srcs = ["vmx_nested_vmexit_handoff.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_94", "//sys/amd64/vmm/intel:vmm_module_context_98"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmentry_handoff_module", srcs = ["vmx_nested_vmentry_handoff.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_95", "//sys/amd64/vmm/intel:vmm_module_context_99"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_nested_vmentry_module", srcs = ["vmx_nested_vmentry.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_32"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_96", "//sys/amd64/vmm/intel:vmm_module_context_100"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_msr_module", srcs = ["vmx_msr.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers", "//sys/vm:acpi_support_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_31", "//sys/amd64/vmm/intel:vmm_module_context_101"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmx_support_module", srcs = ["vmx_support.S"],
+    deps = ["//sys/amd64/vmm/intel:module_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-x", "assembler-with-cpp"], local_defines = ["LOCORE", "VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [], convert_ctf = False)
+
+amd64_generic_module_objects(name = "vmm_vmx_module", srcs = ["vmx.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers", "//sys/dev/vmm:vmm_module_context_35", "//sys/isa:x86_core_kernel_cpu_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_bhyve_snapshot_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_32", "//sys/amd64/vmm/intel:vmm_module_context_102"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vtd_module", srcs = ["vtd.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/pci:x86_core_kernel_legacy_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_33"], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "vmx_layout_namespace_1", hdrs = ["vmcs.h", "vmx.h", "vmx_cpufunc.h", "vmx_nested_attempt.h", "vmx_nested_caps.h", "vmx_nested_compose.h", "vmx_nested_context.h", "vmx_nested_continuation.h", "vmx_nested_continuation_handoff.h", "vmx_nested_continuation_types.h", "vmx_nested_control_msr.h", "vmx_nested_entry.h", "vmx_nested_entry_environment.h", "vmx_nested_entry_environment_intel.h", "vmx_nested_entry_runtime.h", "vmx_nested_ept.h", "vmx_nested_ept_binding.h", "vmx_nested_ept_cache.h", "vmx_nested_ept_fault.h", "vmx_nested_ept_handoff.h", "vmx_nested_ept_memory.h", "vmx_nested_ept_root.h", "vmx_nested_event.h", "vmx_nested_execution.h", "vmx_nested_guest.h", "vmx_nested_hardware_result.h", "vmx_nested_host.h", "vmx_nested_instruction.h", "vmx_nested_instruction_handoff.h", "vmx_nested_internal.h", "vmx_nested_invalidate.h", "vmx_nested_l2_portable.h", "vmx_nested_l2_thaw.h", "vmx_nested_l2_thaw_staged.h", "vmx_nested_late_entry.h", "vmx_nested_msr.h", "vmx_nested_msr_state.h", "vmx_nested_msr_workspace.h", "vmx_nested_mtf_owner.h", "vmx_nested_pdpte.h", "vmx_nested_reflect.h", "vmx_nested_refreeze.h", "vmx_nested_refreeze_types.h", "vmx_nested_run.h", "vmx_nested_runtime.h", "vmx_nested_startup_dispatch.h", "vmx_nested_startup_policy.h", "vmx_nested_startup_transaction.h", "vmx_nested_timer.h", "vmx_nested_tsc.h", "vmx_nested_tsc_aux.h", "vmx_nested_types.h", "vmx_nested_vmcs02.h", "vmx_nested_vmcs02_apply.h", "vmx_nested_vmcs02_bind.h", "vmx_nested_vmcs02_intel.h", "vmx_nested_vmcs02_lease.h", "vmx_nested_vmcs02_program.h", "vmx_nested_vmcs12.h", "vmx_nested_vmcs_launch.h", "vmx_nested_vmcs_registry.h", "vmx_nested_vmentry.h", "vmx_nested_vmentry_handoff.h", "vmx_nested_vmexit.h", "vmx_nested_vmexit_handoff.h", "vmx_nested_vpid_owner.h"], includes = ["."], visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", _VMM_LAYOUT_FLAGS = "AMD64_KERNEL_FLAGS", _VMM_LAYOUT_WARNINGS = "AMD64_KERNEL_WARNING_FLAGS", _VMM_LAYOUT_DEBUG = "AMD64_KERNEL_DEBUG_FLAGS", _VMM_LAYOUT_HEADERS = "AMD64_KERNEL_HEADER_DEPS")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+
+# Original NOSAN_CFLAGS layout recipe retains common symbols; never link this object into vmm.ko.
+cc_library(name = "module_layout_object", srcs = ["vmx_genassym.c"], deps = ["//sys/amd64/vmm:vmx_layout_namespace_0", "//sys/amd64/vmm/intel:vmx_layout_namespace_1", "//sys/dev/vmm:vmx_layout_extra_headers", "//sys/vm:vmx_layout_extra_headers"] + _VMM_LAYOUT_HEADERS + ["//sys/kern:generic_offset_header"], copts = _VMM_LAYOUT_FLAGS + _VMM_LAYOUT_WARNINGS + _VMM_LAYOUT_DEBUG, local_defines = ["VMM_KEEP_STATS", "_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "module_layout", group = ":module_layout_object", out = "module_layout/vmx_genassym.o")
+kernel_constants(name = "module_assym", object = ":module_layout", kind = "assym", output = "module_layout/vmx_assym.h", prerequisites = ["//sys/kern:generic_genoffset_check_object"])
+cc_library(name = "module_assym_header", hdrs = [":module_assym"], strip_include_prefix = "module_layout", visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+exports_files(["vmcs.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_cpufunc.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_attempt.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_caps.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_compose.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_context.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_continuation.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_continuation_handoff.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_continuation_types.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_control_msr.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_entry.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_entry_environment.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_entry_environment_intel.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_entry_runtime.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_binding.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_cache.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_fault.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_handoff.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_memory.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_ept_root.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_event.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_execution.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_guest.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_hardware_result.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_host.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_instruction.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_instruction_handoff.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_internal.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_invalidate.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_l2_portable.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_l2_thaw.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_l2_thaw_staged.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_late_entry.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_msr.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_msr_state.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_msr_workspace.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_mtf_owner.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_pdpte.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_reflect.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_refreeze.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_refreeze_types.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_run.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_runtime.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_startup_dispatch.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_startup_policy.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_startup_transaction.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_timer.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_tsc.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_tsc_aux.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_types.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02_apply.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02_bind.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02_intel.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02_lease.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs02_program.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs12.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs_launch.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmcs_registry.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmentry.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmentry_handoff.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmexit.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vmexit_handoff.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["vmx_nested_vpid_owner.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["ept.h", "vmx_controls.h", "vmx_msr.h", "vmx_nested_apic_priority.h", "vmx_nested_bitmap.h", "vmx_nested_checkpoint.h", "vmx_nested_cold_ept.h", "vmx_nested_cold_reflect.h", "vmx_nested_control_capabilities.h", "vmx_nested_control_capabilities_intel.h", "vmx_nested_decode.h", "vmx_nested_entry_event.h", "vmx_nested_ept_exit.h", "vmx_nested_ept_reflect.h", "vmx_nested_ept_runtime.h", "vmx_nested_exit_capture.h", "vmx_nested_exit_flow.h", "vmx_nested_exposure.h", "vmx_nested_guest_memory_intel.h", "vmx_nested_hardware_entry.h", "vmx_nested_hot_ept.h", "vmx_nested_hot_exit.h", "vmx_nested_instruction_capture.h", "vmx_nested_instruction_gate.h", "vmx_nested_instruction_publish.h", "vmx_nested_instruction_runtime.h", "vmx_nested_l1_restore.h", "vmx_nested_l2_access.h", "vmx_nested_l2_access_intel.h", "vmx_nested_l2_continuation_state.h", "vmx_nested_l2_freeze.h", "vmx_nested_l2_rebuild.h", "vmx_nested_l2_state.h", "vmx_nested_link.h", "vmx_nested_memory.h", "vmx_nested_owner_outcome.h", "vmx_nested_restore_transaction.h", "vmx_nested_resume_result.h", "vmx_nested_state.h", "vmx_nested_state_range.h", "vmx_nested_validate.h", "vmx_nested_vmcs.h", "vmx_nested_vmcs02_lease_intel.h", "vmx_nested_vmcs_fields.h", "vmx_nested_vmcs_registry_state.h", "vmx_nested_vmcs_store.h"], visibility = ["//sys/amd64/vmm:__pkg__"])

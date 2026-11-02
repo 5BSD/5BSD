@@ -5,3 +5,175 @@ kernel_interfaces(srcs = glob(["*_if.m"]))
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(name = "bhyvectl_headers", hdrs = ["vmcb.h"], strip_include_prefix = ".", include_prefix = "amd", visibility = ["//usr.sbin/bhyvectl:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "vmm_module_context_0", hdrs = ["nested_svm_cpuid.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_1", hdrs = ["nested_svm_msr.h", "svm.h", "svm_softc.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_2", hdrs = ["nested_svm_aux.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_3", hdrs = ["nested_svm_bitmap.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_4", hdrs = ["nested_svm_aux.h", "nested_svm_compose.h", "nested_svm_policy.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_5", hdrs = ["nested_svm_bitmap.h", "nested_svm_exit_policy.h", "nested_svm_policy.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_6", hdrs = ["nested_svm_l2_msr.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_7", hdrs = ["nested_svm_aux.h", "nested_svm_bitmap.h", "nested_svm_memory.h", "nested_svm_policy.h", "nested_svm_reflect.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_8", hdrs = ["nested_svm_msr.h", "nested_svm_policy.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_9", hdrs = ["nested_svm_npt.h", "nested_svm_policy.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_10", hdrs = ["nested_svm_npt.h", "nested_svm_npt_runtime.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_11", hdrs = ["nested_svm_npt.h", "nested_svm_npt_root.h", "nested_svm_npt_runtime.h", "npt.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_12", hdrs = ["nested_svm_operand.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_13", hdrs = ["nested_svm_l2_msr.h", "nested_svm_policy.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_14", hdrs = ["nested_svm_aux.h", "nested_svm_policy.h", "nested_svm_reflect.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_15", hdrs = ["amdvi_priv.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_16", hdrs = ["nested_svm_aux.h", "nested_svm_bitmap.h", "nested_svm_compose.h", "nested_svm_exit_policy.h", "nested_svm_l2_msr.h", "nested_svm_memory.h", "nested_svm_msr.h", "nested_svm_npt.h", "nested_svm_npt_root.h", "nested_svm_operand.h", "nested_svm_policy.h", "nested_svm_reflect.h", "npt.h", "svm.h", "svm_msr.h", "svm_softc.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_17", hdrs = ["npt.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_18", hdrs = ["nested_svm_msr.h", "nested_svm_policy.h", "svm.h", "svm_msr.h", "svm_softc.h", "vmcb.h"], includes = ["."],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+filegroup(name = "ivhd_if_module_header", srcs = [":ivhd_if"], output_group = "header")
+cc_library(name = "ivhd_if_headers", hdrs = [":ivhd_if_module_header"], strip_include_prefix = "ivhd_if.generated", visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+filegroup(name = "ivhd_if_module_source", srcs = [":ivhd_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "vmm_vmcb_module", srcs = ["vmcb.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_28", "//sys/amd64/conf:final_drivers_module_opt_bhyve_snapshot_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_34", "//sys/amd64/vmm/amd:vmm_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_aux_module", srcs = ["nested_svm_aux.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_97", "//sys/amd64/vmm/amd:vmm_module_context_2"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_bitmap_module", srcs = ["nested_svm_bitmap.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_98", "//sys/amd64/vmm/amd:vmm_module_context_3"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_compose_module", srcs = ["nested_svm_compose.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_99", "//sys/amd64/vmm/amd:vmm_module_context_4"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_exit_policy_module", srcs = ["nested_svm_exit_policy.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_100", "//sys/amd64/vmm/amd:vmm_module_context_5"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_l2_msr_module", srcs = ["nested_svm_l2_msr.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_101", "//sys/amd64/vmm/amd:vmm_module_context_6"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_memory_module", srcs = ["nested_svm_memory.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/vmm:vmm_module_context_31"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_102", "//sys/amd64/vmm/amd:vmm_module_context_7"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_msr_module", srcs = ["nested_svm_msr.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_103", "//sys/amd64/vmm/amd:vmm_module_context_8"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_npt_module", srcs = ["nested_svm_npt.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_104", "//sys/amd64/vmm/amd:vmm_module_context_9"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_npt_runtime_module", srcs = ["nested_svm_npt_runtime.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_31", "//sys/vm:core_kernel_imgact_shell_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_105", "//sys/amd64/vmm/amd:vmm_module_context_10"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_npt_root_module", srcs = ["nested_svm_npt_root.c"],
+    deps = ["//sys/vm:lowlevel_kernel_exec_machdep_headers", "//sys/dev/vmm:vmm_module_context_31"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_106", "//sys/amd64/vmm/amd:vmm_module_context_11"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_operand_module", srcs = ["nested_svm_operand.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_107", "//sys/amd64/vmm/amd:vmm_module_context_12"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_policy_module", srcs = ["nested_svm_policy.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_108", "//sys/amd64/vmm/amd:vmm_module_context_13"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_nested_svm_reflect_module", srcs = ["nested_svm_reflect.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_109", "//sys/amd64/vmm/amd:vmm_module_context_14"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_amdviiommu_module", srcs = ["amdviiommu.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/vmm/amd:ivhd_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_110", "//sys/amd64/vmm/amd:vmm_module_context_15"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_ivhd_if_module", srcs = [":ivhd_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/vmm/amd:ivhd_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :ivhd_if_module_source)=ivhd_if.c", "-fdebug-prefix-map=$(execpath :ivhd_if_module_source)=ivhd_if.c"], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_svm_module", srcs = ["svm.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers", "//sys/dev/vmm:vmm_module_context_36", "//sys/isa:x86_core_kernel_cpu_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_bhyve_snapshot_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_35", "//sys/amd64/vmm/amd:vmm_module_context_16"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_svm_support_module", srcs = ["svm_support.S"],
+    deps = ["//sys/amd64/vmm/amd:module_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-x", "assembler-with-cpp"], local_defines = ["LOCORE", "VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [], convert_ctf = False)
+
+amd64_generic_module_objects(name = "vmm_npt_module", srcs = ["npt.c"],
+    deps = ["//sys/vm:virtualization_kernel_vmbus_xact_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_include_namespace_111", "//sys/amd64/vmm/amd:vmm_module_context_17"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_ivrs_drv_module", srcs = ["ivrs_drv.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_33", "//sys/amd64/vmm/amd:vmm_module_context_15"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_amdvi_hw_module", srcs = ["amdvi_hw.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/vmm:tracing_module_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/vmm/amd:ivhd_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pcib_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_33", "//sys/amd64/vmm/amd:vmm_module_context_15"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_svm_msr_module", srcs = ["svm_msr.c"],
+    deps = ["//sys/dev/vmm:tracing_module_headers", "//sys/amd64/conf:final_drivers_module_opt_bhyve_snapshot_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = ["//sys/amd64/vmm:vmm_module_context_36", "//sys/amd64/vmm/amd:vmm_module_context_18"], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "svm_layout_namespace_1", hdrs = ["svm.h"], includes = ["."], visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+load("//tools/build/bazel:kernel_amd64.bzl", _VMM_LAYOUT_FLAGS = "AMD64_KERNEL_FLAGS", _VMM_LAYOUT_WARNINGS = "AMD64_KERNEL_WARNING_FLAGS", _VMM_LAYOUT_DEBUG = "AMD64_KERNEL_DEBUG_FLAGS", _VMM_LAYOUT_HEADERS = "AMD64_KERNEL_HEADER_DEPS")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+load("//tools/build/bazel:bsd_kernel_constants.bzl", "kernel_constants")
+
+# Original NOSAN_CFLAGS layout recipe retains common symbols; never link this object into vmm.ko.
+cc_library(name = "module_layout_object", srcs = ["svm_genassym.c"], deps = ["//sys/amd64/vmm:svm_layout_namespace_0", "//sys/amd64/vmm/amd:svm_layout_namespace_1"] + _VMM_LAYOUT_HEADERS + ["//sys/kern:generic_offset_header"], copts = _VMM_LAYOUT_FLAGS + _VMM_LAYOUT_WARNINGS + _VMM_LAYOUT_DEBUG, local_defines = ["VMM_KEEP_STATS", "_KERNEL", "KLD_MODULE", "KLD_TIED", "HAVE_KERNEL_OPTION_HEADERS", "__printf__=__freebsd_kprintf__"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "module_layout", group = ":module_layout_object", out = "module_layout/svm_genassym.o")
+kernel_constants(name = "module_assym", object = ":module_layout", kind = "assym", output = "module_layout/svm_assym.h", prerequisites = ["//sys/kern:generic_genoffset_check_object"])
+cc_library(name = "module_assym_header", hdrs = [":module_assym"], strip_include_prefix = "module_layout", visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+exports_files(["svm.h"], visibility = ["//sys/amd64/vmm:__pkg__"])
+
+exports_files(["amdvi_priv.h", "nested_svm_aux.h", "nested_svm_bitmap.h", "nested_svm_compose.h", "nested_svm_exit_policy.h", "nested_svm_l2_msr.h", "nested_svm_memory.h", "nested_svm_msr.h", "nested_svm_npt.h", "nested_svm_npt_root.h", "nested_svm_npt_runtime.h", "nested_svm_operand.h", "nested_svm_policy.h", "nested_svm_reflect.h", "npt.h", "vmcb.h"], visibility = ["//sys/amd64/vmm:__pkg__"])

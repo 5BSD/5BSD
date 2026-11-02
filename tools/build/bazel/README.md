@@ -182,8 +182,14 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 727 selected directories contain local BUILD
-files, leaving two without: linux64 and vmm. The OpenSSL crypto module passes
+GENERIC audit selects 729 modules; 728 selected directories contain local BUILD
+files, leaving linux64 without. VMM passes both original/native module and layout
+profiles (185 module compilers plus two layout compilers per profile), complete
+plain-byte parity, ordered links and installation. The existing bhyve consumer
+also builds after its file-label migration; see
+[VMM qualification](VMM-MODULE-QUALIFICATION.md). Runtime virtualization, separate
+DWARF, other settings/targets and full-system gates remain open.
+The OpenSSL crypto module passes
 both profiles with nineteen actual compiler contexts, complete plain-byte
 parity, CTF/runtime, link-order and install comparisons; see
 [OpenSSL module qualification](OSSL-MODULE-QUALIFICATION.md).

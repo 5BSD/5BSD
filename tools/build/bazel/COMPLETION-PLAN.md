@@ -1260,3 +1260,17 @@ original Make. Local declaration presence is 727/729; Linux64 and VMM remain.
 Separate DWARF, runtime crypto/dispatch, alternative settings, cross targets and
 full-system/cache/performance gates remain open. Existing native helpers and
 normal format-5 frontend inputs suffice; no new frontend/manual policy is added.
+
+### VMM native module and layout-producer qualification
+
+[Qualification](VMM-MODULE-QUALIFICATION.md): both profiles pass 185 actual module
+compiler contexts, 15,693 consumed occurrences, 204 option-header occurrences,
+complete original object order, installation and runtime ELF/CTF comparisons.
+The full plain module is byte-identical. Two actual layout compilers/extractors
+per profile preserve original common-symbol policy, 227 consumed occurrences and
+full generated-header equality; helper objects are excluded from module linkage.
+The bhyve native consumer build and actual affected source/header/link inputs
+pass after physical-package label relocation. Local declaration presence is
+728/729; Linux64 remains. Separate DWARF, live VM execution, alternative settings,
+cross targets and full-system/pkgbase/bootstrap/cache/performance gates remain
+open. Existing rules/format-5 frontend suffice; no new C/helper/manual option.

@@ -13,7 +13,7 @@ cc_library(name = "param_header", hdrs = ["vmm_param.h"], strip_include_prefix =
 
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "tracing_module_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"],
-    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__"])
+    includes = [], visibility = ["//sys/dev/dttransport:__pkg__", "//sys/cddl/dev/hypertrace:__pkg__", "//sys/security/audit:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/fs/nfsclient:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
@@ -25,3 +25,214 @@ bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["vmm_dirty_log
 # Physical prerequisites for native DTrace built-in built-ins.
 bsd_source_headers(name = "dtrace_builtins_kernel_dtrace_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"],
     visibility = ["//sys/cddl/compat/opensolaris:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtmalloc:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/dtrace/x86:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/profile:__pkg__", "//sys/cddl/dev/sdt:__pkg__", "//sys/cddl/dev/systrace:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_0", hdrs = ["vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_snapshot_envelope.h", "vmm_snapshot_state.h", "vmm_startup_controller.h", "vmm_startup_entry_owner.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_1", hdrs = ["vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_collector.h", "vmm_dirty_log_machdep.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_2", hdrs = ["vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_3", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_4", hdrs = ["vmm_address_range.h", "vmm_event_checkpoint.h", "vmm_event_ingress.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_5", hdrs = ["vmm_address_range.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_startup_controller.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_6", hdrs = ["vmm_address_range.h", "vmm_event_ingress.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_7", hdrs = ["vmm_address_range.h", "vmm_startup_event.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__", "//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_8", hdrs = ["vmm_address_range.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_9", hdrs = ["vmm_address_range.h", "vmm_startup_entry_owner.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_10", hdrs = ["vmm_address_range.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_11", hdrs = ["vmm_address_range.h", "vmm_startup_controller.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_12", hdrs = ["vmm_address_range.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_13", hdrs = ["vmm_startup_run_request.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_14", hdrs = ["vmm_address_range.h", "vmm_event_wait.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_15", hdrs = ["vmm_dirty_log.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_16", hdrs = ["vmm_address_range.h", "vmm_dirty_log.h", "vmm_dirty_log_collector.h", "vmm_dirty_log_owner.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_17", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_collector.h", "vmm_dirty_log_machdep.h", "vmm_dirty_log_owner.h", "vmm_mem.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_18", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_map.h", "vmm_dirty_log_owner.h", "vmm_mem.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_19", hdrs = ["vmm_address_range.h", "vmm_dirty_log.h", "vmm_dirty_log_map.h", "vmm_dirty_log_owner.h", "vmm_mem.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_20", hdrs = ["vmm_address_range.h", "vmm_dirty_log.h", "vmm_dirty_log_request.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_21", hdrs = ["vmm_address_range.h", "vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_collector.h", "vmm_dirty_log_map.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_22", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_23", hdrs = ["vmm_address_range.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_entry_owner.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_24", hdrs = ["vmm_address_range.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_26", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_27", hdrs = ["vmm_dirty_log_request.h", "vmm_ktr.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_28", hdrs = ["vmm_ktr.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_29", hdrs = ["vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_30", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_31", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/amd64/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_32", hdrs = ["vmm_address_range.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_33", hdrs = ["vmm_address_range.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_34", hdrs = ["vmm_startup_event.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_35", hdrs = ["vmm_address_range.h", "vmm_dev.h", "vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_dirty_log_request.h", "vmm_event_checkpoint.h", "vmm_event_coordinator.h", "vmm_event_ingress.h", "vmm_event_wait.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_controller.h", "vmm_startup_entry_owner.h", "vmm_startup_event.h", "vmm_startup_handshake.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/intel:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_36", hdrs = ["vmm_dirty_log.h", "vmm_dirty_log_owner.h", "vmm_ktr.h", "vmm_mem.h", "vmm_param.h", "vmm_startup_entry_owner.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_stat.h", "vmm_vm.h"], includes = [],
+    visibility = ["//sys/amd64/vmm/amd:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_37", hdrs = ["vmm_address_range.h", "vmm_snapshot_envelope.h"], includes = [],
+    visibility = ["//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_38", hdrs = ["vmm_snapshot_envelope.h", "vmm_snapshot_state.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__", "//sys/dev/vmm:__pkg__"])
+
+bsd_source_headers(name = "vmm_module_context_39", hdrs = ["vmm_snapshot_envelope.h"], includes = [],
+    visibility = ["//sys/amd64/vmm:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "vmm_vmm_dev_module", srcs = ["vmm_dev.c"],
+    deps = ["//sys/vm:vmm_module_context_1", "//sys/dev/vmm:vmm_module_context_1", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/ddb:core_kernel_kern_cons_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_event_checkpoint_module", srcs = ["vmm_event_checkpoint.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_event_coordinator_module", srcs = ["vmm_event_coordinator.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_5"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_event_ingress_module", srcs = ["vmm_event_ingress.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_6"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_event_module", srcs = ["vmm_startup_event.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_7"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_mode_module", srcs = ["vmm_startup_mode.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_8"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_entry_owner_module", srcs = ["vmm_startup_entry_owner.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_9"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_handshake_module", srcs = ["vmm_startup_handshake.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_10"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_controller_module", srcs = ["vmm_startup_controller.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_11"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_request_module", srcs = ["vmm_startup_request.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_12"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_startup_run_request_module", srcs = ["vmm_startup_run_request.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_13"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_event_wait_module", srcs = ["vmm_event_wait.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_14"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_dirty_log_module", srcs = ["vmm_dirty_log.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_15"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_dirty_log_collector_module", srcs = ["vmm_dirty_log_collector.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_16"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_dirty_log_map_module", srcs = ["vmm_dirty_log_map.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_18"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_dirty_log_owner_module", srcs = ["vmm_dirty_log_owner.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_19"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_dirty_log_request_module", srcs = ["vmm_dirty_log_request.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_20"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_mem_module", srcs = ["vmm_mem.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_21", "//sys/vm:vmm_module_context_4"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_stat_module", srcs = ["vmm_stat.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_22"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_vm_module", srcs = ["vmm_vm.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_23", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_snapshot_envelope_module", srcs = ["vmm_snapshot_envelope.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_37"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "vmm_vmm_snapshot_state_module", srcs = ["vmm_snapshot_state.c"],
+    deps = ["//sys/dev/vmm:vmm_module_context_38"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["VMM_KEEP_STATS"], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+bsd_source_headers(name = "vmx_layout_extra_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [], visibility = ["//sys/amd64/vmm/intel:__pkg__"])
