@@ -20,7 +20,9 @@
  *   - the source is never resumed once retirement began;
  *   - a destination never resumes unless the source was destroyed first;
  *   - a destination resumes at most once;
- *   - a committed source exits with BHYVE_EXIT_SUSPEND only after retirement;
+ *   - a committed source exits with BHYVE_EXIT_SUSPEND only after retirement,
+ *     and only after its IPC handler returned a reply for the controller
+ *     (ipc.c sends it, then exits with the status the handler requested);
  *   - an IPC reply that reports source_runnable describes a source whose
  *     CPUs and devices are running and that was never destroyed;
  *   - a non-runnable source is quarantined (retiring) or wedged (repairable).
@@ -979,6 +981,15 @@ ipc_wedge_vm(void)
 	CHECK(!quarantined);
 	wedged = 1;
 	event("E wedged");
+}
+
+/* ipc.c contract: the status is applied only after the reply was sent. */
+static int ipc_exit_status = -1;
+void
+ipc_exit_after_reply(int status)
+{
+	ipc_exit_status = status;
+	event("E exit_after_reply %d", status);
 }
 
 int
@@ -2051,7 +2062,8 @@ run_source(const struct scenario *s, int fd)
 	}
 	reply = ipc_call("migrate", request);
 	nvlist_destroy(request);
-	/* Only a failed migration returns: record the reply and the state. */
+	/* Every migration returns: record the reply (the controller's answer)
+	 * and the state, as ipc.c sends it. */
 	snprintf(path, sizeof(path), "%s/source-reply", workdir);
 	out = fopen(path, "w");
 	CHECK(out != NULL);
@@ -2072,6 +2084,9 @@ run_source(const struct scenario *s, int fd)
 	fclose(out);
 	event("E source_returned");
 	nvlist_destroy(reply);
+	/* ipc.c ends bhyve after the reply when the handler asked for it. */
+	if (ipc_exit_status >= 0)
+		exit(ipc_exit_status);
 	/* The driver decides whether the operator recovers through this process. */
 	char command = 'X';
 	(void)read(control_fd, &command, 1);
@@ -2389,9 +2404,14 @@ run_scenario(const struct scenario *s, const char *fault, struct outcome *o)
 	for (int i = 0; i < 6000 && !source_done; i++) {
 		if (waitpid(source, &status, WNOHANG) == source)
 			source_done = true;
-		else if (access(reply_path, F_OK) == 0 && count_events("S E source_returned") > 0)
+		else if (access(reply_path, F_OK) == 0 && count_events("S E source_returned") > 0) {
+			/* A committed source exits once it has answered. */
+			if (count_events("S E exit_after_reply") > 0) {
+				CHECK(waitpid(source, &status, 0) == source);
+				source_done = true;
+			}
 			break;
-		else
+		} else
 			usleep(2000);
 	}
 	for (int i = 0; i < 300 && !dest_done; i++) {
@@ -2439,7 +2459,7 @@ run_scenario(const struct scenario *s, const char *fault, struct outcome *o)
 	o->recover_error = kv_int("source-recover", "error_code");
 	close(event_fd);
 	event_fd = -1;
-	o->source_replied = o->source_status == 0;
+	o->source_replied = count_events("S E source_returned") > 0;
 	o->runnable = kv_int("source-reply", "runnable");
 	o->phase = kv_int("source-reply", "phase");
 	o->reason = kv_int("source-reply", "reason");
@@ -2459,9 +2479,17 @@ run_scenario(const struct scenario *s, const char *fault, struct outcome *o)
 		o->dest_blob = strtoul(v, NULL, 10);
 	}
 	check_events(s->name, o);
-	/* Committed source: exit status 5 only after its own destruction. */
-	if (o->source_status == BHYVE_EXIT_SUSPEND)
+	/* Committed source: exit status 5 only after its own destruction, and
+	 * never before bhyvectl has its answer (a committed handoff whose
+	 * controller saw ENOTCONN is reported as failed to the operator). */
+	if (o->source_status == BHYVE_EXIT_SUSPEND) {
 		CHECK(o->events_source_destroyed == 1);
+		if (!o->source_replied)
+			fprintf(stderr, "%s: committed source exited without "
+			    "answering the migrate command\n", s->name);
+		CHECK(o->source_replied && o->runnable == 0);
+		CHECK(strstr(o->state, "destroyed 1") != NULL);
+	}
 	else
 		CHECK(o->source_status == 0 || (o->source_status == 77 && o->fault_fired));
 	if (o->source_replied && o->runnable == 1) {
@@ -2556,8 +2584,9 @@ test_success(const struct scenario *s)
 	CHECK(o.dest_blob == MIGRATE_BLOB_HDR + META_LEN + KERNEL_LEN +
 	    (s->tracing ? HYPERTRACE_SESSION_RECORD_SIZE : 0));
 	/* INTENT and retirement each assert the irreversible quarantine (every
-	 * migration records INTENT since protocol 2's journal). */
-	CHECK(count_events("S E quarantined") == 2);
+	 * migration records INTENT since protocol 2's journal), and the handler
+	 * reasserts it before answering for the retired source. */
+	CHECK(count_events("S E quarantined") == 3);
 	CHECK(count_events("S E gdb_fenced") == 1 && count_events("S E gdb_retired") == 1);
 	printf("success %-24s collections %d, RAM and %zu-byte state equal\n", s->name,
 	    collects, o.dest_blob);

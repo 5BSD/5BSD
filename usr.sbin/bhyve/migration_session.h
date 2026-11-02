@@ -496,7 +496,8 @@ struct migration_session_config {
  *                     rollback; failure keeps the source quiesced.
  *   so_activate_relay  start the prepared relay after RELEASE.  Failure is
  *                     terminal: the source must still become defunct.
- *   so_defunct        finish source teardown after RELEASE (post-commit)
+ *   so_defunct        finish source teardown after RELEASE (post-commit);
+ *                     production ends bhyve once the IPC reply is sent
  */
 #include "migration_recovery_phase.h"
 #include "migration_commit.h"
