@@ -5,6 +5,26 @@ checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
 remains supported for ports and third-party software. BIP remains out of scope.
 
+## Latest Intel Ethernet checkpoint (2026-11-02)
+
+Seven more amd64 modules pass two native compiler/input/link and artifact/install
+profiles. Each binds 118 actual uncached compiler actions and 21,775 original and
+native-consumed dependencies; all seven plain modules are whole-file identical
+to Make. CTF/debug sections, CTF payloads, split-debug CRCs and seventeen install
+records pass; ten plain records pass. Three relative aliases follow configured
+kernel directories. The common helper has positive archive and negative prefix
+tests; existing archive and prior network outputs remain exact. Actual Make
+staging also qualifies the empty-alias-package-tag correction and explicit
+package/tag overrides. See
+[INTEL-ETHERNET-MODULES-QUALIFICATION.md](INTEL-ETHERNET-MODULES-QUALIFICATION.md).
+
+Local BUILD presence is 550/729 selected amd64 leaves (179 missing), not whole
+system qualification. ARM64/RISC-V, complete world/rescue/pkgbase/hardware,
+bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. The maintained build-bsd frontend exercises these changes with existing
+format-5 inputs; module rules, tests and manual are updated. Make stays default;
+BIP remains excluded.
+
 ## Latest network-module checkpoint (2026-11-02)
 
 Nine amd64 network/RDMA leaves now pass native compiler/input/link and artifact/

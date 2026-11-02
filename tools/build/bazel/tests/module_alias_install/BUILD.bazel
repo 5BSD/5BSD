@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load(":tests.bzl", "failure_test")
+
+_PREFIX = "/configured/kernel"
+string_flag(name = "directory", build_setting_default = _PREFIX)
+bsd_install_file(name = "module", src = "payload.txt", destination = "/driver.ko",
+    destination_prefixes = [":directory"], owner = "root", group = "wheel",
+    mode = "0444", install_tags = ["package=kernel"])
+bsd_install_link(name = "alias", destination = "/alias.ko", target = "driver.ko",
+    destination_prefixes = [":directory"], kind = "symlink", owner = "root",
+    group = "wheel", mode = "0755", install_tags = ["package=kernel"])
+bsd_install_manifest(name = "manifest", entries = [":module", ":alias"])
+filegroup(name = "manifest_file", srcs = [":manifest"], output_group = "manifest")
+bsd_install_archive(name = "archive", manifests = [":manifest"], epoch = 42,
+    users = {"root": "0"}, groups = {"wheel": "0"},
+    directories = {p: '{"owner":"root","group":"wheel","mode":"0755"}' for p in ["/", "/configured", _PREFIX]},
+    python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+bsd_host_artifact_test(name = "archive_test", src = "check.py", data = [":manifest_file", ":archive", "payload.txt"],
+    args = ["--manifest", "$(location :manifest_file)", "--archive", "$(location :archive)",
+        "--payload", "$(location payload.txt)", "--directory", _PREFIX])
+
+string_flag(name = "relative_directory", build_setting_default = "relative/kernel")
+string_flag(name = "traversal_directory", build_setting_default = "/configured/../kernel")
+[bsd_install_link(name = name + "_link", destination = "/alias.ko", target = "driver.ko",
+    destination_prefixes = [":" + name + "_directory"], kind = "symlink", owner = "root",
+    group = "wheel", mode = "0755", install_tags = ["package=kernel"], tags = ["manual"])
+    for name in ["relative", "traversal"]]
+failure_test(name = "relative_prefix_rejected_test", target_under_test = ":relative_link",
+    expected = "installation prefixes must be absolute directory strings or empty")
+failure_test(name = "traversal_prefix_rejected_test", target_under_test = ":traversal_link",
+    expected = "installation destination must be absolute without traversal")

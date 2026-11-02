@@ -367,6 +367,14 @@ CLEANFILES+= ${PROG} ${KMOD}.kld ${OBJS}
 KMODTAGS?=	package=${PACKAGE:Ukernel}
 KMODDBGTAGS?=	package=${PACKAGE:Ukernel},dbg
 
+# bsd.links.mk uses TAGS for compatibility aliases. Derive its default from
+# the module tags so unset userland PACKAGE does not create package= entries.
+.if defined(NO_ROOT)
+.if !defined(TAGS) || ! ${TAGS:Mpackage=*}
+TAGS+=		${KMODTAGS:S/,/ /g}
+.endif
+.endif
+
 .if defined(DEBUG_FLAGS) && ${MK_SPLIT_KERNEL_DEBUG} != "no"
 CLEANFILES+= ${FULLPROG} ${PROG}.debug
 .endif

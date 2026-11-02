@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_iavf", objects = ["//sys/dev/iavf:if_iavf_if_iavf_iflib_module_object_files", "//sys/dev/iavf:if_iavf_iavf_lib_module_object_files", "//sys/dev/iavf:if_iavf_iavf_osdep_module_object_files", "//sys/dev/iavf:if_iavf_iavf_txrx_iflib_module_object_files", "//sys/dev/iavf:if_iavf_iavf_adminq_module_object_files"], object_order = ["if_iavf_iflib.o", "iavf_lib.o", "iavf_osdep.o", "iavf_txrx_iflib.o", "iavf_vc_common.o", "iavf_vc_iflib.o", "iavf_adminq.o", "iavf_common.o"], export_all = False, package = "kernel", aliases = ["if_ixlv.ko"])

@@ -3898,6 +3898,10 @@ Debuglink CRC and native kldxref metadata checks pass. No module loading is impl
 .Pp
 .Dq //sys/modules/nullfs:install_manifest
 records root/wheel ownership, 0444 modes and kernel/debug package tags.
+Declared kernel-module compatibility aliases are relative symbolic links in the
+selected module directory. Installation manifests retain their target, owner,
+group, mode and module package tag; they follow the configured directory without
+embedding /boot/modules in the alias declarations.
 The format-5 settings
 .Dq //tools/build/bazel/config:kernel_directory
 and

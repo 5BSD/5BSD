@@ -47,3 +47,42 @@ amd64_generic_kernel_objects(name = "generic_ethernet_iavf_vc_common", srcs = ["
 amd64_generic_kernel_objects(name = "generic_ethernet_iavf_vc_iflib", srcs = ["iavf_vc_iflib.c"],
     deps = ["//sys/contrib/ck:ethernet_kernel_if_alc_headers", "//sys/dev/iavf:ethernet_kernel_iavf_lib_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/net:ethernet_kernel_if_igc_headers", "//sys/netinet:ethernet_kernel_if_iavf_iflib_headers", "//sys/netinet6:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/net:ethernet_kernel_ifdi_if_headers", "//sys/amd64/conf:ethernet_kernel_opt_inet_header", "//sys/amd64/conf:ethernet_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_rss_header", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "intel_ethernet_module_context_0", hdrs = ["iavf_adminq.h", "iavf_adminq_cmd.h", "iavf_alloc.h", "iavf_debug.h", "iavf_devids.h", "iavf_drv_info.h", "iavf_iflib.h", "iavf_lib.h", "iavf_opts.h", "iavf_osdep.h", "iavf_prototype.h", "iavf_register.h", "iavf_status.h", "iavf_sysctls_common.h", "iavf_sysctls_iflib.h", "iavf_type.h", "iavf_vc_common.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/iavf:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_1", hdrs = ["iavf_adminq.h", "iavf_adminq_cmd.h", "iavf_alloc.h", "iavf_debug.h", "iavf_devids.h", "iavf_iflib.h", "iavf_lib.h", "iavf_opts.h", "iavf_osdep.h", "iavf_prototype.h", "iavf_register.h", "iavf_status.h", "iavf_type.h", "iavf_vc_common.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/iavf:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_2", hdrs = ["iavf_adminq.h", "iavf_adminq_cmd.h", "iavf_alloc.h", "iavf_debug.h", "iavf_devids.h", "iavf_iflib.h", "iavf_lib.h", "iavf_opts.h", "iavf_osdep.h", "iavf_prototype.h", "iavf_register.h", "iavf_status.h", "iavf_type.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/iavf:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_3", hdrs = ["iavf_adminq.h", "iavf_adminq_cmd.h", "iavf_alloc.h", "iavf_debug.h", "iavf_devids.h", "iavf_iflib.h", "iavf_lib.h", "iavf_opts.h", "iavf_osdep.h", "iavf_prototype.h", "iavf_register.h", "iavf_status.h", "iavf_txrx_common.h", "iavf_type.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/iavf:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_4", hdrs = ["iavf_adminq.h", "iavf_adminq_cmd.h", "iavf_alloc.h", "iavf_debug.h", "iavf_devids.h", "iavf_osdep.h", "iavf_prototype.h", "iavf_register.h", "iavf_status.h", "iavf_type.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/iavf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_iavf_if_iavf_iflib_module", srcs = ["if_iavf_iflib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/iavf:intel_ethernet_module_context_0", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_iavf_iflib_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iavf_iavf_lib_module", srcs = ["iavf_lib.c", "iavf_vc_common.c", "iavf_vc_iflib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/iavf:intel_ethernet_module_context_1", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_iavf_iflib_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iavf_iavf_osdep_module", srcs = ["iavf_osdep.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/iavf:intel_ethernet_module_context_2", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_iavf_iflib_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iavf_iavf_txrx_iflib_module", srcs = ["iavf_txrx_iflib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/iavf:intel_ethernet_module_context_3", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_iavf_iflib_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iavf_iavf_adminq_module", srcs = ["iavf_adminq.c", "iavf_common.c"],
+    deps = ["//sys/dev/iavf:intel_ethernet_module_context_4", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

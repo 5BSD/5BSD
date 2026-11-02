@@ -10322,3 +10322,16 @@ Make; libutil member runtime code/relocations/symbols match. The first link fail
 on omitted libutil and ran no tests; that evidence is retained. No tracing is
 activated, no full rescue install is claimed, and libutil's existing compiler-
 policy discrepancy remains a distinct follow-up gate.
+
+
+### Intel Ethernet modules (2026-11-02)
+
+The bounded source scan of 99 C files and two KOBJ schemas records twenty
+DTrace/SDT/CTR/audit-call candidate lines, including comments and macros. Four
+compiled modules (if_em, if_ice, if_igc, if_ix) preserve their SDT tracepoint/probe
+sections and relocation payloads against Make. Other modules lack these sections
+in the recorded profile; inherited subsystem events and alternate configurations
+are separate questions. No new probes or live event qualification. Review shared
+attach/reset/recovery, VF lifecycle, firmware error/logging and queue allocation
+paths for useful events without per-packet logging or payload/credential leakage.
+See INTEL-ETHERNET-MODULES-QUALIFICATION.md for evidence and limits.

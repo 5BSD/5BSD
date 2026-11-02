@@ -2,15 +2,20 @@
 load("//tools/build/bazel:bsd_kernel_module.bzl", "bsd_module_link", "bsd_module_exports")
 load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_merge")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
-load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_link", "bsd_install_manifest")
 
 
 _KERNEL_CTF = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//conditions:default": False})
 
 def kernel_module_artifacts(module, objects, emulation, script = None, linkopts = [], shared = False,
                             prefix = "", exports = [], export_all = False, package = "kernel",
-                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = []):
+                            linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], object_order = [], aliases = []):
     """Preserve the maintained link/CTF/export/debug/install stage ordering."""
+    if len(depset(aliases).to_list()) != len(aliases):
+        fail("duplicate module installation alias")
+    for alias in aliases:
+        if not alias or "/" in alias or alias in [".", "..", module + ".ko"]:
+            fail("module installation aliases must be distinct basenames")
     if export_all and exports:
         fail("export_all and an explicit export list are mutually exclusive")
     bsd_module_link(name = prefix + "generic_link", objects = objects, object_order = object_order,
@@ -52,8 +57,15 @@ def kernel_module_artifacts(module, objects, emulation, script = None, linkopts 
     bsd_install_file(name = prefix + "install_debug", src = ":" + prefix + "generic_debug", destination = "/%s.ko.debug" % module,
         destination_prefixes = ["//tools/build/bazel/config:kernel_debug_directory", "//tools/build/bazel/config:kernel_directory"],
         owner = "root", group = "wheel", mode = "0444", install_tags = ["package=" + package, "dbg"])
+    for index, alias in enumerate(aliases):
+        bsd_install_link(name = prefix + "install_alias_" + str(index),
+            destination = "/" + alias,
+            destination_prefixes = ["//tools/build/bazel/config:kernel_directory"],
+            target = module + ".ko", kind = "symlink",
+            owner = "root", group = "wheel", mode = "0755",
+            install_tags = ["package=" + package])
     bsd_install_manifest(name = prefix + "install_manifest",
-        entries = [":" + prefix + "install_module"] + select({
+        entries = [":" + prefix + "install_module"] + [":" + prefix + "install_alias_" + str(index) for index in range(len(aliases))] + select({
             "//tools/build/bazel/config:kernel_debug_enabled": [":" + prefix + "install_debug"],
             "//conditions:default": [],
         }), visibility = ["//visibility:public"])

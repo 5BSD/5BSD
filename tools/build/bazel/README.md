@@ -48065,3 +48065,24 @@ now runs real cat/echo/head through original dispatch and crunchide objects.
 Main and full ELF equal an original generated-Make control with the same native
 libraries/startup, and ten real runtime methods pass. Existing libutil compile-
 policy correction is a separate next gate; full rescue install remains open.
+
+
+## Latest Intel Ethernet checkpoint (2026-11-02)
+
+Seven more amd64 modules pass two native compiler/input/link and artifact/install
+profiles. Each binds 118 actual uncached compiler actions and 21,775 original and
+native-consumed dependencies; all seven plain modules are whole-file identical
+to Make. CTF/debug sections, CTF payloads, split-debug CRCs and seventeen install
+records pass; ten plain records pass. Three relative aliases follow configured
+kernel directories. The common helper has positive archive and negative prefix
+tests; existing archive and prior network outputs remain exact. Actual Make
+staging also qualifies the empty-alias-package-tag correction and explicit
+package/tag overrides. See
+[INTEL-ETHERNET-MODULES-QUALIFICATION.md](INTEL-ETHERNET-MODULES-QUALIFICATION.md).
+
+Local BUILD presence is 550/729 selected amd64 leaves (179 missing), not whole
+system qualification. ARM64/RISC-V, complete world/rescue/pkgbase/hardware,
+bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. The maintained build-bsd frontend exercises these changes with existing
+format-5 inputs; module rules, tests and manual are updated. Make stays default;
+BIP remains excluded.

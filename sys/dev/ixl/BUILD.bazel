@@ -68,3 +68,53 @@ amd64_generic_kernel_objects(name = "generic_ethernet_i40e_adminq", srcs = ["i40
 amd64_generic_kernel_objects(name = "generic_ethernet_i40e_dcb", srcs = ["i40e_dcb.c"],
     deps = ["//sys/dev/ixl:ethernet_kernel_i40e_dcb_headers", "//sys/dev/pci:ethernet_kernel_if_alc_headers", "//sys/vm:ethernet_kernel_if_igc_headers", "//sys/kern:ethernet_kernel_bus_if_headers", "//sys/kern:ethernet_kernel_device_if_headers", "//sys/dev/pci:ethernet_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "intel_ethernet_module_context_0", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_dcb.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_prototype.h", "i40e_register.h", "i40e_status.h", "i40e_type.h", "ixl.h", "ixl_debug.h", "ixl_pf.h", "ixl_pf_iov.h", "ixl_pf_qmgr.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_1", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_dcb.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_prototype.h", "i40e_register.h", "i40e_status.h", "i40e_type.h", "ixl.h", "ixl_debug.h", "ixl_pf.h", "ixl_pf_qmgr.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_2", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_prototype.h", "i40e_register.h", "i40e_status.h", "i40e_type.h", "ixl.h", "ixl_debug.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_3", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_prototype.h", "i40e_register.h", "i40e_status.h", "i40e_type.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_4", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_register.h", "i40e_status.h", "i40e_type.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+bsd_source_headers(name = "intel_ethernet_module_context_5", hdrs = ["i40e_adminq.h", "i40e_adminq_cmd.h", "i40e_alloc.h", "i40e_dcb.h", "i40e_devids.h", "i40e_hmc.h", "i40e_lan_hmc.h", "i40e_osdep.h", "i40e_prototype.h", "i40e_register.h", "i40e_status.h", "i40e_type.h", "virtchnl.h"], includes = [],
+    visibility = ["//sys/dev/ixl:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "if_ixl_ixl_pf_main_module", srcs = ["ixl_pf_main.c", "ixl_pf_iov.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ixl:intel_ethernet_module_context_0", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_ixl_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_ixl_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_ixl_pf_qmgr_module", srcs = ["ixl_pf_qmgr.c", "ixl_pf_i2c.c", "ixl_pf_iflib.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ixl:intel_ethernet_module_context_1", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_ixl_headers", "//sys/netinet6:tracing_core_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_ixl_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_ixl_txrx_module", srcs = ["ixl_txrx.c", "i40e_osdep.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ixl:intel_ethernet_module_context_2", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_em_headers", "//sys/netinet:ethernet_kernel_if_ixl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_ixl_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_if_ixl_module", srcs = ["if_ixl.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/ixl:intel_ethernet_module_context_0", "//sys/vm:pci_ethernet_headers", "//sys/net:intel_nic_kernel_if_igb_iov_headers", "//sys/netinet:ethernet_kernel_if_ixl_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/pci:intel_nic_kernel_if_em_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:ethernet_kernel_opt_ixl_header", "//sys/amd64/conf:core_kernel_opt_rss_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_i40e_common_module", srcs = ["i40e_common.c", "i40e_nvm.c", "i40e_adminq.c", "i40e_lan_hmc.c"],
+    deps = ["//sys/dev/ixl:intel_ethernet_module_context_3", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_i40e_hmc_module", srcs = ["i40e_hmc.c"],
+    deps = ["//sys/dev/ixl:intel_ethernet_module_context_4", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_ixl_i40e_dcb_module", srcs = ["i40e_dcb.c"],
+    deps = ["//sys/dev/ixl:intel_ethernet_module_context_5", "//sys/vm:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
