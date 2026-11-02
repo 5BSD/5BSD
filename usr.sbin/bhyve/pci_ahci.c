@@ -2306,7 +2306,7 @@ out:
 	DPRINTF("%s exit", __func__);
 }
 
-static void
+static int
 pci_ahci_ioreq_init(struct ahci_port *pr)
 {
 	struct ahci_ioreq *vr;
@@ -2315,6 +2315,13 @@ pci_ahci_ioreq_init(struct ahci_port *pr)
 	pr->ioqsz = blockif_queuesz(pr->bctx);
 	pr->ioreq = calloc(pr->ioqsz, sizeof(struct ahci_ioreq));
 	pr->ioiov = calloc(pr->ioqsz, sizeof(struct iovec) * BLOCKIF_IOV_MAX);
+	if (pr->ioreq == NULL || pr->ioiov == NULL) {
+		free(pr->ioreq);
+		free(pr->ioiov);
+		pr->ioreq = NULL;
+		pr->ioiov = NULL;
+		return (ENOMEM);
+	}
 	STAILQ_INIT(&pr->iofhd);
 	STAILQ_INIT(&pr->iodhd);
 
@@ -2335,6 +2342,7 @@ pci_ahci_ioreq_init(struct ahci_port *pr)
 	}
 
 	TAILQ_INIT(&pr->iobhd);
+	return (0);
 }
 
 static void
@@ -2812,7 +2820,11 @@ pci_ahci_init(struct pci_devinst *pi, nvlist_t *nvl)
 		 * Allocate blockif request structures and add them
 		 * to the free list
 		 */
-		pci_ahci_ioreq_init(&sc->port[p]);
+		if (pci_ahci_ioreq_init(&sc->port[p]) != 0) {
+			sc->ports = p + 1;
+			ret = 1;
+			goto open_fail;
+		}
 
 		sc->pi |= (UINT32_C(1) << p);
 		if (sc->port[p].ioqsz < slots)

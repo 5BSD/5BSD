@@ -65,6 +65,8 @@ static unsigned int connection_set_discard_calls;
 static unsigned int connection_set_reset_complete_calls;
 static unsigned int connection_set_notification_calls;
 static int connection_progress_error;
+static bool connection_progress_readable;
+static bool connection_progress_writable;
 static int connection_control_status_result;
 static int connection_begin_quiesce_result;
 static int connection_begin_thaw_saved_error;
@@ -365,9 +367,11 @@ virtio_fs_connection_fd(
 int
 virtio_fs_connection_progress(
     struct virtio_fs_connection *connection __unused,
-    bool readable __unused, bool writable __unused)
+    bool readable, bool writable)
 {
 
+	connection_progress_readable = readable;
+	connection_progress_writable = writable;
 	return (connection_progress_error);
 }
 
@@ -1967,6 +1971,8 @@ ATF_TC_BODY(event_processes_progress_and_completions, tc)
 	pci_vtfs_event(-1, EVF_READ, &sc);
 	ATF_CHECK(sc.vsc_callbacks_set);
 	ATF_CHECK_EQ(vi_pci_modern_queue_reset_complete_calls, 1U);
+	ATF_CHECK(connection_progress_readable &&
+	    !connection_progress_writable);
 
 	/* A backend progress error requests a reset. */
 	sc.vsc_callbacks_set = false;
@@ -1974,6 +1980,23 @@ ATF_TC_BODY(event_processes_progress_and_completions, tc)
 	needs_reset_calls = 0;
 	pci_vtfs_event(-1, EVF_WRITE, &sc);
 	ATF_CHECK(needs_reset_calls >= 1U);
+	ATF_CHECK(!connection_progress_readable &&
+	    connection_progress_writable);
+
+	/*
+	 * The deadline timer tries both directions; a peer that still cannot
+	 * move (ETIMEDOUT) requests a reset, one that moved does not.
+	 */
+	connection_progress_error = ETIMEDOUT;
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_TIMER, &sc);
+	ATF_CHECK(connection_progress_readable &&
+	    connection_progress_writable);
+	ATF_CHECK(needs_reset_calls >= 1U);
+	connection_progress_error = EAGAIN;
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_TIMER, &sc);
+	ATF_CHECK_EQ(needs_reset_calls, 0U);
 
 	/* A reconnecting device drops the event immediately. */
 	connection_progress_error = 0;

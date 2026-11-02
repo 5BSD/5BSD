@@ -490,8 +490,12 @@ pci_vtfs_event(int fd __unused, enum ev_type type, void *arg)
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		return;
 	}
+	/*
+	 * The deadline timer tries both directions: a stalled frame fails
+	 * only if it still cannot move.
+	 */
 	error = virtio_fs_connection_progress(sc->vsc_connection,
-	    type == EVF_READ, type == EVF_WRITE);
+	    type != EVF_WRITE, type != EVF_READ);
 	if (error != 0 && error != EAGAIN && error != EWOULDBLOCK) {
 		vi_set_needs_reset(&sc->vsc_vs);
 		VIRTIO_PROBE_FS_BACKEND("vtfs", "progress",

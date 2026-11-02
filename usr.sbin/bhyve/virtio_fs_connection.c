@@ -523,32 +523,6 @@ virtio_fs_connection_deadline(const struct virtio_fs_connection *connection,
 }
 
 int
-virtio_fs_connection_expire(struct virtio_fs_connection *connection,
-    const struct timespec *now)
-{
-	struct timespec current, deadline;
-	int error;
-
-	if (connection == NULL)
-		return (EINVAL);
-	if (!virtio_fs_connection_deadline(connection, &deadline))
-		return (0);
-	if (now == NULL) {
-		if (clock_gettime(CLOCK_MONOTONIC, &current) != 0)
-			return (virtio_fs_connection_fail(connection, errno));
-		now = &current;
-	}
-	if (connection->queue == NULL)
-		error = virtio_fs_backend_client_expire(connection->client,
-		    now);
-	else
-		error = timespeccmp(now, &deadline, <) ? 0 : ETIMEDOUT;
-	if (error != 0)
-		return (virtio_fs_connection_fail(connection, error));
-	return (0);
-}
-
-int
 virtio_fs_connection_progress(struct virtio_fs_connection *connection,
     bool readable, bool writable)
 {
@@ -562,9 +536,6 @@ virtio_fs_connection_progress(struct virtio_fs_connection *connection,
 		return (ECANCELED);
 	if (connection->error != 0)
 		return (connection->error);
-	error = virtio_fs_connection_expire(connection, NULL);
-	if (error != 0)
-		return (error);
 	if (connection->queue == NULL) {
 		error = virtio_fs_backend_client_progress(connection->client,
 		    readable, writable);
@@ -784,7 +755,8 @@ virtio_fs_connection_pause(struct virtio_fs_connection *connection,
 	    VIRTIO_FS_BACKEND_F_STATE_TRANSFER) == 0)
 		return (ENOTSUP);
 	if (connection->notification_payload != NULL ||
-	    virtio_fs_backend_stream_sending(&connection->stream))
+	    virtio_fs_backend_stream_sending(&connection->stream) ||
+	    virtio_fs_backend_stream_receiving(&connection->stream))
 		return (EBUSY);
 	error = virtio_fs_queue_pause(connection->queue, fuse_session);
 	if (error == EINPROGRESS) {
