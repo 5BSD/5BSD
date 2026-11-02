@@ -453,6 +453,21 @@ The guest-memory member also saves fixed boot and PCI ROM contents.
 Snapshots whose memory extension predates fixed-ROM support cannot restore
 into a VM with either ROM region because their contents cannot be verified.
 .Pp
+With ACPI tables, the guest's ACPI VM Generation ID
+.Pq Xr vmgenc 4
+changes on every restore, including a repeated restore of the same snapshot,
+and
+.Nm
+raises its general-purpose event so the guest receives
+.Li Notify(0x80)
+and reseeds its random number generator.
+Live migration presents the source's generation ID unchanged and raises no
+event; a snapshot taken while the guest keeps running does not change it.
+Snapshots and migration streams also carry the ACPI PM1 and GPE0 event
+registers.
+Images from earlier versions carry neither: they restore with a new ID, and a
+migration from such a source keeps the destination's own ID.
+.Pp
 As for a fresh boot, a guest configured without a boot ROM
 .Pq Fl o Cm lpc.bootrom
 must already exist in the kernel; otherwise

@@ -45,6 +45,7 @@
 #include "checkpoint_topology.h"
 #include "checkpoint_cpu.h"
 #include "checkpoint_manifest.h"
+#include "checkpoint_vmgenid.h"
 #include "hypertrace_session.h"
 
 /*
@@ -87,6 +88,9 @@ struct restore_state {
 	const void *hypertrace_private_image;
 	size_t hypertrace_private_length;
 	struct pci_devinst *hypertrace_private_dev;
+	/* Optional VM generation record, decoded by the restore preflight. */
+	bool vmgenid_present;
+	struct checkpoint_vmgenid vmgenid;
 
 	struct ucl_parser *meta_parser;
 	ucl_object_t *meta_root_obj;

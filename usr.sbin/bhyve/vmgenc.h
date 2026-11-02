@@ -25,5 +25,18 @@
  * SUCH DAMAGE.
  */
 #pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "checkpoint_vmgenid.h"
+
+struct vmctx;
+
 void	vmgenc_init(struct vmctx *);
 void	vmgenc_write_dsdt(void);
+int	vmgenc_current_id(struct vmctx *, uint8_t [CHECKPOINT_VMGENID_ID_SIZE]);
+int	vmgenc_checkpoint_state(struct vmctx *, struct checkpoint_vmgenid *);
+int	vmgenc_restore_apply(struct vmctx *,
+	    const uint8_t [CHECKPOINT_VMGENID_ID_SIZE],
+	    const struct checkpoint_acpi_pm *, bool);

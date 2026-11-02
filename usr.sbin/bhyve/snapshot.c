@@ -116,6 +116,7 @@
 #include "snapshot_md.h"
 #include "snapshot_portable.h"
 #include "tpm_device.h"
+#include "vmgenc.h"
 
 #include <libxo/xo.h>
 #include <ucl.h>
@@ -183,6 +184,7 @@ static sig_t old_winch_handler;
 #define	JSON_VMNAME_KEY 		"vmname"
 #define	JSON_MEMSIZE_KEY		"memsize"
 #define	JSON_MEMFLAGS_KEY		"memflags"
+#define	JSON_VMGENID_STATE_KEY		"vmgenid_state"
 
 #define min(a,b)		\
 ({				\
@@ -963,6 +965,67 @@ lookup_hypertrace_handoff(struct restore_state *rstate, bool *required)
 		return (EPROTO);
 	*required = version == 1;
 	return (0);
+}
+
+/* The optional VM generation record; absent in images from older peers. */
+static int
+lookup_vmgenid_state(struct restore_state *rstate)
+{
+	const ucl_object_t *basic, *obj;
+	const char *text;
+
+	rstate->vmgenid_present = false;
+	basic = lookup_basic_metadata_object(rstate);
+	if (basic == NULL)
+		return (EINVAL);
+	obj = ucl_object_lookup(basic, JSON_VMGENID_STATE_KEY);
+	if (obj == NULL)
+		return (0);
+	if (!ucl_object_tostring_safe(obj, &text) ||
+	    checkpoint_vmgenid_decode(text, &rstate->vmgenid) != 0) {
+		EPRINTLN("Checkpoint '%s' is malformed.", JSON_VMGENID_STATE_KEY);
+		return (EINVAL);
+	}
+	rstate->vmgenid_present = true;
+	return (0);
+}
+
+static int
+vmgenid_entropy(void *buf, size_t len)
+{
+	return (getentropy(buf, len) == 0 ? 0 : EIO);
+}
+
+/*
+ * Give the destination its VM generation ID before any vCPU runs: a fresh
+ * ID with an ACPI notification for a checkpoint restore, the source's ID
+ * for a live migration.  Runs after the kernel structures are restored so
+ * the SCI level matches the restored interrupt controllers.  The record was
+ * decoded by the preflight.
+ */
+static int
+vm_restore_vmgenid(struct vmctx *ctx, struct restore_state *rstate,
+    enum checkpoint_vmgenid_restore kind)
+{
+	const struct checkpoint_vmgenid *saved;
+	uint8_t current[CHECKPOINT_VMGENID_ID_SIZE];
+	uint8_t next[CHECKPOINT_VMGENID_ID_SIZE];
+	bool notify;
+	int error;
+
+	/* No generation device on this destination: nothing to present. */
+	if (vmgenc_current_id(ctx, current) != 0)
+		return (0);
+	saved = rstate->vmgenid_present ? &rstate->vmgenid : NULL;
+	error = checkpoint_vmgenid_plan(kind, saved, current, vmgenid_entropy,
+	    next, &notify);
+	if (error == 0)
+		error = vmgenc_restore_apply(ctx, next,
+		    saved != NULL ? &saved->pm : NULL, notify);
+	if (error != 0)
+		EPRINTLN("Could not restore the VM generation ID: %s",
+		    strerror(error));
+	return (error);
 }
 
 const char *
@@ -2511,6 +2574,8 @@ vm_restore_preflight_internal(struct restore_state *rstate,
 	if (error == 0)
 		error = vm_restore_device_payloads_validate(rstate,
 		    capture_hypertrace);
+	if (error == 0)
+		error = lookup_vmgenid_state(rstate);
 	if (error != 0) {
 		rstate->hypertrace_private_image = NULL;
 		rstate->hypertrace_private_length = 0;
@@ -3235,6 +3300,10 @@ vm_restore_transaction(struct vmctx *ctx, struct restore_state *rstate)
 		    strerror(error));
 		goto failed;
 	}
+	/* A restored checkpoint is a new generation (also on its next restore). */
+	error = vm_restore_vmgenid(ctx, rstate, CHECKPOINT_VMGENID_RESTORE);
+	if (error != 0)
+		goto failed;
 	/* Trace continuity (disabled future feature): continuity images are refused above. */
 	if (handoff_required) {
 		int handoff_error = handoff_rebinding ?
@@ -3594,6 +3663,8 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	uint64_t domain_sizes[CHECKPOINT_NUMA_MAX_DOMAINS];
 	uint16_t *vcpu_domains;
 	char topology_digest[CHECKPOINT_MACHINE_DIGEST_LENGTH];
+	char vmgenid_text[CHECKPOINT_VMGENID_TEXT_SIZE];
+	struct checkpoint_vmgenid vmgenid;
 	char *cpu_contract_text, *mapping_text, *sizes_text;
 	size_t domain_count;
 	int error;
@@ -3604,6 +3675,13 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	 */
 	if (ctx == NULL || xop == NULL || memsz == 0 || memsz > INT64_MAX)
 		return (memsz > INT64_MAX ? EOVERFLOW : EINVAL);
+	/* Optional record: a VM without a generation device carries none.
+	 * Capturing it reads only; a running checkpoint keeps its ID. */
+	vmgenid_text[0] = '\0';
+	if (vmgenc_checkpoint_state(ctx, &vmgenid) == 0 &&
+	    (error = checkpoint_vmgenid_encode(&vmgenid, vmgenid_text,
+	    sizeof(vmgenid_text))) != 0)
+		return (error);
 	cpu_contract_text = NULL;
 	error = checkpoint_cpu_contract_capture(fbsdrun_vcpu(0),
 	    &cpu_contract);
@@ -3688,6 +3766,9 @@ vm_snapshot_basic_metadata(struct vmctx *ctx, xo_handle_t *xop, size_t memsz)
 	    CHECKPOINT_MACHINE_TOPOLOGY_VERSION);
 	xo_emit_h(xop, "{:" JSON_MACHINE_TOPOLOGY_DIGEST_KEY "/%s}\n",
 	    topology_digest);
+	if (vmgenid_text[0] != '\0')
+		xo_emit_h(xop, "{:" JSON_VMGENID_STATE_KEY "/%s}\n",
+		    vmgenid_text);
 	xo_close_container_h(xop, JSON_BASIC_METADATA_KEY);
 	free(cpu_contract_text);
 	free(sizes_text);
@@ -5311,7 +5392,10 @@ vm_migrate_commit_state_impl(struct vmctx *ctx, const uint8_t *blob, size_t len,
 		error = rel;
 		goto out;
 	}
-	error = 0;
+	/* Live migration keeps the source's generation; no notification. */
+	error = vm_restore_vmgenid(ctx, &rstate, CHECKPOINT_VMGENID_MIGRATE);
+	if (error != 0)
+		goto out;
 	if (fresh)
 		*fresh_device = rstate.hypertrace_private_dev;
 

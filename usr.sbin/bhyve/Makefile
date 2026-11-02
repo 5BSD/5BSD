@@ -161,7 +161,7 @@ LDFLAGS+= -l proc -l ctf -l elf -l z -l rtld_db -l pthread -l util
 .if ${MK_BHYVE_SNAPSHOT} != "no"
 .PATH:	${.CURDIR}/${MACHINE_CPUARCH}
 SRCS+=	checkpoint_compat.c checkpoint_machine.c checkpoint_cpu.c checkpoint_cpu_machdep.c \
-	checkpoint_manifest.c checkpoint_numa.c \
+	checkpoint_manifest.c checkpoint_numa.c checkpoint_vmgenid.c \
 	checkpoint_topology.c \
 	snapshot.c snapshot_devmem.c
 

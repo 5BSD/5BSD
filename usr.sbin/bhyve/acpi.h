@@ -52,9 +52,13 @@
 #define	GPE_VMGENC		0
 
 struct vmctx;
+struct checkpoint_acpi_pm;
 
 int	acpi_build(struct vmctx *ctx, int ncpu);
 void	acpi_raise_gpe(struct vmctx *ctx, unsigned bit);
+void	acpi_pm_state_get(struct checkpoint_acpi_pm *pm);
+void	acpi_pm_state_set(struct vmctx *ctx,
+	    const struct checkpoint_acpi_pm *pm);
 int 	acpi_tables_add_device(const struct acpi_device *const dev);
 int	acpi_add_vcpu_affinity(int vcpuid, int domain);
 void	dsdt_line(const char *fmt, ...) __printflike(1, 2);
