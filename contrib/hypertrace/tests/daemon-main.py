@@ -1290,8 +1290,8 @@ live('host-ingest-lost-ack-replay', ['-d', '-D', '@ROOT@/state', '-t', '2'],
 def consumer_delivery_isolation(root, proc):
     # A host consumer that never acknowledges a delivery holds the worker
     # sending to it until the 60 s ACK deadline; deliveries to another host
-    # consumer must not queue behind it (the -t workers ran them side by
-    # side).  Two uploads: one delivery worker stuck on the silent consumer
+    # consumer must not queue behind it, also at the default -t 1 (the
+    # one -t worker used to run them in turn).  Two uploads: one delivery worker stuck on the silent consumer
     # delays the live consumer's second delivery whatever the recipient
     # order, and a second worker must not take the silent consumer's next
     # delivery, which would wait on its stream as well.
@@ -1340,7 +1340,7 @@ def consumer_delivery_isolation(root, proc):
     return {'ok': ok and proc.poll() is None, **d}
 
 
-live('consumer-delivery-isolation', ['-d', '-D', '@ROOT@/state', '-t', '2'],
+live('consumer-delivery-isolation', ['-d', '-D', '@ROOT@/state'],
      consumer_delivery_isolation, {'HT_ATTEST': '7:9:guest-a'})
 
 

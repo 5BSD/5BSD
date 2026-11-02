@@ -335,8 +335,10 @@ state::setup_threads(void)
 		this->directory_start_error = 0;
 	}
 	try {
-		this->workers.resize(this->threadpool_size *
-		    (this->ctrlmachine != 0 ? 2 : 1));
+		this->workers.resize(this->threadpool_size +
+		    (this->ctrlmachine != 0 ? std::max<size_t>(
+		    this->threadpool_size, DTRACED_CONSUMER_DELIVERY_WORKERS) :
+		    0));
 		for (size_t i = 0; i < this->threadpool_size; i++)
 			this->workers[i] = std::thread(&state::process_joblist, this);
 		for (size_t i = this->threadpool_size; i < this->workers.size(); i++)
@@ -2335,10 +2337,11 @@ state::handle_job(job *j)
  * That read needs a worker of its own: on a control machine host consumer
  * deliveries run only on process_consumer_deliveries(), every other job only
  * on process_joblist().  There are as many delivery workers as -t workers,
- * and each consumer has at most one delivery running, so a consumer that
- * does not acknowledge holds one delivery worker and none of its queued
- * deliveries waits on its stream in another.  A minion has no consumer
- * delivery worker.
+ * but at least DTRACED_CONSUMER_DELIVERY_WORKERS so that the default -t 1
+ * does not serialize consumers, and each consumer has at most one delivery
+ * running, so a consumer that does not acknowledge holds one delivery worker
+ * and none of its queued deliveries waits on its stream in another.  A
+ * minion has no consumer delivery worker.
  */
 static bool
 consumer_delivery(int ctrlmachine, const job *j)

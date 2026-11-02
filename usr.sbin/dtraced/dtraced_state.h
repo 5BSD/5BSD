@@ -54,6 +54,9 @@
 #include "dtraced_release_keys.h"
 #include "dtraced_collector_owner.h"
 
+/* Minimum number of host consumer delivery workers on a control machine. */
+#define DTRACED_CONSUMER_DELIVERY_WORKERS 4
+
 #include <array>
 #include <condition_variable>
 #include <list>
@@ -115,8 +118,9 @@ class state {
 	std::thread basetd;    /* base monitoring thread */
 
 	size_t threadpool_size; /* size of the thread pool (workers) */
-	/* thread pool for the joblist; on a control machine as many more
-	 * workers deliver ELF to host consumers (process_consumer_deliveries()) */
+	/* thread pool for the joblist; on a control machine as many more, but
+	 * at least DTRACED_CONSUMER_DELIVERY_WORKERS, deliver ELF to host
+	 * consumers (process_consumer_deliveries()) */
 	std::vector<std::thread> workers;
 
 	std::thread socktd; /* config socket thread */
