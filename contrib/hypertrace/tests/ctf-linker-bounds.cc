@@ -14,6 +14,9 @@ typedef int64_t hrtime_t;
 #include <dt_dfg.hh>
 #include <dt_inttab.h>
 #include <dt_typefile.hh>
+extern "C" {
+#include <ctf_impl.h>	/* ctf_dtd_lookup(): a member at a chosen bit offset */
+}
 /* Exercise the actual built linker's relocation method, not a copy of its
  * arithmetic. Include all dependencies before exposing this private method
  * so the test macro cannot change any library header definitions. */
@@ -118,10 +121,14 @@ test_typecast_symbol_bounds(dtrace_hdl_t *dtp)
  * it (libctf gives an enum no encoding).  The linker rejected it as "a load
  * of kind 8 is unsupported in DIF".
  */
-static void
-test_enum_member_load(dtrace_hdl_t *dtp)
+/*
+ * struct tf_exit { int inst_length; enum tf_exitcode exitcode; }, with
+ * exitcode at bit offset `offset' when it is nonzero.  libctf byte-aligns the
+ * members it adds, so another offset is set in the uncommitted definition.
+ */
+static ctf_file_t *
+enum_member_fixture(ctf_id_t *stypep, ulong_t offset)
 {
-	using namespace dtrace;
 	int err = 0;
 	ctf_file_t *fp = ctf_create(&err);
 	assert(fp != nullptr);
@@ -137,7 +144,26 @@ test_enum_member_load(dtrace_hdl_t *dtp)
 	assert(stype != CTF_ERR);
 	assert(ctf_add_member(fp, stype, "inst_length", itype) == 0);
 	assert(ctf_add_member(fp, stype, "exitcode", etype) == 0);
+	if (offset != 0) {
+		ctf_dtdef_t *dtd = ctf_dtd_lookup(fp, stype);
+		assert(dtd != nullptr);
+		ctf_dmdef_t *dmd = (ctf_dmdef_t *)ctf_list_next(
+		    &dtd->dtd_u.dtu_members);
+		dmd = (ctf_dmdef_t *)ctf_list_next(dmd);
+		assert(dmd != nullptr && strcmp(dmd->dmd_name, "exitcode") == 0);
+		dmd->dmd_offset = offset;
+	}
 	assert(ctf_update(fp) == 0);
+	*stypep = stype;
+	return (fp);
+}
+
+static void
+test_enum_member_load(dtrace_hdl_t *dtp)
+{
+	using namespace dtrace;
+	ctf_id_t stype;
+	ctf_file_t *fp = enum_member_fixture(&stype, 0);
 
 	dt_module_t module{};
 	module.dm_ctfp = fp;
@@ -166,6 +192,41 @@ test_enum_member_load(dtrace_hdl_t *dtp)
 	ctf_close(fp);
 }
 
+/*
+ * An enum member that does not begin on a byte boundary cannot be read with
+ * a sized load (stock dt_cg has the same limitation): the linker refuses it
+ * and leaves the instruction unrelocated.
+ */
+static void
+test_enum_member_unaligned(dtrace_hdl_t *dtp)
+{
+	using namespace dtrace;
+	ctf_id_t stype;
+	ctf_file_t *fp = enum_member_fixture(&stype, 35);
+
+	dt_module_t module{};
+	module.dm_ctfp = fp;
+	Typefile tf(dtp, &module, "enumfix");
+	dif_instr_t insn = DIF_INSTR_LOAD(DIF_OP_ULOAD, 2, 3);
+	dtrace_difo_t difo{};
+	difo.dtdo_buf = &insn;
+	difo.dtdo_len = 1;
+	DFGNode node(dtp, nullptr, nullptr, &difo, nullptr, 0);
+	node.tf = &tf;
+	node.ctfid = stype;
+	node.sym = (char *)"exitcode";
+	HyperTraceLinker linker(dtp, nullptr);
+	assert(linker.relocateUloadOrAdd(&node) == E_HYPERTRACE_LINKING);
+	assert(linker.getErrorMessage().find("not byte aligned") !=
+	    std::string::npos);
+	assert(!node.isRelocated &&
+	    insn == (dif_instr_t)DIF_INSTR_LOAD(DIF_OP_ULOAD, 2, 3));
+	if (node.mip != nullptr)
+		dt_free(dtp, node.mip);
+	module.dm_ctfp = nullptr;
+	ctf_close(fp);
+}
+
 int
 main(void)
 {
@@ -175,6 +236,7 @@ main(void)
 	test_usetx_preconditions(dtp);
 	test_typecast_symbol_bounds(dtp);
 	test_enum_member_load(dtp);
+	test_enum_member_unaligned(dtp);
 	dif_instr_t insn = DIF_INSTR_USETX(0, 1);
 	dtrace_difo_t difo{};
 	difo.dtdo_buf = &insn;

@@ -6,7 +6,9 @@
  * loop's exit dispatch can execute in a user process.  The CPUID
  * instruction is routed too, so the suite can feed the guest's own
  * detector (bhyve_hypercalls_enabled() in machine/bhyve_hypercall.h) from
- * the VMM's CPUID emulation.  Production source text is unchanged.
+ * the VMM's CPUID emulation, and so is the host's CPUID with a subleaf, so
+ * the suite can model host CPUs that answer differently (hybrid parts).
+ * Production source text is unchanged.
  */
 #ifndef KHX_VMM_CPU_H
 #define KHX_VMM_CPU_H
@@ -20,6 +22,7 @@
 #include <sys/cdefs.h>
 #include <sys/types.h>
 #define do_cpuid khx_hw_do_cpuid
+#define cpuid_count khx_hw_cpuid_count
 #define clts khx_hw_clts
 #define rcr0 khx_hw_rcr0
 #define load_cr0 khx_hw_load_cr0
@@ -28,6 +31,7 @@
 #define load_xcr khx_hw_load_xcr
 #include <machine/cpufunc.h>
 #undef do_cpuid
+#undef cpuid_count
 #undef clts
 #undef rcr0
 #undef load_cr0
@@ -35,6 +39,7 @@
 #undef rxcr
 #undef load_xcr
 void khx_do_cpuid(u_int ax, u_int *p);
+void khx_cpuid_count(u_int ax, u_int cx, u_int *p);
 void khx_clts(void);
 u_long khx_rcr0(void);
 void khx_load_cr0(u_long v);
@@ -42,6 +47,7 @@ u_long khx_rcr4(void);
 u_long khx_rxcr(u_int reg);
 void khx_load_xcr(u_int reg, u_long v);
 #define do_cpuid(ax, p) khx_do_cpuid((ax), (p))
+#define cpuid_count(ax, cx, p) khx_cpuid_count((ax), (cx), (p))
 #define clts() khx_clts()
 #define rcr0() khx_rcr0()
 #define load_cr0(v) khx_load_cr0(v)

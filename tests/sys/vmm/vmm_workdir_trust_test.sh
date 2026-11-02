@@ -49,26 +49,17 @@ check_workdir()
 	)
 }
 
+# The tree lives in the test case's work directory, which ATF removes.
 make_tree()
 {
-	base=$(mktemp -d /tmp/vmm-workdir-trust.XXXXXX) ||
-	    atf_fail "cannot create a scratch directory below /tmp"
-	echo "$base" >scratch
+	base=$(mktemp -d "$(pwd)/tree.XXXXXX") ||
+	    atf_fail "cannot create a scratch directory"
 	chmod "$1" "$base"
 	mkdir -m 0700 "$base/work"
 	echo "$base/work"
 }
 
-cleanup_tree()
-{
-	[ -f scratch ] || return 0
-	base=$(cat scratch)
-	case "$base" in
-	/tmp/vmm-workdir-trust.*) rm -rf "$base" ;;
-	esac
-}
-
-atf_test_case sticky_ancestor_accepted cleanup
+atf_test_case sticky_ancestor_accepted
 sticky_ancestor_accepted_head()
 {
 	atf_set "descr" "A root-owned sticky world-writable WORKDIR ancestor" \
@@ -83,12 +74,8 @@ sticky_ancestor_accepted_body()
 		    atf_fail "${entry%%:*} refused a sticky world-writable ancestor"
 	done
 }
-sticky_ancestor_accepted_cleanup()
-{
-	cleanup_tree
-}
 
-atf_test_case nonsticky_ancestor_refused cleanup
+atf_test_case nonsticky_ancestor_refused
 nonsticky_ancestor_refused_head()
 {
 	atf_set "descr" "A world-writable WORKDIR ancestor without the" \
@@ -108,10 +95,6 @@ nonsticky_ancestor_refused_body()
 		    atf_fail "${entry%%:*} refused for an unexpected reason:" \
 		    "$(cat stderr)"
 	done
-}
-nonsticky_ancestor_refused_cleanup()
-{
-	cleanup_tree
 }
 
 atf_init_test_cases()

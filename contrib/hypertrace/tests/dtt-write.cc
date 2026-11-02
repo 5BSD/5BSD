@@ -7,11 +7,13 @@
  * socketpair; listen_dttransport runs alongside so a DTT_HOST_ELF receipt
  * from the scripted driver releases the writer exactly as in production.
  *
- * Oracles: the driver reassembles DTT_ELF fragments and compares them byte
- * for byte with the frame the local daemon sent, checking identifiers,
- * hasmore/len/totallen bookkeeping and the SHA-256 the writer registers; the
- * local daemon receives an 8-byte little-endian delivery ACK only after the
- * receipt. Every malformed frame or transport fault must stop the writer
+ * Oracles: the driver accepts DTT_ELF fragments under bhyve's rules (the
+ * shared hypertrace_elf_append() reassembly plus pci_virtio_dtrace.c's
+ * delivery continuity; any violation would reset the real transport) and
+ * compares the result byte for byte with the frame the local daemon sent,
+ * checking identifiers, hasmore/len/totallen bookkeeping and the SHA-256 the
+ * writer registers; the local daemon receives an 8-byte little-endian
+ * delivery ACK only after the receipt. A malformed frame stops the writer
  * before any device record is written.
  */
 #include <sys/un.h>
@@ -76,6 +78,8 @@ __wrap_socket(int domain, int type, int protocol)
 static std::atomic<int> device_fd{-1};
 static std::mutex inject_mtx;
 static std::deque<int> device_write_errors;
+/* Records the device still has room for; it then stays full (EAGAIN). */
+static std::atomic<int> device_room{-1};
 extern "C" ssize_t __real_write(int, const void *, size_t);
 extern "C" ssize_t
 __wrap_write(int fd, const void *buf, size_t len)
@@ -92,9 +96,69 @@ __wrap_write(int fd, const void *buf, size_t len)
 				return (-1);
 			}
 		}
+		if (device_room.load() == 0) {
+			errno = EAGAIN;
+			return (-1);
+		}
+		if (device_room.load() > 0)
+			--device_room;
 	}
 	return (__real_write(fd, buf, len));
 }
+
+/*
+ * bhyve's acceptance of guest ELF fragments (pci_vtdtr_control_rx(),
+ * VTDTR_DEVICE_ELF): fragments reassemble through the same
+ * hypertrace_elf_append() bhyve uses, which refuses another identifier or
+ * total and enforces hasmore/length ordering, and while a partial ELF is held
+ * only its own delivery (delivery_id, vmid, epoch, program and source) may
+ * continue it.  Any refusal sets NEEDS_RESET there; here it marks the model
+ * reset, which no test allows.
+ */
+struct bhyve_inbound {
+	struct hypertrace_elf elf{};
+	dtt_entry_t first{};
+	bool reset = false;
+
+	/* Accept one fragment; true when it completed an ELF into *out. */
+	bool accept(const dtt_entry_t &e, std::vector<unsigned char> *out)
+	{
+		int complete, error;
+
+		if (e.event_kind != DTT_ELF || e.u.elf.len > DTT_MAXDATALEN) {
+			fail();
+			return (false);
+		}
+		if (elf.data == nullptr)
+			first = e;
+		else if (e.u.elf.delivery_id != first.u.elf.delivery_id ||
+		    e.u.elf.vmid != first.u.elf.vmid ||
+		    e.u.elf.epoch != first.u.elf.epoch ||
+		    memcmp(e.u.elf.program_id, first.u.elf.program_id, 16) != 0 ||
+		    memcmp(e.u.elf.source_id, first.u.elf.source_id, 16) != 0) {
+			fail();
+			return (false);
+		}
+		error = hypertrace_elf_append(&elf, e.u.elf.identifier,
+		    e.u.elf.totallen, e.u.elf.data, e.u.elf.len,
+		    e.u.elf.hasmore, &complete);
+		if (error != 0) {
+			fail();
+			return (false);
+		}
+		if (!complete)
+			return (false);
+		out->assign(elf.data, elf.data + elf.total);
+		hypertrace_elf_reset(&elf);
+		return (true);
+	}
+	void fail()
+	{
+		hypertrace_elf_reset(&elf);
+		reset = true;
+	}
+	~bhyve_inbound() { hypertrace_elf_reset(&elf); }
+};
 
 /* ---- fixture ---- */
 struct writer_fixture {
@@ -167,6 +231,7 @@ struct writer_fixture {
 		if (reader.joinable())
 			reader.join();
 		device_fd.store(-1);
+		device_room.store(-1);
 		redirect_path[0] = '\0';
 		if (listener >= 0)
 			close(listener);
@@ -264,28 +329,25 @@ payload(size_t n, unsigned char seed)
 	return (v);
 }
 
-/* Read DTT_ELF fragments until hasmore is clear; validate bookkeeping. */
+/* Read DTT_ELF fragments until bhyve completes the ELF; validate them. */
 static std::vector<unsigned char>
 collect_elf(int dev, const dtraced_hdr_t &h)
 {
+	bhyve_inbound bhyve;
 	std::vector<unsigned char> out;
-	uint32_t identifier = 0;
 	for (;;) {
 		dtt_entry_t e{};
 		CHECK(peer_recv(dev, e));
 		CHECK(e.event_kind == DTT_ELF);
-		if (out.empty())
-			identifier = e.u.elf.identifier;
-		CHECK(e.u.elf.identifier == identifier &&
-		    e.u.elf.delivery_id == h.elf.delivery_id &&
+		CHECK(e.u.elf.delivery_id == h.elf.delivery_id &&
 		    e.u.elf.vmid == h.elf.vmid && e.u.elf.epoch == h.elf.epoch &&
 		    memcmp(e.u.elf.program_id, h.elf.program_id, 16) == 0 &&
 		    memcmp(e.u.elf.source_id, h.elf.source_id, 16) == 0 &&
 		    e.u.elf.totallen == h.elf.len && e.u.elf.len > 0 &&
 		    e.u.elf.len <= DTT_MAXDATALEN);
-		out.insert(out.end(), e.u.elf.data, e.u.elf.data + e.u.elf.len);
-		CHECK(e.u.elf.hasmore == (out.size() < h.elf.len));
-		if (!e.u.elf.hasmore)
+		bool complete = bhyve.accept(e, &out);
+		CHECK(!bhyve.reset);
+		if (complete)
 			return (out);
 	}
 }
@@ -477,6 +539,7 @@ test_failed_job_token_replayed()
 	uint64_t uploaded_id = 0;
 	std::atomic<bool> uploaded_done{false};
 	std::thread device([&] {
+		bhyve_inbound bhyve;
 		std::vector<unsigned char> partial;
 		while (!device_stop.load()) {
 			dtt_entry_t e{};
@@ -490,10 +553,10 @@ test_failed_job_token_replayed()
 				r.u.installed.epoch = 4;
 				peer_send(f.dev[1], r);
 			} else if (e.event_kind == DTT_ELF) {
-				partial.insert(partial.end(), e.u.elf.data,
-				    e.u.elf.data + e.u.elf.len);
-				if (e.u.elf.hasmore)
+				if (!bhyve.accept(e, &partial)) {
+					CHECK(!bhyve.reset);
 					continue;
+				}
 				dtt_entry_t r{};
 				r.event_kind = DTT_HOST_ELF;
 				r.u.installed.delivery_id = e.u.elf.delivery_id;
@@ -629,8 +692,9 @@ test_bad_frames()
 		    h.kill.pid = 5; h.kill.vmid = 1; h.kill.epoch = 1;
 		    h.kill.source_id[0] = 1; },
 	};
-	/* A refused frame fails that job only: nothing reaches the device,
-	 * the bridge re-registers and the guest daemon stays up. */
+	/* The local daemon is this binary: a malformed frame is a protocol
+	 * violation that a reconnect would only repeat.  Nothing reaches the
+	 * device and the guest daemon stops. */
 	for (edit_t edit : edits) {
 		writer_fixture f;
 		f.start(false);
@@ -639,9 +703,9 @@ test_bad_frames()
 		dtraced_hdr_t h = elf_header(9, 64);
 		edit(h);
 		send_frame(c, h, {});
-		CHECK(peer_eof(c));
+		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(peer_eof(c) && peer_quiet(f.dev[1], 10));
 		close(c);
-		expect_reregistered(f);
 	}
 	{	/* undecodable header */
 		writer_fixture f;
@@ -651,11 +715,11 @@ test_bad_frames()
 		unsigned char wire[DTRACED_MSGHDRSIZE] = {};
 		wire[0] = 0xee;
 		send_all(c, wire, sizeof(wire));
-		CHECK(peer_eof(c));
+		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(peer_eof(c) && peer_quiet(f.dev[1], 10));
 		close(c);
-		expect_reregistered(f);
 	}
-	{	/* truncated header */
+	{	/* truncated header: the daemon closed the bridge */
 		writer_fixture f;
 		f.start(false);
 		int c = f.accept_peer();
@@ -665,25 +729,26 @@ test_bad_frames()
 		close(c);
 		expect_reregistered(f);
 	}
-	{	/* payload is not ELF; truncated payload */
-		for (int variant = 0; variant < 2; ++variant) {
-			writer_fixture f;
-			f.start(false);
-			int c = f.accept_peer();
-			handshake(c);
-			dtraced_hdr_t h = elf_header(9, 64);
-			auto body = payload(64, 1);
-			if (variant == 0)
-				body[1] = 'X';
-			send_frame(c, h, body, variant == 0 ? SIZE_MAX : 10);
-			if (variant == 1)
-				close(c);
-			else
-				CHECK(peer_eof(c));
-			expect_reregistered(f);
-			if (variant == 0)
-				close(c);
-		}
+	{	/* payload is not ELF: protocol violation */
+		writer_fixture f;
+		f.start(false);
+		int c = f.accept_peer();
+		handshake(c);
+		auto body = payload(64, 1);
+		body[1] = 'X';
+		send_frame(c, elf_header(9, 64), body);
+		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(peer_eof(c) && peer_quiet(f.dev[1], 10));
+		close(c);
+	}
+	{	/* truncated payload: the daemon closed the bridge */
+		writer_fixture f;
+		f.start(false);
+		int c = f.accept_peer();
+		handshake(c);
+		send_frame(c, elf_header(9, 64), payload(64, 1), 10);
+		close(c);
+		expect_reregistered(f);
 	}
 	{	/* another sender already awaits a receipt */
 		writer_fixture f;
@@ -814,6 +879,82 @@ test_device_faults()
 	}
 }
 
+/*
+ * The device stays full after accepting the first fragment of a delivery.
+ * bhyve now holds that partial ELF and accepts only its continuation, so
+ * the bridge must not re-register: the daemon would replay the job as a new
+ * transfer (another identifier) and bhyve would reset the transport.  The
+ * bridge stops instead, past its 10 s device deadline.
+ */
+static void
+test_device_full_mid_delivery()
+{
+	writer_fixture f;
+	bhyve_inbound bhyve;
+	std::vector<unsigned char> out;
+	dtt_entry_t e{};
+
+	device_room.store(1);
+	f.start(false);
+	int c = f.accept_peer();
+	handshake(c);
+	dtraced_hdr_t h = elf_header(10, 2 * DTT_MAXDATALEN + 9);
+	auto body = payload(h.elf.len, 8);
+	send_frame(c, h, body);
+	CHECK(peer_recv(f.dev[1], e));
+	CHECK(!bhyve.accept(e, &out) && !bhyve.reset);
+	for (int waited = 0; waited < 15000 && !f.writer_done.load();
+	    waited += 100) {
+		struct pollfd p = {f.listener, POLLIN, 0};
+		if (poll(&p, 1, 100) != 1)
+			continue;
+		/* Re-registered: the daemon replays the pending token. */
+		int r = accept(f.listener, nullptr, nullptr);
+		CHECK(r >= 0);
+		handshake(r);
+		device_room.store(-1);
+		send_frame(r, h, body);
+		CHECK(peer_recv(f.dev[1], e));
+		(void)bhyve.accept(e, &out);
+		CHECK(!bhyve.reset);
+		close(r);
+		break;
+	}
+	CHECK(f.writer_stopped() && f.s.shutdown.load());
+	CHECK(peer_eof(c));
+	close(c);
+	std::lock_guard lock(f.s.host_elf_mtx);
+	CHECK(f.s.host_elf_waiting == 0);
+}
+
+/*
+ * Sessions that end without a delivery (a job that fails every time) are
+ * bounded: after six in a row the bridge stops instead of re-registering
+ * every 2 s forever.  A delivery resets the count.
+ */
+static void
+test_idle_sessions_bounded()
+{
+	writer_fixture f;
+	f.start();
+	for (int i = 0; i < 5; ++i) {
+		int c = f.accept_peer();
+		handshake(c);
+		close(c);
+	}
+	int c = f.accept_peer();
+	handshake(c);
+	deliver_one(f, c, 50, 0x50);
+	close(c);
+	for (int i = 0; i < 6; ++i) {
+		CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+		c = f.accept_peer();
+		handshake(c);
+		close(c);
+	}
+	CHECK(f.writer_stopped() && f.s.shutdown.load());
+}
+
 static void
 test_connection_setup()
 {
@@ -929,6 +1070,7 @@ test_minion_round_trip()
 		dtt_entry_t first{};
 		std::atomic<bool> uploaded_done{false};
 		std::thread device([&] {
+			bhyve_inbound bhyve;
 			while (!device_stop.load()) {
 				dtt_entry_t e{};
 				if (!peer_recv(f.dev[1], e, 100))
@@ -942,12 +1084,11 @@ test_minion_round_trip()
 					identity_queries++;
 					peer_send(f.dev[1], r);
 				} else if (e.event_kind == DTT_ELF) {
-					if (uploaded.empty())
-						first = e;
-					uploaded.insert(uploaded.end(), e.u.elf.data,
-					    e.u.elf.data + e.u.elf.len);
-					if (e.u.elf.hasmore)
+					if (!bhyve.accept(e, &uploaded)) {
+						CHECK(!bhyve.reset);
 						continue;
+					}
+					first = bhyve.first;
 					dtt_entry_t r{};
 					r.event_kind = DTT_HOST_ELF;
 					r.u.installed.delivery_id = e.u.elf.delivery_id;
@@ -1049,6 +1190,8 @@ main()
 	test_bridge_fatal();
 	test_failed_job_token_replayed();
 	test_device_faults();
+	test_device_full_mid_delivery();
+	test_idle_sessions_bounded();
 	test_connection_setup();
 	test_minion_round_trip();
 	printf("dtt-write: %u checks passed\n", harness_checks);

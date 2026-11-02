@@ -1278,7 +1278,8 @@ test_session_controls(void)
 		free_device(d);
 	}
 	/* After a stop request, old-session traffic is discarded (EOF ends
-	 * the batch); READY still flows so STOP can be delivered. */
+	 * the batch); READY still flows so STOP can be delivered.  A discarded
+	 * control is still owed READY; EOF alone owes none. */
 	{
 		static const uint32_t old[] = { VTDTR_DEVICE_INSTALLED, VTDTR_DEVICE_ELF,
 		    VTDTR_DEVICE_KILL_APPLIED, VTDTR_DEVICE_EOF };
@@ -1288,7 +1289,8 @@ test_session_controls(void)
 			d->sc.vsd_ready = 1;
 			c = report(old[i]);
 			int writes_before = writes;
-			OK(rx(d, &c) == (old[i] == VTDTR_DEVICE_EOF ? 1 : 0) && d->sc.vsd_ready == 0 &&
+			OK(rx(d, &c) == (old[i] == VTDTR_DEVICE_EOF ? 1 : 0) &&
+			    d->sc.vsd_ready == (old[i] == VTDTR_DEVICE_EOF ? 1 : 0) &&
 			    writes == writes_before && d->queue.count == 0 && !reset_requested(d));
 			free_device(d);
 		}

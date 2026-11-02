@@ -1286,15 +1286,17 @@ ATF_TC_BODY(l0_base_intercepts_composable, tc)
 	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
 	    VMCB_INTCPT_VMMCALL));
 	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL1_INTCPT,
-	    SVM_L0_CTRL1_BASE_INTERCEPTS));
+	    SVM_NESTED_L0_CTRL1_BASE));
 	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
-	    SVM_L0_CTRL2_BASE_INTERCEPTS));
+	    SVM_NESTED_L0_CTRL2_BASE));
 	ATF_CHECK(svm_nested_l0_intercepts_supported(VMCB_CTRL2_INTCPT,
-	    SVM_L0_CTRL2_BASE_INTERCEPTS | VMCB_INTCPT_WBINVD));
-	/* L0 keeps owning VMMCALL while L2 runs (L2 gets #UD unless L1
-	 * intercepts it). */
+	    SVM_NESTED_L0_CTRL2_BASE | VMCB_INTCPT_WBINVD));
+	/*
+	 * L0 keeps owning VMMCALL while L2 runs (L2 gets #UD unless L1
+	 * intercepts it).
+	 */
 	ATF_CHECK_EQ(svm_nested_l0_intercepts_for_l2(VMCB_CTRL2_INTCPT,
-	    SVM_L0_CTRL2_BASE_INTERCEPTS) & VMCB_INTCPT_VMMCALL,
+	    SVM_NESTED_L0_CTRL2_BASE) & VMCB_INTCPT_VMMCALL,
 	    VMCB_INTCPT_VMMCALL);
 }
 

@@ -623,6 +623,7 @@ vmm_modinit(void)
 		return (ENXIO);
 
 	vmm_host_state_init();
+	x86_host_cpuid_init();
 
 	vmm_ipinum = lapic_ipi_alloc(pti ? &IDTVEC(justreturn1_pti) :
 	    &IDTVEC(justreturn), vmm_justreturn);

@@ -1958,13 +1958,12 @@ state::dispatch_read(client_fd *dfdp, struct kevent &event)
 	if (!dfdp->is_subscribed(DTD_SUB_READDATA) &&
 	    !dfdp->is_subscribed(DTD_SUB_SOURCE_RELEASE) &&
 	    !dfdp->is_subscribed(DTD_SUB_RELEASE_RECOVERY)) {
-		/* An identified host consumer registers its program (HPI1/HPI2)
-		 * on its ELF receiver before any delivery can reach it; that
-		 * frame needs a reader, or dtrace -E waits for its status until
-		 * it times out. read_data() accepts only the registration here. */
-		if (dfdp->kind == DTRACED_KIND_CONSUMER &&
-		    dfdp->is_subscribed(DTD_SUB_ELFWRITE) &&
-		    dfdp->consumer_birth_valid &&
+		/* A host consumer registers its program (HPI1/HPI2) on its ELF
+		 * receiver before any delivery can reach it; that frame needs a
+		 * reader, or dtrace -E waits for its status until it times out.
+		 * read_data() accepts only the registration here, and refuses
+		 * it (status 0) from a consumer without a birth identity. */
+		if (dfdp->elf_only_consumer() &&
 		    !dfdp->consumer_registration_acked.load()) {
 			if (!this->dispatch_event(event)) {
 				ERR("dispatch_event() failed");
@@ -2332,6 +2331,8 @@ state::process_joblist(void)
 		this->dispatched_jobs.pop_front();
 		lk.unlock();
 
+		/* Not every failure path sets errno. */
+		errno = 0;
 		if (!curjob->connsockfd->retired.load() &&
 		    !this->handle_job(curjob)) {
 			const int job_error = errno;
@@ -2402,7 +2403,8 @@ state::process_joblist(void)
 			/* Name the peer and cause: a lost forwarder ACK and a
 			 * refused frame need different fixes. */
 			ERR("failed to handle job kind %d for %s: %s", curjob->kind,
-			    curjob->connsockfd->ident, strerror(job_error));
+			    curjob->connsockfd->ident, job_error != 0 ?
+			    strerror(job_error) : "unknown error");
 			/* The job's reference pins the client through retirement. */
 			this->kill_socket(curjob->connsockfd);
 		}
