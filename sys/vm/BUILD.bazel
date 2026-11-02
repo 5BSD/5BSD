@@ -598,3 +598,65 @@ bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["uma.h", "uma_al
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_dead_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_epair_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_media_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_mib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vether_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_pfil_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])

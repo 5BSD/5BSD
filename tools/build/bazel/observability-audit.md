@@ -9534,3 +9534,13 @@ not qualify daemon control, wireless authentication events or security audit
 delivery. Review shared instrumentation and actual event delivery when the
 remaining supplicant/hostapd services are migrated; no invented probes or host
 tracing/service activation was added.
+
+## Network built-ins (2026-11-02)
+
+The 32-source network cohort preserves existing code and probe plumbing.
+A bounded marker scan finds SDT/DTrace, audit, CTR, lockstat or network probe
+markers in 12 sources and none in 20. Marker absence alone is not a coverage
+defect. Qualify live BPF, bridge/interface, filtering, routing, RSS and VNET
+behavior with the matching isolated test kernel before adding new events.
+See NETWORK-KERNEL-QUALIFICATION.md for retained scan/input/artifact evidence;
+no runtime probe or controlled tracing-performance result is claimed.

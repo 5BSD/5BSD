@@ -326,3 +326,42 @@ cc_library(name = "ipv6_kernel_opt_rss_header", hdrs = [":opt_rss"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
 cc_library(name = "ipv6_kernel_opt_sctp_header", hdrs = [":opt_sctp"],
     strip_include_prefix = "generic_options", visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_tree_file(name = "opt_ifmedia", tree = ":generic_config", member = "opt_ifmedia.h",
+    output = "generic_options/opt_ifmedia.h", python = "@bsd_sdk//toolchain:extra_python",
+    python_home = "@bsd_sdk//toolchain:python-home/runtime.json", runtime = ["@bsd_sdk//toolchain:python_stdlib"])
+cc_library(name = "net_kernel_opt_acpi_header", hdrs = [":opt_acpi"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_bpf_header", hdrs = [":opt_bpf"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_device_polling_header", hdrs = [":opt_device_polling"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_ifmedia_header", hdrs = [":opt_ifmedia"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_inet_header", hdrs = [":opt_inet"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_ipsec_header", hdrs = [":opt_ipsec"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_kdb_header", hdrs = [":opt_kdb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_kern_tls_header", hdrs = [":opt_kern_tls"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_mbuf_profiling_header", hdrs = [":opt_mbuf_profiling"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_mrouting_header", hdrs = [":opt_mrouting"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_netgraph_header", hdrs = [":opt_netgraph"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_ratelimit_header", hdrs = [":opt_ratelimit"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_route_header", hdrs = [":opt_route"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_rss_header", hdrs = [":opt_rss"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])
+cc_library(name = "net_kernel_opt_vlan_header", hdrs = [":opt_vlan"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/net:__pkg__"])

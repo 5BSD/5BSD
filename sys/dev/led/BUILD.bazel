@@ -11,3 +11,7 @@ bsd_source_headers(name = "acpi_support_headers", hdrs = ["led.h"], visibility =
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["led.h"], visibility = ["//sys/net:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["led.h"],
+    visibility = ["//sys/net:__pkg__"])

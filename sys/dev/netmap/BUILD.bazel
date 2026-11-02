@@ -13,3 +13,7 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["if_re_netmap.h", "net
 
 # Physical prerequisites consumed by independent network-support module builds.
 bsd_source_headers(name = "network_support_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"], visibility = ["//sys/net:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["netmap_kern.h", "netmap_mbq.h"],
+    visibility = ["//sys/net:__pkg__"])

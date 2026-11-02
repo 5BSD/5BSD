@@ -28,6 +28,12 @@ are open. The next upgrade checkpoint records prepared common/control-client
 Make references, which require post-upgrade revalidation. All remaining work
 and final completion requirements below apply.
 
+Thirty-two selected network built-ins now pass native code/CTF, input and
+symbolic relocation checks; see NETWORK-KERNEL-QUALIFICATION.md. The corrected
+graph reuses existing interface providers. Whole-kernel aggregation, cross-build
+and runtime/performance gates remain open. This work resumed at user instruction
+after the November 2 committed stopping point; host/SDK revalidation passes.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

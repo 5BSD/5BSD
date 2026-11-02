@@ -767,3 +767,95 @@ bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["include/ck_cc.h
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
     includes = ["include"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_dead_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_epair_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_media_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_mib_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vether_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_pfil_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["include/ck_cc.h", "include/ck_epoch.h", "include/ck_limits.h", "include/ck_md.h", "include/ck_pr.h", "include/ck_queue.h", "include/ck_stack.h", "include/ck_stdbool.h", "include/ck_stddef.h", "include/ck_stdint.h", "include/gcc/ck_cc.h", "include/gcc/ck_pr.h", "include/gcc/x86_64/ck_f_pr.h", "include/gcc/x86_64/ck_pr.h"],
+    includes = ["include"],
+    visibility = ["//sys/net:__pkg__"])

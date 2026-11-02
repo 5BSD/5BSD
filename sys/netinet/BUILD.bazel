@@ -493,3 +493,41 @@ bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["in.h", "in_kdtr
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["icmp6.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_var.h", "udp.h", "udp_var.h", "udplite.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["if_ether.h", "in.h", "in_systm.h", "in_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["if_ether.h", "in.h", "in_var.h", "ip.h", "ip_carp.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_carp.h", "ip_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["in.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["in.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_var.h", "ip_carp.h", "ip_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip6.h", "ip_ecn.h", "ip_encap.h", "ip_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["in.h", "in_var.h", "ip6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["if_ether.h", "in.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["in.h", "in_kdtrace.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h", "udp.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["if_ether.h", "in.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "ip.h", "ip6.h", "ip_var.h", "tcp.h", "tcp_lro.h", "udp.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "in_systm.h", "in_var.h", "ip.h", "ip_options.h", "ip_var.h", "udp.h", "udp_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["in.h", "in_kdtrace.h", "in_systm.h", "in_var.h", "ip.h", "ip_options.h", "ip_var.h", "udp.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["in.h", "ip_mroute.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["in.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["if_ether.h", "in.h", "in_kdtrace.h", "ip_carp.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_toeplitz_headers", hdrs = ["in.h"],
+    visibility = ["//sys/net:__pkg__"])

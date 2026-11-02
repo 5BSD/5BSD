@@ -129,3 +129,27 @@ bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["db_lex.h", "ddb.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["db_sym.h", "ddb.h"],
+    visibility = ["//sys/net:__pkg__"])

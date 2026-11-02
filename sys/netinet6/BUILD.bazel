@@ -382,3 +382,41 @@ amd64_generic_kernel_objects(name = "generic_ipv6_scope6", srcs = ["scope6.c"],
 amd64_generic_kernel_objects(name = "generic_ipv6_udp6_usrreq", srcs = ["udp6_usrreq.c"],
     deps = ["//sys/contrib/ck:ipv6_kernel_udp6_usrreq_headers", "//sys/ddb:ipv6_kernel_udp6_usrreq_headers", "//sys/net:ipv6_kernel_udp6_usrreq_headers", "//sys/netinet:ipv6_kernel_udp6_usrreq_headers", "//sys/netinet6:ipv6_kernel_udp6_usrreq_headers", "//sys/netipsec:ipv6_kernel_udp6_usrreq_headers", "//sys/security/mac:ipv6_kernel_udp6_usrreq_headers", "//sys/vm:ipv6_kernel_udp6_usrreq_headers", "//sys/amd64/conf:ipv6_kernel_opt_inet_header", "//sys/amd64/conf:ipv6_kernel_opt_inet6_header", "//sys/amd64/conf:ipv6_kernel_opt_ipsec_header", "//sys/amd64/conf:ipv6_kernel_opt_rss_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["in6.h", "in6_ifattach.h", "in6_var.h", "ip6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["in6.h", "in6_var.h", "ip6_ecn.h", "ip6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["in6.h", "in6_var.h", "nd6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["in6.h", "ip6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["in6.h", "in6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["in6.h", "in6_var.h", "ip6_var.h", "scope6_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_toeplitz_headers", hdrs = ["in6.h"],
+    visibility = ["//sys/net:__pkg__"])

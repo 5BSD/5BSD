@@ -17,3 +17,7 @@ bsd_source_headers(name = "tracing_module_headers", hdrs = ["vmm_param.h", "vmm_
 
 bsd_source_headers(name = "tracing_core_headers", hdrs = ["vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h"], includes = [],
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["vmm_dirty_log_request.h", "vmm_param.h", "vmm_startup_event.h", "vmm_startup_mode.h", "vmm_startup_request.h", "vmm_startup_run_request.h"],
+    visibility = ["//sys/net:__pkg__"])

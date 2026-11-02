@@ -47423,3 +47423,8 @@ install records/four debug CRCs and eight non-root pre-device test methods.
 All eleven raw object text sections match Make. The documented cxgbetool
 source-filename/relocation layout difference and real hardware, cross-userland,
 other configurations, pkg creation and performance gates remain open.
+
+The next 32 amd64 GENERIC network built-ins are qualified through native
+compiler and CTF actions. See [NETWORK-KERNEL-QUALIFICATION.md](NETWORK-KERNEL-QUALIFICATION.md)
+for byte-identical text/CTF, declared input and symbolic relocation checks,
+existing interface-provider reuse, and remaining whole-system gates.

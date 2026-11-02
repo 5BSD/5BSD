@@ -103,3 +103,19 @@ bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/net:__pkg__"])

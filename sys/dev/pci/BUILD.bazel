@@ -36,3 +36,7 @@ bsd_source_headers(name = "network_support_headers", hdrs = ["pci_iov.h", "pci_p
 filegroup(name = "pci_iov_if_header_file", srcs = [":pci_iov_if"], output_group = "header")
 cc_library(name = "pci_iov_if_headers", hdrs = [":pci_iov_if_header_file"],
     strip_include_prefix = "pci_iov_if.generated", visibility = ["//sys/net:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["pci_iov.h", "pci_private.h", "pcireg.h", "pcivar.h"],
+    visibility = ["//sys/net:__pkg__"])

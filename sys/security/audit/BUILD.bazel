@@ -48,3 +48,7 @@ bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["audit.h"],
 # IPv4 built-in prerequisites.
 bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["audit.h"],
     visibility = ["//sys/netinet:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["audit.h"],
+    visibility = ["//sys/net:__pkg__"])

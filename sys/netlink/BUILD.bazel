@@ -12,3 +12,12 @@ cc_library(name = "rpc_provider_headers", hdrs = ["netlink.h", "netlink_ctl.h", 
 
 cc_library(name = "virtual_interface_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_generic.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+# Network built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "netlink_var.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["netlink.h", "netlink_bitset.h", "netlink_ctl.h", "netlink_message_parser.h", "netlink_message_writer.h", "netlink_route.h", "route/common.h", "route/ifaddrs.h", "route/interface.h", "route/neigh.h", "route/nexthop.h", "route/route.h", "route/route_var.h"],
+    visibility = ["//sys/net:__pkg__"])

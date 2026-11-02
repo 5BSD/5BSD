@@ -807,3 +807,169 @@ bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["if.h", "if_priv
     visibility = ["//sys/netinet6:__pkg__"])
 bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["if.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"],
     visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["bpf.h", "bpf_buffer.h", "bpf_zerocopy.h", "bpfdesc.h", "dlt.h", "if.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["bpf.h", "bpf_buffer.h", "bpfdesc.h", "dlt.h", "if.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["bpf.h", "dlt.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["bpf.h", "bpf_zerocopy.h", "bpfdesc.h", "dlt.h", "if.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["bpf.h", "bpfdesc.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["bridgestp.h", "ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_media.h", "if_mib.h", "if_private.h", "if_strings.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["bpf.h", "bridgestp.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_clone.h", "if_dl.h", "if_llc.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["if.h", "if_clone.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_dead_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_epair_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "ieee_oui.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_llc.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_bridgevar.h", "if_clone.h", "if_gif.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["bpf.h", "dlt.h", "if.h", "if_clone.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/route_ctl.h", "route/route_debug.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_media_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_mib_headers", hdrs = ["if.h", "if_mib.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_dl.h", "if_media.h", "if_private.h", "if_tap.h", "if_tun.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vether_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vf_status.h", "iflib.h", "ifq.h", "mp_ring.h", "netmap.h", "netmap_legacy.h", "pfil.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_mp_ring_headers", hdrs = ["mp_ring.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "netisr_internal.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["debugnet.h", "debugnet_int.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["debugnet.h", "debugnet_int.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_pfil_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "pfil.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netisr.h", "rss_config.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_debug.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_toeplitz_headers", hdrs = ["rss_config.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+
+# Native Network built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_net_bpf", srcs = ["bpf.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_headers", "//sys/ddb:net_kernel_bpf_headers", "//sys/net:net_kernel_bpf_headers", "//sys/security/audit:net_kernel_bpf_headers", "//sys/security/mac:net_kernel_bpf_headers", "//sys/vm:net_kernel_bpf_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header", "//sys/amd64/conf:net_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_buffer", srcs = ["bpf_buffer.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_buffer_headers", "//sys/net:net_kernel_bpf_buffer_headers", "//sys/vm:net_kernel_bpf_buffer_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_filter", srcs = ["bpf_filter.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_filter_headers", "//sys/net:net_kernel_bpf_filter_headers", "//sys/vm:net_kernel_bpf_filter_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_zerocopy", srcs = ["bpf_zerocopy.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_zerocopy_headers", "//sys/net:net_kernel_bpf_zerocopy_headers", "//sys/vm:net_kernel_bpf_zerocopy_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_ifnet", srcs = ["bpf_ifnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_ifnet_headers", "//sys/ddb:net_kernel_bpf_ifnet_headers", "//sys/net:net_kernel_bpf_ifnet_headers", "//sys/security/mac:net_kernel_bpf_ifnet_headers", "//sys/vm:net_kernel_bpf_ifnet_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bridgestp", srcs = ["bridgestp.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bridgestp_headers", "//sys/net:net_kernel_bridgestp_headers", "//sys/netinet:net_kernel_bridgestp_headers", "//sys/netinet6:net_kernel_bridgestp_headers", "//sys/vm:net_kernel_bridgestp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if", srcs = ["if.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_headers", "//sys/ddb:net_kernel_if_headers", "//sys/net:net_kernel_if_headers", "//sys/netinet:net_kernel_if_headers", "//sys/netinet6:net_kernel_if_headers", "//sys/security/mac:net_kernel_if_headers", "//sys/vm:net_kernel_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_bridge", srcs = ["if_bridge.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_bridge_headers", "//sys/net:net_kernel_if_bridge_headers", "//sys/netinet:net_kernel_if_bridge_headers", "//sys/netinet6:net_kernel_if_bridge_headers", "//sys/vm:net_kernel_if_bridge_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_clone", srcs = ["if_clone.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_clone_headers", "//sys/net:net_kernel_if_clone_headers", "//sys/netinet:net_kernel_if_clone_headers", "//sys/netinet6:net_kernel_if_clone_headers", "//sys/netlink:net_kernel_if_clone_headers", "//sys/vm:net_kernel_if_clone_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_dead", srcs = ["if_dead.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_dead_headers", "//sys/net:net_kernel_if_dead_headers", "//sys/vm:net_kernel_if_dead_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_egress", srcs = ["if_egress.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_egress_headers", "//sys/net:net_kernel_if_egress_headers", "//sys/netinet:net_kernel_if_egress_headers", "//sys/netinet6:net_kernel_if_egress_headers", "//sys/vm:net_kernel_if_egress_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_epair", srcs = ["if_epair.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_epair_headers", "//sys/net:net_kernel_if_epair_headers", "//sys/vm:net_kernel_if_epair_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_ethersubr", srcs = ["if_ethersubr.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_ethersubr_headers", "//sys/crypto:net_kernel_if_ethersubr_headers", "//sys/ddb:net_kernel_if_ethersubr_headers", "//sys/net:net_kernel_if_ethersubr_headers", "//sys/netinet:net_kernel_if_ethersubr_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/security/mac:net_kernel_if_ethersubr_headers", "//sys/vm:net_kernel_if_ethersubr_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_mbuf_profiling_header", "//sys/amd64/conf:net_kernel_opt_netgraph_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_gif", srcs = ["if_gif.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_gif_headers", "//sys/ddb:net_kernel_if_gif_headers", "//sys/net:net_kernel_if_gif_headers", "//sys/netinet:net_kernel_if_gif_headers", "//sys/netinet6:net_kernel_if_gif_headers", "//sys/netlink:net_kernel_if_gif_headers", "//sys/security/mac:net_kernel_if_gif_headers", "//sys/vm:net_kernel_if_gif_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_loop", srcs = ["if_loop.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_loop_headers", "//sys/ddb:net_kernel_if_loop_headers", "//sys/net:net_kernel_if_loop_headers", "//sys/netinet:net_kernel_if_loop_headers", "//sys/netinet6:net_kernel_if_loop_headers", "//sys/security/mac:net_kernel_if_loop_headers", "//sys/vm:net_kernel_if_loop_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_llatbl", srcs = ["if_llatbl.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_llatbl_headers", "//sys/ddb:net_kernel_if_llatbl_headers", "//sys/net:net_kernel_if_llatbl_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:net_kernel_if_llatbl_headers", "//sys/vm:net_kernel_if_llatbl_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_media", srcs = ["if_media.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_media_headers", "//sys/net:net_kernel_if_media_headers", "//sys/vm:net_kernel_if_media_headers", "//sys/amd64/conf:net_kernel_opt_ifmedia_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_mib", srcs = ["if_mib.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_mib_headers", "//sys/net:net_kernel_if_mib_headers", "//sys/vm:net_kernel_if_mib_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_tuntap", srcs = ["if_tuntap.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_tuntap_headers", "//sys/ddb:net_kernel_if_tuntap_headers", "//sys/dev/virtio/network:net_kernel_if_tuntap_headers", "//sys/dev/vmm:net_kernel_if_tuntap_headers", "//sys/net:net_kernel_if_tuntap_headers", "//sys/netinet:net_kernel_if_tuntap_headers", "//sys/netinet6:net_kernel_if_tuntap_headers", "//sys/security/mac:net_kernel_if_tuntap_headers", "//sys/vm:net_kernel_if_tuntap_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_vether", srcs = ["if_vether.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_vether_headers", "//sys/net:net_kernel_if_vether_headers", "//sys/vm:net_kernel_if_vether_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_vlan", srcs = ["if_vlan.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_vlan_headers", "//sys/net:net_kernel_if_vlan_headers", "//sys/netinet:net_kernel_if_vlan_headers", "//sys/netinet6:net_kernel_if_vlan_headers", "//sys/netlink:net_kernel_if_vlan_headers", "//sys/vm:net_kernel_if_vlan_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_ipsec_header", "//sys/amd64/conf:net_kernel_opt_kern_tls_header", "//sys/amd64/conf:net_kernel_opt_ratelimit_header", "//sys/amd64/conf:net_kernel_opt_vlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_iflib", srcs = ["iflib.c"],
+    deps = ["//sys/contrib/ck:net_kernel_iflib_headers", "//sys/dev/led:net_kernel_iflib_headers", "//sys/dev/netmap:net_kernel_iflib_headers", "//sys/dev/pci:net_kernel_iflib_headers", "//sys/net:net_kernel_iflib_headers", "//sys/netinet:net_kernel_iflib_headers", "//sys/netinet6:net_kernel_iflib_headers", "//sys/vm:net_kernel_iflib_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_mp_ring", srcs = ["mp_ring.c"],
+    deps = ["//sys/net:net_kernel_mp_ring_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_netisr", srcs = ["netisr.c"],
+    deps = ["//sys/contrib/ck:net_kernel_netisr_headers", "//sys/ddb:net_kernel_netisr_headers", "//sys/net:net_kernel_netisr_headers", "//sys/vm:net_kernel_netisr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_device_polling_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_debugnet", srcs = ["debugnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_debugnet_headers", "//sys/ddb:net_kernel_debugnet_headers", "//sys/net:net_kernel_debugnet_headers", "//sys/netinet:net_kernel_debugnet_headers", "//sys/netinet6:net_kernel_debugnet_headers", "//sys/vm:net_kernel_debugnet_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_debugnet_inet", srcs = ["debugnet_inet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_debugnet_inet_headers", "//sys/net:net_kernel_debugnet_inet_headers", "//sys/netinet:net_kernel_debugnet_inet_headers", "//sys/netinet6:net_kernel_debugnet_inet_headers", "//sys/vm:net_kernel_debugnet_inet_headers", "//sys/amd64/conf:net_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_pfil", srcs = ["pfil.c"],
+    deps = ["//sys/contrib/ck:net_kernel_pfil_headers", "//sys/net:net_kernel_pfil_headers", "//sys/vm:net_kernel_pfil_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_route", srcs = ["route.c"],
+    deps = ["//sys/contrib/ck:net_kernel_route_headers", "//sys/net:net_kernel_route_headers", "//sys/netinet:net_kernel_route_headers", "//sys/netinet6:net_kernel_route_headers", "//sys/vm:net_kernel_route_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_mrouting_header", "//sys/amd64/conf:net_kernel_opt_route_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_rss_config", srcs = ["rss_config.c"],
+    deps = ["//sys/contrib/ck:net_kernel_rss_config_headers", "//sys/net:net_kernel_rss_config_headers", "//sys/netinet:net_kernel_rss_config_headers", "//sys/netinet6:net_kernel_rss_config_headers", "//sys/vm:net_kernel_rss_config_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_rtsock", srcs = ["rtsock.c"],
+    deps = ["//sys/contrib/ck:net_kernel_rtsock_headers", "//sys/net:net_kernel_rtsock_headers", "//sys/netinet:net_kernel_rtsock_headers", "//sys/netinet6:net_kernel_rtsock_headers", "//sys/vm:net_kernel_rtsock_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_toeplitz", srcs = ["toeplitz.c"],
+    deps = ["//sys/net:net_kernel_toeplitz_headers", "//sys/netinet:net_kernel_toeplitz_headers", "//sys/netinet6:net_kernel_toeplitz_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_vnet", srcs = ["vnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_vnet_headers", "//sys/ddb:net_kernel_vnet_headers", "//sys/net:net_kernel_vnet_headers", "//sys/vm:net_kernel_vnet_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_kdb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
