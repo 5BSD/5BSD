@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["dcons.h"], includes = [],
+    visibility = ["//sys/dev/dcons:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_1", hdrs = ["dcons.h", "dcons_os.h"], includes = [],
+    visibility = ["//sys/dev/dcons:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "dcons_dcons_module", srcs = ["dcons.c"],
+    deps = ["//sys/dev/dcons:system_io_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "dcons_dcons_os_module", srcs = ["dcons_os.c"],
+    deps = ["//sys/gdb:peripheral_devices_kernel_uart_dbg_headers", "//sys/dev/dcons:system_io_module_context_1", "//sys/ddb:core_kernel_kern_cons_headers", "//sys/vm:lowlevel_kernel_db_trace_headers", "//sys/amd64/conf:system_io_module_opt_dcons_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:x86_core_kernel_opt_gdb_header", "//sys/amd64/conf:core_kernel_opt_kdb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "dcons_crom_dcons_crom_module", srcs = ["dcons_crom.c"],
+    deps = ["//sys/dev/firewire:system_io_module_context_0", "//sys/dev/dcons:system_io_module_context_1", "//sys/vm:lowlevel_kernel_db_trace_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+
+# The established userspace ABI view references this package-owned file.
+exports_files(["dcons.h"], visibility = ["//:__pkg__"])

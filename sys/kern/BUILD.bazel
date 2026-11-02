@@ -903,12 +903,20 @@ cc_library(name = "hardware_module_device_if_headers", hdrs = [":hardware_module
 exports_files(["firmw.S"], visibility = ["//sys/modules:__subpackages__"])
 
 filegroup(name = "serdev_if_module_header", srcs = [":serdev_if"], output_group = "header")
-cc_library(name = "serdev_if_headers", hdrs = [":serdev_if_module_header"], strip_include_prefix = "serdev_if.generated", visibility = ["//sys/dev/puc:__pkg__", "//sys/dev/uart:__pkg__", "//sys/kern:__pkg__"])
+cc_library(name = "serdev_if_headers", hdrs = [":serdev_if_module_header"], strip_include_prefix = "serdev_if.generated", visibility = ["//sys/dev/puc:__pkg__", "//sys/dev/uart:__pkg__", "//sys/kern:__pkg__", "//sys/dev/scc:__pkg__"])
 
 filegroup(name = "serdev_if_module_source", srcs = [":serdev_if"], output_group = "source")
 
 load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 
 amd64_generic_module_objects(name = "puc_serdev_if_module", srcs = [":serdev_if_module_source"],
+    deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :serdev_if_module_source)=serdev_if.c", "-fdebug-prefix-map=$(execpath :serdev_if_module_source)=serdev_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "imgact_binmisc_imgact_binmisc_module", srcs = ["imgact_binmisc.c"],
+    deps = ["//sys/vm:mii_family_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "scc_serdev_if_module", srcs = [":serdev_if_module_source"],
     deps = ["//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :serdev_if_module_source)=serdev_if.c", "-fdebug-prefix-map=$(execpath :serdev_if_module_source)=serdev_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

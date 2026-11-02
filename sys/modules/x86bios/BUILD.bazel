@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "x86bios", objects = ["//sys/compat/x86bios:x86bios_x86bios_module_object_files", "//sys/contrib/x86emu:x86bios_x86emu_module_object_files"], object_order = ["x86bios.o", "x86emu.o"], exports = [], export_all = False, package = "kernel", aliases = [])

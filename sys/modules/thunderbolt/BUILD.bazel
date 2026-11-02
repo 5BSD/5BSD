@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "tb", objects = ["//sys/dev/thunderbolt:tb_nhi_pci_module_object_files", "//sys/dev/thunderbolt:tb_nhi_module_object_files", "//sys/dev/thunderbolt:tb_tb_pcib_module_object_files", "//sys/dev/thunderbolt:tb_tb_acpi_pcib_module_object_files", "//sys/dev/thunderbolt:tb_tb_debug_module_object_files", "//sys/dev/thunderbolt:tb_nhi_wmi_module_object_files", "//sys/dev/thunderbolt:tb_router_module_object_files", "//sys/dev/thunderbolt:tb_hcm_module_object_files", "//sys/dev/thunderbolt:tb_tb_dev_module_object_files", "//sys/dev/thunderbolt:tb_tb_if_module_object_files"], object_order = ["nhi_pci.o", "nhi.o", "tb_pcib.o", "tb_acpi_pcib.o", "tb_debug.o", "nhi_wmi.o", "router.o", "hcm.o", "tb_dev.o", "tb_if.o"], exports = [], export_all = False, package = "kernel", aliases = [])

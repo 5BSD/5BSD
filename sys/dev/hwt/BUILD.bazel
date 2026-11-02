@@ -75,3 +75,6 @@ amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_thread", src
 amd64_generic_kernel_objects(name = "generic_monitoring_devices_hwt_vm", srcs = ["hwt_vm.c"],
     deps = ["//sys/dev/hwt:monitoring_devices_kernel_hwt_owner_headers", "//sys/vm:monitoring_devices_kernel_hwt_vm_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["hwt_backend.h", "hwt_config.h", "hwt_context.h", "hwt_cpu.h", "hwt_record.h", "hwt_thread.h", "hwt_vm.h"], includes = [],
+    visibility = ["//sys/amd64/pt:__pkg__"])

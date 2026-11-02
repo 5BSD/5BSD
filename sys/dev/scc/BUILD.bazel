@@ -2,3 +2,37 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["scc_bfe.h", "scc_bus.h"], includes = [],
+    visibility = ["//sys/dev/scc:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_1", hdrs = ["scc_bfe.h"], includes = [],
+    visibility = ["//sys/dev/scc:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_2", hdrs = ["scc_bus.h"], includes = [],
+    visibility = ["//sys/dev/uart:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "scc_if_module_header", srcs = [":scc_if"], output_group = "header")
+cc_library(name = "scc_if_headers", hdrs = [":scc_if_module_header"], strip_include_prefix = "scc_if.generated", visibility = ["//sys/dev/scc:__pkg__"])
+
+filegroup(name = "scc_if_module_source", srcs = [":scc_if"], output_group = "source")
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "scc_scc_core_module", srcs = ["scc_core.c"],
+    deps = ["//sys/dev/scc:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/scc:scc_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "scc_scc_if_module", srcs = [":scc_if_module_source"],
+    deps = ["//sys/dev/scc:system_io_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/scc:scc_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :scc_if_module_source)=scc_if.c", "-fdebug-prefix-map=$(execpath :scc_if_module_source)=scc_if.c"], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "scc_scc_dev_z8530_module", srcs = ["scc_dev_z8530.c"],
+    deps = ["//sys/dev/scc:system_io_module_context_0", "//sys/dev/ic:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/scc:scc_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

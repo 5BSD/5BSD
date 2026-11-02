@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "vkbd", objects = ["//sys/dev/vkbd:vkbd_vkbd_module_object_files"], object_order = ["vkbd.o"], exports = [], export_all = False, package = "kernel", aliases = [])

@@ -10389,3 +10389,15 @@ each product starts. No live events or complete original-library/rescue/install
 claim. Pwd keeps canonical relative __FILE__ diagnostics; its untouched Make
 mismatch and independent compiler filename-policy control are retained. See
 RESCUE-EIGHT-PROGRAM-QUALIFICATION.md for current/cached evidence and all gates.
+
+### System and I/O modules (2026-11-02)
+
+The bounded 116-C-file/nine-schema scan finds 57 explicit DTrace/SDT/CTR/audit
+candidate lines, including comments/macros, in IOAT/MD/MMC/SDIO/SNP/UART and
+image-activation paths. Seven compiled modules (imgact_binmisc, geom_md, mmc,
+sdio, snp, uart, xdr) retain probe/tracepoint sections and relocation payloads
+against respective Make controls. No new/live probes qualified. Other source
+absences do not establish missing shared-subsystem instrumentation. Review shared
+request/completion/error/recovery, device lifecycle, terminal and image activation
+with useful events; avoid per-I/O logs or payload/credential disclosure. The test
+framework is compiled, not executed. See SYSTEM-IO-MODULES-QUALIFICATION.md.

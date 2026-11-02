@@ -48140,3 +48140,22 @@ accepted native objects/libraries/startup reproduces the complete ELF byte for
 byte. Pwd's ordinary diagnostic filename difference and its separate Make
 filename-policy control remain explicit. This is not the full 103-program rescue
 selection, complete original-library parity, installation or pkgbase.
+
+## Latest system/I/O module checkpoint (2026-11-02)
+
+Thirty-seven further amd64 module leaves pass compiler/input/link and artifact/
+install checks: 125 actual compiler contexts and 13,134 original / 13,135 native consumed
+dependencies per profile, with the sole extra TPM header alias verified as the
+same physical file and bytes, plus 37 ordered links. Thirty-five plain modules equal
+untouched Make; two equal explicitly documented filename controls. CTF/debug
+payloads/CRCs and 74 install records pass, plus 37 plain records. Explicit iconv/
+nvdimm exports and Thunderbolt's module option header are preserved. Actual
+before/after dconschat archives, including debug payloads, remain byte-identical
+using the unchanged public ABI view with physical package-owned file labels.
+See [SYSTEM-IO-MODULES-QUALIFICATION.md](SYSTEM-IO-MODULES-QUALIFICATION.md).
+
+BUILD presence is 628/729 selected amd64 leaves (101 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Existing build-bsd format-5 inputs/rules carry this cohort; no new CLI or
+security/publication policy. Make stays production/default; BIP remains excluded.

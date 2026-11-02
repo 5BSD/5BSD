@@ -14,11 +14,11 @@ cc_library(name = "kernel_headers", hdrs = ["zlib.h", "zconf.h", "zutil.h"], inc
 # Core kernel physical prerequisites.
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_subr_compressor_headers", hdrs = ["zconf.h", "zlib.h", "zutil.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/contrib/zlib:__pkg__", "//sys/dev/zlib:__pkg__"])
 
 # OpenCrypto built-in prerequisites.
 bsd_source_headers(name = "opencrypto_kernel_cryptodeflate_headers", hdrs = ["zconf.h", "zlib.h"],
-    visibility = ["//sys/opencrypto:__pkg__", "//sys/dev/bxe:__pkg__"])
+    visibility = ["//sys/opencrypto:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/contrib/zlib:__pkg__"])
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_spl_zlib_headers", hdrs = ["zconf.h", "zlib.h"],
@@ -78,3 +78,39 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_uncompr", srcs = ["un
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_zutil", srcs = ["zutil.c"],
     deps = ["//sys/contrib/zlib:codecs_crypto_kernel_adler32_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = ["-Wno-cast-qual", "-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "zlib_adler32_module", srcs = ["adler32.c"],
+    deps = ["//sys/contrib/zlib:core_kernel_subr_compressor_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_compress_module", srcs = ["compress.c", "uncompr.c"],
+    deps = ["//sys/contrib/zlib:opencrypto_kernel_cryptodeflate_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-cast-qual"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_crc32_module", srcs = ["crc32.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_crc32_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_deflate_module", srcs = ["deflate.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_deflate_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-cast-qual"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_inffast_module", srcs = ["inffast.c", "inflate.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_inffast_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_inftrees_module", srcs = ["inftrees.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_inftrees_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_trees_module", srcs = ["trees.c"],
+    deps = ["//sys/contrib/zlib:codecs_crypto_kernel_trees_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_zutil_module", srcs = ["zutil.c"],
+    deps = ["//sys/contrib/zlib:core_kernel_subr_compressor_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype", "-Wno-strict-prototypes"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

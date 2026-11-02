@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "mem", objects = ["//sys/amd64/amd64:mem_mem_module_object_files", "//sys/dev/mem:mem_memdev_module_object_files", "//sys/dev/mem:mem_memutil_module_object_files", "//sys/x86/x86:mem_x86_mem_module_object_files"], object_order = ["mem.o", "memdev.o", "memutil.o", "x86_mem.o"], exports = [], export_all = False, package = "kernel", aliases = [])

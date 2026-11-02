@@ -101,3 +101,6 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 exports_files(["fwcrom.c"], visibility = ["//usr.sbin/fwcontrol:__pkg__"])
 cc_library(name = "userspace_headers", hdrs = ["firewire.h", "iec13213.h", "fwphyreg.h", "iec68113.h"], strip_include_prefix = "/sys", visibility = ["//:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["firewire.h", "firewirereg.h", "iec13213.h"], includes = [],
+    visibility = ["//sys/dev/dcons:__pkg__"])

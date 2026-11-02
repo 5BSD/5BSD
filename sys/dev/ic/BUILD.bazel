@@ -17,3 +17,9 @@ bsd_source_headers(name = "platform_support_kernel_isa_dma_headers", hdrs = ["i8
     visibility = ["//sys/amd64/acpica:__pkg__", "//sys/amd64/pci:__pkg__", "//sys/compat/x86bios:__pkg__", "//sys/contrib/x86emu:__pkg__", "//sys/gdb:__pkg__", "//sys/isa:__pkg__", "//sys/x86/acpica:__pkg__", "//sys/x86/cpufreq:__pkg__", "//sys/x86/iommu:__pkg__", "//sys/x86/isa:__pkg__", "//sys/x86/pci:__pkg__", "//sys/x86/xen:__pkg__", "//sys/xen:__pkg__", "//sys/xen/xenbus:__pkg__"])
 
 bsd_source_headers(name = "acpi_wakecode_headers", hdrs = ["i8253reg.h"], visibility = ["//sys/amd64/acpica:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["z8530.h"], includes = [],
+    visibility = ["//sys/dev/scc:__pkg__", "//sys/dev/uart:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_2", hdrs = ["quicc.h"], includes = [],
+    visibility = ["//sys/dev/uart:__pkg__"])

@@ -53,3 +53,31 @@ bsd_source_headers(name = "codecs_crypto_kernel_port_headers", hdrs = glob(["fre
 # Physical prerequisites for native peripheral device built-ins.
 bsd_source_headers(name = "peripheral_devices_kernel_mlxfw_mfa2_headers", hdrs = ["linux/include/linux/xz.h"],
     visibility = ["//sys/dev/amdsmn:__pkg__", "//sys/dev/amdtemp:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/coretemp:__pkg__", "//sys/dev/cpuctl:__pkg__", "//sys/dev/cpufreq:__pkg__", "//sys/dev/dttransport:__pkg__", "//sys/dev/efidev:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/io:__pkg__", "//sys/dev/iommu:__pkg__", "//sys/dev/iwn:__pkg__", "//sys/dev/kbdmux:__pkg__", "//sys/dev/kvm_clock:__pkg__", "//sys/dev/led:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mem:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/null:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/puc:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbios:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/tcp_log:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/veriexec:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/vkbd:__pkg__", "//sys/dev/vmd:__pkg__", "//sys/dev/vmgenc:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/watchdog:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_private.h"], includes = ["freebsd", "linux/include/linux"],
+    visibility = ["//sys/contrib/xz-embedded:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_1", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_lzma2.h", "linux/lib/xz/xz_private.h"], includes = ["freebsd", "linux/include/linux"],
+    visibility = ["//sys/contrib/xz-embedded:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_2", hdrs = ["freebsd/xz_config.h", "freebsd/xz_malloc.h", "linux/include/linux/xz.h", "linux/lib/xz/xz_private.h", "linux/lib/xz/xz_stream.h"], includes = ["freebsd", "linux/include/linux"],
+    visibility = ["//sys/contrib/xz-embedded:__pkg__"])
+
+bsd_source_headers(name = "system_io_module_context_3", hdrs = ["freebsd/xz_malloc.h", "linux/include/linux/xz.h"], includes = ["freebsd", "linux/include/linux"],
+    visibility = ["//sys/dev/xz:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "xz_xz_crc32_module", srcs = ["linux/lib/xz/xz_crc32.c", "linux/lib/xz/xz_crc64.c", "linux/lib/xz/xz_dec_bcj.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["XZ_USE_CRC64"], header_overrides = ["//sys/contrib/xz-embedded:system_io_module_context_0"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "xz_xz_dec_lzma2_module", srcs = ["linux/lib/xz/xz_dec_lzma2.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["XZ_USE_CRC64"], header_overrides = ["//sys/contrib/xz-embedded:system_io_module_context_1"], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "xz_xz_dec_stream_module", srcs = ["linux/lib/xz/xz_dec_stream.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = ["XZ_USE_CRC64"], header_overrides = ["//sys/contrib/xz-embedded:system_io_module_context_2"], preinclude_headers = [], textual_hdrs = [])

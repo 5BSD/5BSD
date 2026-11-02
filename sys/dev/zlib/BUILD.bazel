@@ -19,3 +19,15 @@ amd64_generic_kernel_objects(name = "generic_codecs_crypto_zlib_mod", srcs = ["z
 amd64_generic_kernel_objects(name = "generic_codecs_crypto_zcalloc", srcs = ["zcalloc.c"],
     deps = ["//sys/contrib/zlib:codecs_crypto_kernel_adler32_headers", "//sys/dev/zlib:codecs_crypto_kernel_zcalloc_headers"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "zlib_zcalloc_module", srcs = ["zcalloc.c"],
+    deps = ["//sys/dev/zlib:codecs_crypto_kernel_zcalloc_headers", "//sys/contrib/zlib:core_kernel_subr_compressor_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "zlib_zlib_mod_module", srcs = ["zlib_mod.c"],
+    deps = [],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-deprecated-non-prototype"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

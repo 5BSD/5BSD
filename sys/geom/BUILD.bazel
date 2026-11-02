@@ -46,13 +46,13 @@ bsd_source_headers(name = "openzfs_kernel_zvol_os_headers", hdrs = ["geom.h"],
 bsd_source_headers(name = "storage_core_kernel_cam_iosched_headers", hdrs = ["geom_disk.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/flash:__pkg__", "//sys/dev/mfi:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_nvme_da_headers", hdrs = ["geom.h", "geom_disk.h"],
-    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/mmc:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_nvme_ns_headers", hdrs = ["geom.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_geom_ctl_headers", hdrs = ["geom.h", "geom_ctl.h", "geom_int.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_geom_dev_headers", hdrs = ["geom.h", "geom_int.h"],
-    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
+    visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__", "//sys/dev/md:__pkg__", "//sys/dev/nvdimm:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_geom_disk_headers", hdrs = ["geom.h", "geom_disk.h", "geom_int.h"],
     visibility = ["//sys/dev/ufshci:__pkg__", "//sys/geom/label:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/geom:__pkg__", "//sys/cam:__pkg__"])
 bsd_source_headers(name = "storage_core_kernel_geom_flashmap_headers", hdrs = ["geom.h", "geom_disk.h", "geom_flashmap.h", "geom_slice.h"],

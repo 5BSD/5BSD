@@ -4,3 +4,28 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 cc_library(name = "kernel_headers", hdrs = ["nvdimm_var.h"], strip_include_prefix = "/sys",
     visibility = ["//sys/dev/virtio/pmem:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "system_io_module_context_0", hdrs = ["nvdimm_var.h"], includes = [],
+    visibility = ["//sys/dev/nvdimm:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "nvdimm_nvdimm_module", srcs = ["nvdimm.c", "nvdimm_acpi.c"],
+    deps = ["//sys/contrib/dev/acpica/include:system_io_module_context_1", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/nvdimm:system_io_module_context_0", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "nvdimm_nvdimm_e820_module", srcs = ["nvdimm_e820.c"],
+    deps = ["//sys/isa:tracing_core_headers", "//sys/vm:core_kernel_kern_xxx_headers", "//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/nvdimm:system_io_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-missing-braces"], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "nvdimm_nvdimm_nfit_module", srcs = ["nvdimm_nfit.c", "nvdimm_ns.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/nvdimm:system_io_module_context_0", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "nvdimm_nvdimm_spa_module", srcs = ["nvdimm_spa.c"],
+    deps = ["//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/isa:tracing_core_headers", "//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/vm:filesystems_rpc_kernel_cuse_headers", "//sys/contrib/dev/acpica/include:system_io_module_context_1", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/nvdimm:system_io_module_context_0", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

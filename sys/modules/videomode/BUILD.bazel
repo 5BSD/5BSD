@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "videomode", objects = ["//sys/dev/videomode:videomode_videomode_module_object_files", "//sys/dev/videomode:videomode_edid_module_object_files", "//sys/dev/videomode:videomode_pickmode_module_object_files", "//sys/dev/videomode:videomode_vesagtf_module_object_files"], object_order = ["videomode.o", "edid.o", "pickmode.o", "vesagtf.o"], exports = [], export_all = False, package = "kernel", aliases = [])

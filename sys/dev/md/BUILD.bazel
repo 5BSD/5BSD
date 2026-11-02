@@ -7,3 +7,11 @@ load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "K
 amd64_generic_kernel_objects(name = "generic_peripheral_devices_md", srcs = ["md.c"],
     deps = ["//sys/geom:peripheral_devices_kernel_md_headers", "//sys/net:peripheral_devices_kernel_md_headers", "//sys/netinet:peripheral_devices_kernel_md_headers", "//sys/netinet6:peripheral_devices_kernel_if_iwn_headers", "//sys/vm:peripheral_devices_kernel_md_headers", "//sys/kern:peripheral_devices_kernel_bus_if_headers", "//sys/kern:peripheral_devices_kernel_device_if_headers", "//sys/amd64/conf:peripheral_devices_kernel_opt_geom_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_md_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_rootdevname_header"], early_deps = [],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, copts = [])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "geom_md_md_module", srcs = ["md.c"],
+    deps = ["//sys/vm:peripheral_devices_kernel_md_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/geom:storage_core_kernel_geom_dev_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:storage_core_kernel_opt_geom_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_md_header", "//sys/amd64/conf:peripheral_devices_kernel_opt_rootdevname_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
