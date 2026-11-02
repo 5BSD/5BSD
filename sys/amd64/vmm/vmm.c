@@ -1504,9 +1504,12 @@ vm_handle_internal_exit(struct vcpu *vcpu, bool *retu)
 		else if (vme->exitcode == VM_EXITCODE_PAGING)
 			/*
 			 * L0's map of L1 memory refused an L2 access that
-			 * L1's nested page tables allow.  Fault the L1 page
-			 * as for an L1 access: a refusal returns EFAULT
-			 * instead of re-entering L2 into the same fault.
+			 * L1's nested page tables allow.  Handle it as the
+			 * same access by L1: the refusal comes from the
+			 * protection of L1's memory mapping, which vm_fault()
+			 * also enforces, so the exit becomes the terminal
+			 * EFAULT the equivalent L1 access gets instead of
+			 * re-entering L2 into the same fault.
 			 */
 			error = vm_handle_paging(vcpu, retu);
 		else if (vme->exitcode == VM_EXITCODE_HLT)
