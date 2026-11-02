@@ -200,3 +200,16 @@ passes a fresh post-merge Make reference; code/DOF/section parity and other
 configurations remain separate gates. Every reused Make receipt must still pass
 its recorded source hashes after merges; an old successful receipt is not a
 current-source baseline.
+
+### WPA daemon continuation (2026-11-02)
+
+The genuine AES-SIV dependency fix and native hostapd checks are recorded in
+WPA-AES-CTR-QUALIFICATION.md and WPA-HOSTAPD-QUALIFICATION.md. Four of five WPA
+programs now have bounded native qualification. Continue wpa_supplicant with
+actual source/flag/archive/install ownership, then reconcile the independent
+internal-backend SAE/EHT/crypto API failures without silently disabling features.
+Qualify hostapd IPv6/examples-disabled and custom build selections explicitly.
+Retain live control, root driver setup, wireless/EAP/authentication and audit
+event delivery as separate runtime gates. Archive construction and safe CLI
+reports do not establish those behaviors. Existing compact execution logging,
+configured exec-action caching and full pkgbase/system gates remain open.

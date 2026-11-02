@@ -10,9 +10,12 @@ libraries now pass [their qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md),
 including all 660 object/compiler/input checks and 32 archive comparisons. All
 sixteen private directories have bounded native output qualification. The
 [wpa_cli client](WPA-CLI-QUALIFICATION.md) now passes four program configurations,
-sixteen safe CLI/loader methods and its actual link/install/input checks. Next
-WPA work is hostapd and wpa_supplicant; daemon/control/wireless runtime, cross
-builds and whole-system gates are still open. The earlier paused record
+sixteen safe CLI/loader methods and its actual link/install/input checks. Native
+[hostapd](WPA-HOSTAPD-QUALIFICATION.md) now passes two OpenSSL configurations,
+eight retained safe methods and twenty install records. The independently
+verified [AES-CTR fix](WPA-AES-CTR-QUALIFICATION.md) closes its real no-EAPOL
+link failure. Next is wpa_supplicant, followed by internal crypto feature/API
+closure and the remaining daemon/control/wireless, cross and whole-system gates. The earlier paused record
 and prepared-reference notes below are historical.
 
 ## Update at the next upgrade stopping point (2026-11-02)

@@ -25,8 +25,13 @@ hash checks across four configurations. All sixteen private directories have
 bounded output qualification; three programs and full service/runtime/system
 gates remain open. The [wpa_cli control client](WPA-CLI-QUALIFICATION.md) now
 passes four immutable ELF/link comparisons, sixteen safe CLI/loader methods and
-its original install metadata. Three of five WPA programs have bounded native
-qualification; hostapd and wpa_supplicant remain.
+its original install metadata. Three of five WPA programs had bounded native
+qualification at that checkpoint. The [hostapd daemon](WPA-HOSTAPD-QUALIFICATION.md)
+now adds two supported OpenSSL configurations, eight retained safe CLI/loader
+methods and twenty install records. The [AES-CTR dependency correction](WPA-AES-CTR-QUALIFICATION.md)
+fixes the genuine no-EAPOL link failure. Four of five programs have bounded
+native qualification; wpa_supplicant, internal-backend feature closure and live
+wireless/authentication behavior remain open.
 
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.

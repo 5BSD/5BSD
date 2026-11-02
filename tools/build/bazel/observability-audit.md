@@ -9646,3 +9646,13 @@ audit/CTR calls in these 22 sources. Existing code is unchanged. This does not
 establish missing shared hooks or qualify live debugger entry/commands, CTF type
 lookup, breakpoints/watchpoints or textdump behavior. Use an isolated matching
 kernel; see DDB-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## WPA access-point daemon (2026-11-02)
+
+The bounded source-bound call-shaped scan finds no recognized direct SDT/DTrace,
+audit or FIDL calls in the five hostapd program translation units. The native
+build preserves their source, macro/warning policy, raw code and nondebug
+relocations. Safe CLI/loader tests return before driver/interface setup and do
+not qualify access-point authentication, EAP, security-event/audit delivery or
+shared instrumentation. Review the shared WPA/kernel event paths before adding
+probes; no invented hot-path hooks were added. See WPA-HOSTAPD-QUALIFICATION.md.
