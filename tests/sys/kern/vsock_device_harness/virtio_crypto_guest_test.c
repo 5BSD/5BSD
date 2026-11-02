@@ -6,14 +6,16 @@
  * The kernel headers the driver includes are suppressed through their include
  * guards and replaced with minimal mocks: a descriptor-counting virtqueue, a
  * contiguous-buffer cryptop and recorders for crypto_done()/crypto_unblock().
- * Expectations come from crypto(9) (a driver out of resources returns
- * ERESTART and later calls crypto_unblock()) and the VirtIO 1.2 data request
- * layout (virtio_crypto_sym_data_req.op_type at byte 64), never from the
- * driver's own constants.
+ * Expectations come from crypto(9) and opencrypto's dispatch (a driver may
+ * return ERESTART, which crypto_proc() records as "blocked" only after
+ * process() returns, and only a later crypto_unblock() clears) and the
+ * VirtIO 1.2 data request layout (virtio_crypto_sym_data_req.op_type at
+ * byte 64), never from the driver's own constants.
  */
 
 #include <sys/param.h>
 #include <sys/endian.h>
+#include <sys/queue.h>
 #include <sys/time.h>
 
 #include <errno.h>
@@ -80,6 +82,8 @@ struct mtx { int held; };
 #define	mtx_destroy(m)		do { } while (0)
 #define	mtx_lock(m)		((m)->held++)
 #define	mtx_unlock(m)		((m)->held--)
+#define	MA_OWNED		0
+#define	mtx_assert(m, w)	ATF_REQUIRE((m)->held > 0)
 
 #define	M_NOWAIT		0x1
 #define	M_ZERO			0x100
@@ -102,17 +106,25 @@ struct sglist_seg {
 	size_t	 ss_len;
 };
 struct sglist {
-	int			sg_nseg;
-	int			sg_maxseg;
-	struct sglist_seg	sg_segs[8];
+	struct sglist_seg	*sg_segs;
+	int			 sg_nseg;
+	int			 sg_maxseg;
 };
+static void
+sglist_init(struct sglist *sg, int n, struct sglist_seg *segs)
+{
+	sg->sg_segs = segs;
+	sg->sg_nseg = 0;
+	sg->sg_maxseg = n;
+}
 static struct sglist *
 sglist_alloc(int n, int fl)
 {
-	struct sglist *sg = mock_malloc(sizeof(*sg), M_ZERO);
+	struct sglist *sg = mock_malloc(sizeof(*sg) +
+	    n * sizeof(struct sglist_seg), M_ZERO);
 
 	(void)fl;
-	sg->sg_maxseg = n;
+	sglist_init(sg, n, (struct sglist_seg *)(sg + 1));
 	return (sg);
 }
 static int
@@ -182,6 +194,7 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 #define	virtqueue_disable_intr(vq)	do { } while (0)
 #define	virtqueue_enable_intr(vq)	(0)
 #define	virtqueue_empty(vq)		((vq)->head == (vq)->tail)
+#define	virtqueue_full(vq)		((vq)->free_desc == 0)
 static void *
 virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 {
@@ -248,6 +261,7 @@ struct cryptop {
 	uint8_t		 iv[16];
 	uint8_t		 buf[4096];
 	bool		 done;
+	TAILQ_ENTRY(cryptop) crp_next;
 };
 #define	crypto_get_params(s)		(&(s)->csp)
 #define	crypto_get_driver_session(s)	((s)->drv)
@@ -259,6 +273,11 @@ struct cryptop {
 #define	crypto_get_driverid(d, sz, f)	(7)
 #define	crypto_unregister_all(id)	do { } while (0)
 
+/*
+ * opencrypto's view of the driver: crypto_proc() sets cc_qblocked under
+ * CRYPTO_Q_LOCK after process() returned ERESTART; crypto_unblock() clears it.
+ */
+static bool g_qblocked;
 static int g_done, g_done_err, g_unblock, g_unblock_what;
 static void
 crypto_done(struct cryptop *crp)
@@ -268,12 +287,13 @@ crypto_done(struct cryptop *crp)
 	if (crp->crp_etype != 0)
 		g_done_err++;
 }
-static int
+static __unused int
 crypto_unblock(uint32_t id, int what)
 {
 	ATF_REQUIRE_EQ(7, (int)id);
 	g_unblock++;
 	g_unblock_what = what;
+	g_qblocked = false;
 	return (0);
 }
 
@@ -286,24 +306,28 @@ crypto_unblock(uint32_t id, int what)
 /* --------------------------------------------------------------- fixture */
 static struct mock_dev g_dev;
 static struct vtcrypto_softc g_sc;
-static struct vtcrypto_dataq g_dq;
-static struct virtqueue g_vq;
+static struct vtcrypto_dataq g_dq[2];
+static struct virtqueue g_vq[2];
 static struct vtcrypto_session g_drv;
 static struct mock_session g_ses;
 
 static void
-fixture(void)
+fixture_queues(int ndataq)
 {
 	memset(&g_sc, 0, sizeof(g_sc));
-	memset(&g_dq, 0, sizeof(g_dq));
-	memset(&g_vq, 0, sizeof(g_vq));
-	g_vq.free_desc = MOCK_RINGSZ;
-	g_dq.vdq_sc = &g_sc;
-	g_dq.vdq_vq = &g_vq;
+	memset(g_dq, 0, sizeof(g_dq));
+	memset(g_vq, 0, sizeof(g_vq));
+	for (int i = 0; i < ndataq; i++) {
+		g_vq[i].free_desc = MOCK_RINGSZ;
+		g_dq[i].vdq_sc = &g_sc;
+		g_dq[i].vdq_vq = &g_vq[i];
+		g_dq[i].vdq_id = i;
+		TAILQ_INIT(&g_dq[i].vdq_parked);
+	}
 	g_sc.vtc_dev = &g_dev;
 	g_sc.vtc_cid = 7;
-	g_sc.vtc_ndataq = 1;
-	g_sc.vtc_dataq = &g_dq;
+	g_sc.vtc_ndataq = ndataq;
+	g_sc.vtc_dataq = g_dq;
 	g_sc.vtc_have_cipher = true;
 	g_dev.softc = &g_sc;
 
@@ -320,6 +344,13 @@ fixture(void)
 	g_ses.csp.csp_ivlen = 16;
 	g_ses.drv = &g_drv;
 	g_done = g_done_err = g_unblock = g_unblock_what = 0;
+	g_qblocked = false;
+}
+
+static void
+fixture(void)
+{
+	fixture_queues(1);
 }
 
 /* One geli(4) sector: 512-byte AES-CBC. */
@@ -335,75 +366,166 @@ sector_crp(bool encrypt)
 	return (crp);
 }
 
-/* Device side: complete everything posted with status VIRTIO_CRYPTO_S_OK. */
-static void
+/*
+ * Device side: complete everything posted on every data queue with status
+ * VIRTIO_CRYPTO_S_OK, then deliver each queue's interrupt.  Returns the number
+ * of requests completed by the device.
+ */
+static int
 device_complete_all(void)
 {
-	for (int i = g_vq.used; i < g_vq.tail; i++) {
-		struct vtcrypto_request *vcr = g_vq.cookie[i];
+	int n = 0;
 
-		vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = 0;
+	for (int q = 0; q < g_sc.vtc_ndataq; q++) {
+		for (int i = g_vq[q].used; i < g_vq[q].tail; i++) {
+			struct vtcrypto_request *vcr = g_vq[q].cookie[i];
+
+			vcr->vcr_wbuf[vcr->vcr_wbuf_len - 1] = 0;
+			n++;
+		}
+		g_vq[q].used = g_vq[q].tail;
 	}
-	g_vq.used = g_vq.tail;
+	for (int q = 0; q < g_sc.vtc_ndataq; q++)
+		vtcrypto_dataq_intr(&g_dq[q]);
+	return (n);
 }
 
 /*
- * A full ring is resource exhaustion: crypto(9) requires ERESTART (request
- * kept by the framework, driver blocked) rather than completing the request
- * with ENOSPC, and the completion path must call crypto_unblock().
+ * opencrypto's dispatch of one request: an ERESTART result is recorded as
+ * cc_qblocked (crypto_proc()) and the request is held for a later retry.
  */
-ATF_TC_WITHOUT_HEAD(ring_full_returns_erestart);
-ATF_TC_BODY(ring_full_returns_erestart, tc)
+static int
+dispatch(struct cryptop *crp)
 {
-	struct cryptop *crp[MOCK_RINGSZ];
-	struct cryptop *extra;
-	int i, n, rc;
+	int rc;
 
-	fixture();
-	/* Fill the ring with sector requests until it refuses one. */
+	rc = vtcrypto_process(&g_dev, crp, 0);
+	if (rc == ERESTART)
+		g_qblocked = true;
+	else
+		ATF_REQUIRE_EQ(0, rc);
+	return (rc);
+}
+
+/* Fill the single data ring with sector requests; returns the count. */
+static int
+fill_ring(struct cryptop **crp)
+{
+	int n;
+
 	for (n = 0; n < MOCK_RINGSZ; n++) {
 		crp[n] = sector_crp(true);
 		ATF_REQUIRE_EQ(0, vtcrypto_process(&g_dev, crp[n], 0));
-		if (crp[n]->done)
-			break;
-		ATF_REQUIRE(g_vq.free_desc >= 0);
-		if (g_vq.free_desc == 0)
+		ATF_REQUIRE_MSG(!crp[n]->done,
+		    "request failed before the ring filled");
+		ATF_REQUIRE(g_vq[0].free_desc >= 0);
+		if (g_vq[0].free_desc == 0)
 			break;
 	}
-	ATF_REQUIRE_MSG(g_done == 0, "requests failed before the ring filled");
-	ATF_REQUIRE_EQ(0, g_vq.free_desc);
-	n++;
+	ATF_REQUIRE_EQ(0, g_vq[0].free_desc);
+	return (n + 1);
+}
 
+/*
+ * A full ring is resource exhaustion, not a request failure: the request
+ * must not be completed with ENOSPC, and it must complete once the in-flight
+ * requests return their descriptors.
+ */
+ATF_TC_WITHOUT_HEAD(ring_full_request_completes);
+ATF_TC_BODY(ring_full_request_completes, tc)
+{
+	struct cryptop *crp[MOCK_RINGSZ];
+	struct cryptop *extra;
+	int i, n, rc, rounds;
+
+	fixture();
+	n = fill_ring(crp);
 	extra = sector_crp(true);
-	rc = vtcrypto_process(&g_dev, extra, 0);
+	rc = dispatch(extra);
 	ATF_REQUIRE_MSG(!extra->done,
 	    "full ring completed the request with error %d", extra->crp_etype);
-	ATF_REQUIRE_MSG(rc == ERESTART, "process returned %d", rc);
 
-	device_complete_all();
-	vtcrypto_dataq_intr(&g_dq);
-	ATF_REQUIRE_EQ(n, g_done);
+	for (rounds = 0; !extra->done; rounds++) {
+		ATF_REQUIRE_MSG(rounds < 4, "request never completed");
+		if (rc == ERESTART && !g_qblocked)
+			rc = dispatch(extra);
+		device_complete_all();
+	}
+	ATF_REQUIRE_EQ(n + 1, g_done);
 	ATF_REQUIRE_EQ(0, g_done_err);
-	ATF_REQUIRE_MSG(g_unblock == 1, "crypto_unblock calls: %d", g_unblock);
-	ATF_REQUIRE(g_unblock_what & CRYPTO_SYMQ);
-
-	/* The framework resubmits the held request; it now fits. */
-	ATF_REQUIRE_EQ(0, vtcrypto_process(&g_dev, extra, 0));
-	ATF_REQUIRE(!extra->done);
-	device_complete_all();
-	vtcrypto_dataq_intr(&g_dq);
-	ATF_REQUIRE(extra->done);
-	ATF_REQUIRE_EQ(0, extra->crp_etype);
-	/* No ERESTART since the last unblock: no spurious second unblock. */
-	ATF_REQUIRE_EQ(1, g_unblock);
 	for (i = 0; i < n; i++)
 		free(crp[i]);
 	free(extra);
 }
 
 /*
+ * The lost-unblock interleaving: process() finds the ring full, then -- before
+ * opencrypto records the ERESTART as cc_qblocked -- the device completes every
+ * in-flight request and the interrupt handler runs.  An unblock issued in that
+ * window is lost (crypto_proc() sets cc_qblocked afterwards), the ring is
+ * empty and no further interrupt comes: the request must still complete.
+ */
+ATF_TC_WITHOUT_HEAD(ring_drained_before_erestart_recorded);
+ATF_TC_BODY(ring_drained_before_erestart_recorded, tc)
+{
+	struct cryptop *crp[MOCK_RINGSZ];
+	struct cryptop *extra;
+	int i, n, rc, rounds;
+
+	fixture();
+	n = fill_ring(crp);
+	extra = sector_crp(true);
+	rc = vtcrypto_process(&g_dev, extra, 0);
+	/* The interrupt drains the ring before crypto_proc() relocks. */
+	ATF_REQUIRE_EQ(n, device_complete_all());
+	if (rc == ERESTART)
+		g_qblocked = true;
+	else
+		ATF_REQUIRE_EQ(0, rc);
+
+	for (rounds = 0; !extra->done; rounds++) {
+		ATF_REQUIRE_MSG(rounds < 4,
+		    "request stalled: driver %s, nothing in flight",
+		    g_qblocked ? "left blocked" : "never resubmitted it");
+		if (rc == ERESTART && !g_qblocked)
+			rc = dispatch(extra);
+		device_complete_all();
+	}
+	ATF_REQUIRE_EQ(0, extra->crp_etype);
+	ATF_REQUIRE_EQ(n + 1, g_done);
+	for (i = 0; i < n; i++)
+		free(crp[i]);
+	free(extra);
+}
+
+/*
+ * A full data queue is not back-pressure while another data queue has room:
+ * the request goes to the other queue.
+ */
+ATF_TC_WITHOUT_HEAD(full_queue_uses_other_queue);
+ATF_TC_BODY(full_queue_uses_other_queue, tc)
+{
+	struct cryptop *crp[3];
+
+	fixture_queues(2);
+	g_vq[0].free_desc = 2;		/* room for one sector request */
+	for (int i = 0; i < 3; i++) {
+		crp[i] = sector_crp(true);
+		ATF_REQUIRE_EQ(0, dispatch(crp[i]));
+		ATF_REQUIRE(!crp[i]->done);
+	}
+	ATF_REQUIRE_EQ(1, g_vq[0].tail);
+	ATF_REQUIRE_EQ(2, g_vq[1].tail);
+	ATF_REQUIRE_EQ(3, device_complete_all());
+	ATF_REQUIRE_EQ(3, g_done);
+	ATF_REQUIRE_EQ(0, g_done_err);
+	for (int i = 0; i < 3; i++)
+		free(crp[i]);
+}
+
+/*
  * A 1 MiB geli(4) WRITE and READ is 2048 sector requests; model opencrypto's
- * dispatch (ERESTART keeps the request and blocks the driver until
+ * dispatch (ERESTART holds the request and blocks the driver until
  * crypto_unblock()) and require every request to complete without error.
  */
 static void
@@ -411,37 +533,24 @@ burst(bool encrypt)
 {
 	enum { NREQ = 2048 };
 	struct cryptop **crp;
-	bool blocked = false;
-	int next = 0, rc, rounds = 0;
+	int next = 0, rounds = 0;
 
 	fixture();
 	crp = calloc(NREQ, sizeof(*crp));
 	ATF_REQUIRE(crp != NULL);
 	for (int i = 0; i < NREQ; i++)
 		crp[i] = sector_crp(encrypt);
-	while (next < NREQ) {
-		ATF_REQUIRE(++rounds < 10 * NREQ);
-		if (!blocked) {
-			rc = vtcrypto_process(&g_dev, crp[next], 0);
-			if (rc == ERESTART) {
-				blocked = true;
-				continue;
-			}
-			ATF_REQUIRE_EQ(0, rc);
-			next++;
+	while (g_done < NREQ) {
+		ATF_REQUIRE_MSG(++rounds < 10 * NREQ,
+		    "%d of %d requests completed", g_done, NREQ);
+		if (next < NREQ && !g_qblocked) {
+			if (dispatch(crp[next]) == 0)
+				next++;
 			continue;
 		}
-		/* Blocked: the device drains and the interrupt fires. */
-		int before = g_unblock;
+		/* The device drains and the interrupt fires. */
 		device_complete_all();
-		vtcrypto_dataq_intr(&g_dq);
-		ATF_REQUIRE_MSG(g_unblock > before,
-		    "driver never called crypto_unblock()");
-		blocked = false;
 	}
-	device_complete_all();
-	vtcrypto_dataq_intr(&g_dq);
-	ATF_REQUIRE_EQ(NREQ, g_done);
 	ATF_REQUIRE_MSG(g_done_err == 0, "%d of %d sector requests failed",
 	    g_done_err, NREQ);
 	for (int i = 0; i < NREQ; i++)
@@ -478,12 +587,11 @@ ATF_TC_BODY(cipher_data_request_op_type, tc)
 		crp = sector_crp(enc != 0);
 		ATF_REQUIRE_EQ(0, vtcrypto_process(&g_dev, crp, 0));
 		ATF_REQUIRE(!crp->done);
-		memcpy(&op_type, g_vq.last_hdr + 24 + 40, sizeof(op_type));
+		memcpy(&op_type, g_vq[0].last_hdr + 24 + 40, sizeof(op_type));
 		ATF_REQUIRE_MSG(le32toh(op_type) == 1,
 		    "%s request op_type %u", enc ? "encrypt" : "decrypt",
 		    le32toh(op_type));
 		device_complete_all();
-		vtcrypto_dataq_intr(&g_dq);
 		ATF_REQUIRE(crp->done);
 		free(crp);
 	}
@@ -491,7 +599,9 @@ ATF_TC_BODY(cipher_data_request_op_type, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, ring_full_returns_erestart);
+	ATF_TP_ADD_TC(tp, ring_full_request_completes);
+	ATF_TP_ADD_TC(tp, ring_drained_before_erestart_recorded);
+	ATF_TP_ADD_TC(tp, full_queue_uses_other_queue);
 	ATF_TP_ADD_TC(tp, geli_1mib_write_burst);
 	ATF_TP_ADD_TC(tp, geli_1mib_read_burst);
 	ATF_TP_ADD_TC(tp, cipher_data_request_op_type);
