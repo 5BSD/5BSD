@@ -46,8 +46,8 @@
  * queue and returns, and the queue interrupt handler copies results back and
  * calls crypto_done().  Control requests (session create/destroy) are
  * synchronous and, because the crypto framework may call into the driver with
- * a mutex held, poll the control queue without sleeping.  The wire layouts are defined in virtio_crypto.h and byte-match
- * the bhyve host model.
+ * a mutex held, poll the control queue without sleeping.  The wire layouts
+ * are defined in virtio_crypto.h and byte-match the bhyve host model.
  */
 
 #include <sys/param.h>
