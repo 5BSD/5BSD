@@ -392,10 +392,11 @@ refused. Builds before the hardware-driver class sent devmatch's drivers to
 a broker whose allow-list did not name them, and rc.subr `load_kld` used
 the direct load only, so late rc.d modules such as `mac_ntpd` failed.
 Current builds permit drivers listed with plug-and-play data in
-`/boot/kernel/linker.hints`, list the base rc.d service modules, retry
-a refused `load_kld` through the broker, and compile the common desktop
-drivers (snd_uaudio, uvideo, ure, hms, hmt and others) and mac_ntpd into
-GENERIC. After boot only devd(8) may load modules, and only hardware drivers:
+`/boot/kernel/linker.hints`, list the base rc.d service modules, send
+`load_kld` through the broker once it runs, compile the common desktop
+drivers (snd_uaudio, ure, hms, hmt and others) and mac_ntpd into GENERIC,
+and load uvideo from the loader. After boot only devd(8) may load modules,
+and only hardware drivers:
 switchboard restarts devd when `/etc/rc` exits under its grant in
 `/Capabilities/Config/switchboard/service-authority.ucl`. If a device
 attached later gets no driver, check that devd is that unit
@@ -428,6 +429,32 @@ drivers and modules the current policy permits and reboot; the loader would
 otherwise keep loading them for hardware that may not be present. A module
 the policy still denies (for example one from `/boot/modules`) needs
 `sysextctl allow NAME`, or a loader preload.
+
+## webcamd does not see a USB camera
+
+**Symptom.** A UVC camera works as `/dev/video0` (dmesg shows `uvideo0:
+registered as /dev/video0`), but webcamd(8) from ports does not take it.
+
+**Cause.** The loader loads uvideo(4) on every boot (`required_modules`),
+so the kernel driver claims the camera's interface first; webcamd can only
+use a USB interface that no kernel driver has attached. Applications that
+use `/dev/video0` directly need nothing else.
+
+**Fix.** To leave cameras to webcamd from boot on, add to
+`/boot/loader.conf`:
+
+```sh
+uvideo_load="NO"
+```
+
+and reboot. To hand one camera over for the running session only, detach the
+driver and start webcamd for the camera's ugen(4) device, which
+`usbconfig list` shows (here `ugen3.9`):
+
+```sh
+devctl detach uvideo0
+service webcamd start ugen3.9
+```
 
 ## Stale kernel modules versus packages
 
