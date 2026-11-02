@@ -20,3 +20,22 @@ amd64_generic_module_objects(name = "intelspi_spi_acpi_module", srcs = ["spi_acp
 amd64_generic_module_objects(name = "intelspi_spi_pci_module", srcs = ["spi_pci.c"],
     deps = ["//sys/dev/intel:spi_module_context_0", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:lowlevel_kernel_opt_pci_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/spibus:spibus_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+bsd_source_headers(name = "platform_families_module_context_0", hdrs = ["hfsts.h"], includes = [],
+    visibility = ["//sys/dev/intel:__pkg__"])
+
+amd64_generic_module_objects(name = "hfsts_hfsts_module", srcs = ["hfsts.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/dev/ichwd:platform_families_module_context_0", "//sys/dev/intel:platform_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "hfsts_hfsts_isa_module", srcs = ["hfsts_isa.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/dev/ichwd:platform_families_module_context_0", "//sys/dev/intel:platform_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "intel_pmc_intel_pmc_module", srcs = ["intel_pmc.c"],
+    deps = ["//sys/vm:acpi_support_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "pchtherm_pchtherm_module", srcs = ["pchtherm.c"],
+    deps = ["//sys/dev/pci:pci_ethernet_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

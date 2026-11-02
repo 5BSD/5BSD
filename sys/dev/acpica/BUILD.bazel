@@ -8,7 +8,7 @@ cc_library(name = "ioctl_headers", hdrs = ["acpiio.h"], strip_include_prefix = "
 
 filegroup(name = "acpi_if_header_file", srcs = [":acpi_if"], output_group = "header")
 cc_library(name = "acpi_if_headers", hdrs = [":acpi_if_header_file"], strip_include_prefix = "acpi_if.generated",
-    visibility = ["//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/amd64/amd64:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/ahci:__pkg__", "//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/pvpanic:__pkg__", "//sys/dev/wdatwd:__pkg__"])
 cc_library(name = "acpivar_headers", hdrs = ["acpivar.h"], strip_include_prefix = "/sys",
     deps = [":acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/sys:kernel_headers"],
     visibility = ["//sys/dev/amdsmu:__pkg__", "//sys/dev/virtio/pmem:__pkg__"])
@@ -47,7 +47,7 @@ cross_generic_module_objects(arch = "arm64", name = "acpi_ged_module", srcs = ["
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acpivar.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/atopcase:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/spibus:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/pvpanic:__pkg__", "//sys/dev/wdatwd:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_mp_x86_headers", hdrs = ["acpivar.h"],

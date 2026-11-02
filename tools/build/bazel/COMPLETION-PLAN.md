@@ -5,6 +5,24 @@ checkpoint (`7ffc0048161`). The target is complete base-system Make coverage
 and a complete native Bazel system build, not BUILD-file presence. Make
 remains supported for ports and third-party software. BIP remains out of scope.
 
+## Latest platform-module checkpoint (2026-11-02)
+
+Twenty-four further amd64 platform/GPIO/watchdog modules pass two native
+compiler/input/link and artifact/install profiles: 36 actual compilers and 3,843
+original/native-consumed dependencies per profile, plus 24 ordered links.
+Twenty-two plain modules equal untouched Make whole-file; p2sb/superio equal
+independent canonical-filename Make controls. Original lexical-path discrepancies
+remain recorded. CTF/debug payloads, CRCs and 48 install records pass, alongside
+24 plain records. Six existing provider tests pass per profile; device runtime
+is not qualified. See
+[PLATFORM-FAMILIES-MODULES-QUALIFICATION.md](PLATFORM-FAMILIES-MODULES-QUALIFICATION.md).
+
+BUILD presence is 574/729 selected amd64 leaves (155 missing), not qualification
+percentage. Other architectures/options, full world/rescue/pkgbase/hardware,
+bootstrap/publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox gates remain
+open. Existing build-bsd format-5 inputs/helpers carry this cohort; no new CLI or
+security/publication policy. Make stays production/default; BIP remains excluded.
+
 ## Latest Intel Ethernet checkpoint (2026-11-02)
 
 Seven more amd64 modules pass two native compiler/input/link and artifact/install

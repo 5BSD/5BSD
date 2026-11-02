@@ -81,3 +81,11 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_uart_if", srcs = [":b
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["uart_ppstypes.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "puc_uart_bus_puc_module", srcs = ["uart_bus_puc.c"],
+    deps = ["//sys/dev/puc:peripheral_devices_kernel_uart_bus_puc_headers", "//sys/dev/uart:peripheral_devices_kernel_uart_bus_isa_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:serdev_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

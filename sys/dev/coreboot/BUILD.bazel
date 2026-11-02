@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "platform_families_module_context_0", hdrs = ["coreboot.h", "corebootio.h"], includes = [],
+    visibility = ["//sys/dev/coreboot:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "coreboot_coreboot_module", srcs = ["coreboot.c", "coreboot_console.c", "coreboot_cbmem.c", "coreboot_timestamps.c"],
+    deps = ["//sys/vm:lowlevel_kernel_db_trace_headers", "//sys/dev/coreboot:platform_families_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

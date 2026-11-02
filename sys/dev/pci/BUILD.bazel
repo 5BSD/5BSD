@@ -25,7 +25,7 @@ cc_library(name = "storage_module_headers", hdrs = ["pcireg.h", "pcivar.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical source prerequisites from independent Ethernet module builds.
-bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/intel:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/alpm:__pkg__", "//sys/dev/amdpm:__pkg__", "//sys/dev/amdsmb:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/imcsmb:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/ismt:__pkg__", "//sys/dev/nfsmb:__pkg__", "//sys/dev/viapm:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/liquidio:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__"])
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/ath:__pkg__", "//sys/dev/bhnd/bhndb:__pkg__", "//sys/dev/bhnd:__pkg__", "//sys/dev/bwi:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/intel:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/alpm:__pkg__", "//sys/dev/amdpm:__pkg__", "//sys/dev/amdsmb:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/ichsmb:__pkg__", "//sys/dev/imcsmb:__pkg__", "//sys/dev/intpm:__pkg__", "//sys/dev/ismt:__pkg__", "//sys/dev/nfsmb:__pkg__", "//sys/dev/viapm:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound:__pkg__", "//sys/dev/usb/controller:__pkg__", "//sys/dev/liquidio:__pkg__", "//sys/dev/ntb:__pkg__", "//sys/dev/firewire:__pkg__", "//sys/dev/ipmi:__pkg__", "//sys/dev/mfi:__pkg__", "//sys/dev/mrsas:__pkg__", "//sys/dev/vmware:__pkg__", "//sys/dev/axgbe:__pkg__", "//sys/dev/bxe:__pkg__", "//sys/dev/cxgb:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/iavf:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/ixgbe:__pkg__", "//sys/dev/ixl:__pkg__", "//sys/dev/chromebook_platform:__pkg__", "//sys/dev/p2sb:__pkg__", "//sys/dev/puc:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/mii:__pkg__"])
@@ -51,12 +51,12 @@ bsd_source_headers(name = "x86_core_kernel_legacy_headers", hdrs = ["pcireg.h"],
 bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_msi_headers", hdrs = ["pcivar.h"],
-    visibility = ["//sys/x86/x86:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/sound/pcm:__pkg__"])
+    visibility = ["//sys/x86/x86:__pkg__", "//sys/crypto:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/intel:__pkg__", "//sys/dev/viawd:__pkg__"])
 
 # Native x86 core consumer of the existing PCI bridge interface producer.
 filegroup(name = "pcib_if_header_file", srcs = [":pcib_if"], output_group = "header")
 cc_library(name = "pcib_if_headers", hdrs = [":pcib_if_header_file"],
-    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__"])
+    strip_include_prefix = "pcib_if.generated", visibility = ["//sys/dev/acpica:__pkg__", "//sys/x86/x86:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/vmd:__pkg__"])
 
 # ACPI core built-in prerequisites.
 bsd_source_headers(name = "acpica_core_kernel_acpi_headers", hdrs = ["pcivar.h"],
@@ -68,7 +68,7 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_cpu_headers", hdrs = ["pcivar
 bsd_source_headers(name = "acpica_core_kernel_acpi_throttle_headers", hdrs = ["pcivar.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_pci_headers", hdrs = ["pci_private.h", "pcireg.h", "pcivar.h"],
-    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__"])
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/mxge:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/qlnx:__pkg__", "//sys/dev/ichwd:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_pci_link_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_pcib_headers", hdrs = ["pcireg.h", "pcivar.h"],
@@ -159,7 +159,7 @@ cc_library(name = "device_io_pci_if_headers", hdrs = [":device_io_pci_if_header_
 bsd_source_headers(name = "virtualization_kernel_virtio_pci_headers", hdrs = ["pcireg.h", "pcivar.h"],
     visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
 bsd_source_headers(name = "virtualization_kernel_vmbus_pcib_headers", hdrs = ["pci_private.h", "pcib_private.h", "pcireg.h", "pcivar.h"],
-    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__", "//sys/dev/vmd:__pkg__"])
 bsd_source_headers(name = "virtualization_kernel_hyperv_headers", hdrs = ["pcib_private.h", "pcivar.h"],
     visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
 
@@ -316,3 +316,6 @@ amd64_generic_kernel_objects(name = "generic_kobj_builtins_pcib_if", srcs = [":b
 
 filegroup(name = "hardware_module_pci_if_file", srcs = [":pci_if"], output_group = "header")
 cc_library(name = "hardware_module_pci_if_headers", hdrs = [":hardware_module_pci_if_file"], strip_include_prefix = "pci_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+bsd_source_headers(name = "platform_families_module_context_3", hdrs = ["pci_private.h", "pcivar.h"], includes = [],
+    visibility = ["//sys/dev/ichwd:__pkg__"])

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "coreboot", objects = ["//sys/dev/coreboot:coreboot_coreboot_module_object_files"], object_order = ["coreboot.o", "coreboot_console.o", "coreboot_cbmem.o", "coreboot_timestamps.o"], export_all = False, package = "kernel", aliases = [])

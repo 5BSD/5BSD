@@ -10350,3 +10350,15 @@ Four PIC object checks and an actual compiler negative validate the feature.
 No tracing activated. Full original provider/DOF site/relocation and DSO payload
 parity, installed-library tests, live events and complete rescue remain open.
 See LIBUTIL-COMPILE-POLICY-QUALIFICATION.md for exact evidence and rejected checks.
+
+### Platform, GPIO and watchdog modules (2026-11-02)
+
+The bounded source scan of 35 C files and one KOBJ schema records 0 explicit
+DTrace/SDT/CTR/audit candidate lines, including comments/macros. Compiled section
+inventories are retained against original or explicit filename-policy Make controls;
+0 modules have preserved compiled SDT/DTrace sections. This does not
+establish absence of shared subsystem logging/events or live instrumentation.
+Review GPIO/controller lifecycle, watchdog arm/disarm/expiry, sensor access errors,
+serial attach/detach and firmware-resource failures with shared subsystem hooks;
+avoid excessive polling logs or disclosure of firmware/memory contents. No probes
+added. See PLATFORM-FAMILIES-MODULES-QUALIFICATION.md for exact evidence and limits.

@@ -7,7 +7,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_i2c_headers", hdrs = ["iic.h", "iicbus.h", "iiconf.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/cyapa:__pkg__", "//sys/dev/ichiic:__pkg__", "//sys/dev/iicbus/mux:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/isl:__pkg__", "//sys/dev/pcf:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/chromebook_platform:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 

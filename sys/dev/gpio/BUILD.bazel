@@ -9,7 +9,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["gpiobusvar.h", "intel/intelgpio.h"], includes = [],
     visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 bsd_source_headers(name = "hardware_module_amdgpio_headers", hdrs = ["gpiobusvar.h"], includes = [],
-    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__"])
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -22,7 +22,7 @@ amd64_generic_module_objects(name = "adlngpio_module", srcs = ["intel/intelgpio.
     deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:hardware_module_acpi_if_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/dev/gpio:hardware_module_gpio_if_headers", "//sys/amd64/conf:hardware_module_opt_acpi_header", "//sys/amd64/conf:hardware_module_opt_platform_header"])
 
 filegroup(name = "gpio_if_module_header", srcs = [":gpio_if"], output_group = "header")
-cc_library(name = "gpio_if_headers", hdrs = [":gpio_if_module_header"], strip_include_prefix = "gpio_if.generated", visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__"])
+cc_library(name = "gpio_if_headers", hdrs = [":gpio_if_module_header"], strip_include_prefix = "gpio_if.generated", visibility = ["//sys/dev/bhnd/cores/chipc:__pkg__", "//sys/dev/bwn:__pkg__", "//sys/dev/gpio:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/ow:__pkg__", "//sys/dev/ftgpio:__pkg__", "//sys/dev/nctgpio:__pkg__", "//sys/dev/p2sb:__pkg__"])
 
 bsd_source_headers(name = "gpio_module_context_0", hdrs = ["acpi_gpiobusvar.h", "gpiobusvar.h"], includes = [],
     visibility = ["//sys/dev/gpio:__pkg__"])
@@ -81,3 +81,22 @@ amd64_generic_module_objects(name = "gpiospi_gpiospi_module", srcs = ["gpiospi.c
 amd64_generic_module_objects(name = "gpioths_gpioths_module", srcs = ["gpioths.c"],
     deps = ["//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:generic_opt_platform_header"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [])
+
+bsd_source_headers(name = "platform_families_module_context_1", hdrs = ["chvgpio_reg.h", "gpiobusvar.h"], includes = [],
+    visibility = ["//sys/dev/gpio:__pkg__"])
+
+amd64_generic_module_objects(name = "bytgpio_bytgpio_module", srcs = ["bytgpio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "chvgpio_chvgpio_module", srcs = ["chvgpio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:platform_families_module_context_1", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tglhgpio_intelgpio_module", srcs = ["intel/intelgpio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "tglhgpio_tglhgpio_module", srcs = ["intel/tglhgpio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:lowlevel_kernel_mp_machdep_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:acpi_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/gpio:gpio_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:generic_opt_platform_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
