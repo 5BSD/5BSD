@@ -31,9 +31,11 @@ wireless/service behavior are open. Nine further support libraries now pass
 WPA-SUPPORT-QUALIFICATION.md. All four remaining private libraries now pass
 32 archive comparisons and 660 actual object/compiler/input checks across four
 profiles; see WPA-FINAL-PRIVATE-QUALIFICATION.md. All sixteen private library
-directories have bounded native output qualification. Remaining programs are
-wpa_supplicant, wpa_cli and hostapd; their source/link/install graphs and actual
-service/runtime gates remain next. The next upgrade checkpoint records prepared
+directories have bounded native output qualification. The wpa_cli client now
+passes four immutable ELF contracts, actual compiler/link/input checks, sixteen
+safe CLI/loader methods and original install metadata; see WPA-CLI-QUALIFICATION.md.
+Remaining programs are wpa_supplicant and hostapd. Their source/link/install
+graphs and all actual service/wireless runtime gates remain next. The next upgrade checkpoint records prepared
 common/control-client Make references, which require post-upgrade revalidation. All remaining work
 and final completion requirements below apply.
 

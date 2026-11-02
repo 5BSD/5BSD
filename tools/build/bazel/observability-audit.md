@@ -9611,3 +9611,13 @@ shared instrumentation and event delivery remain unqualified. No probe or
 production body was removed. Authentication, TLS interoperability and wireless/
 service runtime coverage belongs with completed program consumers. See
 [the final private-library qualification](WPA-FINAL-PRIVATE-QUALIFICATION.md).
+
+## Native wpa_cli (2026-11-02)
+
+The unchanged client source has no recognized direct SDT/DTrace/audit/FIDL
+call markers; its source hash and scan are retained in
+bazel-wpa-cli-observability-20261102.json. Four execution-bound program objects
+preserve actual Make text, constants and 9,718 raw non-debug relocations.
+Sixteen safe CLI/loader methods return before daemon connections; they do not
+prove control events, wireless/authentication behavior or shared probe delivery.
+See [the client qualification](WPA-CLI-QUALIFICATION.md) for all remaining gates.

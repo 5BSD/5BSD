@@ -23,7 +23,10 @@ five native profiles pass 76 archive comparisons, 418 code/policy checks and
 now add 32 archive comparisons, 660 code/policy checks and 59,912 prerequisite
 hash checks across four configurations. All sixteen private directories have
 bounded output qualification; three programs and full service/runtime/system
-gates remain open.
+gates remain open. The [wpa_cli control client](WPA-CLI-QUALIFICATION.md) now
+passes four immutable ELF/link comparisons, sixteen safe CLI/loader methods and
+its original install metadata. Three of five WPA programs have bounded native
+qualification; hostapd and wpa_supplicant remain.
 
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.

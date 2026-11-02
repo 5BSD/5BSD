@@ -905,3 +905,26 @@ bsd_source_headers(
     includes = ["src", "src/crypto", "src/tls", "src/utils"],
     visibility = ["//usr.sbin/wpa:__subpackages__"],
 )
+
+exports_files(["wpa_supplicant/wpa_cli.c"], visibility = ["//usr.sbin/wpa:__subpackages__"])
+
+bsd_source_headers(
+    name = "wpa_cli_headers",
+    hdrs = [
+        'src/utils/includes.h',
+        'src/utils/build_config.h',
+        'src/common/cli.h',
+        'src/utils/list.h',
+        'src/common/wpa_ctrl.h',
+        'src/utils/common.h',
+        'src/utils/os.h',
+        'src/utils/wpa_debug.h',
+        'src/utils/wpabuf.h',
+        'src/utils/eloop.h',
+        'src/utils/edit.h',
+        'src/common/version.h',
+        'src/common/ieee802_11_defs.h',
+    ],
+    includes = ["src", "src/common", "src/utils"],
+    visibility = ["//usr.sbin/wpa:__subpackages__"],
+)
