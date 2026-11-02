@@ -39,6 +39,14 @@ GPIO, Apple BCE, Areca and Apple SMC. The batch covers 19 source files and 2,799
 Make dependency occurrences; see
 [NINE-HARDWARE-MODULES-QUALIFICATION.md](NINE-HARDWARE-MODULES-QUALIFICATION.md).
 
+
+Ten Atheros loadable modules now pass native default plain/CTF-debug comparison,
+including the complete 138-object default inventory and both alternative rate
+algorithms. All twelve plain binaries are byte-identical to Make; CTF/debug
+runtime sections and 36 install records agree. Actual compiler/input and ordered
+link audits pass. Source corrections and runtime limitations are recorded in
+[ATH-MODULES-QUALIFICATION.md](ATH-MODULES-QUALIFICATION.md).
+
 Earlier component checkpoints below are retained historical evidence.
 
 The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have

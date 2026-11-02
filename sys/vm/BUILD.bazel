@@ -46,7 +46,7 @@ bsd_source_headers(
         "uma.h",
         "uma_align_mask.h"
     ],
-    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__"],
+    visibility = ["//sys/dev/usb/net:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/ath:__pkg__"],
 )
 
 bsd_source_headers(

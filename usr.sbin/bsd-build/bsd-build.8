@@ -3947,6 +3947,15 @@ inventories, scripts, ownership and modes with controlled kernel/debug checks.
 This does not qualify kernel package creation, combined module installation,
 arbitrary kernel names, host installation or VM boot.
 
+.Pp
+The format-5 string setting
+.Dq //tools/build/bazel/config:ath_rate_algorithm
+selects sample (default), onoe or amrr for the native amd64 GENERIC
+.Dq //sys/modules/ath_rate
+loadable module. Only one algorithm is compiled into that module.
+Unsupported values are rejected during analysis. This setting does not change
+built-in kernel rate selection or establish wireless runtime qualification.
+
 .Ss Native LLVM component settings
 The format-5 build-settings keys
 .Cm //tools/build/bazel/config:llvm_assertions

@@ -5,10 +5,14 @@ The caller supplies the architecture linker policy and selected SDK closure.
 Relocatable and shared stages are distinct; PREFIX_SYMS remains separate.
 """
 
+load(":bsd_object_order.bzl", "ordered_objects")
+
+
 def _link(ctx):
-    if not ctx.files.objects:
+    objects = ordered_objects(ctx.files.objects, ctx.attr.object_order)
+    if not objects:
         fail("module link requires ordered object inputs")
-    if len(depset(ctx.files.objects).to_list()) != len(ctx.files.objects):
+    if len(depset(objects).to_list()) != len(objects):
         fail("duplicate module object inputs")
     output = ctx.actions.declare_file(ctx.attr.output)
     args = ctx.actions.args()
@@ -18,16 +22,17 @@ def _link(ctx):
         args.add_all(["-T", ctx.file.script.path])
     args.add_all(["-Bshareable", "-znotext", "-znorelro"] if ctx.attr.shared else ["-r"])
     args.add_all(["-o", output.path])
-    args.add_all(ctx.files.objects)
+    args.add_all(objects)
     args.use_param_file("@%s", use_always = True)
     ctx.actions.run(executable = ctx.attr.linker[DefaultInfo].files_to_run,
-        arguments = [args], inputs = ctx.files.objects + ([ctx.file.script] if ctx.file.script else []),
+        arguments = [args], inputs = objects + ([ctx.file.script] if ctx.file.script else []),
         tools = ctx.files.linker_inputs, outputs = [output], env = {"LC_ALL": "C"},
         use_default_shell_env = False, mnemonic = "BSDModuleLink")
     return [DefaultInfo(files = depset([output]))]
 
 bsd_module_link = rule(implementation = _link, attrs = {
     "objects": attr.label_list(allow_files = True, mandatory = True),
+    "object_order": attr.string_list(),
     "script": attr.label(allow_single_file = True),
     "shared": attr.bool(default = False),
     "linkopts": attr.string_list(),

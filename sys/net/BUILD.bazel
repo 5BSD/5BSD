@@ -1478,3 +1478,6 @@ load("//tools/build/bazel:bsd_object_alias.bzl", "bsd_object_alias")
 amd64_generic_kernel_objects(name = "generic_custom_names_radix", srcs = ["radix.c"],
     deps = ["//sys/net:custom_names_kernel_radix_headers"], early_deps = [],
     pre_copts = [], copts = [], warning_flags = KERNEL_COMMON_WARNING_FLAGS + [] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}))
+
+bsd_source_headers(name = "ath_module_context_5", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/ath:__pkg__"])

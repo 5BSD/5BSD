@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+# Preserve original Make export policy and complete object order.
+amd64_generic_module(module = "ath_hal", objects = ["//sys/dev/ath:ath_hal_ah_osdep_module_object_files", "//sys/dev/ath:ath_hal_ah_module_object_files", "//sys/dev/ath:ath_hal_ah_regdomain_module_object_files", "//sys/dev/ath:ath_hal_ah_eeprom_v1_module_object_files", "//sys/dev/ath:ath_hal_ah_eeprom_v3_module_object_files", "//sys/dev/ath:ath_hal_ah_eeprom_v14_module_object_files", "//sys/dev/ath:ath_hal_ah_eeprom_v4k_module_object_files"],
+    object_order = ["ah_osdep.o", "ah.o", "ah_regdomain.o", "ah_eeprom_v1.o", "ah_eeprom_v3.o", "ah_eeprom_v14.o", "ah_eeprom_v4k.o"], export_all = True)

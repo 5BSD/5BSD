@@ -109,3 +109,63 @@ amd64_generic_kernel_objects(name = "generic_ath_ar9300_xmit", srcs = ["ath_hal/
 amd64_generic_kernel_objects(name = "generic_ath_ar9300_xmit_ds", srcs = ["ath_hal/ar9300/ar9300_xmit_ds.c"],
     deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_misc_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_interrupts_module", srcs = ["ath_hal/ar9300/ar9300_interrupts.c", "ath_hal/ar9300/ar9300_radio.c", "ath_hal/ar9300/ar9300_mci.c", "ath_hal/ar9300/ar9300_gpio.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_radar_module", srcs = ["ath_hal/ar9300/ar9300_radar.c", "ath_hal/ar9300/ar9300_ani.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_keycache_module", srcs = ["ath_hal/ar9300/ar9300_keycache.c", "ath_hal/ar9300/ar9300_beacon.c", "ath_hal/ar9300/ar9300_power.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_beacon_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_xmit_module", srcs = ["ath_hal/ar9300/ar9300_xmit.c", "ath_hal/ar9300/ar9300_xmit_ds.c", "ath_hal/ar9300/ar9300_spectral.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_misc_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_attach_module", srcs = ["ath_hal/ar9300/ar9300_attach.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_stub_module", srcs = ["ath_hal/ar9300/ar9300_stub.c", "ath_hal/ar9300/ar9300_stub_funcs.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_stub_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_misc_module", srcs = ["ath_hal/ar9300/ar9300_misc.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_misc_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_recv_module", srcs = ["ath_hal/ar9300/ar9300_recv.c", "ath_hal/ar9300/ar9300_recv_ds.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_recv_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_eeprom_module", srcs = ["ath_hal/ar9300/ar9300_eeprom.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_eeprom_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable", "-Wno-error=constant-conversion"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_paprd_module", srcs = ["ath_hal/ar9300/ar9300_paprd.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_paprd_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_freebsd_module", srcs = ["ath_hal/ar9300/ar9300_freebsd.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_freebsd_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_phy_module", srcs = ["ath_hal/ar9300/ar9300_phy.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_phy_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_reset_module", srcs = ["ath_hal/ar9300/ar9300_reset.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_ani_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_misc_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable", "-Wno-error=sometimes-uninitialized", "-Wno-unused-function"])
+
+amd64_generic_module_objects(name = "ath_hal_ar9300_ar9300_timer_module", srcs = ["ath_hal/ar9300/ar9300_timer.c"],
+    deps = ["//sys/dev/ath:ath_kernel_ar9300_attach_headers", "//sys/net80211:ath_kernel_ah_headers", "//sys/contrib/dev/ath:ath_kernel_ar9300_recv_headers", "//sys/amd64/conf:ath_kernel_opt_ah_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + ["-Wno-unused-but-set-variable"])

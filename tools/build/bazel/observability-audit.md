@@ -9972,3 +9972,17 @@ BCE queue/USB bridge failures and SMC fan-control writes. Absence of a local
 probe is not by itself a defect. Loading, hardware control and probe/audit
 runtime delivery were not exercised in this build qualification. See
 NINE-HARDWARE-MODULES-QUALIFICATION.md for evidence and remaining hardware gates.
+
+
+### Atheros loadable module family (2026-11-02)
+
+The ten default modules and Onoe/AMRR alternatives retain 140 original C sources,
+including the separately documented source correctness fixes. A scoped call-shaped
+scan of SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR-family calls found three CTR calls in
+if_ath.c; no local matches in the other 139 sources do not prove missing generic
+FBT/framework coverage. Follow up on load-time HAL/rate-control symbol dependency
+closure, device attach/detach, calibration, association/authentication, rate-control
+transitions, Tx/Rx, power management and failure recovery. Privileged wireless
+configuration and diagnostics need tracing/audit delivery review. Build parity
+is established; radio operation and probe/audit runtime delivery are not.
+See ATH-MODULES-QUALIFICATION.md for exact compiled scope and source fixes.
