@@ -113,6 +113,7 @@ struct state {
     std::atomic_bool shutdown{false};
     std::atomic_bool cleanup_in_progress{false};
     int dtt_fd, socket;
+    unsigned setup_calls = 0;
     sem_t socksema;
     directory *inbounddir;
     std::mutex deliverymtx;
@@ -133,11 +134,8 @@ static bool send_uninstall_observation(int, const guest_delivery &delivery) {
     return true;
 }
 static void broadcast_shutdown(state &s) { s.shutdown.store(true); }
-static int setup_connection(state *s) { return s->socket; }
-static void closefd_generic(int *fd) { if (*fd >= 0) close(*fd); }
-#undef __cleanup
-#define __cleanup(fn) __attribute__((cleanup(fn)))
 #define ERR(...) ((void)0)
+#define WARN(...) ((void)0)
 #define DTRACED_SLEEPTIME 10000
 static bool fail_deadline_clock;
 static std::atomic<int> fail_deadline_after{-1};
@@ -247,7 +245,12 @@ int main()
 	    s.host_elf_cv.notify_all();
 	} else if (test == 1) put(socket[1], payload.data(), 2);
         else if (test == 3) put(socket[1], "bad!", 4);
-        close(socket[1]); writer.join(); assert(s.shutdown.load() == (test != 5));
+        close(socket[1]); writer.join();
+        /* A closed connection or a refused frame fails that job only: the
+         * bridge re-registers (the stub then ends it) without stopping the
+         * guest daemon.  Shutdown and cleanup end it directly. */
+        assert(s.shutdown.load() == (test == 4));
+        assert(s.setup_calls == (test <= 3 ? 2u : 1u));
 	if (host.joinable()) host.join();
         close(pipefd[1]);
 	dtt_entry_t entry;
