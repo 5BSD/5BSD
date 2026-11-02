@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["tcp_log_dev.h"],
+    visibility = ["//sys/netinet:__pkg__"])

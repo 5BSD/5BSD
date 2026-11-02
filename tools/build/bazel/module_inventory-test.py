@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+import shutil
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
-from module_inventory import audit, module_description, parse_make_query, resolve_subdir
+from module_inventory import audit, module_description, parse_make_query, resolve_subdir, parse_make_exports
 
 
 class ModuleInventoryTests(unittest.TestCase):
@@ -57,7 +59,7 @@ class ModuleInventoryTests(unittest.TestCase):
                 self.assertIn("MACHINE_ARCH=aarch64", command)
                 self.assertIn("KERN_OPTS=INET", command)
                 return SimpleNamespace(returncode=1 if relative == "broken" else 0,
-                    stdout=graph[relative] + "arm64\naarch64\n", stderr="query failed" if relative == "broken" else "")
+                    stdout=graph[relative] + "arm64\naarch64\n\n", stderr="query failed" if relative == "broken" else "")
             with patch("module_inventory.subprocess.run", side_effect=query) as run:
                 serial = audit(src, "make", "arm64", "aarch64", kernel,
                     "/dev/null", "/dev/null", "/dev/null", jobs=1)
@@ -83,12 +85,71 @@ class ModuleInventoryTests(unittest.TestCase):
             kernel = src / "kernel"
             kernel.mkdir()
             with patch("module_inventory.subprocess.run", return_value=SimpleNamespace(
-                    returncode=0, stdout="\n\namd64\namd64\n", stderr="")):
+                    returncode=0, stdout="\n\namd64\namd64\n\n", stderr="")):
                 result = audit(src, "make", "arm64", "aarch64", kernel,
                     "/dev/null", "/dev/null", "/dev/null", jobs=2)
             self.assertEqual(result["status"], "incomplete")
             self.assertEqual(result["selected_leaf_kmods"], 0)
             self.assertIn("differs from requested", result["errors"][0]["error"])
+
+    def test_exports_decode_quoted_values_without_shell_execution(self):
+        self.assertEqual(parse_make_exports(r"OPT_FDT=\#define\ FDT\ 1 EMPTY= X='$(do-not-execute)' X='$(do-not-execute)'"),
+                         {"OPT_FDT": "#define FDT 1", "EMPTY": "", "X": "$(do-not-execute)"})
+        with self.assertRaisesRegex(ValueError, "invalid exported"):
+            parse_make_exports("not-an-assignment")
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            parse_make_exports("X=one X=two")
+
+    def test_real_make_propagates_parent_exports_before_leaf_conditionals(self):
+        make = shutil.which("make")
+        if not make or subprocess.run([make, "-V", "MAKE_VERSION"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            self.skipTest("BSD Make required")
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp)
+            root = src / "sys/modules"
+            root.mkdir(parents=True)
+            (root / "Makefile").write_text("SUBDIR=parent\nOPT_FDT=enabled\n.export OPT_FDT\n")
+            parent = root / "parent"
+            parent.mkdir()
+            (parent / "Makefile").write_text(
+                ".if !empty(OPT_FDT)\nSUBDIR=fdt\n.else\nSUBDIR=wrong\n.endif\n")
+            for name in ("fdt", "wrong"):
+                child = parent / name
+                child.mkdir()
+                (child / "Makefile").write_text("KMOD=" + name + "\n")
+            kernel = src / "kernel"
+            kernel.mkdir()
+            result = audit(src, make, "arm64", "aarch64", kernel,
+                           "/dev/null", "/dev/null", "/dev/null", jobs=2)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual([r["kmod"] for r in result["modules"]], ["fdt"])
+            self.assertIn("OPT_FDT", result["exported_make_contexts"][1]["inherited_names"])
+
+    def test_rejects_duplicate_directory_with_conflicting_parent_exports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            src = Path(temp)
+            for name in ("", "a", "b", "shared"):
+                directory = src / "sys/modules" / name
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "Makefile").touch()
+            kernel = src / "kernel"
+            kernel.mkdir()
+            outputs = {
+                ".": "a b\n\namd64\namd64\n\n",
+                "a": "../shared\n\namd64\namd64\nCHOICE=one\n",
+                "b": "../shared\n\namd64\namd64\nCHOICE=two\n",
+                "shared": "\nshared\namd64\namd64\n\n",
+            }
+            def query(command, **kwargs):
+                relative = Path(command[2]).relative_to(src / "sys/modules").as_posix()
+                return SimpleNamespace(returncode=0, stdout=outputs[relative], stderr="")
+            with patch("module_inventory.subprocess.run", side_effect=query):
+                result = audit(src, "make", "amd64", "amd64", kernel,
+                               "/dev/null", "/dev/null", "/dev/null", jobs=2)
+            self.assertEqual(result["status"], "incomplete")
+            self.assertEqual(len(result["errors"]), 1)
+            self.assertIn("conflicting exported Make contexts", result["errors"][0]["error"])
 
     def test_description_distinguishes_partial_build_file(self):
         with tempfile.TemporaryDirectory() as temp:

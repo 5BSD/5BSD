@@ -225,3 +225,901 @@ bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["bpf.h", "debugnet.h",
 
 filegroup(name = "ifdi_if_header_file", srcs = [":ifdi_if"], output_group = "header")
 cc_library(name = "ifdi_if_headers", hdrs = [":ifdi_if_header_file"], strip_include_prefix = "ifdi_if.generated", visibility = ["//sys/dev/aq:__pkg__"])
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_llatbl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "iflib.h", "ifq.h", "mp_ring.h", "netmap.h", "netmap_legacy.h", "pfil.h", "route.h", "vnet.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
+
+filegroup(name = "ifdi_if_source", srcs = [":ifdi_if"], output_group = "source")
+
+amd64_generic_module_objects(name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/amd64/conf:generic_opt_acpi_header", "//sys/amd64/conf:generic_opt_inet_header", "//sys/amd64/conf:generic_opt_inet6_header", "//sys/amd64/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "network_ordered_module_objects", group = ":network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+cross_generic_module_objects(arch = "arm64", name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/netmap:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/arm64/conf:generic_opt_acpi_header", "//sys/arm64/conf:generic_opt_inet_header", "//sys/arm64/conf:generic_opt_inet6_header", "//sys/arm64/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "arm64_network_ordered_module_objects", group = ":arm64_network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+cross_generic_module_objects(arch = "riscv", name = "network_support_module", srcs = ["iflib.c", "mp_ring.c", ":ifdi_if_source"],
+    deps = ["//sys/bsm:network_support_headers", "//sys/contrib/ck:network_support_headers", "//sys/dev/led:network_support_headers", "//sys/dev/pci:network_support_headers", "//sys/net:network_support_headers", "//sys/netinet:network_support_headers", "//sys/netinet6:network_support_headers", "//sys/vm:network_support_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_acpi_header", "//sys/riscv/conf:generic_opt_inet_header", "//sys/riscv/conf:generic_opt_inet6_header", "//sys/riscv/conf:generic_opt_sched_header", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers", "//sys/net:ifdi_if_headers"],
+    copts = ["-fmacro-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c", "-fdebug-prefix-map=$(execpath :ifdi_if_source)=ifdi_if.c"])
+bsd_component_selected_objects(name = "riscv_network_ordered_module_objects", group = ":riscv_network_support_module_ctf",
+    object_names = ["iflib.o", "mp_ring.o", "ifdi_if.o"], visibility = ["//sys/modules/iflib:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "if.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "route.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "if_vlan_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "if_vlan_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "if.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "netisr.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "bpf.h",
+        "dlt.h",
+        "ethernet.h",
+        "if.h",
+        "if_arp.h",
+        "if_dl.h",
+        "if_media.h",
+        "if_types.h",
+        "if_var.h",
+        "ifq.h",
+        "rndis.h",
+        "vnet.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+# Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
+cc_library(name = "cxgbetool_headers", hdrs = ['bpf.h', 'dlt.h', 'ethernet.h', 'sff8472.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_mbuf_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_vnodedumper_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_trap_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_domain_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["ethernet.h", "infiniband.h", "vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/vm:__pkg__"])
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_algo_headers", hdrs = ["if.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["ethernet.h", "if.h", "if_gif.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_id_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["if.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "pfil.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["if.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["ethernet.h", "if.h", "if_llatbl.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_var.h", "ifq.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["if.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_lagg.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "infiniband.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["if.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["if.h", "netisr.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["if.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/fib_algo.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_gif_headers", hdrs = ["ethernet.h", "if.h", "if_gif.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_jail_headers", hdrs = ["if.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_pcb_headers", hdrs = ["if.h", "if_llatbl.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_proto_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rmx_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rss_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["if.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "pfil.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_id_headers", hdrs = ["if.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["if.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["ethernet.h", "if.h", "if_llatbl.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "route/nhop.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_nbr_headers", hdrs = ["if.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_rtr_headers", hdrs = ["if.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["if.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_route6_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["if.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["bpf.h", "bpf_buffer.h", "bpf_zerocopy.h", "bpfdesc.h", "dlt.h", "if.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["bpf.h", "bpf_buffer.h", "bpfdesc.h", "dlt.h", "if.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["bpf.h", "dlt.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["bpf.h", "bpf_zerocopy.h", "bpfdesc.h", "dlt.h", "if.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["bpf.h", "bpfdesc.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["bridgestp.h", "ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llc.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_media.h", "if_mib.h", "if_private.h", "if_strings.h", "if_types.h", "if_var.h", "if_vf_status.h", "if_vlan_var.h", "ifq.h", "radix.h", "route.h", "route/route_ctl.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["bpf.h", "bridgestp.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_clone.h", "if_dl.h", "if_llc.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "pfil.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["if.h", "if_clone.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "radix.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_dead_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_epair_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "ieee_oui.h", "if.h", "if_arp.h", "if_bridgevar.h", "if_dl.h", "if_llatbl.h", "if_llc.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "pfil.h", "route.h", "rss_config.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_bridgevar.h", "if_clone.h", "if_gif.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["bpf.h", "dlt.h", "if.h", "if_clone.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "route/route_ctl.h", "route/route_debug.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_media_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_mib_headers", hdrs = ["if.h", "if_mib.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_dl.h", "if_media.h", "if_private.h", "if_tap.h", "if_tun.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "netisr.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vether_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_clone.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "if_vlan_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "if_vf_status.h", "iflib.h", "ifq.h", "mp_ring.h", "netmap.h", "netmap_legacy.h", "pfil.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_mp_ring_headers", hdrs = ["mp_ring.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["if.h", "if_private.h", "if_var.h", "ifq.h", "netisr.h", "netisr_internal.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["debugnet.h", "debugnet_int.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "route/nhop.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["debugnet.h", "debugnet_int.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_pfil_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "pfil.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_var.h", "ifq.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "netisr.h", "rss_config.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_llatbl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "netisr.h", "radix.h", "route.h", "route/nhop.h", "route/route_ctl.h", "route/route_debug.h", "route/route_var.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_toeplitz_headers", hdrs = ["rss_config.h", "toeplitz.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["if.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net:__pkg__"])
+
+# Native Network built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_net_bpf", srcs = ["bpf.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_headers", "//sys/ddb:net_kernel_bpf_headers", "//sys/net:net_kernel_bpf_headers", "//sys/security/audit:net_kernel_bpf_headers", "//sys/security/mac:net_kernel_bpf_headers", "//sys/vm:net_kernel_bpf_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header", "//sys/amd64/conf:net_kernel_opt_netgraph_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_buffer", srcs = ["bpf_buffer.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_buffer_headers", "//sys/net:net_kernel_bpf_buffer_headers", "//sys/vm:net_kernel_bpf_buffer_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_filter", srcs = ["bpf_filter.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_filter_headers", "//sys/net:net_kernel_bpf_filter_headers", "//sys/vm:net_kernel_bpf_filter_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_zerocopy", srcs = ["bpf_zerocopy.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_zerocopy_headers", "//sys/net:net_kernel_bpf_zerocopy_headers", "//sys/vm:net_kernel_bpf_zerocopy_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bpf_ifnet", srcs = ["bpf_ifnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bpf_ifnet_headers", "//sys/ddb:net_kernel_bpf_ifnet_headers", "//sys/net:net_kernel_bpf_ifnet_headers", "//sys/security/mac:net_kernel_bpf_ifnet_headers", "//sys/vm:net_kernel_bpf_ifnet_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_bridgestp", srcs = ["bridgestp.c"],
+    deps = ["//sys/contrib/ck:net_kernel_bridgestp_headers", "//sys/net:net_kernel_bridgestp_headers", "//sys/netinet:net_kernel_bridgestp_headers", "//sys/netinet6:net_kernel_bridgestp_headers", "//sys/vm:net_kernel_bridgestp_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if", srcs = ["if.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_headers", "//sys/ddb:net_kernel_if_headers", "//sys/net:net_kernel_if_headers", "//sys/netinet:net_kernel_if_headers", "//sys/netinet6:net_kernel_if_headers", "//sys/security/mac:net_kernel_if_headers", "//sys/vm:net_kernel_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_bpf_header", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_bridge", srcs = ["if_bridge.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_bridge_headers", "//sys/net:net_kernel_if_bridge_headers", "//sys/netinet:net_kernel_if_bridge_headers", "//sys/netinet6:net_kernel_if_bridge_headers", "//sys/vm:net_kernel_if_bridge_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_clone", srcs = ["if_clone.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_clone_headers", "//sys/net:net_kernel_if_clone_headers", "//sys/netinet:net_kernel_if_clone_headers", "//sys/netinet6:net_kernel_if_clone_headers", "//sys/netlink:net_kernel_if_clone_headers", "//sys/vm:net_kernel_if_clone_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_dead", srcs = ["if_dead.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_dead_headers", "//sys/net:net_kernel_if_dead_headers", "//sys/vm:net_kernel_if_dead_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_egress", srcs = ["if_egress.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_egress_headers", "//sys/net:net_kernel_if_egress_headers", "//sys/netinet:net_kernel_if_egress_headers", "//sys/netinet6:net_kernel_if_egress_headers", "//sys/vm:net_kernel_if_egress_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_epair", srcs = ["if_epair.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_epair_headers", "//sys/net:net_kernel_if_epair_headers", "//sys/vm:net_kernel_if_epair_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_ethersubr", srcs = ["if_ethersubr.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_ethersubr_headers", "//sys/crypto:net_kernel_if_ethersubr_headers", "//sys/ddb:net_kernel_if_ethersubr_headers", "//sys/net:net_kernel_if_ethersubr_headers", "//sys/netinet:net_kernel_if_ethersubr_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/security/mac:net_kernel_if_ethersubr_headers", "//sys/vm:net_kernel_if_ethersubr_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_mbuf_profiling_header", "//sys/amd64/conf:net_kernel_opt_netgraph_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_gif", srcs = ["if_gif.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_gif_headers", "//sys/ddb:net_kernel_if_gif_headers", "//sys/net:net_kernel_if_gif_headers", "//sys/netinet:net_kernel_if_gif_headers", "//sys/netinet6:net_kernel_if_gif_headers", "//sys/netlink:net_kernel_if_gif_headers", "//sys/security/mac:net_kernel_if_gif_headers", "//sys/vm:net_kernel_if_gif_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_loop", srcs = ["if_loop.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_loop_headers", "//sys/ddb:net_kernel_if_loop_headers", "//sys/net:net_kernel_if_loop_headers", "//sys/netinet:net_kernel_if_loop_headers", "//sys/netinet6:net_kernel_if_loop_headers", "//sys/security/mac:net_kernel_if_loop_headers", "//sys/vm:net_kernel_if_loop_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_llatbl", srcs = ["if_llatbl.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_llatbl_headers", "//sys/ddb:net_kernel_if_llatbl_headers", "//sys/net:net_kernel_if_llatbl_headers", "//sys/netinet:net_kernel_if_llatbl_headers", "//sys/netinet6:net_kernel_if_llatbl_headers", "//sys/vm:net_kernel_if_llatbl_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_media", srcs = ["if_media.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_media_headers", "//sys/net:net_kernel_if_media_headers", "//sys/vm:net_kernel_if_media_headers", "//sys/amd64/conf:net_kernel_opt_ifmedia_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_mib", srcs = ["if_mib.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_mib_headers", "//sys/net:net_kernel_if_mib_headers", "//sys/vm:net_kernel_if_mib_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_tuntap", srcs = ["if_tuntap.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_tuntap_headers", "//sys/ddb:net_kernel_if_tuntap_headers", "//sys/dev/virtio/network:net_kernel_if_tuntap_headers", "//sys/dev/vmm:net_kernel_if_tuntap_headers", "//sys/net:net_kernel_if_tuntap_headers", "//sys/netinet:net_kernel_if_tuntap_headers", "//sys/netinet6:net_kernel_if_tuntap_headers", "//sys/security/mac:net_kernel_if_tuntap_headers", "//sys/vm:net_kernel_if_tuntap_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_vether", srcs = ["if_vether.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_vether_headers", "//sys/net:net_kernel_if_vether_headers", "//sys/vm:net_kernel_if_vether_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_if_vlan", srcs = ["if_vlan.c"],
+    deps = ["//sys/contrib/ck:net_kernel_if_vlan_headers", "//sys/net:net_kernel_if_vlan_headers", "//sys/netinet:net_kernel_if_vlan_headers", "//sys/netinet6:net_kernel_if_vlan_headers", "//sys/netlink:net_kernel_if_vlan_headers", "//sys/vm:net_kernel_if_vlan_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_ipsec_header", "//sys/amd64/conf:net_kernel_opt_kern_tls_header", "//sys/amd64/conf:net_kernel_opt_ratelimit_header", "//sys/amd64/conf:net_kernel_opt_vlan_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_iflib", srcs = ["iflib.c"],
+    deps = ["//sys/contrib/ck:net_kernel_iflib_headers", "//sys/dev/led:net_kernel_iflib_headers", "//sys/dev/netmap:net_kernel_iflib_headers", "//sys/dev/pci:net_kernel_iflib_headers", "//sys/net:net_kernel_iflib_headers", "//sys/netinet:net_kernel_iflib_headers", "//sys/netinet6:net_kernel_iflib_headers", "//sys/vm:net_kernel_iflib_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/net:ifdi_if_headers", "//sys/amd64/conf:net_kernel_opt_acpi_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/dev/pci:pci_if_headers", "//sys/dev/pci:pci_iov_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_mp_ring", srcs = ["mp_ring.c"],
+    deps = ["//sys/net:net_kernel_mp_ring_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_netisr", srcs = ["netisr.c"],
+    deps = ["//sys/contrib/ck:net_kernel_netisr_headers", "//sys/ddb:net_kernel_netisr_headers", "//sys/net:net_kernel_netisr_headers", "//sys/vm:net_kernel_netisr_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_device_polling_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_debugnet", srcs = ["debugnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_debugnet_headers", "//sys/ddb:net_kernel_debugnet_headers", "//sys/net:net_kernel_debugnet_headers", "//sys/netinet:net_kernel_debugnet_headers", "//sys/netinet6:net_kernel_debugnet_headers", "//sys/vm:net_kernel_debugnet_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_debugnet_inet", srcs = ["debugnet_inet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_debugnet_inet_headers", "//sys/net:net_kernel_debugnet_inet_headers", "//sys/netinet:net_kernel_debugnet_inet_headers", "//sys/netinet6:net_kernel_debugnet_inet_headers", "//sys/vm:net_kernel_debugnet_inet_headers", "//sys/amd64/conf:net_kernel_opt_inet_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_pfil", srcs = ["pfil.c"],
+    deps = ["//sys/contrib/ck:net_kernel_pfil_headers", "//sys/net:net_kernel_pfil_headers", "//sys/vm:net_kernel_pfil_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_route", srcs = ["route.c"],
+    deps = ["//sys/contrib/ck:net_kernel_route_headers", "//sys/net:net_kernel_route_headers", "//sys/netinet:net_kernel_route_headers", "//sys/netinet6:net_kernel_route_headers", "//sys/vm:net_kernel_route_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_mrouting_header", "//sys/amd64/conf:net_kernel_opt_route_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_rss_config", srcs = ["rss_config.c"],
+    deps = ["//sys/contrib/ck:net_kernel_rss_config_headers", "//sys/net:net_kernel_rss_config_headers", "//sys/netinet:net_kernel_rss_config_headers", "//sys/netinet6:net_kernel_rss_config_headers", "//sys/vm:net_kernel_rss_config_headers", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header", "//sys/amd64/conf:net_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_rtsock", srcs = ["rtsock.c"],
+    deps = ["//sys/contrib/ck:net_kernel_rtsock_headers", "//sys/net:net_kernel_rtsock_headers", "//sys/netinet:net_kernel_rtsock_headers", "//sys/netinet6:net_kernel_rtsock_headers", "//sys/vm:net_kernel_rtsock_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_inet_header", "//sys/amd64/conf:net_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_toeplitz", srcs = ["toeplitz.c"],
+    deps = ["//sys/net:net_kernel_toeplitz_headers", "//sys/netinet:net_kernel_toeplitz_headers", "//sys/netinet6:net_kernel_toeplitz_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_net_vnet", srcs = ["vnet.c"],
+    deps = ["//sys/contrib/ck:net_kernel_vnet_headers", "//sys/ddb:net_kernel_vnet_headers", "//sys/net:net_kernel_vnet_headers", "//sys/vm:net_kernel_vnet_headers", "//sys/amd64/conf:net_kernel_opt_ddb_header", "//sys/amd64/conf:net_kernel_opt_kdb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_acphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_amphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_atphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_axphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_bmtphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ciphy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83822phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83867phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_e1000phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_gentbi_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_icsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ip1000phy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_jmphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_lxtphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mcommphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_physubr_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mv88e151x_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsgphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphyter_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_pnaphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_qsphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rdcphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["if.h", "if_arp.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smcphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smscphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_tdkphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_truephy_headers", hdrs = ["ethernet.h", "if.h", "if_arp.h", "if_media.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_subr_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_vscphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+
+# Wireless built-in prerequisites.
+bsd_source_headers(name = "wlan_kernel_ieee80211_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_action_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_adhoc_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ageq_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_amrr_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_ccmp_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_none_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_tkip_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_wep_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ddb_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_dfs_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_freebsd_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_clone.h", "if_dl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_hostap_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ht_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_hwmp_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_input_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ioctl_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_mesh_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_monitor_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_node_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_llc.h", "if_media.h", "if_private.h", "if_var.h", "if_vlan_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_phy_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_power_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_proto_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_private.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_radiotap_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_private.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ratectl_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "route.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ratectl_none_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_regdomain_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_sta_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_sta_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_sw_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_vht_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

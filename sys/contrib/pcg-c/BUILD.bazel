@@ -8,3 +8,7 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["include/pcg_variants.
     visibility = ["//sys/cddl/dev/dtrace:__pkg__", "//sys/cddl/dev/fbt:__pkg__", "//sys/cddl/dev/kinst:__pkg__", "//sys/modules/dtrace/dtraceall:__pkg__"])
 
 bsd_source_headers(name = "opensolaris_module_headers", hdrs = ["include/pcg_variants.h"], visibility = ["//sys/cddl/compat/opensolaris:__pkg__"])
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_subr_prng_headers", hdrs = ["include/pcg_variants.h"],
+    visibility = ["//sys/kern:__pkg__"])

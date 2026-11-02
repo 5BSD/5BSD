@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "tool_headers", hdrs = ["mlx5io.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mlx5tool:__pkg__"])

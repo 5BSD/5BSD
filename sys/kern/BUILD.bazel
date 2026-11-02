@@ -514,3 +514,227 @@ bsd_syscall_tables(name = "native_syscall_tables", master = "syscalls.master", c
 cc_library(name = "native_syscall_tables_headers", hdrs = [":native_syscall_tables_syscall_h", ":native_syscall_tables_sysproto_h"],
     textual_hdrs = [":native_syscall_tables_systrace_args"],
     strip_include_prefix = "native_syscalls", visibility = ["//sys/cddl/dev/systrace:__pkg__"])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["uipc_vsock.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["uipc_vsock.h"],
+    visibility = ["//sys/kern:__pkg__"])
+
+# Built-in core kernel objects; each source declares its own prerequisites.
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_core_coredump_vnode", srcs = ["coredump_vnode.c"],
+    deps = ["//sys/security/audit:core_kernel_coredump_vnode_headers", "//sys/vm:core_kernel_coredump_vnode_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_imgact_elf", srcs = ["imgact_elf.c"],
+    deps = ["//sys/vm:core_kernel_imgact_elf_headers", "//sys/amd64/conf:core_kernel_opt_capsicum_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_imgact_shell", srcs = ["imgact_shell.c"],
+    deps = ["//sys/vm:core_kernel_imgact_shell_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_init_sysent", srcs = ["init_sysent.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_boottrace", srcs = ["kern_boottrace.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_cons", srcs = ["kern_cons.c"],
+    deps = ["//sys/ddb:core_kernel_kern_cons_headers", "//sys/dev/kbd:core_kernel_kern_cons_headers", "//sys/vm:core_kernel_kern_cons_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_kbd_header", "//sys/amd64/conf:core_kernel_opt_syscons_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_dtrace", srcs = ["kern_dtrace.c"],
+    deps = ["//sys/amd64/conf:core_kernel_opt_kdb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_dump", srcs = ["kern_dump.c"],
+    deps = ["//sys/vm:core_kernel_kern_dump_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_fail", srcs = ["kern_fail.c"],
+    deps = ["//sys/amd64/conf:core_kernel_opt_stack_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_intr", srcs = ["kern_intr.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/ddb:core_kernel_kern_intr_headers", "//sys/dev/hwpmc:core_kernel_kern_intr_headers", ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:core_kernel_opt_kstack_usage_prof_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_jail", srcs = ["kern_jail.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_jail_headers", "//sys/ddb:core_kernel_kern_jail_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:core_kernel_kern_jail_headers", "//sys/netinet6:core_kernel_kern_jail_headers", "//sys/security/mac:core_kernel_kern_jail_headers", "//sys/vm:core_kernel_kern_jail_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_nfs_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_jaildesc", srcs = ["kern_jaildesc.c"],
+    deps = ["//sys/vm:core_kernel_kern_jaildesc_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_jailmeta", srcs = ["kern_jailmeta.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_kexec", srcs = ["kern_kexec.c"],
+    deps = ["//sys/vm:core_kernel_kern_kexec_headers", ":bus_if_headers", ":device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_ktrace", srcs = ["kern_ktrace.c"],
+    deps = ["//sys/ddb:core_kernel_kern_ktrace_headers", "//sys/security/mac:core_kernel_kern_ktrace_headers", "//sys/vm:core_kernel_kern_ktrace_headers", "//sys/amd64/conf:core_kernel_opt_ktrace_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_lockstat", srcs = ["kern_lockstat.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_malloc", srcs = ["kern_malloc.c"],
+    deps = ["//sys/ddb:core_kernel_kern_malloc_headers", "//sys/vm:core_kernel_kern_malloc_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_mbuf", srcs = ["kern_mbuf.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_mbuf_headers", "//sys/net:core_kernel_kern_mbuf_headers", "//sys/vm:core_kernel_kern_mbuf_headers", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_pmc", srcs = ["kern_pmc.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_pmc_headers", "//sys/dev/hwpmc:core_kernel_kern_pmc_headers", "//sys/vm:core_kernel_kern_pmc_headers", "//sys/amd64/conf:core_kernel_opt_hwpmc_hooks_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_sdt", srcs = ["kern_sdt.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_sendfile", srcs = ["kern_sendfile.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_sendfile_headers", "//sys/ddb:core_kernel_kern_sendfile_headers", "//sys/net:core_kernel_kern_sendfile_headers", "//sys/netinet:core_kernel_kern_sendfile_headers", "//sys/netinet/cc:core_kernel_kern_sendfile_headers", "//sys/netinet6:core_kernel_kern_sendfile_headers", "//sys/security/audit:core_kernel_kern_sendfile_headers", "//sys/security/mac:core_kernel_kern_sendfile_headers", "//sys/vm:core_kernel_kern_sendfile_headers", "//sys/amd64/conf:core_kernel_opt_kern_tls_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_shutdown", srcs = ["kern_shutdown.c"],
+    deps = ["//sys/crypto/chacha20:core_kernel_kern_shutdown_headers", "//sys/crypto/rijndael:core_kernel_kern_shutdown_headers", "//sys/crypto/sha2:core_kernel_kern_shutdown_headers", "//sys/ddb:core_kernel_kern_shutdown_headers", "//sys/net:core_kernel_kern_shutdown_headers", "//sys/netinet:core_kernel_kern_shutdown_headers", "//sys/netinet6:core_kernel_kern_shutdown_headers", "//sys/security/mac:core_kernel_kern_shutdown_headers", "//sys/vm:core_kernel_kern_shutdown_headers", ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_ekcd_header", "//sys/amd64/conf:core_kernel_opt_kdb_header", "//sys/amd64/conf:core_kernel_opt_panic_header", "//sys/amd64/conf:core_kernel_opt_printf_header", "//sys/amd64/conf:core_kernel_opt_sched_header", "//sys/amd64/conf:core_kernel_opt_watchdog_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_syscalls", srcs = ["kern_syscalls.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_ucoredump", srcs = ["kern_ucoredump.c"],
+    deps = ["//sys/ddb:core_kernel_kern_ucoredump_headers", "//sys/security/mac:core_kernel_kern_ucoredump_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_vnodedumper", srcs = ["kern_vnodedumper.c"],
+    deps = ["//sys/net:core_kernel_kern_vnodedumper_headers", "//sys/netinet:core_kernel_kern_vnodedumper_headers", "//sys/netinet6:core_kernel_kern_vnodedumper_headers", "//sys/vm:core_kernel_kern_vnodedumper_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_xxx", srcs = ["kern_xxx.c"],
+    deps = ["//sys/vm:core_kernel_kern_xxx_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_sched_shim", srcs = ["sched_shim.c"],
+    deps = ["//sys/amd64/conf:core_kernel_opt_sched_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_stack_protector", srcs = ["stack_protector.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS, stack_protector = False)
+amd64_generic_kernel_objects(name = "generic_core_subr_boot", srcs = ["subr_boot.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_capability", srcs = ["subr_capability.c"],
+    deps = ["//sys/vm:core_kernel_subr_capability_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_compressor", srcs = ["subr_compressor.c"],
+    deps = ["//sys/contrib/zlib:core_kernel_subr_compressor_headers", "//sys/contrib/zstd:core_kernel_subr_compressor_headers", "//sys/amd64/conf:core_kernel_opt_gzio_header", "//sys/amd64/conf:core_kernel_opt_zstdio_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_early", srcs = ["subr_early.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_exterr", srcs = ["subr_exterr.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_filter", srcs = ["subr_filter.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_kdb", srcs = ["subr_kdb.c"],
+    deps = ["//sys/ddb:core_kernel_subr_kdb_headers", "//sys/security/mac:core_kernel_subr_kdb_headers", ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:core_kernel_opt_kdb_header", "//sys/amd64/conf:core_kernel_opt_stack_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_lock", srcs = ["subr_lock.c"],
+    deps = ["//sys/ddb:core_kernel_subr_lock_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_mprof_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_msgid", srcs = ["subr_msgid.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_mbufid", srcs = ["subr_mbufid.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_param", srcs = ["subr_param.c"],
+    deps = ["//sys/vm:core_kernel_subr_param_headers", "//sys/amd64/conf:core_kernel_opt_maxphys_header", "//sys/amd64/conf:core_kernel_opt_maxusers_header", "//sys/amd64/conf:core_kernel_opt_msgbuf_header", "//sys/amd64/conf:core_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_pidctrl", srcs = ["subr_pidctrl.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_power", srcs = ["subr_power.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_prng", srcs = ["subr_prng.c"],
+    deps = ["//sys/contrib/pcg-c:core_kernel_subr_prng_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_prof", srcs = ["subr_prof.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_scanf", srcs = ["subr_scanf.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_stack", srcs = ["subr_stack.c"],
+    deps = ["//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_terminal", srcs = ["subr_terminal.c"],
+    deps = ["//sys/teken:core_kernel_subr_terminal_headers", "//sys/amd64/conf:core_kernel_opt_syscons_header", "//sys/amd64/conf:core_kernel_opt_teken_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_ticks", srcs = ["subr_ticks.S"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
+    copts = ["-x", "assembler-with-cpp", "-DLOCORE"])
+amd64_generic_kernel_objects(name = "generic_core_subr_trap", srcs = ["subr_trap.c"],
+    deps = ["//sys/contrib/ck:core_kernel_subr_trap_headers", "//sys/dev/hwpmc:core_kernel_subr_trap_headers", "//sys/net:core_kernel_subr_trap_headers", "//sys/amd64/conf:core_kernel_opt_hwpmc_hooks_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_vmem", srcs = ["subr_vmem.c"],
+    deps = ["//sys/ddb:core_kernel_subr_vmem_headers", "//sys/vm:core_kernel_subr_vmem_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_subr_witness", srcs = ["subr_witness.c"],
+    deps = ["//sys/ddb:core_kernel_subr_witness_headers", ":bus_if_headers", ":device_if_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:core_kernel_opt_stack_header", "//sys/amd64/conf:core_kernel_opt_witness_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_kern_envfd", srcs = ["kern_envfd.c"],
+    deps = ["//sys/security/audit:core_kernel_kern_envfd_headers", "//sys/vm:core_kernel_kern_envfd_headers", "//sys/amd64/conf:core_kernel_opt_capsicum_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_sys_process", srcs = ["sys_process.c"],
+    deps = ["//sys/security/audit:core_kernel_sys_process_headers", "//sys/vm:core_kernel_sys_process_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_sys_socket", srcs = ["sys_socket.c"],
+    deps = ["//sys/contrib/ck:core_kernel_sys_socket_headers", "//sys/ddb:core_kernel_sys_socket_headers", "//sys/net:core_kernel_sys_socket_headers", "//sys/netinet:core_kernel_sys_socket_headers", "//sys/netinet6:core_kernel_sys_socket_headers", "//sys/security/mac:core_kernel_sys_socket_headers", "//sys/vm:core_kernel_sys_socket_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_syscalls", srcs = ["syscalls.c"],
+    deps = [],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty", srcs = ["tty.c"],
+    deps = ["//sys/ddb:core_kernel_tty_headers", "//sys/fs/devfs:core_kernel_tty_headers", "//sys/vm:core_kernel_tty_headers", "//sys/amd64/conf:core_kernel_opt_capsicum_header", "//sys/amd64/conf:core_kernel_opt_ddb_header", "//sys/amd64/conf:core_kernel_opt_printf_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_info", srcs = ["tty_info.c"],
+    deps = ["//sys/vm:core_kernel_tty_info_headers", "//sys/amd64/conf:core_kernel_opt_stack_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_inq", srcs = ["tty_inq.c"],
+    deps = ["//sys/vm:core_kernel_tty_inq_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_outq", srcs = ["tty_outq.c"],
+    deps = ["//sys/vm:core_kernel_tty_outq_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_pts", srcs = ["tty_pts.c"],
+    deps = ["//sys/ddb:core_kernel_tty_pts_headers", "//sys/security/mac:core_kernel_tty_pts_headers", "//sys/vm:core_kernel_tty_pts_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_tty", srcs = ["tty_tty.c"],
+    deps = ["//sys/fs/devfs:core_kernel_tty_tty_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_tty_ttydisc", srcs = ["tty_ttydisc.c"],
+    deps = ["//sys/teken:core_kernel_tty_ttydisc_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_accf", srcs = ["uipc_accf.c"],
+    deps = ["//sys/vm:core_kernel_uipc_accf_headers", "//sys/amd64/conf:core_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_debug", srcs = ["uipc_debug.c"],
+    deps = ["//sys/ddb:core_kernel_uipc_debug_headers", "//sys/amd64/conf:core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_domain", srcs = ["uipc_domain.c"],
+    deps = ["//sys/contrib/ck:core_kernel_uipc_domain_headers", "//sys/net:core_kernel_uipc_domain_headers", "//sys/vm:core_kernel_uipc_domain_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_ktls", srcs = ["uipc_ktls.c"],
+    deps = ["//sys/contrib/ck:core_kernel_uipc_ktls_headers", "//sys/net:core_kernel_uipc_ktls_headers", "//sys/netinet:core_kernel_uipc_ktls_headers", "//sys/netinet/cc:core_kernel_uipc_ktls_headers", "//sys/netinet6:core_kernel_uipc_ktls_headers", "//sys/opencrypto:core_kernel_uipc_ktls_headers", "//sys/vm:core_kernel_uipc_ktls_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header", "//sys/amd64/conf:core_kernel_opt_kern_tls_header", "//sys/amd64/conf:core_kernel_opt_ratelimit_header", "//sys/amd64/conf:core_kernel_opt_rss_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_mbuf", srcs = ["uipc_mbuf.c"],
+    deps = ["//sys/crypto/siphash:core_kernel_uipc_mbuf_headers", "//sys/ddb:core_kernel_uipc_mbuf_headers", "//sys/security/mac:core_kernel_uipc_mbuf_headers", "//sys/vm:core_kernel_uipc_mbuf_headers", "//sys/amd64/conf:core_kernel_opt_mbuf_profiling_header", "//sys/amd64/conf:core_kernel_opt_mbuf_stress_test_header", "//sys/amd64/conf:core_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_mbuf2", srcs = ["uipc_mbuf2.c"],
+    deps = ["//sys/ddb:core_kernel_uipc_mbuf2_headers", "//sys/security/mac:core_kernel_uipc_mbuf2_headers", "//sys/vm:core_kernel_uipc_mbuf2_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_mbufhash", srcs = ["uipc_mbufhash.c"],
+    deps = ["//sys/net:core_kernel_uipc_mbufhash_headers", "//sys/netinet:core_kernel_uipc_mbufhash_headers", "//sys/netinet6:core_kernel_uipc_mbufhash_headers", "//sys/vm:core_kernel_uipc_mbufhash_headers", "//sys/amd64/conf:core_kernel_opt_inet_header", "//sys/amd64/conf:core_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_mqueue", srcs = ["uipc_mqueue.c"],
+    deps = ["//sys/security/audit:core_kernel_uipc_mqueue_headers", "//sys/vm:core_kernel_uipc_mqueue_headers", "//sys/amd64/conf:core_kernel_opt_capsicum_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_vsock", srcs = ["uipc_vsock.c"],
+    deps = ["//sys/kern:core_kernel_uipc_vsock_headers", "//sys/net:core_kernel_uipc_vsock_headers", "//sys/vm:core_kernel_uipc_vsock_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uipc_vsock_user.c"],
+    deps = ["//sys/ddb:core_kernel_uipc_vsock_user_headers", "//sys/kern:core_kernel_uipc_vsock_user_headers", "//sys/security/audit:core_kernel_uipc_vsock_user_headers", "//sys/security/mac:core_kernel_uipc_vsock_user_headers", "//sys/vm:core_kernel_uipc_vsock_user_headers", "//sys/amd64/conf:core_kernel_opt_mac_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module")
+
+amd64_generic_module(
+    module = "if_kue",
+    objects = [
+        "//sys/dev/usb/net:usb_net_if_kue_ordered_objects"
+    ],
+    export_all = False,
+)
+
+cross_generic_module(
+    arch = "arm64",
+    module = "if_kue",
+    objects = [
+        "//sys/dev/usb/net:arm64_usb_net_if_kue_ordered_objects"
+    ],
+    export_all = False,
+)
+
+cross_generic_module(
+    arch = "riscv",
+    module = "if_kue",
+    objects = [
+        "//sys/dev/usb/net:riscv_usb_net_if_kue_ordered_objects"
+    ],
+    export_all = False,
+)

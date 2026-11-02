@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file")
+load(":sources.bzl", "PPP_SOURCES")
+
+# Presence-only PPP_NO_* options, represented as explicit native inputs.
+[bool_flag(name = "no_" + option, build_setting_default = False, visibility = ["//visibility:public"])
+ for option in ["nat", "suid", "kldload", "des", "radius", "netgraph", "pam"]]
+[config_setting(name = feature + "_enabled", flag_values = {":no_" + feature: "false"}, visibility = ["//visibility:public"])
+ for feature in ["nat", "suid"]]
+config_setting(name = "no_kldload_enabled", flag_values = {":no_kldload": "true"})
+config_setting(name = "des_enabled", flag_values = {":no_des": "false", "//tools/build/bazel/config:openssl": "true"})
+config_setting(name = "radius_enabled", flag_values = {":no_radius": "false", "//tools/build/bazel/config:radius_support": "true"})
+config_setting(name = "netgraph_enabled", flag_values = {":no_netgraph": "false", "//tools/build/bazel/config:netgraph": "true"})
+config_setting(name = "pam_enabled", flag_values = {":no_pam": "false", "//tools/build/bazel/config:pam_support": "true"})
+
+_WARNINGS = [
+    "-Wall", "-Wno-format-y2k", "-W", "-Wno-unused-parameter", "-Wstrict-prototypes",
+    "-Wmissing-prototypes", "-Wpointer-arith", "-Wno-uninitialized", "-Wno-pointer-sign",
+    "-Wdate-time", "-Wno-empty-body", "-Wno-string-plus-int", "-Wno-unused-const-variable",
+    "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch",
+    "-Wno-tautological-compare", "-Wno-unused-value", "-Wno-parentheses-equality",
+    "-Wno-unused-function", "-Wno-enum-conversion", "-Wno-unused-local-typedef",
+    "-Wno-address-of-packed-member",
+]
+cc_binary(name = "ppp", srcs = PPP_SOURCES + glob(["*.h"]) +
+    select({":nat_enabled": ["nat_cmd.c"], "//conditions:default": []}) +
+    select({":suid_enabled": ["id.c"], "//conditions:default": []}) +
+    select({":des_enabled": ["chap_ms.c", "mppe.c"], "//conditions:default": []}) +
+    select({":radius_enabled": ["radius.c"], "//conditions:default": []}) +
+    select({":netgraph_enabled": ["ether.c"], "//conditions:default": []}),
+    copts = ["-std=gnu17", "-fPIE", "-DPIC", "-pipe", "-fno-common", "-Qunused-arguments", "-Wno-format-zero-length", "-Wsystem-headers"] +
+        select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}) + _WARNINGS +
+        select({":no_kldload_enabled": ["-DNOKLDLOAD"], "//conditions:default": []}) +
+        select({"//tools/build/bazel/config:inet6_support_enabled": [], "//conditions:default": ["-DNOINET6"]}) +
+        select({":nat_enabled": [], "//conditions:default": ["-DNONAT"]}) +
+        select({":suid_enabled": [], "//conditions:default": ["-DNOSUID"]}) +
+        select({":des_enabled": ["-DOPENSSL_API_COMPAT=0x10100000L"], "//conditions:default": ["-DNODES"]}) +
+        select({":radius_enabled": [], "//conditions:default": ["-DNORADIUS"]}) +
+        select({":netgraph_enabled": [], "//conditions:default": ["-DNONETGRAPH"]}) +
+        select({":pam_enabled": [], "//conditions:default": ["-DNOPAM"]}),
+    deps = ["//lib/libmd:md_link", "//lib/libutil:util", "//lib/libz:z"] +
+        select({":nat_enabled": ["//lib/libalias/libalias:alias"], "//conditions:default": []}) +
+        select({":des_enabled": ["//secure/lib/libcrypto:crypto"], "//conditions:default": []}) +
+        select({":radius_enabled": ["//lib/libradius:radius"], "//conditions:default": []}) +
+        select({":netgraph_enabled": ["//lib/libnetgraph:netgraph"], "//conditions:default": []}) +
+        select({":pam_enabled": ["//lib/libpam/libpam:pam"], "//conditions:default": ["//lib/libcrypt:crypt"]}),
+    dynamic_deps = ["//lib/libmd:md_shared", "//lib/libutil:util_shared", "//lib/libz:z_shared"] +
+        select({":nat_enabled": ["//lib/libalias/libalias:alias_shared"], "//conditions:default": []}) +
+        select({":des_enabled": ["//secure/lib/libcrypto:crypto_shared"], "//conditions:default": []}) +
+        select({":radius_enabled": ["//lib/libradius:radius_shared"], "//conditions:default": []}) +
+        select({":netgraph_enabled": ["//lib/libnetgraph:netgraph_shared"], "//conditions:default": []}) +
+        select({":pam_enabled": ["//lib/libpam/libpam:pam_shared"], "//conditions:default": ["//lib/libcrypt:crypt_shared"]}),
+    linkopts = ["-pie"], target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+bsd_install_file(name = "configuration", src = "ppp.conf", destination = "/etc/ppp/ppp.conf",
+    owner = "root", group = "wheel", mode = "0600", install_tags = ["package=ppp", "config"])
+utility_installation(name = "install_manifest", program = "ppp", manual = "ppp.8", package = "ppp", bindir = "/usr/sbin", man_section = "8",
+    binary_group = "network", binary_mode = select({":suid_enabled": "04554", "//conditions:default": "0554"}), extra_entries = [":configuration"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {
+        "/usr/lib/debug/usr": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ppp","dbg"]}',
+        "/usr/lib/debug/usr/sbin": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=ppp","dbg"]}',
+        "/etc/ppp": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities"]}',
+    },
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

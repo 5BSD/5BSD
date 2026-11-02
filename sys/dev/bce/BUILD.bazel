@@ -23,3 +23,10 @@ cross_generic_module_objects(arch = "riscv", name = "ethernet_module", srcs = ["
     deps = ["//sys/bsm:pci_ethernet_headers", "//sys/contrib/ck:pci_ethernet_headers", "//sys/dev/bce:pci_ethernet_headers", "//sys/dev/mii:pci_ethernet_headers", "//sys/dev/ofw:pci_ethernet_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:pci_ethernet_headers", "//sys/netinet:pci_ethernet_headers", "//sys/netinet6:pci_ethernet_headers", "//sys/vm:pci_ethernet_headers", "//sys/contrib/ck:kernel_headers", "//sys/riscv/conf:generic_opt_bce_header", "//sys/riscv/conf:generic_opt_platform_header", "//sys/dev/mii:miibus_if_headers", "//sys/kern:device_if_headers", "//sys/kern:bus_if_headers", "//sys/dev/pci:pci_if_headers", "//sys/dev/ofw:ofw_bus_if_headers", "//sys/dev/mii:device_id_headers"])
 bsd_component_selected_objects(name = "riscv_ordered_module_objects", group = ":riscv_ethernet_module_ctf",
     object_names = ["if_bce.o"], visibility = ["//sys/modules/bce:__pkg__"])
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["if_bcereg.h"], visibility = ["//sys/dev/mii:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["if_bcereg.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])

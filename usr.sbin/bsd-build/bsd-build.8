@@ -4933,3 +4933,234 @@ See
 for exact evidence and resource guards.
 These are component build gates; hardware operation and full system builds
 remain unqualified. The existing format-5 action is used.
+
+.Pp
+The native base-accounts component uses the existing format-5 action for
+literal script/reference/manual/test installation and native guest helpers.
+Its nine default component installation records match Make, and all eleven
+original ATF cases pass at normal paths in a bounded disposable guest,
+including the absolute pw/pwd_mkdb helper chain and shipped reference files.
+A separate test-disabled, manpage-split profile matches all six component
+installation records and four literal payloads against Make.
+The maintained explicit-input fixture assembler and daemon-runtime VM harness
+preserve original test bodies, unprivileged identities and cleanup.
+See
+.Pa tools/build/bazel/BASE-ACCOUNTS-QUALIFICATION.md
+for bootstrap, configuration and system-level limits.
+This component gate does not qualify normal startup, host account migration,
+full pkgbase creation or system upgrades; Make remains production/default.
+
+.Pp
+Native MII-family profiles qualify miibus, mdio and miiproxy on amd64, ARM64
+and RISC-V64, including generated interfaces, FDT source selection, plain/CTF
+installation records, source/header inputs and original object order.
+See
+.Pa tools/build/bazel/MII-FAMILY-QUALIFICATION.md
+for exact comparisons and retained reference failures.
+The existing format-5 action is used; hardware operation and complete native
+world/kernel/pkgbase builds remain open.
+
+.Pp
+Native iflib, etherswitch and toecore profiles qualify plain/CTF products on
+amd64, ARM64 and RISC-V64, including generated interfaces, installation
+metadata, source/header inputs and original object order.
+All six iflib configurations retain Make's SDT section/symbol contracts.
+See
+.Pa tools/build/bazel/NETWORK-SUPPORT-QUALIFICATION.md
+for immutable evidence and retained analysis failures.
+Hardware operation, live probe firing and complete native system builds
+remain open; Make remains production/default.
+
+.Pp
+Native mailwrapper uses existing typed format-5 settings plus MAILWRAPPER
+selection to preserve MAIL, DMAGENT, SENDMAIL and OPENSSL dependencies,
+configuration files, examples, aliases and package ownership.
+All ten selected component configurations match 84 unique Make installation
+records; four private unprivileged dispatch/error cases and corrected compiler
+policy checks pass.
+See
+.Pa tools/build/bazel/MAILWRAPPER-QUALIFICATION.md
+for immutable artifact bindings, debug/ELF checks and unqualified privileged
+fallback, actual mail delivery and full-system gates.
+No production mail configuration is installed or modified by qualification.
+
+.Pp
+Native dtracedctl accepts the typed format-5
+.Va //tools/build/bazel/config:dtrace_optimized
+boolean, default false, to select authentic full LTO.
+Plain and optimized component builds qualify Make compiler/header/link inputs,
+ELF contracts, installation and six pre-connect parser test methods each.
+See
+.Pa tools/build/bazel/DTRACEDCTL-QUALIFICATION.md
+for captured linked bitcode and separate installed daemon/IPC runtime gates.
+No host tracing or daemon connection is activated by these tests.
+
+.Pp
+Native PPP uses existing typed format-5 source settings plus
+.Va pam_support , radius_support
+and the seven component
+.Va //usr.sbin/ppp:no_*
+selectors to preserve actual Make source/library selections and installation
+policy, including root:network setuid mode and private configuration files.
+See
+.Pa tools/build/bazel/PPP-QUALIFICATION.md
+for three qualified build profiles, retained source-diagnostic differences,
+pppctl usage tests and separate privileged/network/runtime gates.
+Custom configuration-directory and experimental netgraph inputs remain open.
+.Pp
+Native USB network qualification uses existing format-5 kernel profiles,
+module/install actions and target GENERIC option providers for nineteen
+source-selected modules on amd64, ARM64 and RISC-V64.
+All 114 plain/CTF component configurations match Make installation contracts;
+plain modules are byte-identical and installed CTF sections/debug CRCs pass.
+See
+.Pa tools/build/bazel/USB-NETWORK-QUALIFICATION.md
+for original compiler/link-input audits, retained analysis failures and separate
+hardware, live tracing, alternate configuration and full-system gates.
+No host module loading is performed by these checks.
+
+.Pp
+Existing format-5 native inputs qualify the corrected source-owned ACPICA,
+evdev and autofs header providers without new command-line options.
+The real configured kernel query retains version and COPYRIGHT dependencies.
+See
+.Pa tools/build/bazel/ROOT-HEADER-OWNERSHIP-QUALIFICATION.md
+for seven affected userland build/install regressions and explicit bhyve
+dependency-order, physical-section and runtime reconciliation gates.
+Configured analysis and archive generation do not establish a complete
+native system, runtime qualification or split-package ownership.
+.Pp
+The existing format-5 target/test API runs
+.Va //tools/build/bazel:kernel_inventory_test
+with declared native bmake test data.
+The separate
+.Pa tools/build/bazel/kernel_inventory.py
+audit reads an explicitly configured Make kernel without building it.
+See
+.Pa tools/build/bazel/KERNEL-INVENTORY.md
+for configuration freshness, final-link/post-processing preservation and
+remaining native kernel closure gates.
+Query success is not a kernel build or runtime qualification.
+.Pp
+The native ELF comparison helper now rejects a different ordered dynamic
+library dependency vector for both programs and shared libraries.
+Its standalone
+.Pa tools/build/bazel/elf-needed-order-test.py
+regression accepts explicit executable, shared-library, SONAME, inspector,
+object-copy and work-directory inputs and checks private negative ELF copies.
+This is an inspection regression, not a guest runtime test.
+The normal format-5 qualification path remains responsible for capturing the
+native build outputs; no library-order override is provided.
+See
+.Pa tools/build/bazel/ELF-NEEDED-ORDER-QUALIFICATION.md
+for the default bhyve link correction, fresh Make reference, installation
+checks, and remaining section, configuration and runtime gates.
+.Pp
+Native component qualification now includes cxgbetool and mlx5tool through the
+existing format-5 target and test lists.
+Their package manifests preserve the original driver-interface headers,
+textually included register tables, manuals and package tags.
+The pre-device argument tests run as an ordinary user and do not qualify NIC
+operations or firmware changes.
+See
+.Pa tools/build/bazel/NIC-TOOLS-QUALIFICATION.md
+for independent Make, immutable ELF, installation, object and input checks and
+remaining hardware, configuration and cross-userland gates.
+.Pp
+The existing format-5 target API also qualifies seventy-one amd64 GENERIC core
+kernel objects and an existing clock-conversion group.
+Per-source compiler exceptions retain stack-protector and assembly semantics;
+the CTF action converts a private copy and preserves assembly without C types.
+See
+.Pa tools/build/bazel/CORE-KERNEL-QUALIFICATION.md
+for the fresh linked Make reference, captured objects, input hashes and
+filename-related differences.
+The profile runs no runtime tests and does not qualify a complete native
+kernel link, installation, cross-kernel build or performance.
+.Pp
+The existing format-5 explicit SDK and target inputs also qualify twenty-four
+amd64 GENERIC virtual-memory built-in objects after an execution-host upgrade.
+Changed host execution dependencies require a new staged SDK receipt;
+a previous successful receipt is not silently rebound.
+See
+.Pa tools/build/bazel/VM-KERNEL-QUALIFICATION.md
+for actual compiler inputs, object and CTF comparisons and remaining complete
+kernel, runtime, cross-build and controlled performance gates.
+.Pp
+The existing format-5 native target API also qualifies forty-three selected
+amd64 GENERIC IPv4/TCP built-in objects with the selected staged SDK.
+See
+.Pa tools/build/bazel/IPV4-KERNEL-QUALIFICATION.md
+for compiler/input, machine-code, CTF and filename/relocation comparisons.
+This does not qualify a complete kernel, cross build, network runtime or
+controlled performance result.
+.Pp
+The normal format-5 host-test API runs
+.Va //tools/build/bazel:ctf_semantics_test .
+The separate
+.Pa tools/build/bazel/ctf-artifact-check.py
+inspector accepts explicit captured target/output and Make object inputs.
+It preserves raw CTF hashes and checks supported standalone type-layout/schema
+metadata and ELF symbol associations without rewriting artifacts.
+See
+.Pa tools/build/bazel/CTF-SEMANTIC-CHECK.md
+for supported formats, negative regressions and ABI/runtime limits.
+Kernel artifact profiles retain their restriction against runnable host tests.
+.Pp
+The format-5 native target API also qualifies twenty-nine selected amd64 GENERIC
+IPv6 built-in objects through the existing staged SDK and kernel settings.
+See
+.Pa tools/build/bazel/IPV6-KERNEL-QUALIFICATION.md
+for actual compiler/input, code, CTF and symbolic relocation checks.
+Complete kernel, cross-build, network runtime and performance gates
+remain open.
+.Pp
+The existing format-5 native target API builds WPA private utility and crypto
+libraries with distinct ordinary and PIE objects, and the passphrase program.
+Typed build settings
+.Va //tools/build/bazel/config:openssl ,
+.Va //tools/build/bazel/config:wpa_supplicant_eapol ,
+and
+.Va //tools/build/bazel/config:inet6
+select the maintained source configuration.
+See
+.Pa tools/build/bazel/WPA-PRIVATE-QUALIFICATION.md
+for five profile builds, actual input and ELF comparisons, installation checks
+and seven runtime input/loader methods per profile.
+Remaining WPA programs, wireless services, cross builds, full packages and
+controlled performance results are separate open gates.
+
+.Pp
+The existing format-5 target API also qualifies thirty-two selected amd64
+GENERIC network built-in objects, reusing the maintained interface generators
+and header providers.
+See
+.Pa tools/build/bazel/NETWORK-KERNEL-QUALIFICATION.md
+for code/CTF, compiler input and symbolic relocation checks.
+Complete kernel link, runtime, cross-build and performance gates remain open.
+.Pp
+The same format-5 WPA settings build the common library with distinct
+ordinary and PIE objects and the hostapd control client.
+See
+.Pa tools/build/bazel/WPA-COMMON-CLIENT-QUALIFICATION.md
+for four configuration profiles, immutable artifact and install comparisons,
+and safe CLI and loader tests.
+The client is assigned to the hostapd package.
+Control requests, daemon and wireless behavior, cross builds and complete
+system qualification remain separate open gates.
+
+.Pp
+The existing format-5 native target API also qualifies thirty-six selected
+amd64 GENERIC MII built-ins, with existing device-ID and interface generators.
+See
+.Pa tools/build/bazel/MII-KERNEL-QUALIFICATION.md
+for code/CTF, actual input and relocation checks, and remaining hardware,
+complete kernel, cross-build and performance gates.
+
+.Pp
+The existing format-5 native target API also qualifies thirty-seven selected
+amd64 GENERIC wireless built-ins, including per-source warning exceptions.
+See
+.Pa tools/build/bazel/WIRELESS-KERNEL-QUALIFICATION.md
+for code/CTF, actual input and relocation checks and remaining wireless,
+complete kernel, cross-build and performance gates.

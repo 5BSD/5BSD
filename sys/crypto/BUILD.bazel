@@ -25,3 +25,40 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 ) for arch in ["arm64", "riscv"]]
 
 exports_files(["sha1.c"], visibility = ["//sys/netgraph:__pkg__", "//sys/netinet:__pkg__"])
+
+# IPv4 built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/net:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_cbc_mac_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["intake.h", "sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["curve25519.h", "sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_cbc_mac_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_chacha20_poly1305_headers", hdrs = ["libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h", "libsodium/stdio.h", "libsodium/stdlib.h", "sha1.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_gmac_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_null_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_poly1305_headers", hdrs = ["libsodium/limits.h", "libsodium/stddef.h", "libsodium/stdint.h", "libsodium/stdio.h", "libsodium/stdlib.h", "sha1.h"],
+    includes = ["libsodium"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_rmd160_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha1_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_xform_sha2_headers", hdrs = ["sha1.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

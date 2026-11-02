@@ -31,3 +31,8 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
         "//sys/" + arch + "/conf:generic_opt_inet6_header",
     ],
 ) for arch in ["arm64", "riscv"]]
+
+# Network built-in prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["virtio_net.h"],
+    visibility = ["//sys/net:__pkg__"])

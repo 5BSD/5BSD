@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
+
+# Authentic WARNS=3 vector, including its maintained Clang exceptions.
+_WARNINGS = [
+    "-Wall", "-Wno-format-y2k", "-W", "-Wno-unused-parameter", "-Wstrict-prototypes",
+    "-Wmissing-prototypes", "-Wpointer-arith", "-Wno-uninitialized", "-Wno-pointer-sign",
+    "-Wdate-time", "-Wno-empty-body", "-Wno-string-plus-int", "-Wno-unused-const-variable",
+    "-Wno-error=unused-but-set-parameter", "-Wno-error=cast-function-type-mismatch",
+    "-Wno-tautological-compare", "-Wno-unused-value", "-Wno-parentheses-equality",
+    "-Wno-unused-function", "-Wno-enum-conversion", "-Wno-unused-local-typedef",
+    "-Wno-address-of-packed-member",
+]
+# This qualified userland target is amd64. The original Make excludes LTO on
+# RISC-V64; cross-userland selection remains a separate unqualified gate.
+_LTO = select({"//tools/build/bazel/config:dtrace_optimized_enabled": ["-flto"], "//conditions:default": []})
+cc_binary(name = "dtracedctl", srcs = ["dtracedctl.c"], deps = ["//usr.sbin/dtraced:ctl_headers"],
+    copts = ["-std=gnu17", "-fPIE", "-DPIC", "-pipe", "-fno-common", "-Qunused-arguments",
+             "-Wno-format-zero-length", "-Wsystem-headers"] + select({
+        "//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": [],
+    }) + _WARNINGS + _LTO,
+    linkopts = ["-pie", "-O2", "-g", "-gz=zlib"] + _LTO,
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+# Standard rules_cc output group exposes genuine objects without a wrapper or
+# copied substitute, so qualification can inspect real full-LTO bitcode.
+filegroup(name = "source_objects", srcs = [":dtracedctl"], output_group = "compilation_outputs", visibility = ["//visibility:public"])
+utility_installation(name = "install_manifest", program = "dtracedctl", manual = "dtracedctl.8",
+    package = "utilities", bindir = "/usr/sbin", man_section = "8")
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"],
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=utilities","dbg"]}' for d in ["/usr/lib/debug/usr", "/usr/lib/debug/usr/sbin"]},
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.debug.dist": "/usr/lib"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])
+bsd_python_test(name = "preconnect_test", src = "preconnect_test.py", data = [
+    ":dtracedctl", "//lib/libc:c_shared", "//lib/libsys:sys_shared",
+])

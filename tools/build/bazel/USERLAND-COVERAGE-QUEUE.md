@@ -87,24 +87,46 @@ ELF/dependency order and debug CRC checks, and eleven original safe ATF passes.
 Its two installed-path cases, live hardware, cross-userland and wider package/
 performance gates remain open; see BSDTRACE-QUALIFICATION.md.
 
-The next selected source gap is base-accounts: the original runtime script,
-shipped reference account data, manual and complete eleven-case ATF suite.
-Its independent maintained Make build/install reference passes. The first
-native attempt passed four environment API analysis tests and a previous ATF
-regression, but both selected account cases failed before their bodies because
-an ATF pathname helper was missing from the declared runtime. The declarations
-were corrected, with real libm/libmd runtime dependencies added after source
-inspection. No successful native component qualification is claimed yet.
-The retry did not start: the disk-reserve preflight rejected insufficient space.
+The base-accounts default component now passes native build/install and all
+eleven original ATF cases at their normal installed paths in a disposable
+guest. Its nine component installation records and all six literal payloads
+match independent Make output. UID/GID/group checks, private test-root removal,
+fixture input integrity and wrapper mount cleanup pass; no source cases were
+dropped or rewritten. The actual native pw/pwd_mkdb absolute-helper chain is
+exercised. See BASE-ACCOUNTS-QUALIFICATION.md for the bootstrap boundary,
+resource evidence and preserved failed host attempts. The unused generic ATF
+environment/text-helper experiment was removed from active source.
 
-Eight mutating original cases call native pw -R against private roots, but pw
-and libutil still exec /usr/sbin/pwd_mkdb by its normal absolute path. They need
-a disposable guest to qualify the entire native chain without a host helper.
-The shipped_reference case also needs actual installed guest data. Two cases
-(dry_run and missing_reference) can use the declared native runtime without
-entering that absolute-helper path. Preserve all eleven original case bodies
-and installed names. Do not rewrite production paths, account policy or shell
-selection to manufacture a pass.
+The separate test-disabled/manpage-split selector also passes: six component
+records and four literal payloads equal independent Make output, component
+tests are absent and the manual belongs to runtime-man. Mailwrapper now also passes ten configuration comparisons and 84 unique
+installation records, including actual conditional MTA configuration/aliases,
+four program ELF contracts, eight debug CRC checks and four unprivileged
+dispatch/error cases. The corrected compiler action matches Make warnings,
+macros and 50 prerequisite hashes; see MAILWRAPPER-QUALIFICATION.md. The next
+reviewed component, dtracedctl, now qualifies plain/full-LTO builds with actual
+WARNS=3 macro/header/link-tool policy, ten exact installation records, matching
+runtime sections and six safe pre-connect test methods per profile. Genuine
+linked bitcode is captured; only three DWARF sections differ. Installed daemon
+protocol/runtime remains open. See DTRACEDCTL-QUALIFICATION.md. This component
+result does not establish completion of the remaining inventory.
+
+PPP/pppctl now also have native source/install ownership with three explicit
+PPP configurations (57/53/51 C units), 26 component/configuration installation records, eight
+CRC checks, actual flags/header/link-object checks and three safe pppctl usage
+methods. PPP's relative __FILE__ literal and resulting final layout differences
+remain explicit; original objects otherwise match Make runtime sections and
+nondebug relocations. See PPP-QUALIFICATION.md. Real PPP sessions, custom
+PPP_CONFDIR/experimental netgraph, broader configurations and exec cache/log
+resource investigation remain open. This is component evidence, not whole
+userland or native package completion.
+
+Parent-export review found no directory-specific exports/SUBDIR_ENV in
+usr.sbin/Makefile, usr.sbin/Makefile.inc or base-accounts/test Makefiles. The
+maintained world traversal uses real Make buildenv; broader per-directory
+export/action completeness remains a review gate. The separate module inventory
+correction is not evidence that these world observations establish complete
+action or source coverage.
 
 ## Completion gates
 
@@ -121,3 +143,13 @@ Existing format-5 component qualification and the read-only maintained inventory
 APIs cover this refresh without frontend C/backend changes. Resource reserves
 must remain enforced; no receipt/evidence, boot environment or snapshot was
 deleted by this userland work to make a test pass.
+
+The cxgbetool/mlx5tool cohort now owns eleven maintained C translation units and
+all original included register tables, package installation and manuals. Eight
+pre-device test methods, strict dynamic metadata, ten install records/four CRCs,
+384 declared prerequisite checks and eleven exact raw object text sections pass;
+see NIC-TOOLS-QUALIFICATION.md for the retained cxgbetool filename/layout
+qualification limit and hardware/cross/configuration gates. This closes these
+two local source-owner gaps, not the configured world inventory. The earlier
+inventory is a dated snapshot: switchboard-nss must be re-surveyed after merged
+NSS source changes, rather than recreated solely because an old queue names it.

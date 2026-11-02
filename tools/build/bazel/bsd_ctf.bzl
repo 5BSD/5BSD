@@ -47,9 +47,13 @@ def _convert(ctx):
                 # inputs retain the same ordering as ordinary Make objects.
                 # The index still distinguishes equal-basename input objects.
                 out = ctx.actions.declare_file(ctx.label.name + "/" + variant + "/" + obj.basename + "/" + str(index) + "/" + obj.basename)
-                ctx.actions.run(executable = ctx.attr.converter[DefaultInfo].files_to_run,
-                    arguments = (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, "-o", out.path, obj.path],
-                    inputs = [obj], tools = ctx.files.runtime, outputs = [out],
+                # ctfconvert may succeed without writing a new output for an
+                # assembly object with no C types. Match Make's in-place
+                # conversion on a private copy, never on the compiler output.
+                ctx.actions.run(executable = ctx.attr.copy_runner[DefaultInfo].files_to_run,
+                    arguments = ["--copy", obj.path, out.path, "--", ctx.executable.converter.path] +
+                        (["-g"] if ctx.attr.preserve_debug else []) + ["-l", label, out.path],
+                    inputs = [obj], tools = [ctx.attr.converter[DefaultInfo].files_to_run] + ctx.files.runtime, outputs = [out],
                     env = {"LC_ALL": "C", "LD_LIBRARY_PATH": ":".join(runtime_dirs)},
                     use_default_shell_env = False, mnemonic = "BSDCtfConvert")
                 outputs.append(out)
@@ -76,6 +80,7 @@ def _convert(ctx):
 bsd_ctf_library = rule(implementation = _convert, provides = [CcInfo, CcSharedLibraryHintInfo],
     attrs = {"library": attr.label(providers = [CcInfo], mandatory = True),
         "converter": attr.label(executable = True, cfg = "exec", mandatory = True),
+        "copy_runner": attr.label(executable = True, cfg = "exec", default = "//tools/build/bazel:dtrace_copy_runner"),
         "runtime": attr.label_list(allow_files = True, cfg = "exec"),
         "enabled": attr.bool(default = True),
         "ctf_label": attr.string(),

@@ -3,18 +3,63 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
+The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have
+native ordinary/PIE source ownership, declared OpenSSL/EAPOL/IPv6 selections and
+installation metadata. Five profiles pass 25 immutable ELF comparisons and 35
+actual runtime test methods; default 63 code objects and 5,229 prerequisite
+hashes match Make. Remaining WPA programs and full-system/cross/package/runtime
+and performance gates remain open.
+
+The [WPA common library and hostapd control client](WPA-COMMON-CLIENT-QUALIFICATION.md)
+add eleven library sources and one client, distinct ordinary/PIE archives and
+source-owned installation. Four configurations pass twelve immutable ELF
+comparisons and sixteen safe CLI/loader methods. Remaining WPA service/control
+behavior and complete system gates remain open.
+
+The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
+GENERIC final-link inventories and the remaining native built-in graph gaps.
+Configured analysis and declaration counts remain separate from actual builds.
+
+The [IPv6 cohort](IPV6-KERNEL-QUALIFICATION.md) adds twenty-nine amd64 GENERIC
+built-in objects with actual compiler/input, machine-code, CTF and symbolic
+relocation checks. Complete kernel/network runtime and system gates remain open.
+
+The [CTF semantic checker](CTF-SEMANTIC-CHECK.md) preserves raw hashes while
+checking type-layout/reference metadata and actual symbol associations across
+local type-ID encodings. Its native host-test regression includes 29 methods;
+this is separate from kernel runtime or complete ABI qualification.
+
+The [IPv4/TCP cohort](IPV4-KERNEL-QUALIFICATION.md) adds forty-three amd64
+GENERIC built-in objects with actual compiler/input, machine-code, CTF and
+filename/relocation checks. Complete kernel/network runtime and system gates
+remain open.
+
+The [virtual-memory cohort](VM-KERNEL-QUALIFICATION.md) adds twenty-four amd64
+GENERIC built-in objects with actual compile/input, machine-code and CTF checks.
+It uses a freshly staged execution baseline after the host upgrade; full native
+kernel/world/package/runtime and performance gates remain open.
+
+The [core kernel checkpoint](CORE-KERNEL-QUALIFICATION.md) adds seventy-one
+amd64 GENERIC objects qualified against a fresh, successfully linked Make
+reference kernel. Object inspection and input checks do not establish a full
+native kernel link, runtime qualification or cross-architecture completion.
+
 Bazel is experimental. `build-bsd` keeps `bsd-make` as its production backend;
 its separate `bazel-test` action qualifies maintained native targets. There is
 no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-01):** the maintained recursive amd64
-GENERIC audit selects 729 modules, with 219 direct native declarations and
-510 without them. This is source inventory, not a count of qualified builds.
+GENERIC audit selects 729 modules, with 244 direct native declarations and
+485 without them. This is source inventory, not a count of qualified builds.
 The newest qualified cohort is documented in
-[PCI Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md). Evidence:
-`/usr/obj/usr/src/bazel-module-coverage-post-pci-ethernet-20261101.json`.
+[USB network qualification](USB-NETWORK-QUALIFICATION.md). Evidence:
+`/usr/obj/usr/src/bazel-fresh-kernel-module-inventory-20261101/amd64.json`.
 Complete native world/kernel/pkgbase and system qualification remain open.
+The corrected parent-export-aware inventory selects 627 ARM64 and 553 RISC-V64
+modules. These are selection totals, not completed conversions. See
+[module inventory context](MODULE-INVENTORY-CONTEXT.md) for the fix, regression
+checks and review of earlier native module selections.
 
 **Earlier cohort snapshot (2026-11-01; counts below are historical):** the architecture-checked Make inventory counts 729
 selected amd64 GENERIC kernel modules, with 124 direct Bazel module declarations.
@@ -47310,3 +47355,94 @@ Original USB/MII generated headers match, and object orders are hash-bound.
 See [Ethernet qualification](PCI-ETHERNET-QUALIFICATION.md) for preserved query
 and capture corrections, disk reserve guards and runtime/performance limits.
 No complete world/kernel/package build is claimed.
+
+### Native base-accounts (2026-11-01)
+
+The default component's nine install records and six literal payloads match
+Make, and all eleven original cases pass at native installed paths in a
+2 GiB disposable guest, with checked unprivileged identities, private account
+roots, unchanged fixture inputs and cleanup. A separate tests-disabled,
+manpage-split profile matches all six Make records and four payloads. Existing
+format-5 build-bsd is
+used; no shared ATF environment API or production script changes were needed.
+See [base-accounts evidence](BASE-ACCOUNTS-QUALIFICATION.md) for retained host
+failures, matching bootstrap inputs and system-level qualification limits.
+
+### Native mailwrapper (2026-11-01)
+
+All ten mail/MTA configurations pass native/Make comparison: 84 unique install
+records, literal configuration/manual payloads and eight actual debug CRCs.
+Four private unprivileged dispatch/error cases pass, and the corrected actual
+compile matches Make's warning/macro settings and 50 prerequisite hashes.
+See [mailwrapper evidence](MAILWRAPPER-QUALIFICATION.md) for preserved initial
+policy/hash issues, exact conditional ownership and privileged/MTA/runtime
+limits. This uses the normal format-5 frontend; Make remains production.
+
+### Native dtracedctl (2026-11-01)
+
+Plain and full-LTO profiles pass native/Make ELF contracts, ten installation
+records, exact manuals, four debug CRC checks and six pre-connect test methods
+per profile. Actual compiler/header/link-tool inputs and linked LLVM bitcode
+are checked. See [dtracedctl evidence](DTRACEDCTL-QUALIFICATION.md) for immutable
+bindings, three DWARF differences and the separate guest daemon/IPC gates.
+Typed format-5 configuration uses `dtrace_optimized`; Make remains production.
+
+### Native PPP family (2026-11-01)
+
+PPP default/global-reduced/local-exclusion profiles and pppctl pass native
+build/test/install and Make ELF contracts: 26 component/configuration installation records,
+eight debug CRC checks, 162 actual C compiles and 12,489 prerequisite hash
+checks. Original object sections isolate PPP's sole relative __FILE__ literal
+difference; final PPP byte identity is not claimed. See
+[PPP qualification](PPP-QUALIFICATION.md) for exact setuid/group/configuration
+policy, safe usage tests, cache/log observations and isolated runtime/remaining
+configuration gates. Make remains production/default.
+
+### Header source ownership and configured kernel analysis (2026-11-01)
+
+Root header providers now respect ACPICA/evdev/autofs package ownership while
+preserving every physical header and logical include name. All 111 existing
+configured kernel groups analyze, including version/COPYRIGHT. Seven affected
+userland programs and fourteen binary/install targets build; 131 final installed
+paths, 16 debug CRCs and 2 autofs hardlink checks match fresh Make references.
+See [source ownership evidence](ROOT-HEADER-OWNERSHIP-QUALIFICATION.md) for
+explicit bhyve dependency-order and physical section differences, package-tag
+contexts and remaining runtime/system gates. This is no full-kernel claim.
+
+### Ordered dynamic dependency gate (2026-11-01)
+
+[ELF-NEEDED-ORDER-QUALIFICATION.md](ELF-NEEDED-ORDER-QUALIFICATION.md) records the
+new default program/shared-library ordered-NEEDED rejection gate, real ELF
+negative regressions, and bhyve's native link correction against a fresh
+post-HyperTrace-merge Make reference. Default bhyve matches all 21 ordered
+libraries and 86 installed paths/four CRCs; physical runtime-section parity,
+other configurations and VM behavior remain open. Historical report-only
+ordering differences in the otel/protobuf/dtrace probes now require correction
+before those probes pass this gate.
+
+### NIC utilities native candidate (2026-11-01)
+
+[NIC-TOOLS-QUALIFICATION.md](NIC-TOOLS-QUALIFICATION.md) records cxgbetool's ten
+native C entries and mlx5tool's one, exact source-owned interface/header and
+warning policies, 384 prerequisite hash checks, both strict ELF contracts, ten
+install records/four debug CRCs and eight non-root pre-device test methods.
+All eleven raw object text sections match Make. The documented cxgbetool
+source-filename/relocation layout difference and real hardware, cross-userland,
+other configurations, pkg creation and performance gates remain open.
+
+The next 32 amd64 GENERIC network built-ins are qualified through native
+compiler and CTF actions. See [NETWORK-KERNEL-QUALIFICATION.md](NETWORK-KERNEL-QUALIFICATION.md)
+for byte-identical text/CTF, declared input and symbolic relocation checks,
+existing interface-provider reuse, and remaining whole-system gates.
+
+See [MII-KERNEL-QUALIFICATION.md](MII-KERNEL-QUALIFICATION.md) for the next
+36 native amd64 GENERIC MII built-ins: original text/CTF, actual input and
+relocation checks, reused device/interface generators and hardware/runtime gates.
+
+[WIRELESS-KERNEL-QUALIFICATION.md](WIRELESS-KERNEL-QUALIFICATION.md) records
+37 native amd64 GENERIC wireless built-ins, exact code/CTF and input checks,
+five source-specific warning-policy corrections and remaining runtime gates.
+
+[OPENCRYPTO-KERNEL-QUALIFICATION.md](OPENCRYPTO-KERNEL-QUALIFICATION.md) records
+25 native amd64 GENERIC OpenCrypto built-ins, narrow libsodium ownership,
+code/CTF/input/relocation checks and remaining crypto/runtime/system gates.

@@ -12,11 +12,334 @@ load("//tools/build/bazel:bsd_usbdevs.bzl", "bsd_usbdevs_header")
 exports_files(["usbdevs"])
 bsd_usbdevs_header(name = "device_ids")
 cc_library(name = "device_id_headers", hdrs = [":device_ids"],
-    strip_include_prefix = "device_ids.generated", visibility = ["//sys/netgraph/bluetooth:__pkg__"])
+    strip_include_prefix = "device_ids.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
 filegroup(name = "usb_if_header_file", srcs = [":usb_if"], output_group = "header")
 cc_library(name = "usb_if_headers", hdrs = [":usb_if_header_file"],
-    strip_include_prefix = "usb_if.generated", visibility = ["//sys/netgraph/bluetooth:__pkg__"])
+    strip_include_prefix = "usb_if.generated", visibility = ["//sys/dev/usb/net:__pkg__", "//sys/netgraph/bluetooth:__pkg__"])
 
 cc_library(name = "bluetooth_headers", hdrs = ["usb.h", "usb_busdma.h", "usb_debug.h", "usb_dev.h", "usb_endian.h", "usb_freebsd.h", "usb_ioctl.h", "usbdi.h", "usbdi_util.h"], strip_include_prefix = "/sys",
     deps = [":device_id_headers", ":usb_if_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"],
     visibility = ["//sys/netgraph/bluetooth:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "serial/usb_serial.h",
+        "usb.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_msctest.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "usb.h",
+        "usb_busdma.h",
+        "usb_cdc.h",
+        "usb_core.h",
+        "usb_device.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usb_transfer.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "usb.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "usb.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_msctest.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "usb.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_msctest.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_fdt_support.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "serial/usb_serial.h",
+        "usb.h",
+        "usb_busdma.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_msctest.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "usb.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_fdt_support.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "usb.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "usb.h",
+        "usb_cdc.h",
+        "usb_debug.h",
+        "usb_endian.h",
+        "usb_freebsd.h",
+        "usb_process.h",
+        "usbdi.h",
+        "usbdi_util.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)

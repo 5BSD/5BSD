@@ -508,3 +508,21 @@ config_setting(name = "kernel_nfs_root_enabled", flag_values = {":kernel_nfs_roo
 # Maintained MK_HTML input; documentation components opt in explicitly.
 bool_flag(name = "html", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "html_enabled", flag_values = {":html": "true"}, visibility = ["//visibility:public"])
+
+# src.opts.mk makes MAILWRAPPER conditional on the global MAIL selection.
+bool_flag(name = "mailwrapper", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "mailwrapper_enabled", flag_values = {":mailwrapper": "true", ":mail": "true"}, visibility = ["//visibility:public"])
+
+# Make's opt-in DTRACE_OPTIMIZED selects full compile/link LTO for userland.
+bool_flag(name = "dtrace_optimized", build_setting_default = False, visibility = ["//visibility:public"])
+config_setting(name = "dtrace_optimized_enabled", flag_values = {":dtrace_optimized": "true"}, visibility = ["//visibility:public"])
+
+# Feature support switches used by PPP's actual source/install graph.
+bool_flag(name = "pam_support", build_setting_default = True, visibility = ["//visibility:public"])
+bool_flag(name = "radius_support", build_setting_default = True, visibility = ["//visibility:public"])
+
+# Source-owned MK_WPA_SUPPLICANT_EAPOL and MK_INET6 selections for native WPA.
+bool_flag(name = "wpa_supplicant_eapol", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "wpa_supplicant_eapol_enabled", flag_values = {":wpa_supplicant_eapol": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "inet6", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "inet6_enabled", flag_values = {":inet6": "true"}, visibility = ["//visibility:public"])

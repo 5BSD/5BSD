@@ -6,3 +6,10 @@ cc_library(name = 'kernel_headers', hdrs = ['teken.h'],
     strip_include_prefix = "/sys",
     deps = [],
     visibility = ['//sys/dev/vt:__pkg__'])
+
+# Core kernel physical prerequisites.
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "core_kernel_subr_terminal_headers", hdrs = ["teken.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_ttydisc_headers", hdrs = ["teken.h", "teken_wcwidth.h"],
+    visibility = ["//sys/kern:__pkg__"])

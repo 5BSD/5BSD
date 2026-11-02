@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest", "bsd_compress")
+load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
+
+filegroup(name = "base-accounts", srcs = ["base-accounts.sh"], visibility = ["//visibility:public"])
+bsd_install_file(name = "install_program", src = "base-accounts.sh", destination = "/usr/sbin/base-accounts",
+    owner = "root", group = "wheel", mode = "0555", install_tags = ["package=runtime"])
+[bsd_install_file(name = "reference_" + name.replace(".", "_"), src = "//etc:" + name,
+    destination = "/usr/share/base-accounts/" + name, owner = "root", group = "wheel", mode = "0444",
+    install_tags = ["package=runtime"]) for name in ["group", "master.passwd"]]
+bsd_compress(name = "manual", src = "base-accounts.8", output = "base-accounts.8.gz", arguments = ["-cn"],
+    compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
+    runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
+bsd_install_file(name = "install_manual", src = ":manual", destination = "/usr/share/man/man8/base-accounts.8.gz",
+    owner = "root", group = "wheel", mode = "0444", install_tags = select({
+        "//tools/build/bazel/config:split_manpages_enabled": ["package=runtime-man"], "//conditions:default": ["package=runtime"]}))
+bsd_install_manifest(name = "install_manifest", entries = [":install_program", ":reference_group", ":reference_master_passwd", ":install_manual"])
+bsd_install_archive(name = "install_archive", manifests = [":install_manifest"] + select({
+    "//tools/build/bazel/config:tests_enabled": ["//usr.sbin/base-accounts/tests:install_manifest"], "//conditions:default": []}),
+    directories = {d: '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime"]}' for d in ["/usr/sbin", "/usr/share/base-accounts"]} |
+        select({"//tools/build/bazel/config:tests_enabled": {"/usr/tests/usr.sbin/base-accounts": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=tests"]}'}, "//conditions:default": {}}),
+    mtree_specs = {"//etc/mtree:BSD.root.dist": "/", "//etc/mtree:BSD.usr.dist": "/usr", "//etc/mtree:BSD.tests.dist": "/usr/tests"},
+    passwd = "//etc:master.passwd", group = "//etc:group", epoch = 0,
+    mtree = "@bsd_sdk//toolchain:extra_mtree", python = "@bsd_sdk//toolchain:extra_python", python_home = "@bsd_sdk//toolchain:python-home/runtime.json",
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:extra_mtree_runtime"], visibility = ["//visibility:public"])

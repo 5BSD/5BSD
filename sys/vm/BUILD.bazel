@@ -33,3 +33,788 @@ cc_library(name = "bsdtrace_headers", hdrs = ['_vm_radix.h', 'pmap.h', 'vm.h', '
 
 # Physical source prerequisites from independent Ethernet module builds.
 bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+
+# Physical prerequisites consumed by independent MII-family module builds.
+bsd_source_headers(name = "mii_family_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/dev/etherswitch:__pkg__", "//sys/dev/mii:__pkg__"])
+
+# Physical prerequisites consumed by independent network-support module builds.
+bsd_source_headers(name = "network_support_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"], visibility = ["//sys/net:__pkg__", "//sys/netinet:__pkg__"])
+
+bsd_source_headers(
+    name = "usb_net_usie_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_umb_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uether_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_aue_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axe_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_axge_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdce_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cdceem_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_cue_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_kue_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_mos_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_rue_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_smsc_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_udav_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_uhso_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ipheth_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_muge_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_ure_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h",
+        "vm.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+bsd_source_headers(
+    name = "usb_net_if_urndis_headers",
+    hdrs = [
+        "uma.h",
+        "uma_align_mask.h"
+    ],
+    visibility = [
+        "//sys/dev/usb/net:__pkg__"
+    ],
+)
+
+# Core kernel physical prerequisites.
+bsd_source_headers(name = "core_kernel_coredump_vnode_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_imgact_elf_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_imgact_shell_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_dump_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_dumpset.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_jaildesc_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_kexec_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pagequeue.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_ktrace_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_malloc_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "uma_int.h", "vm.h", "vm_domainset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_mbuf_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_pageout.h", "vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_pmc_headers", hdrs = ["vm.h", "vm_extern.h", "vm_kern.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_vnodedumper_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_xxx_headers", hdrs = ["vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_capability_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_param_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_subr_vmem_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_kern_envfd_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_process_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_sys_socket_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_info_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_inq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_outq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_tty_pts_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_accf_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_domain_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_ktls_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbuf_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h", "vm_pageout.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbuf2_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mbufhash_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_mqueue_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/kern:__pkg__"])
+bsd_source_headers(name = "core_kernel_uipc_vsock_user_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/kern:__pkg__"])
+
+# Virtual-memory built-in prerequisites.
+bsd_source_headers(name = "vm_kernel_device_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_phys_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_sg_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_swap_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_uma_core_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "uma_int.h", "vm.h", "vm_domainset.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_uma_dbg_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "memguard.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_dbg.h", "uma_int.h", "vm.h", "vm_object.h", "vm_page.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_domainset_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_domainset.h", "vm_object.h", "vm_page.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_fault_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_glue_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_domainset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_init_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_kern_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_domainset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_map_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_radix.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_meter_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_mmap_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_object_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_page_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "uma_int.h", "vm.h", "vm_domainset.h", "vm_dumpset.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_pageout_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_phys_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_page.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_radix_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_reserv_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pagequeue.h", "vm_param.h", "vm_phys.h", "vm_radix.h", "vm_reserv.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_swapout_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "swap_pager.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_kern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pageout.h", "vm_pager.h", "vm_param.h", "vm_phys.h", "vm_radix.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vm_unix_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h", "vm_param.h"],
+    visibility = ["//sys/vm:__pkg__"])
+bsd_source_headers(name = "vm_kernel_vnode_pager_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_object.h", "vm_page.h", "vm_pager.h", "vm_param.h", "vnode_pager.h"],
+    visibility = ["//sys/vm:__pkg__"])
+
+# Native virtual-memory built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_device_pager", srcs = ["device_pager.c"],
+    deps = ["//sys/vm:vm_kernel_device_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_phys_pager", srcs = ["phys_pager.c"],
+    deps = ["//sys/vm:vm_kernel_phys_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_sg_pager", srcs = ["sg_pager.c"],
+    deps = ["//sys/vm:vm_kernel_sg_pager_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_swap_pager", srcs = ["swap_pager.c"],
+    deps = ["//sys/ddb:vm_kernel_swap_pager_headers", "//sys/geom:vm_kernel_swap_pager_headers", "//sys/net:vm_kernel_swap_pager_headers", "//sys/netinet:vm_kernel_swap_pager_headers", "//sys/netinet6:vm_kernel_swap_pager_headers", "//sys/security/mac:vm_kernel_swap_pager_headers", "//sys/vm:vm_kernel_swap_pager_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_uma_core", srcs = ["uma_core.c"],
+    deps = ["//sys/ddb:vm_kernel_uma_core_headers", "//sys/vm:vm_kernel_uma_core_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_param_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_uma_dbg", srcs = ["uma_dbg.c"],
+    deps = ["//sys/vm:vm_kernel_uma_dbg_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_domainset", srcs = ["vm_domainset.c"],
+    deps = ["//sys/vm:vm_kernel_vm_domainset_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_fault", srcs = ["vm_fault.c"],
+    deps = ["//sys/vm:vm_kernel_vm_fault_headers", "//sys/amd64/conf:vm_kernel_opt_ktrace_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_glue", srcs = ["vm_glue.c"],
+    deps = ["//sys/vm:vm_kernel_vm_glue_headers", "//sys/amd64/conf:vm_kernel_opt_kstack_max_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_usage_prof_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_init", srcs = ["vm_init.c"],
+    deps = ["//sys/vm:vm_kernel_vm_init_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_kern", srcs = ["vm_kern.c"],
+    deps = ["//sys/vm:vm_kernel_vm_kern_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_map", srcs = ["vm_map.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_map_headers", "//sys/vm:vm_kernel_vm_map_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_meter", srcs = ["vm_meter.c"],
+    deps = ["//sys/vm:vm_kernel_vm_meter_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_mmap", srcs = ["vm_mmap.c"],
+    deps = ["//sys/contrib/ck:vm_kernel_vm_mmap_headers", "//sys/ddb:vm_kernel_vm_mmap_headers", "//sys/dev/hwpmc:vm_kernel_vm_mmap_headers", "//sys/dev/hwt:vm_kernel_vm_mmap_headers", "//sys/security/audit:vm_kernel_vm_mmap_headers", "//sys/security/mac:vm_kernel_vm_mmap_headers", "//sys/vm:vm_kernel_vm_mmap_headers", "//sys/amd64/conf:vm_kernel_opt_capsicum_header", "//sys/amd64/conf:vm_kernel_opt_hwpmc_hooks_header", "//sys/amd64/conf:vm_kernel_opt_hwt_hooks_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_object", srcs = ["vm_object.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_object_headers", "//sys/vm:vm_kernel_vm_object_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_page", srcs = ["vm_page.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_page_headers", "//sys/vm:vm_kernel_vm_page_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_pageout", srcs = ["vm_pageout.c"],
+    deps = ["//sys/vm:vm_kernel_vm_pageout_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_pager", srcs = ["vm_pager.c"],
+    deps = ["//sys/vm:vm_kernel_vm_pager_headers", "//sys/amd64/conf:vm_kernel_opt_param_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_phys", srcs = ["vm_phys.c"],
+    deps = ["//sys/ddb:vm_kernel_vm_phys_headers", "//sys/vm:vm_kernel_vm_phys_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_radix", srcs = ["vm_radix.c"],
+    deps = ["//sys/vm:vm_kernel_vm_radix_headers", "//sys/amd64/conf:vm_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_reserv", srcs = ["vm_reserv.c"],
+    deps = ["//sys/vm:vm_kernel_vm_reserv_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_swapout", srcs = ["vm_swapout.c"],
+    deps = ["//sys/vm:vm_kernel_vm_swapout_headers", "//sys/amd64/conf:vm_kernel_opt_kstack_max_pages_header", "//sys/amd64/conf:vm_kernel_opt_kstack_pages_header", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vm_unix", srcs = ["vm_unix.c"],
+    deps = ["//sys/vm:vm_kernel_vm_unix_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_vnode_pager", srcs = ["vnode_pager.c"],
+    deps = ["//sys/vm:vm_kernel_vnode_pager_headers", "//sys/amd64/conf:vm_kernel_opt_vm_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# IPv4 built-in prerequisites.
+bsd_source_headers(name = "ipv4_kernel_if_ether_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_igmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_cksum_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_debug_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_fib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_jail_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_mcast_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_pcb_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_prot_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_proto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rmx_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_in_rss_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_ecn_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_encap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_fastfwd_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_icmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_options_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_ip_reass_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_raw_ip_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_sctp_crc32_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_ecn_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_fastopen_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_hostcache_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_log_buf_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_lro_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_offload_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_reass_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_sack_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_subr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_syncache_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timer_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_timewait_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_tcp_usrreq_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+bsd_source_headers(name = "ipv4_kernel_udp_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet:__pkg__"])
+
+# IPv6 built-in prerequisites.
+bsd_source_headers(name = "ipv6_kernel_dest6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_frag6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_icmp6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_cksum_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_fib_algo_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_ifattach_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_jail_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_mcast_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_pcb_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_proto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rmx_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_rss_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_in6_src_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_fastfwd_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_forward_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_ip6_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_mld6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_nbr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_nd6_rtr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_raw_ip6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_route6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_scope6_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+bsd_source_headers(name = "ipv6_kernel_udp6_usrreq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/netinet6:__pkg__"])
+
+# Network built-in prerequisites.
+bsd_source_headers(name = "net_kernel_bpf_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_buffer_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_filter_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_zerocopy_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_extern.h", "vm_map.h", "vm_page.h", "vm_param.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bpf_ifnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_bridgestp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_bridge_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_clone_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_dead_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_egress_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_epair_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_ethersubr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_gif_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_loop_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_llatbl_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_media_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_mib_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_tuntap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vether_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_if_vlan_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_iflib_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_netisr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_debugnet_inet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_pfil_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_route_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rss_config_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_rtsock_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+bsd_source_headers(name = "net_kernel_vnet_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net:__pkg__"])
+
+# MII built-in prerequisites.
+bsd_source_headers(name = "mii_kernel_acphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_amphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_atphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_axphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_bmtphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_brgphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ciphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83822phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_dp83867phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_e1000phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_gentbi_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_icsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ip1000phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_jmphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_lxtphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mcommphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mii_physubr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_mv88e151x_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsgphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_nsphyter_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_pnaphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_qsphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rdcphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rgephy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_rlphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smcphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_smscphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_tdkphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_truephy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_ukphy_subr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_vscphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/dev/mii:__pkg__"])
+
+# Wireless built-in prerequisites.
+bsd_source_headers(name = "wlan_kernel_ieee80211_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_action_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_adhoc_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ageq_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_amrr_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_ccmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_none_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_tkip_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_wep_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ddb_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_dfs_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_freebsd_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_hostap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ht_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_hwmp_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_input_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ioctl_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_mesh_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_monitor_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_node_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_phy_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_power_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_proto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_radiotap_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ratectl_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_ratectl_none_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_regdomain_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_sta_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_sta_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_scan_sw_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_vht_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+bsd_source_headers(name = "wlan_kernel_ieee80211_wds_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/net80211:__pkg__"])
+
+# OpenCrypto built-in prerequisites.
+bsd_source_headers(name = "opencrypto_kernel_criov_headers", hdrs = ["_vm_phys.h", "_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_page.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_crypto_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptodev_headers", hdrs = ["uma.h", "uma_align_mask.h", "vm.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_cryptosoft_headers", hdrs = ["uma.h", "uma_align_mask.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])
+bsd_source_headers(name = "opencrypto_kernel_ktls_ocf_headers", hdrs = ["_vm_radix.h", "pmap.h", "uma.h", "uma_align_mask.h", "vm.h", "vm_param.h"],
+    visibility = ["//sys/opencrypto:__pkg__"])

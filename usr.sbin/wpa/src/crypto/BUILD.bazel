@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//usr.sbin/wpa:common.bzl", "OPENSSL", "INET6", "PLATFORM", "inc_flags", "crypto_flags", "compiler_flags", "crypto_sources")
+_HEADERS = select({OPENSSL: ["//contrib/wpa:crypto_openssl_headers"], "//conditions:default": ["//contrib/wpa:crypto_internal_headers"]})
+_SOURCES = crypto_sources()
+_EXTRA = ["-DCONFIG_CRYPTO_INTERNAL", "-DCONFIG_TLS_INTERNAL_CLIENT", "-DCONFIG_TLS_INTERNAL_SERVER", "-DCONFIG_SHA256", "-DCONFIG_SHA384", "-DCONFIG_HMAC_SHA384_KDF", "-DCONFIG_INTERNAL_SHA384"]
+_HEADERS = _HEADERS + select({OPENSSL: ["//crypto/openssl:headers"], "//conditions:default": []})
+# INTERNALLIB builds ordinary and PIE archives with genuinely distinct flags.
+[cc_library(name = "wpacrypto" + suffix, srcs = _SOURCES, deps = _HEADERS,
+    copts = (["-fpie", "-DPIC"] if suffix else []) + inc_flags() + crypto_flags() + _EXTRA + compiler_flags(),
+    linkstatic = True, target_compatible_with = PLATFORM, visibility = ["//usr.sbin/wpa:__subpackages__"])
+ for suffix in ["", "_pie"]]
+bsd_component_archive(name = "static_archive", groups = [":wpacrypto"], visibility = ["//usr.sbin/wpa:__subpackages__"], target_compatible_with = PLATFORM)
+bsd_component_archive(name = "pie_archive", groups = [":wpacrypto_pie"], visibility = ["//usr.sbin/wpa:__subpackages__"], target_compatible_with = PLATFORM)

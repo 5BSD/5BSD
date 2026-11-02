@@ -9377,3 +9377,209 @@ not establish missing transitive network/MII instrumentation. Review firmware,
 reset, link transitions, ring allocation/exhaustion, interrupts and error paths
 with network-stack callers. No probes were added solely to satisfy the scan.
 See PCI-ETHERNET-QUALIFICATION.md and the retained compile/observability audit.
+
+## 2026-11-01: base-accounts
+
+The literal production shell script is unchanged and contains no direct
+DTrace/SDT/BSM/syslog calls. All eleven original private-root cases now exercise
+the native installed script/pw/pwd_mkdb chain, including creation/refusal,
+locally modified/removed entries and reference errors. This does not establish
+account-change audit delivery or transitive pw/libutil instrumentation; review
+those privileged account-write/error paths with their audit consumers. No
+probes were added solely for a scan. See BASE-ACCOUNTS-QUALIFICATION.md for
+unchanged source/test payload parity, guest identity and cleanup evidence.
+
+## 2026-11-01: MII, MDIO and miiproxy
+
+A direct scan of all 38 physical production C files found no DTrace/SDT/audit
+markers. Native builds retain the original sources and generated interface
+contracts on amd64, ARM64 and RISC-V64. Review link/autonegotiation, PHY reset,
+MDIO transactions and proxy attach/detach/error paths with network-stack
+callers. This scan does not establish missing transitive instrumentation or
+hardware behavior. No probes were added solely for a scan. See
+MII-FAMILY-QUALIFICATION.md and its retained input/observability audits.
+
+## 2026-11-01: iflib, etherswitch and toecore
+
+All four physical production C files are scanned. Thirteen marker lines in
+iflib.c retain SDT/DTrace definitions and calls. Across six iflib configurations,
+eight SDT data/relocation sections and all SDT/DTrace symbol records match Make;
+all four suspend/resume descriptors are explicitly checked. This does not prove
+live probe firing or transitive coverage of etherswitch/toecore errors. Review
+link/queue pressure, DMA failures, switch/TOE attach/detach and error paths with
+network-stack callers. No probes were added solely for a scan. See
+NETWORK-SUPPORT-QUALIFICATION.md and sdt-review.json in its evidence directory.
+
+## 2026-11-01: mailwrapper
+
+The unchanged production C unit retains openlog/syslog/closelog on missing or
+unreadable configuration fallback, and err/errx diagnostics on parse/exec
+failures. It has no direct DTrace/SDT/BSM hooks. Native/Make runtime section
+payloads match in all four program-present selections; only DWARF differs.
+Four unprivileged private-configuration tests cover dispatch, argument order,
+no mapping, malformed mapping and explicit exec failure; they deliberately
+avoid host configuration/default-MTA paths and do not qualify syslog delivery,
+privileged LOCALBASE handling or MTA execution/audit consumers. No probes or
+new runtime APIs were added for this scan. The initial missing -DPIC/warning
+policy was corrected and actual ordered flags/input hashes checked; earlier
+userland macro/warning reconciliation remains a separate completion gate.
+The pre-existing dmagent_enabled selector's extra CRYPT condition is also an
+explicit follow-up, outside this source-correct mailwrapper selection graph.
+See MAILWRAPPER-QUALIFICATION.md and the retained final artifact/compile audits.
+
+## 2026-11-01: dtracedctl
+
+The unchanged C source has no direct DTrace/SDT/BSM hooks. It retains stderr
+parser diagnostics and the real deadline-bounded daemon IO/wire helpers. Both
+plain/full-LTO profiles retain Make runtime sections; parser-only tests return
+before daemon connection. Inspect authorization, connection/handshake failures,
+cleanup/stats acknowledgements, malformed peers and deadline errors in isolated
+daemon integration; no live-probe or logging-delivery claim follows from the
+parser cases. No instrumentation was removed or added just for this scan.
+See DTRACEDCTL-QUALIFICATION.md and actual compile/link/ELF audits.
+
+## 2026-11-01: PPP family
+
+The 57 default PPP C units and pppctl retain their unchanged production source.
+No direct DTrace/SDT/BSM calls were found; PPP keeps openlog/vsyslog, session
+logging and error diagnostics. The existing sig.c diagnostic retains __FILE__
+semantics with a relative native source spelling, explicitly bounded by original
+object comparisons. Three pppctl argument-error methods return before network
+operations; logging delivery, privileged transitions, authentication and device
+negotiation remain isolated runtime gates. No probes or production behavior
+were changed for this scan. See PPP-QUALIFICATION.md for all captured evidence
+and dependency-library/runtime limits.
+
+
+## USB network module review (2026-11-01)
+
+Twenty unchanged production C sources for nineteen selected USB network modules
+contain no direct DTrace/SDT, audit or CTR markers in the bounded source scan.
+All 114 native architecture/plain/CTF module configurations preserve Make
+installed sections and debug-link contracts as described in
+[USB network qualification](USB-NETWORK-QUALIFICATION.md). The absence of direct
+markers is a review candidate for attach/detach, link changes and recoverable
+USB transfer failures, not proof that shared network/USB tracing is absent.
+Review existing shared probes and disabled/enabled overhead before adding hot
+packet-path instrumentation. No live probe firing, USB hardware operation or
+new event coverage is claimed. Scan hashes and lines are retained in
+/usr/obj/usr/src/bazel-usb-ethernet-review-r3-20261101/observability.json.
+
+### cxgbetool / mlx5tool (2026-11-01)
+
+The eleven unchanged production C entries have no DTrace/SDT provider, FIDL
+code generation or explicit BSM audit calls. Native ownership retains all
+original C/table/header inputs; no probes were removed. Review audit coverage
+of privileged register/filter/firmware/reset/dump operations as a future policy
+item. Only eight source-reviewed pre-device argument methods ran, never those
+privileged operations. See NIC-TOOLS-QUALIFICATION.md for actual compile/object,
+installation and hardware-runtime limits; no new tracing/audit policy is claimed.
+
+## Core kernel objects (2026-11-01)
+
+Seventy-one unchanged sys/kern source entries now have native amd64 object
+inspection. Twenty-seven contain direct SDT/DTrace, AUDIT, CTR or LOCKSTAT
+markers in the bounded line scan; forty-four have no such direct marker.
+The retained source hashes/lines are in
+/usr/obj/usr/src/bazel-kernel-core-review-r1-20261101/observability.json.
+Original machine code and CTF preservation are inspected as described in
+[the core checkpoint](CORE-KERNEL-QUALIFICATION.md). Source scanning and object
+parity do not prove live event delivery. Existing exec/jail, ptrace/socket/TTY,
+message queue, kTLS and vsock event paths must run on the matching test kernel;
+review shared coverage before adding events to marker-free sources. No tracing
+activation, new event policy or hot-path runtime change was introduced.
+
+## Virtual-memory kernel built-ins (2026-11-02)
+
+Twenty-four unchanged sys/vm sources retain their original native machine code
+and CTF against the configured Make reference. Eleven contain direct trace,
+audit, CTR or lockstat markers in the bounded source scan; thirteen do not.
+See [virtual-memory qualification](VM-KERNEL-QUALIFICATION.md) and its retained
+source hashes/lines. Fault/reclaim, paging/swap, mappings, object lifecycle and
+UMA event delivery remain matching-kernel runtime gates. Review shared probes
+and measured disabled/enabled overhead before adding hot-path events. No new
+runtime probe/policy change or event-delivery qualification is claimed.
+
+## IPv4/TCP kernel built-ins (2026-11-02)
+
+Forty-three unchanged selected sys/netinet sources retain original machine code
+and CTF against Make. The bounded scan recognizes actual TCP/IP/UDP/MIB probe
+wrappers, not only generic SDT tokens: fourteen sources have recognized markers,
+twenty-nine do not. The initial narrower scan is retained separately. See
+[IPv4/TCP qualification](IPV4-KERNEL-QUALIFICATION.md) and its source-bound lines,
+physical interfaces and symbolic relocation comparisons. Packet/session,
+retransmit/timer/MIB events and audit delivery remain matching-kernel runtime
+checks. No host network/tracing activation or new hot-path instrumentation was
+performed; review shared coverage and measured overhead before adding events.
+
+## IPv6 kernel built-ins (2026-11-02)
+
+Twenty-nine unchanged selected sys/netinet6 sources retain original machine code
+and CTF against Make. A bounded scan including real network probe wrappers finds
+recognized markers in 6 sources and none in 23. See
+[IPv6 qualification](IPV6-KERNEL-QUALIFICATION.md) for source hashes/lines and
+compiled interface/relocation evidence. Packet, ICMPv6, neighbor discovery,
+routing/fragmentation/session event delivery and audit remain matching-kernel
+runtime gates. No host network/tracing activation or new hot-path probes were
+introduced; shared coverage and measured overhead must guide further changes.
+
+## WPA private libraries and passphrase (2026-11-02)
+
+The selected 12 utility, 19 default crypto and one passphrase source files have
+no direct DTrace/SDT schemas, FIDL generation or BSM audit calls in the bounded
+source scan. Ordinary/PIE builds preserve all 63 default object code sections
+and reviewed macro/warning policy. See [WPA qualification](WPA-PRIVATE-QUALIFICATION.md)
+for source/header/relocation bindings and runtime input/TTY checks. This does
+not qualify daemon control, wireless authentication events or security audit
+delivery. Review shared instrumentation and actual event delivery when the
+remaining supplicant/hostapd services are migrated; no invented probes or host
+tracing/service activation was added.
+
+## Network built-ins (2026-11-02)
+
+The 32-source network cohort preserves existing code and probe plumbing.
+A bounded marker scan finds SDT/DTrace, audit, CTR, lockstat or network probe
+markers in 12 sources and none in 20. Marker absence alone is not a coverage
+defect. Qualify live BPF, bridge/interface, filtering, routing, RSS and VNET
+behavior with the matching isolated test kernel before adding new events.
+See NETWORK-KERNEL-QUALIFICATION.md for retained scan/input/artifact evidence;
+no runtime probe or controlled tracing-performance result is claimed.
+
+## WPA common library and hostapd control client (2026-11-02)
+
+The eleven common-library sources and one client source have no direct SDT/
+DTrace, FIDL or BSM audit markers in the source-bound scan. All 23 default
+ordinary/PIE/client code objects retain original text and reviewed input policy.
+See [common/client qualification](WPA-COMMON-CLIENT-QUALIFICATION.md). Safe CLI
+and rtld tests do not qualify daemon control/events or authentication audit
+delivery; review shared instrumentation with the remaining WPA services.
+No runtime tracing policy or new probes were introduced.
+
+## MII built-ins (2026-11-02)
+
+The bounded call-shaped scan recognizes no direct tracing/audit calls in the
+36-source MII cohort. The initial broad _PROBE candidate scan incorrectly
+counted BUS_PROBE device-match scores; it is retained and superseded by a scan
+that excludes device scores and protocol-state constants. Existing network,
+IPv6 and IPv4 source-marker counts remain 12/6/14 after the same narrow check.
+Review shared bus/network hooks before proposing new hot-path events.
+No PHY attach, negotiation or live hardware tracing is qualified; see
+MII-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## Wireless built-ins (2026-11-02)
+
+The 37-source wireless cohort preserves existing code and compiled probe
+plumbing. The bounded call-shaped scan finds recognized tracing/audit/CTR
+markers in ieee80211_proto, ieee80211_scan and ieee80211_sta; 34 sources have
+none. Device-match and protocol-state constants are excluded. Review shared
+coverage and measured overhead before adding events. No live association,
+scanning, cipher, AP/mesh, roaming or hardware behavior is qualified; see
+WIRELESS-KERNEL-QUALIFICATION.md for evidence and remaining gates.
+
+## OpenCrypto built-ins (2026-11-02)
+
+The bounded call-shaped scan finds recognized tracing/audit/CTR markers in
+criov, crypto, cryptodev and cryptodeflate; 21 sources have none. Existing
+code/probe plumbing is preserved. Review shared hooks before adding hot-path
+events. Live provider/session, /dev/crypto, KTLS and existing known-answer tests
+remain runtime gates; see OPENCRYPTO-KERNEL-QUALIFICATION.md.

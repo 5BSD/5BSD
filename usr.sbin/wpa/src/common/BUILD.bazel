@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+load("//usr.sbin/wpa:common.bzl", "PLATFORM", "compiler_flags", "crypto_flags", "inc_flags")
+
+_SOURCES = [
+    "//contrib/wpa:src/common/cli.c",
+    "//contrib/wpa:src/common/ctrl_iface_common.c",
+    "//contrib/wpa:src/common/dragonfly.c",
+    "//contrib/wpa:src/common/dpp_tcp.c",
+    "//contrib/wpa:src/common/gas.c",
+    "//contrib/wpa:src/common/hw_features_common.c",
+    "//contrib/wpa:src/common/ieee802_11_common.c",
+    "//contrib/wpa:src/common/ptksa_cache.c",
+    "//contrib/wpa:src/common/sae.c",
+    "//contrib/wpa:src/common/wpa_common.c",
+    "//contrib/wpa:src/common/wpa_ctrl.c",
+]
+
+# Internallib's ordinary and PIE objects have distinct actual compile flags.
+[cc_library(
+    name = "wpacommon" + suffix,
+    srcs = _SOURCES,
+    deps = ["//contrib/wpa:common_headers"],
+    copts = (["-fpie", "-DPIC"] if suffix else []) + inc_flags() + crypto_flags() +
+            ["-DCONFIG_SAE", "-DCONFIG_SUITE", "-DCONFIG_SUITEB"] + compiler_flags(),
+    linkstatic = True,
+    target_compatible_with = PLATFORM,
+    visibility = ["//usr.sbin/wpa:__subpackages__"],
+) for suffix in ["", "_pie"]]
+
+bsd_component_archive(name = "static_archive", groups = [":wpacommon"],
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/wpa:__subpackages__"])
+bsd_component_archive(name = "pie_archive", groups = [":wpacommon_pie"],
+    target_compatible_with = PLATFORM, visibility = ["//usr.sbin/wpa:__subpackages__"])
