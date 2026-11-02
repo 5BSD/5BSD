@@ -335,12 +335,12 @@ state::setup_threads(void)
 		this->directory_start_error = 0;
 	}
 	try {
-		this->workers.resize(this->threadpool_size +
-		    (this->ctrlmachine != 0 ? 1 : 0));
+		this->workers.resize(this->threadpool_size *
+		    (this->ctrlmachine != 0 ? 2 : 1));
 		for (size_t i = 0; i < this->threadpool_size; i++)
 			this->workers[i] = std::thread(&state::process_joblist, this);
-		if (this->ctrlmachine != 0)
-			this->workers[this->threadpool_size] = std::thread(
+		for (size_t i = this->threadpool_size; i < this->workers.size(); i++)
+			this->workers[i] = std::thread(
 			    &state::process_consumer_deliveries, this);
 
 		if (this->ctrlmachine == 0) {
@@ -1632,7 +1632,12 @@ state::stop_fresh_session_step(const durable_session_stop &stop)
 		int error = stopped ? 0 : (errno != 0 ? errno : EIO);
 		if (error == EBUSY) {
 			/* A delivery awaits this collector's ACK; nothing was sent.
-			 * Report pending and ask again on the next stop step. */
+			 * Report pending and ask again on the next stop step.  The
+			 * lost-reply resolution below is for a request that was
+			 * sent; a stop this collector already committed on its own
+			 * connection is found by the next step, once the delivery
+			 * has its ACK or has failed (at most the 60 s ACK deadline,
+			 * after which the socket is killed). */
 			consumer->release();
 			errno = EAGAIN;
 			return (-1);
@@ -2329,7 +2334,11 @@ state::handle_job(job *j)
  * only after this daemon has accepted that program on its READDATA socket.
  * That read needs a worker of its own: on a control machine host consumer
  * deliveries run only on process_consumer_deliveries(), every other job only
- * on process_joblist().  A minion has no consumer delivery worker.
+ * on process_joblist().  There are as many delivery workers as -t workers,
+ * and each consumer has at most one delivery running, so a consumer that
+ * does not acknowledge holds one delivery worker and none of its queued
+ * deliveries waits on its stream in another.  A minion has no consumer
+ * delivery worker.
  */
 static bool
 consumer_delivery(int ctrlmachine, const job *j)
@@ -2367,7 +2376,8 @@ state::run_jobs(bool consumer_deliveries)
 			next = std::find_if(this->dispatched_jobs.begin(),
 			    this->dispatched_jobs.end(), [&](const job *j) {
 				return (consumer_delivery(this->ctrlmachine, j) ==
-				    consumer_deliveries);
+				    consumer_deliveries && (!consumer_deliveries ||
+				    !j->connsockfd->consumer_delivery_active));
 			});
 			return (next != this->dispatched_jobs.end());
 		});
@@ -2377,13 +2387,23 @@ state::run_jobs(bool consumer_deliveries)
 
 		curjob = *next;
 		this->dispatched_jobs.erase(next);
+		if (consumer_deliveries)
+			curjob->connsockfd->consumer_delivery_active = true;
 		lk.unlock();
 
 		/* Not every failure path sets errno. */
 		errno = 0;
-		if (!curjob->connsockfd->retired.load() &&
-		    !this->handle_job(curjob)) {
-			const int job_error = errno;
+		const bool failed = !curjob->connsockfd->retired.load() &&
+		    !this->handle_job(curjob);
+		const int job_error = errno;
+		if (consumer_deliveries) {
+			/* The job's reference keeps the client until delete. */
+			lk.lock();
+			curjob->connsockfd->consumer_delivery_active = false;
+			lk.unlock();
+			this->dispatched_jobscv.notify_all();
+		}
+		if (failed) {
 			if (curjob->handoff_deferred &&
 			    !curjob->connsockfd->retired.load()) {
 				/* HT-C BEGIN: disabled trace continuity. */

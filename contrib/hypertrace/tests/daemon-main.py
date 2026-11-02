@@ -1287,6 +1287,63 @@ live('host-ingest-lost-ack-replay', ['-d', '-D', '@ROOT@/state', '-t', '2'],
      ingest_lost_ack, {'HT_ATTEST': '7:9:guest-a'})
 
 
+def consumer_delivery_isolation(root, proc):
+    # A host consumer that never acknowledges a delivery holds the worker
+    # sending to it until the 60 s ACK deadline; deliveries to another host
+    # consumer must not queue behind it (the -t workers ran them side by
+    # side).  Two uploads: one delivery worker stuck on the silent consumer
+    # delays the live consumer's second delivery whatever the recipient
+    # order, and a second worker must not take the silent consumer's next
+    # delivery, which would wait on its stream as well.
+    d = {'live': []}
+    elf = b'\x7fELF' + bytes(range(40))
+
+    def register(session):
+        c = connect(root)
+        c.sendall(hello(KIND_CONSUMER, 2, 'dtrace-%d-%s' %
+                        (os.getpid(), os.urandom(16).hex()), session))
+        h = bytearray(HEADER)
+        struct.pack_into('<QQ', h, 0, MSG_CONSUMER_PROGRAM, 32)
+        frame(c, bytes(h), hashlib.sha256(b'program-' + session).digest())
+        return c, recv_exact(c, 1).hex()
+
+    silent, d['silent_ack'] = register(b'\xc4')
+    live_c, d['live_ack'] = register(b'\xc5')
+    live_c.settimeout(10)
+    g = forwarder(root, 'guest-a', session=b'\x42', subs=1)
+    time.sleep(0.2)
+    t0 = time.monotonic()
+    try:
+        for delivery in (901, 902):
+            program, source = bytes([delivery & 0xff]), b'\xb4'
+            guest_elf_frame(g, delivery, program, source, 'guest-a', elf)
+            d.setdefault('ingest', []).append(recv_exact(g, 1).hex())
+            hdr = recv_exact(live_c, HEADER)
+            recv_exact(live_c, struct.unpack_from('<Q', hdr, 8)[0])
+            got = struct.unpack_from('<Q', hdr, 16)[0]
+            d['live'].append([got, round(time.monotonic() - t0, 2)])
+            live_c.sendall(struct.pack('<Q16s16sHBxxxxxQ', got, program,
+                                       source, 7, 1, 9))
+    except (OSError, EOFError) as e:
+        d['live'].append(repr(e))
+    silent.settimeout(0.5)
+    try:
+        d['silent_received'] = len(silent.recv(HEADER)) > 0
+    except OSError:
+        d['silent_received'] = False
+    g.close()
+    live_c.close()
+    silent.close()
+    ok = (d['silent_ack'] == '01' and d['live_ack'] == '01' and
+          d.get('ingest') == ['01', '01'] and len(d['live']) == 2 and
+          all(isinstance(x, list) and x[1] < 5 for x in d['live']))
+    return {'ok': ok and proc.poll() is None, **d}
+
+
+live('consumer-delivery-isolation', ['-d', '-D', '@ROOT@/state', '-t', '2'],
+     consumer_delivery_isolation, {'HT_ATTEST': '7:9:guest-a'})
+
+
 def registration_ordering(root, proc):
     # Regression: re-registering a consumer releases its replayed upload.
     # The one-byte registration status must reach the client before that

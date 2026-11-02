@@ -115,6 +115,9 @@ class client_fd {
 	std::set<std::array<uint8_t, 48>> consumer_import_queued_receipts;
 	uintptr_t event_cookie {0};
 	std::mutex output_mtx; /* Serialize complete outbound protocol frames. */
+	/* A consumer delivery worker is sending to this host consumer;
+	 * protected by state::dispatched_jobsmtx. */
+	bool consumer_delivery_active = false;
 	/* Outbound deliveries and observations expire with this connection. */
 	std::mutex installed_mtx;
 	std::vector<outbound_delivery> outbound_deliveries;
