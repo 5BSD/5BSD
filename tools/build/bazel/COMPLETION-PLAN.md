@@ -528,8 +528,12 @@ The root-selected four-source TableGen producer and 19 library headers pass
 native/Make output, eight actual compiler-policy, 5,882 prerequisite-hash and
 789 relocation checks. The original bootstrap stddef wrapper is now declared.
 Host-static Make versus declared-native dynamic execution is explicit; this is
-not installed LLDB completion. Next: 756-source private liblldb, two CLI option
-headers, programs, tests/install/package context and ancestor MK_LLDB selection.
+not installed LLDB completion. The 756-source private shared library now passes
+actual compiler/input/archive-order checks, exact allocated object and linked DSO
+sections against a complete declared filename-policy Make control, five install
+records and one safe API wrapper. See LLDB-LIBRARY-QUALIFICATION.md for the
+untouched baseline differences and historical SDK binding. Next: two CLI option
+headers, programs, debugger runtime/package context and ancestor MK_LLDB selection.
 See LLDB-GENERATORS-QUALIFICATION.md; original ordinary-leaf and strict input
 failures are retained. No host installation or debugger activation occurred.
 

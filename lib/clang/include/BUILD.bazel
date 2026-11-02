@@ -11,3 +11,5 @@ cc_library(
 cc_library(name = "clang_headers", hdrs = ["VCSVersion.inc"] + glob(["clang/**/*.h", "clang/**/*.inc"]), includes = ["."], visibility = ["//visibility:public"])
 
 cc_library(name = "lld_headers", hdrs = ["VCSVersion.inc", "lld/Common/Version.inc"], includes = ["."], visibility = ["//contrib/llvm-project/lld:__pkg__"])
+
+cc_library(name = "lldb_headers", hdrs = ["VCSVersion.inc", "Plugins/Plugins.def"] + glob(["lldb/**/*.h", "lldb/**/*.inc"]), includes = ["."], visibility = ["//contrib/llvm-project/lldb:__pkg__", "//lib/clang/liblldb:__pkg__"])

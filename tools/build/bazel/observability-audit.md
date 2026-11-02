@@ -9986,3 +9986,19 @@ transitions, Tx/Rx, power management and failure recovery. Privileged wireless
 configuration and diagnostics need tracing/audit delivery review. Build parity
 is established; radio operation and probe/audit runtime delivery are not.
 See ATH-MODULES-QUALIFICATION.md for exact compiled scope and source fixes.
+
+## Private LLDB library (2026-11-02)
+
+All 756 actual native PIC compiler records match original Make policy and
+690,249 consumed-file hashes. The original physical-filename payload differences
+remain retained; a complete independent original-Make compiler filename-policy
+control proves all 756 allocated object sections and all allocated linked DSO
+sections byte-exact without observer rewriting. Archive member SHA/order, 59
+consumed generated headers, five install records and actual split-debug CRC pass.
+One safe API wrapper verifies native LLDB/Clang/LLVM loading and pure data APIs
+with DOF initialization disabled before startup; debugger initialization, process
+attach/launch, live tracing and the upstream suite remain untested. This is the
+default amd64 shared configuration, not full LLDB/world completion. See
+LLDB-LIBRARY-QUALIFICATION.md for immutable receipts, actual link/input bindings,
+retained failed controls and SDK scope. Existing frontend APIs/manual remain
+applicable; no new build-bsd interface was introduced.

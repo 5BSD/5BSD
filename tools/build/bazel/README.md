@@ -47681,8 +47681,13 @@ and tracing/world/package limits.
 
 Native LLDB TableGen produces 19 original headers with exact Make output, four
 compiler-code matches and explicit bootstrap/runtime limits; see
-[LLDB-GENERATORS-QUALIFICATION.md](LLDB-GENERATORS-QUALIFICATION.md). The private
-library, CLI programs and installed debugger remain open.
+[LLDB-GENERATORS-QUALIFICATION.md](LLDB-GENERATORS-QUALIFICATION.md). The native
+756-source private library, actual compiler/input/archive order, all allocated
+object/DSO sections against an explicit Make filename-policy control, five
+installation records and one safe API wrapper now pass; see
+[LLDB-LIBRARY-QUALIFICATION.md](LLDB-LIBRARY-QUALIFICATION.md). Original filename
+differences and historical SDK bindings are retained. CLI programs, debugger
+process operations, other configurations and final package/world gates remain open.
 
 ## Parser-owned kernel input inventory (2026-11-02)
 

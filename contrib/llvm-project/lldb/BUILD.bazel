@@ -14,3 +14,16 @@ cc_library(
     visibility = ["//usr.bin/clang/lldb-tblgen:__pkg__"],
 )
 exports_files(["include/lldb/Core/PropertiesBase.td"] + glob(["source/**/*.td"]), visibility = ["//lib/clang/liblldb:__pkg__"])
+
+load("//lib/clang/liblldb:sources.bzl", "LLDB_SOURCES")
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+exports_files(["source/" + source for source in LLDB_SOURCES if source != "LLDBWrapLua.cpp"],
+              visibility = ["//lib/clang/liblldb:__pkg__"])
+bsd_source_headers(
+    name = "headers",
+    hdrs = glob(["include/lldb/**/*.h", "include/lldb/**/*.def",
+                 "source/**/*.h", "source/**/*.def"]) + ["bindings/lua/lua-swigsafecast.swig"],
+    includes = ["include", "source"],
+    deps = ["//lib/clang/include:lldb_headers"],
+    visibility = ["//lib/clang/liblldb:__pkg__", "//usr.bin/clang/lldb:__pkg__", "//usr.bin/clang/lldb-server:__pkg__"],
+)
