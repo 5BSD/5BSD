@@ -526,3 +526,8 @@ bool_flag(name = "wpa_supplicant_eapol", build_setting_default = True, visibilit
 config_setting(name = "wpa_supplicant_eapol_enabled", flag_values = {":wpa_supplicant_eapol": "true"}, visibility = ["//visibility:public"])
 bool_flag(name = "inet6", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "inet6_enabled", flag_values = {":inet6": "true"}, visibility = ["//visibility:public"])
+
+# Static PAM selection follows modules.inc independently of backend availability.
+config_setting(name = "pam_kerberos_selected", flag_values = {":kerberos": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "pam_openssh_selected", flag_values = {":openssh": "true"}, visibility = ["//visibility:public"])
+config_setting(name = "pam_radius_selected", flag_values = {":radius_support": "true"}, visibility = ["//visibility:public"])

@@ -9814,3 +9814,12 @@ The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in fiv
 ## Ethernet built-ins (2026-11-02)
 
 The bounded source-bound scan finds call-shaped tracing/CTR/audit markers in 1 of 73 converted files. This is neither runtime coverage nor proof of missing shared hooks. See ETHERNET-KERNEL-QUALIFICATION.md and retained observability.json. Production instrumentation remains.
+
+## Combined static PAM product (2026-11-02)
+
+The baseline archive retains 20 providers (core plus 19 modules), 56 probe records,
+100 ordinary and six enabled sites, with actual function/DOF relocation bindings.
+Five selected modules still lack their own provider, as recorded above. The two
+fully static registry tests opt out of original drti helper loading and invoke no
+PAM handlers; they do not qualify authentication/audit paths or live probe firing.
+See STATIC-PAM-QUALIFICATION.md for exact compiler, alias/site and runtime scope.

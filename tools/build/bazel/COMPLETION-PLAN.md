@@ -368,3 +368,14 @@ APM-PROGRAM-QUALIFICATION.md records native source/ELF/install qualification of 
 ## Ethernet built-in checkpoint (2026-11-02)
 
 73 additional native Ethernet built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See ETHERNET-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+### Combined static PAM selected product (2026-11-02)
+
+STATIC-PAM-QUALIFICATION.md closes the missing native `/usr/lib/libpam.a` producer:
+54 original core sources, original selected module registration/partial-link order,
+DTrace metadata/sites, compiler/input/relocation checks, default/reduced install
+records and two fully static registry-only native tests (24/20 modules). Keep
+full PAM aggregation/pam.d, installed original authentication/login/SSH tests,
+other LOCALBASE/options/architectures and whole-world/pkgbase/runtime gates open.
+Next reconcile the actual configured userland action/install queue from the
+2,127-directory Make survey; source BUILD presence alone is not coverage.

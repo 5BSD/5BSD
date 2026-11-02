@@ -5,7 +5,7 @@ load(":sources.bzl", "PAM_SOURCES")
 _TRACE = "//tools/build/bazel/config:dtrace_enabled"
 _PLATFORM = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"]
 bsd_dtrace_header(
-    name = "provider", source = "pamchain_provider.d", output = "pamchain_provider.h",
+    name = "provider", visibility = ["//lib/libpam/static_libpam:__pkg__"], source = "pamchain_provider.d", output = "pamchain_provider.h",
     flags = ["-C", "-x", "nolibs"], object_path_mode = "relative",
     dtrace = "//cddl/usr.sbin/dtrace:bootstrap", cpp = "@bsd_sdk//toolchain:bin/cpp",
     linker = "@bsd_sdk//toolchain:bin/ld.lld", objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy",
@@ -14,7 +14,7 @@ bsd_dtrace_header(
     tool_inputs = [ "@bsd_sdk//toolchain:compile_inputs",
         "@bsd_sdk//toolchain:link_inputs", "@bsd_sdk//toolchain:objcopy_inputs"], static_anchor = True,
 )
-cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".")
+cc_library(name = "provider_headers", hdrs = [":provider"], strip_include_prefix = ".", visibility = ["//lib/libpam/static_libpam:__pkg__"])
 cc_library(name = "objects", srcs = PAM_SOURCES,
     deps = ["//contrib/openpam:headers"], implementation_deps = ["//contrib/openpam:private_headers"] + select({_TRACE: [":provider_headers"], "//conditions:default": []}),
     local_defines = ['LOCALBASE=\\"/usr/local\\"', "LIB_MAJ=6", "OPENPAM_DEBUG", "HAVE_DLFUNC=1", "HAVE_FDLOPEN=1", "HAVE_FPURGE=1", "HAVE_STRLCAT=1", "HAVE_STRLCPY=1"] + select({_TRACE: ["WITH_COVERAGE_DTRACE"], "//conditions:default": []}),

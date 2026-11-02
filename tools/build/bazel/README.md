@@ -47571,3 +47571,9 @@ and full relocation/runtime qualification remain open.
 [STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md](STORAGE-CONTROLLERS-KERNEL-QUALIFICATION.md) records 62 native storage-controller built-ins, preserved per-source warning policies, exact code/CTF and checked inputs/relocations, with runtime/system gates still open.
 
 [ETHERNET-KERNEL-QUALIFICATION.md](ETHERNET-KERNEL-QUALIFICATION.md) records 73 additional native Ethernet built-ins, original option/interface/MII generators, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[STATIC-PAM-QUALIFICATION.md](STATIC-PAM-QUALIFICATION.md) records the native
+combined `/usr/lib/libpam.a` product: ordered original modules, preserved DTrace,
+compiler/input/relocation proof, reduced options, install metadata and two fully
+static registry tests covering 24/20 modules. Authentication, full PAM/world/pkgbase
+composition, other configurations/architectures and system runtime remain open.
