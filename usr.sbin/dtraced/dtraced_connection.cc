@@ -439,7 +439,12 @@ client_fd::request_consumer_drain(const dtraced_consumer_drain_t &challenge)
 	header.msg_type = DTRACED_MSG_CONSUMER_DRAIN;
 	header.elf.len = sizeof(body_wire);
 	dtraced_wire_encode_header(header_wire, &header);
-	std::lock_guard output(this->output_mtx);
+	/* See request_consumer_stop(). */
+	std::unique_lock output(this->output_mtx, std::try_to_lock);
+	if (!output.owns_lock()) {
+		errno = EBUSY;
+		return (false);
+	}
 	if (this->retired.load()) {
 		errno = ESTALE;
 		return (false);
@@ -500,7 +505,15 @@ client_fd::request_consumer_stop(const dtraced_consumer_stop_t &challenge)
 	header.msg_type = DTRACED_MSG_CONSUMER_STOP;
 	header.elf.len = sizeof(body_wire);
 	dtraced_wire_encode_header(header_wire, &header);
-	std::lock_guard output(this->output_mtx);
+	/* A delivery holds the stream until the consumer acknowledges it, and
+	 * dtrace -E acknowledges only after this daemon accepts its derived
+	 * program, which needs a worker: never wait for that on a worker.
+	 * EBUSY sends nothing; the caller asks again on its next step. */
+	std::unique_lock output(this->output_mtx, std::try_to_lock);
+	if (!output.owns_lock()) {
+		errno = EBUSY;
+		return (false);
+	}
 	if (this->retired.load()) {
 		errno = ESTALE;
 		return (false);

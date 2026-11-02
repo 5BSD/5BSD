@@ -335,9 +335,13 @@ state::setup_threads(void)
 		this->directory_start_error = 0;
 	}
 	try {
-		this->workers.resize(this->threadpool_size);
+		this->workers.resize(this->threadpool_size +
+		    (this->ctrlmachine != 0 ? 1 : 0));
 		for (size_t i = 0; i < this->threadpool_size; i++)
 			this->workers[i] = std::thread(&state::process_joblist, this);
+		if (this->ctrlmachine != 0)
+			this->workers[this->threadpool_size] = std::thread(
+			    &state::process_consumer_deliveries, this);
 
 		if (this->ctrlmachine == 0) {
 			this->dtt_listentd = std::thread(&dtraced::listen_dttransport, this);
@@ -1626,6 +1630,13 @@ state::stop_fresh_session_step(const durable_session_stop &stop)
 		challenge.epoch = stop.epoch;
 		bool stopped = consumer->request_consumer_stop(challenge);
 		int error = stopped ? 0 : (errno != 0 ? errno : EIO);
+		if (error == EBUSY) {
+			/* A delivery awaits this collector's ACK; nothing was sent.
+			 * Report pending and ask again on the next stop step. */
+			consumer->release();
+			errno = EAGAIN;
+			return (-1);
+		}
 		/* The collector also commits on a separate authenticated connection.
 		 * Resolve a lost reply if that durable proof is already available;
 		 * otherwise a later coordinator retry must establish completion. */
@@ -2312,23 +2323,60 @@ state::handle_job(job *j)
 	return (false);
 }
 
+/*
+ * An ELF delivered to a host consumer holds its worker until the consumer
+ * acknowledges processing it, and dtrace -E acknowledges a derived program
+ * only after this daemon has accepted that program on its READDATA socket.
+ * That read needs a worker of its own: on a control machine host consumer
+ * deliveries run only on process_consumer_deliveries(), every other job only
+ * on process_joblist().  A minion has no consumer delivery worker.
+ */
+static bool
+consumer_delivery(int ctrlmachine, const job *j)
+{
+
+	return (ctrlmachine != 0 && j->kind == NOTIFY_ELFWRITE &&
+	    j->connsockfd->kind == DTRACED_KIND_CONSUMER);
+}
+
 void
 state::process_joblist(void)
 {
+
+	this->run_jobs(false);
+}
+
+void
+state::process_consumer_deliveries(void)
+{
+
+	this->run_jobs(true);
+}
+
+void
+state::run_jobs(bool consumer_deliveries)
+{
+	std::list<job *>::iterator next;
 	job *curjob;
 
 	while (1) {
 		std::unique_lock lk(this->dispatched_jobsmtx);
-		this->dispatched_jobscv.wait(lk, [this] {
-			return (!this->dispatched_jobs.empty() ||
-			    this->shutdown.load() != 0);
+		this->dispatched_jobscv.wait(lk, [&] {
+			if (this->shutdown.load() != 0)
+				return (true);
+			next = std::find_if(this->dispatched_jobs.begin(),
+			    this->dispatched_jobs.end(), [&](const job *j) {
+				return (consumer_delivery(this->ctrlmachine, j) ==
+				    consumer_deliveries);
+			});
+			return (next != this->dispatched_jobs.end());
 		});
 
 		if (unlikely(this->shutdown.load() != 0))
 			break;
 
-		curjob = this->dispatched_jobs.front();
-		this->dispatched_jobs.pop_front();
+		curjob = *next;
+		this->dispatched_jobs.erase(next);
 		lk.unlock();
 
 		/* Not every failure path sets errno. */

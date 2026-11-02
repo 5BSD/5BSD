@@ -182,7 +182,8 @@ struct state_thread_test {
         join(s.reaptd);
         join(s.closetd);
         join(s.jobcleantd);
-        assert(started == (fail_at >= 0 ? fail_at : 10));
+        /* Three workers, the host consumer delivery worker, seven more. */
+        assert(started == (fail_at >= 0 ? fail_at : 11));
         if (s.kq_hdl >= 0) assert(close(s.kq_hdl) == 0);
         s.kq_hdl = -1;
         assert(s.socksema_initialized);
@@ -241,7 +242,7 @@ int main()
     dtraced::state_thread_test::run(1);
     dtraced::state_thread_test::run(2);
     dtraced::state_thread_test::run(3);
-    for (int failure = 4; failure <= 9; ++failure)
+    for (int failure = 4; failure <= 10; ++failure)
         dtraced::state_thread_test::run_late(failure);
     dtraced::state_thread_test::run_late(-1);
     dtraced::state_thread_test::run_late(-1, true);

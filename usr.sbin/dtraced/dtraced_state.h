@@ -109,12 +109,15 @@ class state {
 	bool handle_event(struct kevent &);
 
 	bool handle_job(job *);
+	void run_jobs(bool);
 
 	std::thread inboundtd; /* inbound monitoring thread */
 	std::thread basetd;    /* base monitoring thread */
 
 	size_t threadpool_size; /* size of the thread pool (workers) */
-	std::vector<std::thread> workers; /* thread pool for the joblist */
+	/* thread pool for the joblist; on a control machine the last worker
+	 * delivers ELF to host consumers (process_consumer_deliveries()) */
+	std::vector<std::thread> workers;
 
 	std::thread socktd; /* config socket thread */
 	int sockfd;	    /* config socket filedesc */
@@ -271,6 +274,7 @@ class state {
 	bool dispatch_event(struct kevent &);
 	void process_consumers(void);
 	void process_joblist(void);
+	void process_consumer_deliveries(void);
 	void close_filedescs(void);
 	void manage_children(void);
 	void reap_children(void);
