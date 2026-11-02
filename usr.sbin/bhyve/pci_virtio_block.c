@@ -194,6 +194,7 @@ static int pci_vtblk_debug;
 
 struct pci_vtblk_ioreq {
 	struct blockif_req		io_req;
+	struct iovec			io_iov[BLOCKIF_IOV_MAX];
 	struct pci_vtblk_softc		*io_sc;
 	uint8_t				*io_status;
 	uint32_t			io_data_len;
@@ -1223,7 +1224,7 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 			data_len = readable_len - sizeof(vbh);
 			err = pci_vtblk_iov_slice(iov, req.readable,
 			    sizeof(vbh), data_len, io->io_req.br_iov,
-			    BLOCKIF_IOV_MAX, &io->io_req.br_iovcnt);
+			    io->io_req.br_iovmax, &io->io_req.br_iovcnt);
 		}
 	} else if (type == VBH_OP_READ || type == VBH_OP_IDENT) {
 		if (readable_len != sizeof(vbh))
@@ -1232,7 +1233,7 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 			data_len = writable_len - 1;
 			err = pci_vtblk_iov_slice(&iov[req.readable],
 			    req.writable, 0, data_len, io->io_req.br_iov,
-			    BLOCKIF_IOV_MAX, &io->io_req.br_iovcnt);
+			    io->io_req.br_iovmax, &io->io_req.br_iovcnt);
 		}
 	} else {
 		data_len = 0;
@@ -1580,6 +1581,8 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto failed_early;
 	for (i = 0; i < sc->vbsc_nqueues * VTBLK_RINGSZ; i++) {
 		struct pci_vtblk_ioreq *io = &sc->vbsc_ios[i];
+		io->io_req.br_iov = io->io_iov;
+		io->io_req.br_iovmax = nitems(io->io_iov);
 		io->io_req.br_callback = pci_vtblk_done;
 		io->io_req.br_param = io;
 		io->io_sc = sc;

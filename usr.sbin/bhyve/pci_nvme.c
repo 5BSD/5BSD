@@ -215,15 +215,9 @@ struct pci_nvme_blockstore {
 };
 
 /*
- * Calculate the number of additional page descriptors for guest IO requests
- * based on the advertised Max Data Transfer (MDTS) and given the number of
- * default iovec's in a struct blockif_req.
+ * Each request carries page descriptors for a full Max Data Transfer (MDTS)
+ * of discontiguous guest pages; blockif must accept every one of them.
  */
-#define MDTS_PAD_SIZE \
-	( NVME_MAX_IOVEC > BLOCKIF_IOV_MAX ? \
-	  NVME_MAX_IOVEC - BLOCKIF_IOV_MAX : \
-	  0 )
-/* blockif must accept every entry of the padded request. */
 _Static_assert(NVME_MAX_IOVEC <= BLOCKIF_IOV_LIMIT,
     "a full MDTS transfer exceeds the blockif iovec limit");
 
@@ -245,7 +239,7 @@ struct pci_nvme_ioreq {
 
 	struct blockif_req io_req;
 
-	struct iovec	iovpadding[MDTS_PAD_SIZE];
+	struct iovec	io_iov[NVME_MAX_IOVEC];
 };
 
 enum nvme_dsm_type {
@@ -4061,6 +4055,8 @@ pci_nvme_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto done;
 	}
 	for (uint32_t i = 0; i < sc->ioslots; i++) {
+		sc->ioreqs[i].io_req.br_iov = sc->ioreqs[i].io_iov;
+		sc->ioreqs[i].io_req.br_iovmax = nitems(sc->ioreqs[i].io_iov);
 		STAILQ_INSERT_TAIL(&sc->ioreqs_free, &sc->ioreqs[i], link);
 	}
 

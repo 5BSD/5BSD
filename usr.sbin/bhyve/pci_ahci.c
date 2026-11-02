@@ -181,6 +181,7 @@ struct ahci_port {
 	 * i/o request info
 	 */
 	struct ahci_ioreq *ioreq;
+	struct iovec *ioiov;
 	int ioqsz;
 	STAILQ_HEAD(ahci_fhead, ahci_ioreq) iofhd;
 	TAILQ_HEAD(ahci_bhead, ahci_ioreq) iobhd;
@@ -711,7 +712,7 @@ ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
 	skip = aior->done;
 	left = aior->len - aior->done;
 	todo = 0;
-	for (i = 0, j = 0; i < prdtl && j < BLOCKIF_IOV_MAX && left > 0;
+	for (i = 0, j = 0; i < prdtl && j < breq->br_iovmax && left > 0;
 	    i++, prdt++) {
 		dbcsz = (prdt->dbc & DBCMASK) + 1;
 		/* Skip already done part of the PRDT */
@@ -737,7 +738,7 @@ ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
 	}
 
 	/* If we got limited by IOV length, round I/O down to sector size. */
-	if (j == BLOCKIF_IOV_MAX) {
+	if (j == breq->br_iovmax) {
 		extra = todo % blockif_sectsz(p->bctx);
 		todo -= extra;
 		/* A guest may fill every PRD slot with sub-sector fragments. */
@@ -2313,6 +2314,7 @@ pci_ahci_ioreq_init(struct ahci_port *pr)
 
 	pr->ioqsz = blockif_queuesz(pr->bctx);
 	pr->ioreq = calloc(pr->ioqsz, sizeof(struct ahci_ioreq));
+	pr->ioiov = calloc(pr->ioqsz, sizeof(struct iovec) * BLOCKIF_IOV_MAX);
 	STAILQ_INIT(&pr->iofhd);
 	STAILQ_INIT(&pr->iodhd);
 
@@ -2322,6 +2324,8 @@ pci_ahci_ioreq_init(struct ahci_port *pr)
 	for (i = 0; i < pr->ioqsz; i++) {
 		vr = &pr->ioreq[i];
 		vr->io_pr = pr;
+		vr->io_req.br_iov = &pr->ioiov[i * BLOCKIF_IOV_MAX];
+		vr->io_req.br_iovmax = BLOCKIF_IOV_MAX;
 		if (!pr->atapi)
 			vr->io_req.br_callback = ata_ioreq_cb;
 		else

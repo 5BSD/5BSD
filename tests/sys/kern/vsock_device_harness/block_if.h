@@ -14,11 +14,12 @@
 
 struct blockif_req {
 	int br_iovcnt;
+	int br_iovmax;
 	off_t br_offset;
 	ssize_t br_resid;
 	void (*br_callback)(struct blockif_req *, int);
 	void *br_param;
-	struct iovec br_iov[BLOCKIF_IOV_MAX];
+	struct iovec *br_iov;
 };
 
 struct blockif_ctxt;

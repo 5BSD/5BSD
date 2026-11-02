@@ -324,6 +324,9 @@ setup_softc_queues(struct pci_vtblk_softc *sc, uint16_t nqueues)
 	for (int i = 0; i < nqueues * VTBLK_RINGSZ; i++) {
 		sc->vbsc_ios[i].io_sc = sc;
 		sc->vbsc_ios[i].io_req.br_param = &sc->vbsc_ios[i];
+		sc->vbsc_ios[i].io_req.br_iov = sc->vbsc_ios[i].io_iov;
+		sc->vbsc_ios[i].io_req.br_iovmax =
+		    nitems(sc->vbsc_ios[i].io_iov);
 	}
 }
 
