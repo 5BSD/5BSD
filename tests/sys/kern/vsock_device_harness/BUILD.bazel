@@ -35,7 +35,8 @@ cc_binary(name = "virtio_crypto_guest_test", srcs = ["virtio_crypto_guest_test.c
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
 _CRYPTO_GUEST_CASES = ["ring_full_request_completes", "ring_drained_before_erestart_recorded", "full_queue_uses_other_queue",
     "partial_ring_parks_request", "page_sector_takes_page_segments", "geli_1mib_write_burst", "geli_1mib_read_burst",
-    "cipher_data_request_op_type"]
+    "cipher_data_request_op_type", "large_request_fits_device_segments", "unwritten_status_fails_request",
+    "parked_request_keeps_its_place"]
 [bsd_atf_test(name = case, case_name = case, body = ":virtio_crypto_guest_test", interface = "program",
     runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
  for case in _CRYPTO_GUEST_CASES]
@@ -67,6 +68,7 @@ _FS_CONNECTION_CASES = ["round_trip_and_readiness", "partial_response_does_not_b
     "stalled_partial_frame_expires", "protocol_failure_completes_pending",
     "connect_path_is_authenticated_and_event_driven", "adopt_failure_preserves_caller_ownership",
     "preactive_empty_reset_is_synchronous", "required_backend_features_are_enforced",
+    "checkpoint_admission_and_session_are_transactional",
     "quiesce_drains_with_admission_closed", "backend_state_freeze_and_thaw_are_event_driven",
     "backend_freeze_failure_rolls_back_admission", "malformed_control_reply_fails_connection",
     "backend_thaw_failure_retains_retryable_state", "destroy_withdraws_queue_before_completion",
