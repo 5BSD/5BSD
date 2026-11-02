@@ -1,2 +1,4 @@
 # SPDX-License-Identifier: BSD-2-Clause
 exports_files(["common.bzl"], visibility = ["//usr.sbin/wpa:__subpackages__"])
+
+exports_files(["library.bzl"])

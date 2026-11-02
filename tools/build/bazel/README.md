@@ -16,6 +16,12 @@ source-owned installation. Four configurations pass twelve immutable ELF
 comparisons and sixteen safe CLI/loader methods. Remaining WPA service/control
 behavior and complete system gates remain open.
 
+The [nine WPA support libraries](WPA-SUPPORT-QUALIFICATION.md) add 47 original
+sources with explicit ordinary/PIE variants. All 38 Make configurations and
+five native profiles pass 76 archive comparisons, 418 code/policy checks and
+34,394 prerequisite hash checks. Four WPA private libraries and three programs
+remain, along with full service/runtime and system qualification.
+
 The maintained [kernel product audit](KERNEL-INVENTORY.md) now records fresh
 GENERIC final-link inventories and the remaining native built-in graph gaps.
 Configured analysis and declaration counts remain separate from actual builds.

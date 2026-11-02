@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpal2_packet",
+    srcs = [
+        "//contrib/wpa:src/l2_packet/l2_packet_freebsd.c",
+    ],
+    headers = ["//contrib/wpa:l2_packet_headers"],
+    copts = ["-DIEEE8021X_EAPOL"],
+)

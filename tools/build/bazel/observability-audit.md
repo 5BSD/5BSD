@@ -9583,3 +9583,12 @@ criov, crypto, cryptodev and cryptodeflate; 21 sources have none. Existing
 code/probe plumbing is preserved. Review shared hooks before adding hot-path
 events. Live provider/session, /dev/crypto, KTLS and existing known-answer tests
 remain runtime gates; see OPENCRYPTO-KERNEL-QUALIFICATION.md.
+
+## WPA private support libraries (2026-11-02)
+
+Nine private libraries retain all 418 reviewed ordinary/PIE object code and
+constant sections across actual OpenSSL/EAPOL/IPv6 selections. See
+[support qualification](WPA-SUPPORT-QUALIFICATION.md) and its source-bound scan.
+No runtime probes were introduced or disabled. Archive parity does not prove
+wired packet, authentication, RADIUS/PASN/WPS or daemon event delivery; exercise
+shared instrumentation and service logging with the completed consumers.

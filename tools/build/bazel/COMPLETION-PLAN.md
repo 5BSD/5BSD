@@ -26,7 +26,11 @@ for 25 immutable ELF comparisons, 35 runtime methods and source/input/install
 checks. The common library and hostapd control client now also pass four profiles,
 twelve immutable ELF comparisons and sixteen safe CLI/loader methods; see
 WPA-COMMON-CLIENT-QUALIFICATION.md. Remaining WPA private libraries/programs and
-wireless/service behavior are open. The next upgrade checkpoint records prepared common/control-client
+wireless/service behavior are open. Nine further support libraries now pass
+38 Make configurations, five native profiles and 76 archive comparisons; see
+WPA-SUPPORT-QUALIFICATION.md. Remaining private libraries are ap, eap_peer,
+eap_server and tls; remaining programs are wpa_supplicant, wpa_cli and hostapd.
+Their conditional source graphs and actual service/runtime gates remain next. The next upgrade checkpoint records prepared common/control-client
 Make references, which require post-upgrade revalidation. All remaining work
 and final completion requirements below apply.
 

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpadrivers",
+    srcs = [
+        "//contrib/wpa:src/drivers/drivers.c",
+        "//contrib/wpa:src/drivers/driver_common.c",
+        "//contrib/wpa:src/drivers/driver_wired.c",
+        "//contrib/wpa:src/drivers/driver_wired_common.c",
+    ],
+    headers = ["//contrib/wpa:drivers_headers"],
+)

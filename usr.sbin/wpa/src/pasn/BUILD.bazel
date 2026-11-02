@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//usr.sbin/wpa:library.bzl", "wpa_private_library")
+
+wpa_private_library(
+    name = "wpapasn",
+    srcs = [
+        "//contrib/wpa:src/pasn/pasn_common.c",
+        "//contrib/wpa:src/pasn/pasn_initiator.c",
+        "//contrib/wpa:src/pasn/pasn_responder.c",
+    ],
+    headers = ["//contrib/wpa:pasn_headers"],
+)
