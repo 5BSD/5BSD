@@ -9888,3 +9888,12 @@ A bounded scan finds no matching call-shaped tracing/audit markers in four conve
 ## Final helper and refreshed VDSO (2026-11-02)
 
 The force-dynamic source is empty by the original Make recipe; it adds no runtime instrumentation. Existing VDSO assembly and CFI/unwind bytes remain unchanged and its products match fresh Make completely. Live signal delivery and shared tracing/audit coverage remain separate runtime gates. See FINAL-PRODUCERS-KERNEL-QUALIFICATION.md.
+
+## DWATCH scripts and profiles (2026-11-02)
+
+All original tracing script/profile/template bytes and 99 hardlink alias semantics
+match original Make installations in both tested configurations. This preserves
+embedded DTrace pragmas, providers and probe patterns. The new syntax-only test
+uses native sh -n with constructor-time DOF opt-out; it never evaluates DWATCH
+or activates tracing. Actual event delivery, D compilation and privilege/runtime
+behavior remain unqualified. See DWATCH-QUALIFICATION.md for immutable evidence.

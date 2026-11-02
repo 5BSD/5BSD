@@ -449,3 +449,15 @@ Four radix/OpenZFS SHA objects pass code/CTF/compiler/input/relocation checks, i
 ## Refreshed final-producer checkpoint (2026-11-02)
 
 After merge 7056e69713f, refreshed SDK/config inventories and a complete independent Make amd64 GENERIC reference pass. The native force-dynamic helper and existing VDSO yield six original products exactly matching fresh Make. Current query r45/reconciliation r39 accounts for all 2,462 selected amd64 products with no missing producer in this audit, retaining two weak object identities and four unqualified generated identities. The prior VDSO missing classification was a query-selection gap, now corrected. See FINAL-PRODUCERS-KERNEL-QUALIFICATION.md. Complete native kernel linking/post-processing/install, modules, other architectures, world, packaging, bootstrap, runtime and performance remain open.
+
+## DWATCH and post-merge world checkpoint (2026-11-02)
+
+DWATCH-QUALIFICATION.md records native default 133 / EXAMPLES-off 131 installation
+records, 259 exact installed-path payloads and 198 actual hardlink checks. One
+actual syntax case parses 30 original inputs; the second configuration explicitly
+reuses the byte-identical cached result. Live tracing/world/package gates remain.
+Fresh Make recursion selects 2,128 directories, adding sbin/mount_virtiofs; this is
+not compiled coverage. External merge 7056e69713f changes existing userland
+sources/tests (including capability/runtime libraries, kldload/mount,
+BSDExtension/base-accounts/bhyve/switchboard/dtraced) and adds requalification
+obligations. Earlier receipts remain historical; no SDK receipt was rebound.
