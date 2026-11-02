@@ -42,6 +42,7 @@
 #include <sys/sysctl.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
+#include <sys/malloc.h>
 #include <sys/mutex.h>
 #include <sys/errno.h>
 
@@ -417,7 +418,7 @@ ath_rate_sysctlattach(struct ath_softc *sc)
 		"rate control: # good periods before raising rate");
 }
 
-static int
+int
 ath_rate_fetch_node_stats(struct ath_softc *sc, struct ath_node *an,
     struct ath_rateioctl *re)
 {
