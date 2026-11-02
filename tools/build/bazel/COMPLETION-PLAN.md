@@ -420,3 +420,7 @@ and full world/pkgbase gates. No source assertions or requirements were disabled
 ## DTrace built-in checkpoint (2026-11-02)
 
 15 additional amd64 GENERIC objects pass native object/CTF/compiler/input/relocation checks after fixing real parent-header namespace and late Solaris utility ordering. Reconciliation r33 leaves 64 missing link products and six weaker matches. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, generated products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.
+
+## Generated-interface checkpoint (2026-11-02)
+
+49 KOBJ interface objects and 98 generated C/header bodies pass independent Make comparisons through the maintained frontend. Reconciliation r34 leaves 15 missing link products, 53 generated-name-only and two object-name-only matches; independent provenance/artifact checks strengthen 49 of those generated matches. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md. Full linking, remaining generators/custom products, modules, architectures, world, packaging, runtime, bootstrap and performance remain open.

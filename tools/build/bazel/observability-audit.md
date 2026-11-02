@@ -9857,3 +9857,7 @@ unexecuted installed-path/root cases and full instrumentation/runtime gates.
 ## DTrace built-ins (2026-11-02)
 
 A bounded source-bound scan finds call-shaped tracing/audit markers in 4 of 15 converted files. Indirect provider machinery requires live qualification; this scan proves neither delivery nor an instrumentation gap. See DTRACE-BUILTINS-KERNEL-QUALIFICATION.md and observability.json. Production probes remain.
+
+## Generated KOBJ interfaces (2026-11-02)
+
+The bounded source-bound scan finds no matching call-shaped tracing/audit markers in 49 original schemas. This proves neither absent shared/indirect instrumentation nor runtime behavior. See KOBJ-BUILTINS-KERNEL-QUALIFICATION.md and retained observability.json. Original schemas/generator remain.

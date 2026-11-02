@@ -204,3 +204,12 @@ amd64_generic_kernel_objects(name = "generic_linuxkpi_linux_simple_attr", srcs =
     deps = ["//sys/compat/linuxkpi/common/include/linux:linuxkpi_kernel_linux_simple_attr_headers", "//sys/contrib/ck:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/fs/pseudofs:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/net80211:linuxkpi_kernel_linux_80211_macops_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/compat/linuxkpi/common/include:linuxkpi_kernel_linux_eventfd_headers", "//sys/kern:linuxkpi_bus_if_headers", "//sys/kern:linuxkpi_device_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS,
     copts = ["-include", "sys/compat/linuxkpi/common/include/linux/kconfig.h", "-Isys/compat/linuxkpi/common/include"])
+
+filegroup(name = "kobj_builtins_kernel_lkpi_iic_if_file", srcs = [":lkpi_iic_if"], output_group = "header")
+cc_library(name = "kobj_builtins_kernel_lkpi_iic_if_headers", hdrs = [":kobj_builtins_kernel_lkpi_iic_if_file"], strip_include_prefix = "lkpi_iic_if.generated", visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/acpi_support:__pkg__", "//sys/dev/acpica:__pkg__", "//sys/dev/backlight:__pkg__", "//sys/dev/fb:__pkg__", "//sys/dev/hid:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/ice:__pkg__", "//sys/dev/iicbus:__pkg__", "//sys/dev/mdio:__pkg__", "//sys/dev/mii:__pkg__", "//sys/dev/mmc:__pkg__", "//sys/dev/nvme:__pkg__", "//sys/dev/pci:__pkg__", "//sys/dev/sdhci:__pkg__", "//sys/dev/smbus:__pkg__", "//sys/dev/sound/midi:__pkg__", "//sys/dev/sound/pci/hda:__pkg__", "//sys/dev/sound/pcm:__pkg__", "//sys/dev/tpm:__pkg__", "//sys/dev/uart:__pkg__", "//sys/dev/usb:__pkg__", "//sys/dev/video:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/geom:__pkg__", "//sys/isa:__pkg__", "//sys/kern:__pkg__", "//sys/net:__pkg__", "//sys/opencrypto:__pkg__", "//sys/xen/xenbus:__pkg__", "//sys/xen/xenmem:__pkg__"])
+
+# Native amd64 GENERIC generated KOBJ interface built-ins.
+filegroup(name = "builtin_lkpi_iic_if_source", srcs = [":lkpi_iic_if"], output_group = "source")
+amd64_generic_kernel_objects(name = "generic_kobj_builtins_lkpi_iic_if", srcs = [":builtin_lkpi_iic_if_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:kobj_builtins_kernel_lkpi_iic_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
