@@ -5221,3 +5221,19 @@ The existing format-5 target/test API runs its regression.
 See
 .Pa tools/build/bazel/DTRACE-RELOCATABLE-METADATA-QUALIFICATION.md
 for supported relocations, controls and runtime limits.
+.Pp
+The native
+.Pa //lib/libpam/pam.d:install_manifest
+and
+.Pa //lib/libpam/pam.d:install_archive
+targets preserve the original PAM policy payloads and installation metadata.
+Format-5 typed build settings
+.Pa //tools/build/bazel/config:at
+and
+.Pa //tools/build/bazel/config:ftp
+default to true and select the corresponding Make AT and FTP policy files.
+This uses the existing format-5 API; it does not install host authentication
+configuration or qualify final package creation.
+See
+.Pa tools/build/bazel/PAM-POLICY-QUALIFICATION.md
+for captured default and reduced configuration evidence and remaining gates.

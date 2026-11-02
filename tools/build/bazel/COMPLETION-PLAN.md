@@ -383,3 +383,11 @@ Next reconcile the actual configured userland action/install queue from the
 ## Network stack and PF built-in checkpoint (2026-11-02)
 
 73 additional native Network stack and PF built-ins pass exact code/CTF and compiler/input/relocation checks through the maintained frontend. See NETWORK-POLICY-KERNEL-QUALIFICATION.md. Complete kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.
+
+### PAM policy installation (2026-11-02)
+
+PAM-POLICY-QUALIFICATION.md closes the selected pam.d file/archive producer:
+27 exact original payloads and 29 unique Make-matching records across default
+and AT/FTP-off profiles. Retain full PAM aggregation, explicit directory ownership
+consumption by final package composition, installed authentication tests, other
+configurations/architectures and whole-world/pkgbase gates.

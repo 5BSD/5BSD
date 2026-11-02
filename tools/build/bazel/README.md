@@ -47579,3 +47579,8 @@ static registry tests covering 24/20 modules. Authentication, full PAM/world/pkg
 composition, other configurations/architectures and system runtime remain open.
 
 [NETWORK-POLICY-KERNEL-QUALIFICATION.md](NETWORK-POLICY-KERNEL-QUALIFICATION.md) records 73 additional native Network stack and PF built-ins, original option/interface/USB generators, exact code/CTF and checked compiler inputs/relocations, with runtime/system gates open.
+
+[PAM-POLICY-QUALIFICATION.md](PAM-POLICY-QUALIFICATION.md) records native PAM
+policy installation: 15 default/12 AT-and-FTP-off unchanged payloads, 29 unique
+Make-matching file/directory records, and preserved config/package ownership.
+Authentication, family/world composition and final package production remain open.
