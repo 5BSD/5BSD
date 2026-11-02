@@ -36,11 +36,32 @@ cc_binary(name = "virtio_crypto_guest_test", srcs = ["virtio_crypto_guest_test.c
 _CRYPTO_GUEST_CASES = ["ring_full_request_completes", "ring_drained_before_erestart_recorded", "full_queue_uses_other_queue",
     "partial_ring_parks_request", "page_sector_takes_page_segments", "geli_1mib_write_burst", "geli_1mib_read_burst",
     "cipher_data_request_op_type", "large_request_fits_device_segments", "unwritten_status_fails_request",
-    "parked_request_keeps_its_place"]
+    "parked_request_keeps_its_place", "short_success_fails_request",
+    "small_ring_bounds_request_segments", "rejected_control_request_fails"]
 [bsd_atf_test(name = case, case_name = case, body = ":virtio_crypto_guest_test", interface = "program",
     runtime_lib = _RUNTIME, runner = "//tools/build/bazel:atf_runner", size = "small", visibility = ["//visibility:public"])
  for case in _CRYPTO_GUEST_CASES]
 test_suite(name = "virtio_crypto_guest_tests", tests = [":" + case for case in _CRYPTO_GUEST_CASES],
+    visibility = ["//visibility:public"])
+# Make: CFLAGS.virtio_crypto_pci_test (-DWITHOUT_CAPSICUM -DBHYVE_SNAPSHOT, -I usr.sbin/bhyve -I usr.sbin -I sys
+# -I contrib/libucl/include), CWARNFLAGS -Wno-error, LIBADD pthread crypto.
+cc_binary(name = "virtio_crypto_pci_test", srcs = ["virtio_crypto_pci_test.c", "snapshot.h", "virtio_1_4_spec.h"],
+    deps = ["//usr.sbin/bhyve:virtio_crypto_pci_test_inputs", "//secure/lib/libcrypto:crypto", "//lib/atf/libatf-c:atf_c",
+        "//lib/libthr:thr"],
+    dynamic_deps = _SHARED + ["//secure/lib/libcrypto:crypto_shared"], copts = ["-fPIE", "-DPIC", "-DWITHOUT_CAPSICUM",
+        "-DBHYVE_SNAPSHOT", "-ffunction-sections", "-fdata-sections", "-Wno-error", "-Wno-thread-safety-analysis",
+        "-Wno-cast-align"], linkopts = ["-pie"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+_CRYPTO_PCI_CASES = ["virtio_1_4_wire_layout", "config_space", "init_and_failures", "session_lifecycle", "session_rejects",
+    "control_malformed_chains", "control_rejected_chain_status", "cipher_kat_roundtrip", "hash_kat", "mac_kat",
+    "aead_kat", "data_malformed", "data_long_chain", "data_rejected_chain_status", "reset_frees_sessions",
+    "snapshot_save_restore", "cipher_kat_aes192_aes256", "aead_kat_with_aad", "edge_failures", "hash_mac_edge",
+    "misc_paths"]
+[bsd_atf_test(name = case, case_name = case, body = ":virtio_crypto_pci_test", interface = "program",
+    runtime_lib = _RUNTIME + ["//secure/lib/libcrypto:crypto_shared"], runner = "//tools/build/bazel:atf_runner",
+    size = "small", visibility = ["//visibility:public"])
+ for case in _CRYPTO_PCI_CASES]
+test_suite(name = "virtio_crypto_pci_tests", tests = [":" + case for case in _CRYPTO_PCI_CASES],
     visibility = ["//visibility:public"])
 # Make: CFLAGS.virtio_fs_backend_io_test / virtio_fs_connection_test (-I usr.sbin/bhyve), LIBADD pthread.
 cc_binary(name = "virtio_fs_backend_io_test", srcs = ["virtio_fs_backend_io_test.c"],

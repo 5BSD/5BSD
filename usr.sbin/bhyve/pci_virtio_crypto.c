@@ -749,6 +749,43 @@ vtcrypto_destroy(struct pci_vtcrypto_softc *sc, const uint8_t *req,
 	return (VIRTIO_CRYPTO_OK);
 }
 
+/*
+ * Return a control request without processing it.  When its opcode is
+ * readable, write VIRTIO_CRYPTO_ERR where the reply to that opcode carries the
+ * status (the session_input of a CREATE_SESSION, else the one-byte inhdr), so
+ * the driver never reads a status the device did not write.
+ */
+static void
+pci_vtcrypto_control_reject(struct vqueue_info *vq, struct vi_req *vireq,
+    const struct iovec *iov, int n)
+{
+	uint8_t input[VTCRYPTO_SESSION_INPUT_LEN];
+	uint8_t opcode[4];
+	const struct iovec *wiov;
+	uint8_t status;
+
+	status = VIRTIO_CRYPTO_ERR;
+	if (n <= VTCRYPTO_MAXSEG && vireq->ordered && vireq->readable >= 1 &&
+	    vireq->writable >= 1 && vireq->readable + vireq->writable == n &&
+	    iov_pull(iov, vireq->readable, 0, opcode, sizeof(opcode))) {
+		wiov = &iov[vireq->readable];
+		if ((ld32(opcode) & 0xff) == 0x02) {
+			/* session_input: le64 session_id, le32 status, pad. */
+			memset(input, 0, sizeof(input));
+			st32(input + 8, status);
+			if (iov_push(wiov, vireq->writable, 0, input,
+			    sizeof(input))) {
+				vq_relchain_req(vq, vireq, sizeof(input));
+				return;
+			}
+		} else if (iov_push(wiov, vireq->writable, 0, &status, 1)) {
+			vq_relchain_req(vq, vireq, 1);
+			return;
+		}
+	}
+	vq_relchain_req(vq, vireq, 0);
+}
+
 static void
 pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 {
@@ -774,7 +811,7 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 		    vireq.readable < 1 || vireq.writable < 1 ||
 		    vireq.readable + vireq.writable != n) {
 			WPRINTF("invalid control descriptor chain");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_control_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		riov = &iov[0];
@@ -784,7 +821,7 @@ pci_vtcrypto_control(struct pci_vtcrypto_softc *sc, struct vqueue_info *vq)
 
 		if (!iov_pull(riov, rniov, 0, req, sizeof(req))) {
 			WPRINTF("truncated control request");
-			vq_relchain_req(vq, &vireq, 0);
+			pci_vtcrypto_control_reject(vq, &vireq, iov, n);
 			continue;
 		}
 		opcode = ld32(req + 0);

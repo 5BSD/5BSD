@@ -888,7 +888,7 @@ ATF_TC_WITHOUT_HEAD(control_malformed_chains);
 ATF_TC_BODY(control_malformed_chains, tc)
 {
 	struct pci_vtcrypto_softc *sc;
-	struct seg r[1], w[1];
+	struct seg r[1];
 
 	sc = make_device(NULL, NULL);
 
@@ -900,15 +900,6 @@ ATF_TC_BODY(control_malformed_chains, tc)
 	ATF_CHECK_EQ(1, g_rel_calls);
 	ATF_CHECK_EQ(0u, g_rel_len);
 
-	/* Truncated request header. */
-	r[0].off = 0; r[0].len = 8;
-	w[0].off = 512; w[0].len = 16;
-	mock_set_chain(r, 1, w, 1, true);
-	g_rel_calls = 0;
-	pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
-	ATF_CHECK_EQ(1, g_rel_calls);
-	ATF_CHECK_EQ(0u, g_rel_len);
-
 	/* getchain returns -1: loop breaks, endchains still called. */
 	memset(&g_chain, 0, sizeof(g_chain));
 	g_chain.n = -1;
@@ -916,6 +907,59 @@ ATF_TC_BODY(control_malformed_chains, tc)
 	g_end_calls = 0;
 	pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
 	ATF_CHECK_EQ(1, g_end_calls);
+}
+
+/*
+ * A rejected control request whose opcode is readable carries
+ * VIRTIO_CRYPTO_ERR where the driver reads the status of that opcode: a
+ * zero-filled session_input would read as a new session 0.
+ */
+ATF_TC_WITHOUT_HEAD(control_rejected_chain_status);
+ATF_TC_BODY(control_rejected_chain_status, tc)
+{
+	struct pci_vtcrypto_softc *sc;
+	struct seg r[1], w[1];
+
+	sc = make_device(NULL, NULL);
+
+	/* Truncated CREATE_SESSION: session_input with status ERR. */
+	memset(g_guest, 0, sizeof(g_guest));
+	st32(g_guest + 0, VIRTIO_CRYPTO_CIPHER_CREATE_SESSION);
+	memset(g_guest + 512, 0, VTCRYPTO_SESSION_INPUT_LEN);
+	st32(g_guest + 512 + 8, VIRTIO_CRYPTO_OK);
+	r[0].off = 0; r[0].len = 8;
+	w[0].off = 512; w[0].len = VTCRYPTO_SESSION_INPUT_LEN;
+	mock_set_chain(r, 1, w, 1, true);
+	g_rel_calls = 0;
+	pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
+	ATF_CHECK_EQ(1, g_rel_calls);
+	ATF_CHECK_EQ((uint32_t)VTCRYPTO_SESSION_INPUT_LEN, g_rel_len);
+	ATF_CHECK_EQ((uint32_t)VIRTIO_CRYPTO_ERR, ld32(g_guest + 512 + 8));
+	ATF_CHECK_EQ(0u, sc->vcs_nsessions);
+
+	/* Truncated DESTROY_SESSION: the one-byte inhdr. */
+	memset(g_guest, 0, sizeof(g_guest));
+	st32(g_guest + 0, VIRTIO_CRYPTO_CIPHER_DESTROY_SESSION);
+	g_guest[512] = VIRTIO_CRYPTO_OK;
+	w[0].len = 1;
+	mock_set_chain(r, 1, w, 1, true);
+	g_rel_calls = 0;
+	pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
+	ATF_CHECK_EQ(1, g_rel_calls);
+	ATF_CHECK_EQ(1u, g_rel_len);
+	ATF_CHECK_EQ(VIRTIO_CRYPTO_ERR, g_guest[512]);
+
+	/* Unordered chain: no status is located, nothing is written. */
+	memset(g_guest, 0, sizeof(g_guest));
+	st32(g_guest + 0, VIRTIO_CRYPTO_CIPHER_CREATE_SESSION);
+	r[0].len = VTCRYPTO_OP_CTRL_REQ_LEN;
+	w[0].len = VTCRYPTO_SESSION_INPUT_LEN;
+	mock_set_chain(r, 1, w, 1, false);
+	g_rel_calls = 0;
+	pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
+	ATF_CHECK_EQ(1, g_rel_calls);
+	ATF_CHECK_EQ(0u, g_rel_len);
+	ATF_CHECK_EQ(0u, ld32(g_guest + 512 + 8));
 }
 
 ATF_TC_WITHOUT_HEAD(cipher_kat_roundtrip);
@@ -1949,6 +1993,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, session_lifecycle);
 	ATF_TP_ADD_TC(tp, session_rejects);
 	ATF_TP_ADD_TC(tp, control_malformed_chains);
+	ATF_TP_ADD_TC(tp, control_rejected_chain_status);
 	ATF_TP_ADD_TC(tp, cipher_kat_roundtrip);
 	ATF_TP_ADD_TC(tp, hash_kat);
 	ATF_TP_ADD_TC(tp, mac_kat);
