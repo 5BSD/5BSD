@@ -161,6 +161,12 @@ root_load_body()
 	    env SYSEXT_TEST=protected "$bin" unload linux64
 	atf_check -s exit:71 -o empty -e match:"load failed: Device busy" \
 	    env SYSEXT_TEST=failed "$bin" load linux64
+	atf_check -s exit:71 -o empty \
+	    -e match:"depends on is loaded from another file, whose version" \
+	    env SYSEXT_TEST=version "$bin" load linux64
+	atf_check -s exit:71 -o empty \
+	    -e match:"unload failed: Device busy \(still loaded: in use" \
+	    env SYSEXT_TEST=failed "$bin" unload linux64
 	for path in /tmp/linux64.ko /boot/modules/linux64.ko ../linux64; do
 		atf_check -s exit:64 -o empty -e match:"paths are refused" \
 		    "$bin" load "$path"

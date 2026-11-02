@@ -300,7 +300,8 @@ sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
 /*
  * The root-load endpoint: only for "root" access.  SYSEXT_TEST selects the
  * broker's decision: present, notpackaged, checksum, outside, override,
- * disabled, pkgdb, changed, failed (EBUSY), notroot; otherwise the load or
+ * disabled, pkgdb, changed, failed (EBUSY), version (failed with EEXIST: a
+ * dependency's module loaded from another file), notroot; otherwise the load or
  * unload succeeds.
  */
 int
@@ -329,6 +330,7 @@ root_outcome(const char *name, int load,
 		{ "pkgdb", SYSEXT_DECISION_PKGDB },
 		{ "changed", SYSEXT_DECISION_CHANGED },
 		{ "failed", SYSEXT_DECISION_FAILED },
+		{ "version", SYSEXT_DECISION_FAILED },
 		{ "notroot", SYSEXT_DECISION_NOT_ROOT_LOADED },
 		{ "protected", SYSEXT_DECISION_PROTECTED },
 	};
@@ -344,7 +346,7 @@ root_outcome(const char *name, int load,
 		if (strcmp(mode(), table[i].mode) == 0)
 			o->result = table[i].result;
 	if (o->result == SYSEXT_DECISION_FAILED)
-		o->error = EBUSY;
+		o->error = strcmp(mode(), "version") == 0 ? EEXIST : EBUSY;
 	return (0);
 }
 
