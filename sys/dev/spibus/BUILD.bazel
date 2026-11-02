@@ -2,3 +2,13 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "gpio_module_context_0", hdrs = ["spi.h", "spibusvar.h"], includes = [],
+    visibility = ["//sys/dev/gpio:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "spibus_if_module_header", srcs = [":spibus_if"], output_group = "header")
+cc_library(name = "spibus_if_headers", hdrs = [":spibus_if_module_header"], strip_include_prefix = "spibus_if.generated", visibility = ["//sys/dev/gpio:__pkg__"])

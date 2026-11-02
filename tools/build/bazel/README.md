@@ -59,6 +59,17 @@ source fixes and positive/negative native artifact tests address those defects.
 GPIO providers and runtime/module loading remain open. See
 [BROADCOM-MODULES-QUALIFICATION.md](BROADCOM-MODULES-QUALIFICATION.md).
 
+Six GPIO modules now pass ten actual compiler/input and six ordered-link audits,
+plain/CTF-debug comparisons and eighteen install records. Both profiles pass three
+provider tests, including explicit Broadcom-to-GPIO edges. Two ordinary Make
+filename differences require separately audited compiler-policy controls; the
+untouched baselines and a rejected first control remain recorded. SPI providers,
+full loading and runtime/performance gates remain open. See
+[GPIO-MODULES-QUALIFICATION.md](GPIO-MODULES-QUALIFICATION.md).
+
+The refreshed 729-leaf amd64 selection currently has 284 local BUILD files and
+445 leaves without one. These are source-coverage counts, not qualified builds.
+
 Earlier component checkpoints below are retained historical evidence.
 
 The [WPA private libraries and passphrase](WPA-PRIVATE-QUALIFICATION.md) now have

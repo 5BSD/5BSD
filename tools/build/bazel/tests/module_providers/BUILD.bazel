@@ -35,3 +35,21 @@ bsd_host_artifact_test(name = "localized_provider_rejected_test", src = "check.p
     data = [":localized_bcma", "//sys/modules/bhnd/bcma_bhndb:generic_module"],
     args = ["--expect-localized", "--module", "bcma=$(location :localized_bcma)",
         "--module", "bcma_bhndb=$(location //sys/modules/bhnd/bcma_bhndb:generic_module)"])
+
+# Exercise the GPIO boundary used by Broadcom consumers as well as GPIO clients.
+_GPIO_MODULES = {
+    "gpioaei": "//sys/modules/gpio/gpioaei:generic_module",
+    "gpiobus": "//sys/modules/gpio/gpiobus:generic_module",
+    "gpioiic": "//sys/modules/gpio/gpioiic:generic_module",
+    "gpioled": "//sys/modules/gpio/gpioled:generic_module",
+    "gpiospi": "//sys/modules/gpio/gpiospi:generic_module",
+    "gpioths": "//sys/modules/gpio/gpioths:generic_module",
+}
+_BROADCOM_GPIO_MODULES = dict(_MODULES.items() + _GPIO_MODULES.items())
+bsd_host_artifact_test(name = "broadcom_gpio_providers_test", src = "check.py",
+    data = _BROADCOM_GPIO_MODULES.values(),
+    args = [arg for name, target in _BROADCOM_GPIO_MODULES.items()
+            for arg in ["--module", name + "=$(location " + target + ")"]] + [
+        "--require-edge", "bhnd", "gpiobus", "gpiobus_add_bus",
+        "--require-edge", "if_bwn", "gpiobus", "gpio_pin_config_32_desc",
+    ])

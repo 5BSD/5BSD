@@ -73,3 +73,9 @@ filegroup(name = "builtin_iicbus_if_source", srcs = [":iicbus_if"], output_group
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_iicbus_if", srcs = [":builtin_iicbus_if_source"],
     deps = ["//sys/dev/iicbus:kobj_builtins_physical_iicbus_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/iicbus:kobj_builtins_kernel_iicbus_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+bsd_source_headers(name = "gpio_module_context_0", hdrs = ["iic.h", "iiconf.h"], includes = [],
+    visibility = ["//sys/dev/gpio:__pkg__"])
+
+filegroup(name = "iicbb_if_module_header", srcs = [":iicbb_if"], output_group = "header")
+cc_library(name = "iicbb_if_headers", hdrs = [":iicbb_if_module_header"], strip_include_prefix = "iicbb_if.generated", visibility = ["//sys/dev/gpio:__pkg__"])

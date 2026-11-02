@@ -88,6 +88,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--module', action='append', required=True, help='name=ELF path')
     parser.add_argument('--expect-localized', action='store_true', help='Negative fixture must expose the localized-provider defect')
+    parser.add_argument('--require-edge', nargs=3, action='append', default=[],
+                        metavar=('CONSUMER', 'PROVIDER', 'SYMBOL'),
+                        help='Require a specific declared cross-module provider edge')
     args = parser.parse_args()
     modules = {}
     for value in args.module:
@@ -98,6 +101,12 @@ def main():
     if len(modules) < 2:
         raise ValueError('at least two modules required')
     result = inspect(modules)
+    for consumer, provider, symbol in args.require_edge:
+        edge = dict(consumer=consumer, provider=provider, symbol=symbol)
+        if edge not in result['resolved_cross_module_references']:
+            raise ValueError('required provider edge absent: ' + json.dumps(edge))
+    result['required_edges'] = [dict(consumer=c, provider=p, symbol=s)
+                                for c, p, s in args.require_edge]
     if args.expect_localized:
         if not result['localized_providers']:
             raise ValueError('negative fixture did not reproduce hidden provider definitions')

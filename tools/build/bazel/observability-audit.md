@@ -10014,3 +10014,16 @@ attach/detach, failures, wireless authentication and data paths. Module-source
 export fixes restore 28 shared symbols required by five consumers; full loading
 still needs external GPIO providers. No live radio, device control or probe/audit
 delivery was exercised. See BROADCOM-MODULES-QUALIFICATION.md for exact scope.
+
+
+### GPIO module family (2026-11-02)
+
+Eight physical C sources and two KOBJ schemas now pass native artifact/input
+qualification. The bounded call-shaped SDT/DTRACE_PROBE/AUDIT_ARG/audit/CTR scan
+has 0 local matches; raw source hashes/lines are retained in the GPIO review.
+This does not establish generic FBT/framework coverage. Review GPIO ioctl pin
+ownership and privileged configuration, ACPI event callbacks, IIC/SPI transfer
+failures and attach/detach/resource lifetime through real module/hardware tests.
+The combined Broadcom/GPIO ELF tests restore the known GPIO provider boundary;
+SPI providers and live probe/audit delivery remain open. See
+GPIO-MODULES-QUALIFICATION.md for exact accepted and rejected control evidence.
