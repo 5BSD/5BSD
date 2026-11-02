@@ -17,3 +17,7 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
 amd64_generic_module_objects(name = "dttransport_module", srcs = ["dttransport.c"], deps = [":tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"])
 [cross_generic_module_objects(arch = arch, name = "dttransport_module", srcs = ["dttransport.c"],
     deps = [":tracing_module_headers", "//sys/vm:tracing_module_headers", "//sys/contrib/ck:kernel_headers", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers"]) for arch in ["arm64", "riscv"]]
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_virtio_dtrace_headers", hdrs = ["dttransport.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])

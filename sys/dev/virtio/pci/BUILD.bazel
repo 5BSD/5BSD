@@ -56,3 +56,30 @@ load("//tools/build/bazel:cross_generic_module.bzl", "cross_generic_module_objec
     ],
     copts = ["-fmacro-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c", "-fdebug-prefix-map=$(execpath :virtio_pci_if_source)=virtio_pci_if.c"],
 ) for arch in ["arm64", "riscv"]]
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_virtio_pci_headers", hdrs = ["virtio_pci.h", "virtio_pci_var.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_virtio_pci_legacy_headers", hdrs = ["virtio_pci.h", "virtio_pci_legacy_var.h", "virtio_pci_var.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_virtio_pci_modern_headers", hdrs = ["virtio_pci.h", "virtio_pci_modern_var.h", "virtio_pci_shmem.h", "virtio_pci_var.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+filegroup(name = "virtualization_kernel_virtio_pci_if_file", srcs = [":virtio_pci_if"], output_group = "header")
+cc_library(name = "virtualization_kernel_virtio_pci_if_headers", hdrs = [":virtualization_kernel_virtio_pci_if_file"], strip_include_prefix = "virtio_pci_if.generated", visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC virtualization built-ins.
+amd64_generic_kernel_objects(name = "generic_virtualization_virtio_pci", srcs = ["virtio_pci.c"],
+    deps = ["//sys/dev/pci:virtualization_kernel_virtio_pci_headers", "//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/pci:virtualization_kernel_pci_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_if_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_virtio_pci_legacy", srcs = ["virtio_pci_legacy.c"],
+    deps = ["//sys/dev/pci:virtualization_kernel_virtio_pci_headers", "//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_legacy_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/pci:virtualization_kernel_pci_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_bus_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_if_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_virtio_pci_modern", srcs = ["virtio_pci_modern.c"],
+    deps = ["//sys/dev/pci:virtualization_kernel_virtio_pci_headers", "//sys/dev/virtio:virtualization_kernel_virtio_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_modern_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/pci:virtualization_kernel_pci_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_bus_if_headers", "//sys/dev/virtio:virtualization_kernel_virtio_if_headers", "//sys/dev/virtio/pci:virtualization_kernel_virtio_pci_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

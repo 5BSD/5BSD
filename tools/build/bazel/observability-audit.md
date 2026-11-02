@@ -9802,3 +9802,7 @@ Provider definitions and production C are unchanged. Exact 94 object code
 comparisons, source-proven path-key alias/site evidence and installation metadata
 do not establish live probe firing or authentication/audit behavior. Those gates
 remain open; see PAM-MODULE-POLICY-QUALIFICATION.md.
+
+## Virtualization built-ins (2026-11-02)
+
+The bounded source-bound scan of 60 converted Hyper-V, Xen and VirtIO files finds call-shaped tracing/CTR/audit markers in eight. It does not establish runtime probe coverage or missing hooks in the others. See VIRTUALIZATION-KERNEL-QUALIFICATION.md and the retained observability.json; existing instrumentation remains.

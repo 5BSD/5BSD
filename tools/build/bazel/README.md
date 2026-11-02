@@ -47563,3 +47563,7 @@ persistent action-cache, system/runtime and performance gates remain open.
 strict ordered dependency contracts, actual Make/compiler input provenance and
 145 scoped install records. Combined static PAM, authentication, reduced options
 and full relocation/runtime qualification remain open.
+
+### Virtualization built-in kernel checkpoint (2026-11-02)
+
+[VIRTUALIZATION-KERNEL-QUALIFICATION.md](VIRTUALIZATION-KERNEL-QUALIFICATION.md) records 60 native Hyper-V, Xen and VirtIO built-ins, exact machine code/CTF and compiler-input/relocation checks, plus remaining runtime/system gates.

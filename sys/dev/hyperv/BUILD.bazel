@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Physical prerequisites for native virtualization built-ins.
+bsd_source_headers(name = "virtualization_kernel_hv_sock_headers", hdrs = ["hvsock/hv_sock.h", "include/hyperv.h", "include/vmbus.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hv_kbd_headers", hdrs = ["input/hv_kbdc.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hv_kbdc_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "input/hv_kbdc.h", "utilities/hv_utilreg.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_vmbus_pcib_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hn_nvs_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hn_rndis_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/hn_rndis.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_if_hn_headers", hdrs = ["include/hyperv.h", "include/hyperv_busdma.h", "include/vmbus.h", "include/vmbus_xact.h", "netvsc/hn_nvs.h", "netvsc/hn_rndis.h", "netvsc/if_hnreg.h", "netvsc/if_hnvar.h", "netvsc/ndis.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hv_storvsc_drv_freebsd_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "storvsc/hv_vstorage.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hv_kvp_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "utilities/hv_kvp.h", "utilities/hv_utilreg.h", "utilities/unicode.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hv_snapshot_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "utilities/hv_snapshot.h", "utilities/hv_utilreg.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_vmbus_heartbeat_headers", hdrs = ["include/hyperv.h", "include/vmbus.h", "utilities/vmbus_icreg.h", "utilities/vmbus_icvar.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hyperv_headers", hdrs = ["include/hyperv.h", "include/hyperv_busdma.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_hyperv_busdma_headers", hdrs = ["include/hyperv_busdma.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_vmbus_br_headers", hdrs = ["include/hyperv.h", "include/vmbus.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_vmbus_et_headers", hdrs = ["include/hyperv.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+bsd_source_headers(name = "virtualization_kernel_vmbus_xact_headers", hdrs = ["include/vmbus_xact.h"],
+    visibility = ["//sys/dev/hyperv:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/dev/virtio:__pkg__", "//sys/dev/virtio/balloon:__pkg__", "//sys/dev/virtio/block:__pkg__", "//sys/dev/virtio/dtrace:__pkg__", "//sys/dev/virtio/network:__pkg__", "//sys/dev/virtio/pci:__pkg__", "//sys/dev/virtio/scsi:__pkg__", "//sys/dev/virtio/vsock:__pkg__", "//sys/dev/xen:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS")
+
+# Native amd64 GENERIC virtualization built-ins.
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_sock", srcs = ["hvsock/hv_sock.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_hv_sock_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_hv_sock_headers", "//sys/net:virtualization_kernel_hv_sock_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_kbd", srcs = ["input/hv_kbd.c"],
+    deps = ["//sys/contrib/ck:virtualization_kernel_hv_kbd_headers", "//sys/dev/evdev:virtualization_kernel_hv_kbd_headers", "//sys/dev/hyperv:virtualization_kernel_hv_kbd_headers", "//sys/dev/kbd:virtualization_kernel_hv_kbd_headers", "//sys/vm:virtualization_kernel_virtio_scsi_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_evdev_header", "//sys/amd64/conf:virtualization_kernel_opt_kbd_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_kbdc", srcs = ["input/hv_kbdc.c"],
+    deps = ["//sys/contrib/ck:virtualization_kernel_hv_kbd_headers", "//sys/dev/evdev:virtualization_kernel_hv_kbd_headers", "//sys/dev/hyperv:virtualization_kernel_hv_kbdc_headers", "//sys/dev/kbd:virtualization_kernel_hv_kbdc_headers", "//sys/vm:virtualization_kernel_virtio_scsi_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_evdev_header", "//sys/amd64/conf:virtualization_kernel_opt_kbd_header", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_pcib", srcs = ["pcib/vmbus_pcib.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_vmbus_pcib_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_pcib_headers", "//sys/dev/pci:virtualization_kernel_vmbus_pcib_headers", "//sys/vm:virtualization_kernel_vmbus_pcib_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_acpi_header", "//sys/dev/pci:virtualization_kernel_pci_if_headers", "//sys/dev/pci:virtualization_kernel_pcib_if_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hn_nvs", srcs = ["netvsc/hn_nvs.c"],
+    deps = ["//sys/contrib/ck:virtualization_kernel_if_vtnet_headers", "//sys/dev/hyperv:virtualization_kernel_hn_nvs_headers", "//sys/net:virtualization_kernel_hn_nvs_headers", "//sys/netinet:virtualization_kernel_hn_nvs_headers", "//sys/netinet6:virtualization_kernel_virtio_blk_headers", "//sys/vm:virtualization_kernel_hn_nvs_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_inet_header", "//sys/amd64/conf:virtualization_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hn_rndis", srcs = ["netvsc/hn_rndis.c"],
+    deps = ["//sys/contrib/ck:virtualization_kernel_if_vtnet_headers", "//sys/dev/hyperv:virtualization_kernel_hn_rndis_headers", "//sys/net:virtualization_kernel_hn_rndis_headers", "//sys/netinet:virtualization_kernel_hn_rndis_headers", "//sys/netinet6:virtualization_kernel_virtio_blk_headers", "//sys/vm:virtualization_kernel_virtio_scsi_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_inet_header", "//sys/amd64/conf:virtualization_kernel_opt_inet6_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_if_hn", srcs = ["netvsc/if_hn.c"],
+    deps = ["//sys/contrib/ck:virtualization_kernel_if_vtnet_headers", "//sys/dev/hyperv:virtualization_kernel_if_hn_headers", "//sys/net:virtualization_kernel_if_hn_headers", "//sys/netinet:virtualization_kernel_if_hn_headers", "//sys/netinet6:virtualization_kernel_virtio_blk_headers", "//sys/vm:virtualization_kernel_hn_nvs_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_hn_header", "//sys/amd64/conf:virtualization_kernel_opt_inet_header", "//sys/amd64/conf:virtualization_kernel_opt_inet6_header", "//sys/amd64/conf:virtualization_kernel_opt_rss_header", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_storvsc_drv_freebsd", srcs = ["storvsc/hv_storvsc_drv_freebsd.c"],
+    deps = ["//sys/cam:virtualization_kernel_hv_storvsc_drv_freebsd_headers", "//sys/dev/hyperv:virtualization_kernel_hv_storvsc_drv_freebsd_headers", "//sys/dev/mmc:virtualization_kernel_virtio_scsi_headers", "//sys/dev/nvme:virtualization_kernel_virtio_scsi_headers", "//sys/net:virtualization_kernel_virtio_blk_headers", "//sys/netinet:virtualization_kernel_virtio_blk_headers", "//sys/netinet6:virtualization_kernel_virtio_blk_headers", "//sys/vm:virtualization_kernel_if_vtnet_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/amd64/conf:virtualization_kernel_opt_cam_header", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_kvp", srcs = ["utilities/hv_kvp.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_hv_kvp_headers", "//sys/vm:virtualization_kernel_virtio_scsi_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_hv_snapshot", srcs = ["utilities/hv_snapshot.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_hv_snapshot_headers", "//sys/vm:virtualization_kernel_virtio_scsi_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_heartbeat", srcs = ["utilities/vmbus_heartbeat.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_vmbus_heartbeat_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_ic", srcs = ["utilities/vmbus_ic.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_vmbus_heartbeat_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers", "//sys/dev/hyperv/vmbus:virtualization_kernel_vmbus_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_shutdown", srcs = ["utilities/vmbus_shutdown.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_vmbus_heartbeat_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_virtualization_vmbus_timesync", srcs = ["utilities/vmbus_timesync.c"],
+    deps = ["//sys/dev/hyperv:virtualization_kernel_vmbus_heartbeat_headers", "//sys/kern:virtualization_kernel_bus_if_headers", "//sys/kern:virtualization_kernel_device_if_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Preserve the existing userland utility header provider across this package boundary.
+exports_files(["utilities/hv_kvp.h", "utilities/hv_utilreg.h", "utilities/hv_snapshot.h"], visibility = ["//:__pkg__"])

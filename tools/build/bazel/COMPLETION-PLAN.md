@@ -356,3 +356,7 @@ LIBXO-CSV-QUALIFICATION.md qualifies the actual csv.enc producer and six install
 ### APM selected leaf and next static PAM product (2026-11-02)
 
 APM-PROGRAM-QUALIFICATION.md records native source/ELF/install qualification of the selected x86 APM leaf; whole-world aggregation must retain its parent MK_APM switch. Next close lib/libpam/static_libpam, the actual missing /usr/lib/libpam.a product: compile the real core with OPENPAM_STATIC_MODULES, retain all option-selected module archives and registration partial-link order, preserve DTrace/DOF and original install metadata. Existing shared-core/module targets alone do not establish this static product. Keep device runtime, full PAM authentication, pkg/world and performance gates explicit.
+
+## Virtualization built-in checkpoint (2026-11-02)
+
+60 Hyper-V, Xen and VirtIO built-ins compile through the maintained frontend with exact code/CTF and checked inputs/policies/relocations. See VIRTUALIZATION-KERNEL-QUALIFICATION.md. Full kernel/world/pkgbase, architecture, runtime, bootstrap and performance gates remain open.

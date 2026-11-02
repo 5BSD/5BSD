@@ -31,4 +31,4 @@ cc_library(name = "mps_user_headers", hdrs = ["sys/dev/mps/mpi/mpi2_type.h", "sy
 
 cc_library(name = "mfi_user_headers", hdrs = ["sys/dev/mfi/mfireg.h", "sys/dev/mfi/mfi_ioctl.h"], strip_include_prefix = "/sys", visibility = ["//usr.sbin/mfiutil:__pkg__"])
 
-cc_library(name = "hyperv_utility_headers", hdrs = ["sys/dev/hyperv/utilities/hv_kvp.h", "sys/dev/hyperv/utilities/hv_utilreg.h", "sys/dev/hyperv/utilities/hv_snapshot.h"], strip_include_prefix = "/sys/dev/hyperv/utilities", visibility = ["//usr.sbin/hyperv:__subpackages__"])
+cc_library(name = "hyperv_utility_headers", hdrs = ["//sys/dev/hyperv:utilities/hv_kvp.h", "//sys/dev/hyperv:utilities/hv_utilreg.h", "//sys/dev/hyperv:utilities/hv_snapshot.h"], strip_include_prefix = "/sys/dev/hyperv/utilities", visibility = ["//usr.sbin/hyperv:__subpackages__"])
