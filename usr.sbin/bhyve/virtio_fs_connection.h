@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "virtio_fs_backend.h"
 #include "virtio_fs_host.h"
@@ -62,6 +63,18 @@ int	virtio_fs_connection_set_notification(struct virtio_fs_connection *,
 int	virtio_fs_connection_retry_notification(struct virtio_fs_connection *);
 int	virtio_fs_connection_fd(const struct virtio_fs_connection *);
 uint32_t virtio_fs_connection_events(struct virtio_fs_connection *);
+/*
+ * progress() never waits: a frame that moves in pieces is resumed by later
+ * readiness callbacks and progress() returns EAGAIN meanwhile.  deadline()
+ * reports when such a frame must next make progress; expire() fails the
+ * connection with ETIMEDOUT once "now" (NULL: the current time) has reached
+ * it.  progress() checks the deadline itself; a caller that may see no
+ * further readiness arms a timer.
+ */
+bool	virtio_fs_connection_deadline(const struct virtio_fs_connection *,
+	    struct timespec *);
+int	virtio_fs_connection_expire(struct virtio_fs_connection *,
+	    const struct timespec *);
 int	virtio_fs_connection_progress(struct virtio_fs_connection *,
 	    bool, bool);
 bool	virtio_fs_connection_active(

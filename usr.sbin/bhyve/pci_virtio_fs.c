@@ -43,6 +43,11 @@
 #define	VTFS_MAX_INFLIGHT		4096U
 #define	VTFS_PENDING_BYTES		(64U * 1024U * 1024U)
 #define	VTFS_CHECKPOINT_TIMEOUT_SEC	10
+/*
+ * Period of the timer that enforces the backend connection's progress
+ * deadline while a frame is partly transferred and the peer has stalled.
+ */
+#define	VTFS_DEADLINE_POLL_MS		1000
 
 struct pci_vtfs_reset {
 	struct vqueue_info *vq;
@@ -68,6 +73,7 @@ struct pci_vtfs_softc {
 	struct virtio_fs_connection *vsc_connection;
 	struct mevent *vsc_read_event;
 	struct mevent *vsc_write_event;
+	struct mevent *vsc_deadline_event;
 	/*
 	 * Private duplicate of the backend socket that the readiness events are
 	 * registered on.  The connection closes its own descriptor as soon as
@@ -214,6 +220,10 @@ pci_vtfs_disconnect_sync(struct pci_vtfs_softc *sc)
 		(void)mevent_delete_sync(sc->vsc_write_event);
 		sc->vsc_write_event = NULL;
 	}
+	if (sc->vsc_deadline_event != NULL) {
+		(void)mevent_delete_sync(sc->vsc_deadline_event);
+		sc->vsc_deadline_event = NULL;
+	}
 	if (sc->vsc_event_fd_valid) {
 		(void)close(sc->vsc_event_fd);
 		sc->vsc_event_fd_valid = false;
@@ -256,7 +266,10 @@ pci_vtfs_connect(struct pci_vtfs_softc *sc)
 	    pci_vtfs_event, sc);
 	sc->vsc_write_event = mevent_add_disabled(fd, EVF_WRITE,
 	    pci_vtfs_event, sc);
-	if (sc->vsc_read_event == NULL || sc->vsc_write_event == NULL) {
+	sc->vsc_deadline_event = mevent_add_disabled(VTFS_DEADLINE_POLL_MS,
+	    EVF_TIMER, pci_vtfs_event, sc);
+	if (sc->vsc_read_event == NULL || sc->vsc_write_event == NULL ||
+	    sc->vsc_deadline_event == NULL) {
 		pci_vtfs_disconnect_sync(sc);
 		return (ENOMEM);
 	}
@@ -419,6 +432,7 @@ pci_vtfs_install_callbacks(struct pci_vtfs_softc *sc)
 static int
 pci_vtfs_sync_events(struct pci_vtfs_softc *sc)
 {
+	struct timespec deadline;
 	uint32_t events;
 	int error, event_error;
 
@@ -438,6 +452,15 @@ pci_vtfs_sync_events(struct pci_vtfs_softc *sc)
 		event_error = mevent_enable(sc->vsc_write_event);
 	else if (sc->vsc_write_event != NULL)
 		event_error = mevent_disable(sc->vsc_write_event);
+	else
+		event_error = 0;
+	if (error == 0)
+		error = event_error;
+	if (sc->vsc_deadline_event != NULL &&
+	    virtio_fs_connection_deadline(sc->vsc_connection, &deadline))
+		event_error = mevent_enable(sc->vsc_deadline_event);
+	else if (sc->vsc_deadline_event != NULL)
+		event_error = mevent_disable(sc->vsc_deadline_event);
 	else
 		event_error = 0;
 	if (error == 0)

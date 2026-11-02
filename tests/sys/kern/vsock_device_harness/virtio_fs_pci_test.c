@@ -43,6 +43,9 @@ static unsigned int mevent_enable_read_calls;
 static unsigned int mevent_enable_write_calls;
 static unsigned int mevent_disable_read_calls;
 static unsigned int mevent_disable_write_calls;
+static unsigned int mevent_enable_timer_calls;
+static unsigned int mevent_disable_timer_calls;
+static bool connection_deadline_result;
 static unsigned int notification_retry_calls;
 static int notification_retry_error;
 static int connection_reset_error;
@@ -188,6 +191,17 @@ virtio_fs_connection_events(
 	return (connection_events);
 }
 
+bool
+virtio_fs_connection_deadline(
+    const struct virtio_fs_connection *connection __unused,
+    struct timespec *deadline)
+{
+
+	if (connection_deadline_result)
+		*deadline = (struct timespec){ .tv_sec = 1 };
+	return (connection_deadline_result);
+}
+
 int
 virtio_fs_connection_retry_notification(
     struct virtio_fs_connection *connection __unused)
@@ -211,6 +225,9 @@ mevent_enable(struct mevent *event)
 			return (mevent_enable_write_error);
 	}
 
+	if (event == (struct mevent *)(uintptr_t)3)
+		mevent_enable_timer_calls++;
+
 	return (mevent_enable_error);
 }
 
@@ -221,16 +238,20 @@ mevent_disable(struct mevent *event)
 		mevent_disable_read_calls++;
 	if (event == (struct mevent *)(uintptr_t)2)
 		mevent_disable_write_calls++;
+	if (event == (struct mevent *)(uintptr_t)3)
+		mevent_disable_timer_calls++;
 
 	return (mevent_disable_error);
 }
 
 struct mevent *
-mevent_add_disabled(int fd, enum ev_type type __unused,
+mevent_add_disabled(int fd, enum ev_type type,
     void (*callback)(int, enum ev_type, void *) __unused,
     void *argument __unused)
 {
 
+	if (type == EVF_TIMER)
+		return ((struct mevent *)(uintptr_t)3);
 	mevent_added_fd = fd;
 	return ((struct mevent *)(uintptr_t)1);
 }
@@ -1300,6 +1321,36 @@ ATF_TC_BODY(disconnected_event_sync_is_safe, tc)
 	ATF_CHECK(sc.vsc_connection == NULL);
 	ATF_CHECK(sc.vsc_read_event == NULL);
 	ATF_CHECK(sc.vsc_write_event == NULL);
+}
+
+/*
+ * A peer that stalls part-way through a frame produces no further readiness,
+ * so the progress deadline is enforced by a timer armed only while a frame is
+ * partly transferred.
+ */
+ATF_TC_WITHOUT_HEAD(partial_frame_arms_deadline_timer);
+ATF_TC_BODY(partial_frame_arms_deadline_timer, tc)
+{
+	struct pci_vtfs_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	sc.vsc_write_event = (struct mevent *)(uintptr_t)2;
+	sc.vsc_deadline_event = (struct mevent *)(uintptr_t)3;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	mevent_enable_error = 0;
+	mevent_disable_error = 0;
+	mevent_enable_timer_calls = 0;
+	mevent_disable_timer_calls = 0;
+	connection_deadline_result = true;
+	ATF_CHECK_EQ(pci_vtfs_sync_events(&sc), 0);
+	ATF_CHECK_EQ(mevent_enable_timer_calls, 1U);
+	ATF_CHECK_EQ(mevent_disable_timer_calls, 0U);
+	connection_deadline_result = false;
+	ATF_CHECK_EQ(pci_vtfs_sync_events(&sc), 0);
+	ATF_CHECK_EQ(mevent_enable_timer_calls, 1U);
+	ATF_CHECK_EQ(mevent_disable_timer_calls, 1U);
 }
 
 ATF_TC_WITHOUT_HEAD(event_sync_reports_registration_failure);
@@ -2482,6 +2533,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, option_bounds);
+	ATF_TP_ADD_TC(tp, partial_frame_arms_deadline_timer);
 	ATF_TP_ADD_TC(tp, configuration_layout);
 	ATF_TP_ADD_TC(tp, device_contract);
 	ATF_TP_ADD_TC(tp,

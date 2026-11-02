@@ -1,6 +1,7 @@
 /* Event-loop composition tests for a mediated virtio-fs connection. */
 #include <sys/endian.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 
@@ -218,6 +219,229 @@ ATF_TC_BODY(round_trip_and_readiness, tc)
 	ATF_CHECK_EQ(virtio_fs_connection_pending(connection), 0);
 	virtio_fs_connection_destroy(connection);
 	ATF_REQUIRE_EQ(close(sockets[1]), 0);
+}
+
+/* An event-loop callback must return well inside this bound. */
+#define	PROMPT_MS	50
+
+struct partial {
+	struct virtio_fs_connection *connection;
+	struct completion completion;
+	uint8_t request[DOC_FUSE_INIT_IN];
+	uint8_t output[DOC_FUSE_INIT_OUT];
+	int sockets[2];
+};
+
+static long
+elapsed_ms(const struct timespec *start)
+{
+	struct timespec now;
+
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &now), 0);
+	return ((now.tv_sec - start->tv_sec) * 1000 +
+	    (now.tv_nsec - start->tv_nsec) / 1000000);
+}
+
+/* Activate a connection and submit one FUSE_INIT request. */
+static void
+partial_setup(struct partial *partial)
+{
+	struct virtio_fs_backend_hello hello;
+	struct iovec iov[2];
+
+	memset(partial, 0, sizeof(*partial));
+	hello = offer();
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK |
+	    SOCK_CLOEXEC, 0, partial->sockets), 0);
+	ATF_REQUIRE_EQ(virtio_fs_connection_adopt(partial->sockets[0],
+	    geteuid(), getegid(), &hello, 4, 2, complete, &partial->completion,
+	    &partial->connection), 0);
+	activate(partial->sockets[1], partial->connection);
+	le32enc(partial->request, sizeof(partial->request));
+	le32enc(partial->request + 4, DOC_FUSE_INIT);
+	le64enc(partial->request + 8, 77);
+	le32enc(partial->request + 40, 7);
+	le32enc(partial->request + 44, 31);
+	iov[0] = (struct iovec){ partial->request, sizeof(partial->request) };
+	iov[1] = (struct iovec){ partial->output, sizeof(partial->output) };
+	ATF_REQUIRE_EQ(virtio_fs_connection_submit(partial->connection,
+	    VIRTIO_FS_QUEUE_REQUEST, iov, 2, 1, 1, true, 0x77), 0);
+}
+
+/* Flush the request to the backend and encode the backend's reply frame. */
+static void
+partial_reply(struct partial *partial, uint8_t *frame, size_t length)
+{
+	struct virtio_fs_backend_header reply, request;
+	uint8_t received[DOC_FUSE_INIT_IN];
+	size_t received_len;
+
+	ATF_REQUIRE_EQ(length, 40 + DOC_FUSE_INIT_OUT);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(partial->connection,
+	    false, true), 0);
+	ATF_REQUIRE_EQ(virtio_fs_backend_receive_frame(partial->sockets[1],
+	    &request, received, sizeof(received), &received_len), 0);
+	reply = (struct virtio_fs_backend_header) {
+		.version = DOC_VERSION,
+		.type = VIRTIO_FS_BACKEND_RESPONSE,
+		.payload_len = DOC_FUSE_INIT_OUT,
+		.request_id = request.request_id,
+		.incarnation = request.incarnation,
+	};
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_encode(&reply, frame), 0);
+	memset(frame + 40, 0, DOC_FUSE_INIT_OUT);
+	le32enc(frame + 40, DOC_FUSE_INIT_OUT);
+	le64enc(frame + 48, 77);
+	le32enc(frame + 56, 7);
+	le32enc(frame + 60, 31);
+}
+
+/*
+ * A backend that sends part of a record and stalls must not hold the event
+ * loop: the callback returns EAGAIN at once with readiness still armed, and
+ * the frame completes when the rest arrives.
+ */
+ATF_TC_WITHOUT_HEAD(partial_response_does_not_block_event_loop);
+ATF_TC_BODY(partial_response_does_not_block_event_loop, tc)
+{
+	struct partial partial;
+	struct timespec deadline, start;
+	uint8_t frame[40 + DOC_FUSE_INIT_OUT];
+
+	partial_setup(&partial);
+	partial_reply(&partial, frame, sizeof(frame));
+
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame, 30, 0), 30);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), EAGAIN);
+	ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+	ATF_CHECK((virtio_fs_connection_events(partial.connection) &
+	    VIRTIO_FS_CONNECTION_READ) != 0);
+	ATF_CHECK(virtio_fs_connection_deadline(partial.connection,
+	    &deadline));
+	ATF_CHECK_EQ(partial.completion.calls, 0);
+
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame + 30, 20, 0), 20);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), EAGAIN);
+	ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+	ATF_CHECK_EQ(partial.completion.calls, 0);
+
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame + 50, sizeof(frame) - 50,
+	    MSG_EOR), (ssize_t)(sizeof(frame) - 50));
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), 0);
+	ATF_CHECK_EQ(partial.completion.calls, 1);
+	ATF_CHECK_EQ(partial.completion.cookie, (uintptr_t)0x77);
+	ATF_CHECK_EQ(partial.completion.used, DOC_FUSE_INIT_OUT);
+	ATF_CHECK(memcmp(partial.output, frame + 40, DOC_FUSE_INIT_OUT) == 0);
+	ATF_CHECK(!virtio_fs_connection_deadline(partial.connection,
+	    &deadline));
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
+}
+
+/*
+ * A backend that drains its receive buffer slowly must not hold the event
+ * loop either: the unsent tail of a frame stays queued with write readiness
+ * armed and goes out, unbroken, on later callbacks.
+ */
+ATF_TC_WITHOUT_HEAD(slow_draining_send_does_not_block_event_loop);
+ATF_TC_BODY(slow_draining_send_does_not_block_event_loop, tc)
+{
+	struct virtio_fs_backend_header header;
+	struct partial partial;
+	struct timespec deadline, start;
+	struct iovec vector;
+	struct msghdr message;
+	uint8_t frame[2 * (40 + DOC_FUSE_INIT_IN)];
+	size_t received;
+	ssize_t piece;
+	int error, size;
+	bool eor;
+
+	partial_setup(&partial);
+	size = 64;
+	ATF_REQUIRE_EQ(setsockopt(partial.sockets[1], SOL_SOCKET, SO_RCVBUF,
+	    &size, sizeof(size)), 0);
+
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, false,
+	    true), EAGAIN);
+	ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+	ATF_CHECK((virtio_fs_connection_events(partial.connection) &
+	    VIRTIO_FS_CONNECTION_WRITE) != 0);
+	ATF_CHECK(virtio_fs_connection_deadline(partial.connection,
+	    &deadline));
+
+	received = 0;
+	eor = false;
+	while (!eor) {
+		vector.iov_base = frame + received;
+		vector.iov_len = sizeof(frame) - received;
+		memset(&message, 0, sizeof(message));
+		message.msg_iov = &vector;
+		message.msg_iovlen = 1;
+		piece = recvmsg(partial.sockets[1], &message, MSG_DONTWAIT);
+		ATF_REQUIRE_MSG(piece > 0, "recvmsg: %zd", piece);
+		received += (size_t)piece;
+		eor = (message.msg_flags & MSG_EOR) != 0;
+		ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &start), 0);
+		error = virtio_fs_connection_progress(partial.connection, false,
+		    true);
+		ATF_CHECK(elapsed_ms(&start) < PROMPT_MS);
+		ATF_REQUIRE(error == 0 || error == EAGAIN);
+	}
+	ATF_REQUIRE_EQ(received, 40 + DOC_FUSE_INIT_IN);
+	ATF_CHECK(!virtio_fs_connection_deadline(partial.connection,
+	    &deadline));
+	ATF_CHECK_EQ(virtio_fs_connection_events(partial.connection),
+	    VIRTIO_FS_CONNECTION_READ);
+	ATF_REQUIRE_EQ(virtio_fs_backend_header_decode(frame, 40, &header), 0);
+	ATF_CHECK_EQ(header.type, VIRTIO_FS_BACKEND_REQUEST);
+	ATF_CHECK_EQ(header.payload_len, DOC_FUSE_INIT_IN);
+	ATF_CHECK(memcmp(frame + 40, partial.request, DOC_FUSE_INIT_IN) == 0);
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
+}
+
+/*
+ * The progress deadline replaces the old blocking wait: once it passes, the
+ * connection fails, its descriptor closes, and retained requests complete.
+ */
+ATF_TC_WITHOUT_HEAD(stalled_partial_frame_expires);
+ATF_TC_BODY(stalled_partial_frame_expires, tc)
+{
+	struct partial partial;
+	struct timespec deadline, now;
+	uint8_t byte, frame[40 + DOC_FUSE_INIT_OUT];
+
+	partial_setup(&partial);
+	partial_reply(&partial, frame, sizeof(frame));
+	ATF_REQUIRE_EQ(send(partial.sockets[1], frame, 30, 0), 30);
+	ATF_REQUIRE_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), EAGAIN);
+	ATF_REQUIRE(virtio_fs_connection_deadline(partial.connection,
+	    &deadline));
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &now), 0);
+	ATF_CHECK(timespeccmp(&now, &deadline, <));
+	ATF_CHECK_EQ(virtio_fs_connection_expire(partial.connection, &now), 0);
+	ATF_CHECK(virtio_fs_connection_active(partial.connection));
+
+	now = deadline;
+	ATF_CHECK_EQ(virtio_fs_connection_expire(partial.connection, &now),
+	    ETIMEDOUT);
+	ATF_CHECK_EQ(virtio_fs_connection_error(partial.connection), ETIMEDOUT);
+	ATF_CHECK_EQ(virtio_fs_connection_fd(partial.connection), -1);
+	ATF_CHECK_EQ(partial.completion.calls, 1);
+	ATF_CHECK_EQ(partial.completion.cookie, (uintptr_t)0x77);
+	ATF_CHECK_EQ(virtio_fs_connection_progress(partial.connection, true,
+	    false), ETIMEDOUT);
+	ATF_CHECK_EQ(recv(partial.sockets[1], &byte, 1, MSG_DONTWAIT), 0);
+	virtio_fs_connection_destroy(partial.connection);
+	ATF_REQUIRE_EQ(close(partial.sockets[1]), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(protocol_failure_completes_pending);
@@ -944,6 +1168,9 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, round_trip_and_readiness);
+	ATF_TP_ADD_TC(tp, partial_response_does_not_block_event_loop);
+	ATF_TP_ADD_TC(tp, slow_draining_send_does_not_block_event_loop);
+	ATF_TP_ADD_TC(tp, stalled_partial_frame_expires);
 	ATF_TP_ADD_TC(tp, protocol_failure_completes_pending);
 	ATF_TP_ADD_TC(tp, connect_path_is_authenticated_and_event_driven);
 	ATF_TP_ADD_TC(tp, adopt_failure_preserves_caller_ownership);

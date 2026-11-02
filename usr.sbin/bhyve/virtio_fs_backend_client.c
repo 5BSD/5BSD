@@ -4,6 +4,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,12 +30,15 @@ enum virtio_fs_backend_client_phase {
 struct virtio_fs_backend_client {
 	struct virtio_fs_backend_session session;
 	struct virtio_fs_backend_hello offer;
+	struct virtio_fs_backend_stream stream;
+	uint8_t reply[VIRTIO_FS_BACKEND_HELLO_SIZE];
 	uid_t expected_uid;
 	gid_t expected_gid;
 	int fd;
 	int error;
 	enum virtio_fs_backend_client_phase phase;
 	bool hello_started;
+	bool hello_sent;
 };
 
 static int
@@ -65,6 +69,7 @@ virtio_fs_backend_client_fail(struct virtio_fs_backend_client *client,
 		(void)close(client->fd);
 		client->fd = -1;
 	}
+	virtio_fs_backend_stream_fini(&client->stream);
 	if (client->session.phase != VIRTIO_FS_BACKEND_DISCONNECTED)
 		virtio_fs_backend_disconnect(&client->session);
 	client->phase = VFS_CLIENT_FAILED;
@@ -169,6 +174,7 @@ virtio_fs_backend_client_destroy(struct virtio_fs_backend_client *client)
 		return;
 	if (client->fd >= 0)
 		(void)close(client->fd);
+	virtio_fs_backend_stream_fini(&client->stream);
 	free(client);
 }
 
@@ -200,6 +206,30 @@ virtio_fs_backend_client_events(
 	}
 }
 
+bool
+virtio_fs_backend_client_deadline(
+    const struct virtio_fs_backend_client *client, struct timespec *deadline)
+{
+
+	if (client == NULL || client->fd < 0)
+		return (false);
+	return (virtio_fs_backend_stream_deadline(&client->stream, deadline));
+}
+
+int
+virtio_fs_backend_client_expire(struct virtio_fs_backend_client *client,
+    const struct timespec *now)
+{
+	struct timespec deadline;
+
+	if (client == NULL || now == NULL)
+		return (EINVAL);
+	if (!virtio_fs_backend_client_deadline(client, &deadline) ||
+	    timespeccmp(now, &deadline, <))
+		return (0);
+	return (virtio_fs_backend_client_fail(client, ETIMEDOUT));
+}
+
 int
 virtio_fs_backend_client_progress(struct virtio_fs_backend_client *client,
     bool readable, bool writable)
@@ -207,7 +237,6 @@ virtio_fs_backend_client_progress(struct virtio_fs_backend_client *client,
 	struct virtio_fs_backend_header header;
 	struct virtio_fs_backend_hello selection;
 	uint8_t hello[VIRTIO_FS_BACKEND_HELLO_SIZE];
-	uint8_t payload[VIRTIO_FS_BACKEND_HELLO_SIZE];
 	size_t payload_len;
 	int error;
 
@@ -240,17 +269,29 @@ virtio_fs_backend_client_progress(struct virtio_fs_backend_client *client,
 				    error));
 			client->hello_started = true;
 		}
-		header = (struct virtio_fs_backend_header) {
-			.version = VIRTIO_FS_BACKEND_VERSION,
-			.type = VIRTIO_FS_BACKEND_HELLO,
-			.payload_len = VIRTIO_FS_BACKEND_HELLO_SIZE,
-			.request_id = 1,
-		};
-		error = virtio_fs_backend_hello_encode(&client->offer, hello);
-		if (error != 0)
-			return (virtio_fs_backend_client_fail(client, error));
-		error = virtio_fs_backend_send_frame(client->fd, &header,
-		    hello);
+		if (!client->hello_sent) {
+			header = (struct virtio_fs_backend_header) {
+				.version = VIRTIO_FS_BACKEND_VERSION,
+				.type = VIRTIO_FS_BACKEND_HELLO,
+				.payload_len = VIRTIO_FS_BACKEND_HELLO_SIZE,
+				.request_id = 1,
+			};
+			error = virtio_fs_backend_hello_encode(&client->offer,
+			    hello);
+			if (error != 0)
+				return (virtio_fs_backend_client_fail(client,
+				    error));
+			error = virtio_fs_backend_stream_send(&client->stream,
+			    client->fd, &header, hello);
+			if (error == EAGAIN || error == EWOULDBLOCK)
+				return (EAGAIN);
+			if (error != 0)
+				return (virtio_fs_backend_client_fail(client,
+				    error));
+			client->hello_sent = true;
+		}
+		error = virtio_fs_backend_stream_flush(&client->stream,
+		    client->fd);
 		if (error == EAGAIN || error == EWOULDBLOCK)
 			return (EAGAIN);
 		if (error != 0)
@@ -260,15 +301,15 @@ virtio_fs_backend_client_progress(struct virtio_fs_backend_client *client,
 	if (client->phase != VFS_CLIENT_HELLO_RECEIVE || !readable)
 		return (EAGAIN);
 
-	error = virtio_fs_backend_receive_frame(client->fd, &header, payload,
-	    sizeof(payload), &payload_len);
+	error = virtio_fs_backend_stream_receive(&client->stream, client->fd,
+	    &header, client->reply, sizeof(client->reply), &payload_len);
 	if (error == EAGAIN || error == EWOULDBLOCK)
 		return (EAGAIN);
 	if (error != 0)
 		return (virtio_fs_backend_client_fail(client, error));
 	if (header.status == 0) {
-		error = virtio_fs_backend_hello_decode(payload, payload_len,
-		    &selection);
+		error = virtio_fs_backend_hello_decode(client->reply,
+		    payload_len, &selection);
 		if (error != 0)
 			return (virtio_fs_backend_client_fail(client, error));
 	} else if (payload_len != 0) {
