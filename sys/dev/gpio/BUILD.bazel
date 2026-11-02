@@ -2,3 +2,21 @@
 
 load("//tools/build/bazel:bsd_kobj.bzl", "kernel_interfaces")
 kernel_interfaces(srcs = glob(["*_if.m"]))
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Source prerequisites from independent hardware module Make controls.
+bsd_source_headers(name = "hardware_module_adlngpio_headers", hdrs = ["gpiobusvar.h", "intel/intelgpio.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+bsd_source_headers(name = "hardware_module_amdgpio_headers", hdrs = ["gpiobusvar.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+filegroup(name = "hardware_module_gpio_if_file", srcs = [":gpio_if"], output_group = "header")
+cc_library(name = "hardware_module_gpio_if_headers", hdrs = [":hardware_module_gpio_if_file"], strip_include_prefix = "gpio_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(name = "adlngpio_module", srcs = ["intel/intelgpio.c", "intel/adlngpio.c"],
+    deps = ["//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/gpio:hardware_module_adlngpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:hardware_module_acpi_if_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/dev/gpio:hardware_module_gpio_if_headers", "//sys/amd64/conf:hardware_module_opt_acpi_header", "//sys/amd64/conf:hardware_module_opt_platform_header"])

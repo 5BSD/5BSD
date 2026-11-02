@@ -18,3 +18,11 @@ cc_library(name = "bhyve_engine_headers", hdrs = ['vmm.h', 'vmm_dev.h', 'vmm_sna
 cc_library(name = "pc_bios_headers", hdrs = ["pc/bios.h"],
     strip_include_prefix = ".", include_prefix = "machine",
     visibility = ["//sys/modules/bios/smbios:__pkg__", "//sys/modules/bios/vpd:__pkg__"])
+
+# Original module sources address Linux headers through machine/../linux.
+filegroup(name = "architecture_view_machine_sources", srcs = glob(["*.h"]))
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
+bsd_architecture_headers(name = "linux_module_headers", headers = {
+    ":architecture_view_machine_sources": "machine",
+    "//sys/amd64/linux:module_header_sources": "linux",
+}, visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__"])

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Source prerequisites from independent hardware module Make controls.
+bsd_source_headers(name = "hardware_module_amdgpio_headers", hdrs = ["amdgpio.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(name = "amdgpio_module", srcs = ["amdgpio.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/contrib/dev/acpica/include:acpica_core_kernel_acpi_button_headers", "//sys/dev/acpica:lowlevel_kernel_mp_machdep_headers", "//sys/dev/amdgpio:hardware_module_amdgpio_headers", "//sys/dev/gpio:hardware_module_amdgpio_headers", "//sys/dev/ofw:hardware_module_adlngpio_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/dev/acpica:hardware_module_acpi_if_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/dev/gpio:hardware_module_gpio_if_headers", "//sys/amd64/conf:hardware_module_opt_acpi_header", "//sys/amd64/conf:hardware_module_opt_platform_header"])

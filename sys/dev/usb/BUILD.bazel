@@ -489,3 +489,7 @@ filegroup(name = "builtin_usb_if_source", srcs = [":usb_if"], output_group = "so
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_usb_if", srcs = [":builtin_usb_if_source"],
     deps = ["//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/usb:kobj_builtins_kernel_usb_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+# Source prerequisites from independent hardware module Make controls.
+bsd_source_headers(name = "hardware_module_apple_bce_headers", hdrs = ["usb.h", "usb_bus.h", "usb_busdma.h", "usb_controller.h", "usb_core.h", "usb_device.h", "usb_endian.h", "usb_freebsd.h", "usb_hub.h", "usb_process.h", "usb_transfer.h", "usb_util.h", "usbdi.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])

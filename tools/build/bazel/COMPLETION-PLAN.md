@@ -34,6 +34,13 @@ controls. See [HARDWARE-MODULE-GAP-QUALIFICATION.md](HARDWARE-MODULE-GAP-QUALIFI
 for the export-policy correction, debug-definedness mismatch and fresh SDK
 qualification after a changed host tar input. Other module coverage remains open.
 
+
+Nine further hardware modules now pass native plain and CTF/debug artifact and
+installation comparisons: AAC/AACRAID and their Linux adapters, Alder Lake/AMD
+GPIO, Apple BCE, Areca and Apple SMC. The batch covers 19 source files and 2,799
+Make dependency occurrences; see
+[NINE-HARDWARE-MODULES-QUALIFICATION.md](NINE-HARDWARE-MODULES-QUALIFICATION.md).
+
 Earlier component checkpoints below are retained historical evidence.
 
 Refreshed Make module selection finds 729 selected amd64 leaves, with 245 local

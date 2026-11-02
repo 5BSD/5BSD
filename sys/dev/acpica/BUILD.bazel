@@ -47,7 +47,7 @@ cross_generic_module_objects(arch = "arm64", name = "acpi_ged_module", srcs = ["
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acpivar.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_mp_x86_headers", hdrs = ["acpivar.h"],
@@ -305,3 +305,8 @@ filegroup(name = "builtin_acpi_if_source", srcs = [":acpi_if"], output_group = "
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_acpi_if", srcs = [":builtin_acpi_if_source"],
     deps = ["//sys/contrib/dev/acpica/include:kobj_builtins_physical_apei_if_headers", "//sys/dev/acpica:kobj_builtins_kernel_acpi_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/amd64/conf:kobj_builtins_kernel_opt_acpi_header"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+
+
+filegroup(name = "hardware_module_acpi_if_file", srcs = [":acpi_if"], output_group = "header")
+cc_library(name = "hardware_module_acpi_if_headers", hdrs = [":hardware_module_acpi_if_file"], strip_include_prefix = "acpi_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])

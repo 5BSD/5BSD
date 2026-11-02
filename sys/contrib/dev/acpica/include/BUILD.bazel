@@ -152,7 +152,7 @@ cc_library(name = "compiler_headers", hdrs = [
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_mp_machdep_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
-    visibility = ["//sys/amd64/amd64:__pkg__"])
+    visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/asmc:__pkg__"])
 
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_cpu_machdep_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
@@ -174,7 +174,7 @@ bsd_source_headers(name = "acpica_core_kernel_acpi_apei_bus_headers", hdrs = ["a
 bsd_source_headers(name = "acpica_core_kernel_acpi_battery_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_button_headers", hdrs = ["acbuffer.h", "accommon.h", "acconfig.h", "acexcep.h", "acglobal.h", "achware.h", "aclocal.h", "acmacros.h", "acnames.h", "acobject.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "acstruct.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "acutils.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
-    visibility = ["//sys/dev/acpica:__pkg__"])
+    visibility = ["//sys/dev/acpica:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/gpio:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_cmbat_headers", hdrs = ["acbuffer.h", "acconfig.h", "acexcep.h", "acnames.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],
     visibility = ["//sys/dev/acpica:__pkg__"])
 bsd_source_headers(name = "acpica_core_kernel_acpi_cpu_headers", hdrs = ["acbuffer.h", "accommon.h", "acconfig.h", "acexcep.h", "acglobal.h", "achware.h", "aclocal.h", "acmacros.h", "acnames.h", "acobject.h", "acoutput.h", "acpi.h", "acpiosxf.h", "acpixf.h", "acrestyp.h", "acstruct.h", "actbl.h", "actbl1.h", "actbl2.h", "actbl3.h", "actypes.h", "acutils.h", "platform/acenv.h", "platform/acenvex.h", "platform/acfreebsd.h", "platform/acgcc.h", "platform/acgccex.h"],

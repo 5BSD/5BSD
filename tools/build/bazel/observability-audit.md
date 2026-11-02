@@ -9958,3 +9958,17 @@ transitions. These operations were not exercised during build qualification;
 ECC hardware actions and watchdog arming are not safe host build tests. Hardware
 or supported isolated-VM evidence is still required for operational claims.
 See HARDWARE-MODULE-GAP-QUALIFICATION.md for compiled scope and retained evidence.
+
+
+### AAC/GPIO/Apple hardware module batch (2026-11-02)
+
+Native aac/aac_linux/aacraid/aacraid_linux, adlngpio, amdgpio, apple_bce,
+arcmsr and asmc preserve all 19 original C sources. Plain artifacts are exact;
+CTF/debug runtime and installation contracts match Make. The scoped source scan
+found no dedicated SDT or explicit audit hooks in these files; generic kernel,
+FBT, CAM, USB and syscall coverage still requires operational evidence. Review
+privileged storage-management/Linux ioctl audit coverage, GPIO configuration,
+BCE queue/USB bridge failures and SMC fan-control writes. Absence of a local
+probe is not by itself a defect. Loading, hardware control and probe/audit
+runtime delivery were not exercised in this build qualification. See
+NINE-HARDWARE-MODULES-QUALIFICATION.md for evidence and remaining hardware gates.

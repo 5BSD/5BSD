@@ -893,3 +893,9 @@ filegroup(name = "builtin_serdev_if_source", srcs = [":serdev_if"], output_group
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_serdev_if", srcs = [":builtin_serdev_if_source"],
     deps = ["//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/kern:kobj_builtins_kernel_serdev_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+filegroup(name = "hardware_module_bus_if_file", srcs = [":bus_if"], output_group = "header")
+cc_library(name = "hardware_module_bus_if_headers", hdrs = [":hardware_module_bus_if_file"], strip_include_prefix = "bus_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+filegroup(name = "hardware_module_device_if_file", srcs = [":device_if"], output_group = "header")
+cc_library(name = "hardware_module_device_if_headers", hdrs = [":hardware_module_device_if_file"], strip_include_prefix = "device_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])

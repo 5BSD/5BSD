@@ -25,7 +25,7 @@ cc_library(name = "storage_module_headers", hdrs = ["pcireg.h", "pcivar.h"],
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 # Physical source prerequisites from independent Ethernet module builds.
-bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__"])
+bsd_source_headers(name = "pci_ethernet_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/alc:__pkg__", "//sys/dev/ale:__pkg__", "//sys/dev/aq:__pkg__", "//sys/dev/bce:__pkg__", "//sys/dev/bge:__pkg__", "//sys/dev/et:__pkg__", "//sys/dev/jme:__pkg__", "//sys/dev/msk:__pkg__", "//sys/dev/nfe:__pkg__", "//sys/dev/re:__pkg__", "//sys/dev/rge:__pkg__", "//sys/dev/sge:__pkg__", "//sys/dev/vte:__pkg__", "//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__"])
 
 # Physical prerequisites consumed by independent MII-family module builds.
 bsd_source_headers(name = "mii_family_headers", hdrs = ["pcireg.h", "pcivar.h"], visibility = ["//sys/dev/mii:__pkg__"])
@@ -311,3 +311,8 @@ filegroup(name = "builtin_pcib_if_source", srcs = [":pcib_if"], output_group = "
 amd64_generic_kernel_objects(name = "generic_kobj_builtins_pcib_if", srcs = [":builtin_pcib_if_source"],
     deps = ["//sys/dev/pci:kobj_builtins_physical_pcib_if_headers", "//sys/kern:kobj_builtins_kernel_bus_if_headers", "//sys/kern:kobj_builtins_kernel_device_if_headers", "//sys/dev/pci:kobj_builtins_kernel_pci_if_headers", "//sys/dev/pci:kobj_builtins_kernel_pcib_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+
+
+filegroup(name = "hardware_module_pci_if_file", srcs = [":pci_if"], output_group = "header")
+cc_library(name = "hardware_module_pci_if_headers", hdrs = [":hardware_module_pci_if_file"], strip_include_prefix = "pci_if.generated", visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])

@@ -22,3 +22,7 @@ cc_library(name = "fuse_errno_headers", hdrs = ["linux_errno.h"], textual_hdrs =
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "tracing_remaining_headers", hdrs = ["linux.h", "linux_siginfo.h"], visibility = ["//sys/cddl/dev/systrace:__pkg__", "//sys/cddl/contrib/opensolaris:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+
+# Source prerequisites from independent hardware module Make controls.
+bsd_source_headers(name = "hardware_module_aac_linux_headers", hdrs = ["linux.h", "linux_ioctl.h", "linux_siginfo.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])

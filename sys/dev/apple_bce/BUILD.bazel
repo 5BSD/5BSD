@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+# Source prerequisites from independent hardware module Make controls.
+bsd_source_headers(name = "hardware_module_apple_bce_headers", hdrs = ["apple_bce.h", "apple_bce_mailbox.h", "apple_bce_queue.h", "apple_bce_vhci.h"], includes = [],
+    visibility = ["//sys/dev/aac:__pkg__", "//sys/dev/aacraid:__pkg__", "//sys/dev/amdgpio:__pkg__", "//sys/dev/apple_bce:__pkg__", "//sys/dev/arcmsr:__pkg__", "//sys/dev/asmc:__pkg__", "//sys/dev/gpio:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(name = "apple_bce_module", srcs = ["apple_bce.c", "apple_bce_mailbox.c", "apple_bce_queue.c", "apple_bce_vhci.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/dev/apple_bce:hardware_module_apple_bce_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/usb:hardware_module_apple_bce_headers", "//sys/vm:usb_net_usie_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/amd64/conf:hardware_module_opt_usb_header", "//sys/dev/pci:hardware_module_pci_if_headers"])

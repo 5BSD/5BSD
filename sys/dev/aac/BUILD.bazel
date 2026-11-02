@@ -27,3 +27,13 @@ amd64_generic_kernel_objects(name = "generic_storage_controllers_aac_disk", srcs
 amd64_generic_kernel_objects(name = "generic_storage_controllers_aac_pci", srcs = ["aac_pci.c"],
     deps = ["//sys/dev/aac:storage_controllers_kernel_aac_cam_headers", "//sys/dev/pci:storage_controllers_kernel_aac_headers", "//sys/geom:storage_controllers_kernel_aac_headers", "//sys/net:storage_controllers_kernel_aac_headers", "//sys/netinet:storage_controllers_kernel_aac_headers", "//sys/netinet6:storage_controllers_kernel_aac_headers", "//sys/kern:storage_controllers_kernel_bus_if_headers", "//sys/kern:storage_controllers_kernel_device_if_headers", "//sys/amd64/conf:storage_controllers_kernel_opt_aac_header", "//sys/dev/pci:storage_controllers_kernel_pci_if_headers"],
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+
+
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+amd64_generic_module_objects(name = "aac_module", srcs = ["aac.c", "aac_pci.c", "aac_disk.c", "aac_cam.c"],
+    deps = ["//sys/cam:storage_hba_kernel_ocs_gendump_headers", "//sys/dev/aac:storage_controllers_kernel_aac_headers", "//sys/dev/mmc:isci_kernel_isci_headers", "//sys/dev/nvme:isci_kernel_isci_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/geom:storage_core_kernel_cam_iosched_headers", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/vm:pci_ethernet_headers", "//sys/kern:hardware_module_bus_if_headers", "//sys/kern:hardware_module_device_if_headers", "//sys/amd64/conf:hardware_module_opt_aac_header", "//sys/amd64/conf:hardware_module_opt_cam_header", "//sys/dev/pci:hardware_module_pci_if_headers"])
+
+amd64_generic_module_objects(name = "aac_linux_module", srcs = ["aac_linux.c"],
+    deps = ["//sys/amd64/include:linux_module_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:hardware_module_aac_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers"])
