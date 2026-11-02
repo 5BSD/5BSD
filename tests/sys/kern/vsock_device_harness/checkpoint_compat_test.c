@@ -276,6 +276,65 @@ ATF_TC_BODY(restore_contract_negative_matrix, tc)
 	    EINVAL);
 }
 
+/* A refused restore names the compatibility field and both values. */
+ATF_TC_WITHOUT_HEAD(restore_mismatch_names_the_field);
+ATF_TC_BODY(restore_mismatch_names_the_field, tc)
+{
+	struct pci_snapshot_compat destination, source;
+	char buf[160];
+
+	memset(&source, 0, sizeof(source));
+	source.schema = PCI_SNAPSHOT_COMPAT_SCHEMA;
+	source.transport = 1;
+	source.queue_count = 2;
+	source.msix_table_count = 3;
+	source.config_size = 64;
+	source.offered_features = VIRTIO14_F_VERSION_1 |
+	    VIRTIO14_F_ACCESS_PLATFORM;
+	source.negotiated_features = VIRTIO14_F_ACCESS_PLATFORM;
+	source.payload_crc32 = 0x1234;
+	strlcpy(source.queue_sizes, "256,256", sizeof(source.queue_sizes));
+	strlcpy(source.shared_memory, "1:4:4096:8192",
+	    sizeof(source.shared_memory));
+	destination = source;
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    false, buf, sizeof(buf)), 0);
+	ATF_CHECK_STREQ(buf, "");
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    true, buf, sizeof(buf)), 0);
+
+	destination.queue_count = 4;
+	ATF_REQUIRE(pci_snapshot_compat_validate(&source, &destination) != 0);
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    false, buf, sizeof(buf)), ENOTSUP);
+	ATF_CHECK_STREQ(buf, "queue_count: source 0x2, destination 0x4");
+
+	destination = source;
+	strlcpy(destination.queue_sizes, "256,128",
+	    sizeof(destination.queue_sizes));
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    false, buf, sizeof(buf)), ENOTSUP);
+	ATF_CHECK_STREQ(buf, "queue_sizes: source \"256,256\", destination "
+	    "\"256,128\"");
+
+	destination = source;
+	destination.offered_features &= ~VIRTIO14_F_ACCESS_PLATFORM;
+	ATF_REQUIRE(pci_snapshot_compat_validate(&source, &destination) != 0);
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    false, buf, sizeof(buf)), ENOTSUP);
+	ATF_CHECK(strncmp(buf, "offered_features: ", 18) == 0);
+
+	/* Destination validation ignores the payload CRC; exact does not. */
+	destination = source;
+	destination.payload_crc32 = 0x5678;
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    false, buf, sizeof(buf)), 0);
+	ATF_CHECK_EQ(checkpoint_compat_describe_mismatch(&source, &destination,
+	    true, buf, sizeof(buf)), ENOTSUP);
+	ATF_CHECK_STREQ(buf, "payload_crc32: source 0x1234, destination "
+	    "0x5678");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -286,5 +345,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, codec_is_transactional_and_overlap_safe);
 	ATF_TP_ADD_TC(tp, pci_config_image_is_little_endian);
 	ATF_TP_ADD_TC(tp, restore_contract_negative_matrix);
+	ATF_TP_ADD_TC(tp, restore_mismatch_names_the_field);
 	return (atf_no_error());
 }

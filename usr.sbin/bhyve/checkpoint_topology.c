@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -58,6 +59,92 @@ checkpoint_topology_validate(const char * const *source, size_t source_count,
 		if (!checkpoint_topology_contains(destination, destination_count,
 		    source[i]))
 			return (ENODEV);
+	}
+	return (0);
+}
+
+static const char *
+checkpoint_topology_first_duplicate(const char * const *names, size_t count)
+{
+
+	for (size_t i = 0; i < count; i++) {
+		for (size_t j = 0; j < i; j++) {
+			if (strcmp(names[i], names[j]) == 0)
+				return (names[i]);
+		}
+	}
+	return (NULL);
+}
+
+/*
+ * Name the first difference between a checkpoint's device list and the
+ * destination's for the restore log: the counts, and the first source entry
+ * absent at the destination or destination device absent from the source.
+ * "source" holds the first source_count of source_total checkpoint entries;
+ * a caller bounding allocation by the destination passes at least
+ * destination_count + 1 of them, which always suffices to name a difference
+ * (pigeonhole: one of them is absent at the destination or duplicated).
+ * Returns 0 and an empty string when the lists match.
+ */
+int
+checkpoint_topology_describe_mismatch(const char * const *source,
+    size_t source_count, size_t source_total,
+    const char * const *destination, size_t destination_count,
+    char *buf, size_t len)
+{
+	const char *duplicate;
+	size_t used;
+
+	if (buf == NULL || len == 0)
+		return (EINVAL);
+	buf[0] = '\0';
+	if (source_count > source_total ||
+	    (source_count != 0 && source == NULL) ||
+	    (destination_count != 0 && destination == NULL))
+		return (EINVAL);
+	for (size_t i = 0; i < source_count; i++) {
+		if (source[i] == NULL || source[i][0] == '\0') {
+			snprintf(buf, len, "source entry %zu has no device name",
+			    i);
+			return (EINVAL);
+		}
+	}
+	used = 0;
+	if (source_total != destination_count) {
+		snprintf(buf, len, "device count: source %zu, destination %zu; ",
+		    source_total, destination_count);
+		used = strlen(buf);
+	}
+	for (size_t i = 0; i < source_count; i++) {
+		if (!checkpoint_topology_contains(destination,
+		    destination_count, source[i])) {
+			snprintf(buf + used, len - used, "source device \"%s\" "
+			    "(entry %zu) is absent at the destination", source[i],
+			    i);
+			return (ENODEV);
+		}
+	}
+	duplicate = checkpoint_topology_first_duplicate(source, source_count);
+	if (duplicate != NULL) {
+		snprintf(buf + used, len - used, "source device \"%s\" is "
+		    "recorded more than once", duplicate);
+		return (EEXIST);
+	}
+	if (source_count == source_total) {
+		for (size_t i = 0; i < destination_count; i++) {
+			if (!checkpoint_topology_contains(source, source_count,
+			    destination[i])) {
+				snprintf(buf + used, len - used,
+				    "destination device \"%s\" is absent from "
+				    "the checkpoint", destination[i]);
+				return (ENODEV);
+			}
+		}
+	}
+	if (used != 0) {
+		/* Unreachable for a complete or destination_count + 1 prefix. */
+		buf[used - 2] = '\0';
+		return (ENODEV);
 	}
 	return (0);
 }

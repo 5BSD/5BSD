@@ -21,6 +21,8 @@ int	checkpoint_compat_decode(const void *, size_t,
 uint32_t checkpoint_compat_payload_crc32(const void *, size_t);
 bool	checkpoint_compat_equal(const struct pci_snapshot_compat *,
 	    const struct pci_snapshot_compat *);
+int	checkpoint_compat_describe_mismatch(const struct pci_snapshot_compat *,
+	    const struct pci_snapshot_compat *, bool, char *, size_t);
 #endif
 
 #endif
