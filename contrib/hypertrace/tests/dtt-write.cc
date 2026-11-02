@@ -28,10 +28,18 @@
 #include "dtraced_dttransport.h"
 #include "dtraced_elf.h"
 #include "dtraced_io.h"
+#include "dtraced_job.h"
+#include "dtraced_connection.h"
 #include "dtraced_state.h"
 #include "dtraced_wire.h"
 
 using namespace dtraced;
+
+namespace dtraced {
+struct state_attestation_test {
+	static bool handle(state &s, job *j) { return s.handle_job(j); }
+};
+}
 
 static char redirect_path[104];
 extern "C" int __real_connect(int, const struct sockaddr *, socklen_t);
@@ -576,6 +584,168 @@ test_connection_setup()
 	}
 }
 
+/*
+ * The guest round trip with the real code on both sides of the local socket:
+ * a derived ELF that guest dtrace stored in outbound is queued by the real
+ * process_outbound()/queue_elfwrite_batch() and sent by the real minion
+ * job::send_elf() to the real write_dttransport() bridge client. The scripted
+ * device answers every DTT_VM_IDENTITY_QUERY (the queue-time and the send-time
+ * query, through the real listen_dttransport() reader), reassembles the
+ * bridge's DTT_ELF fragments and returns bhyve's DTT_HOST_ELF receipt.
+ *
+ * Oracles: the job succeeds (no "failed to handle job kind 1"), the bridge
+ * never logs a header error or stops the daemon, the device receives the
+ * spool bytes as a bare ELF with the minion's delivery/program/source IDs and
+ * the attested VM identity, and the minion's durable outbound token is
+ * accepted and retired after the bridge's ACK.
+ */
+static void
+test_minion_round_trip()
+{
+	writer_fixture f;
+	std::string out_path = f.tree.sub("outbound");
+	dir outbound(out_path.c_str(), &process_outbound);
+	outbound.state = &f.s;
+	f.s.outbounddir = &outbound;
+	f.start();
+	int c = f.accept_peer();
+	/* The minion's accept path: server hello, then the bridge's hello. */
+	dtd_initmsg_t server{};
+	server.kind = DTRACED_KIND_DTRACED;
+	server.protocol_version = DTRACED_PROTOCOL_VERSION;
+	size_t t;
+	CHECK(dtraced_wire_write_init(c, &server,
+	    dtraced_io_deadline_after(5000), &t) == 0);
+	dtd_initmsg_t hello{};
+	CHECK(dtraced_wire_read_init(c, &hello,
+	    dtraced_io_deadline_after(5000), &t) == 0);
+	CHECK(hello.kind == DTRACED_KIND_FORWARDER);
+	CHECK(fcntl(c, F_SETFL, O_NONBLOCK) == 0);
+	int kq = kqueue();
+	CHECK(kq >= 0);
+	{
+		client_fd bridge(kq, c, hello);
+		CHECK(bridge.enable_write(&bridge));
+		{
+			std::lock_guard clients(f.s.sockfdsmtx);
+			f.s.sockfds.insert(&bridge);
+		}
+		/* bhyve + guest driver, as seen through /dev/dttransport. */
+		std::atomic<bool> device_stop{false};
+		std::atomic<unsigned> identity_queries{0};
+		std::vector<unsigned char> uploaded;
+		dtt_entry_t first{};
+		std::atomic<bool> uploaded_done{false};
+		std::thread device([&] {
+			while (!device_stop.load()) {
+				dtt_entry_t e{};
+				if (!peer_recv(f.dev[1], e, 100))
+					continue;
+				if (e.event_kind == DTT_VM_IDENTITY_QUERY) {
+					dtt_entry_t r{};
+					r.event_kind = DTT_VM_IDENTITY;
+					r.u.installed.query_id = e.u.installed.query_id;
+					r.u.installed.vmid = 3;
+					r.u.installed.epoch = 4;
+					identity_queries++;
+					peer_send(f.dev[1], r);
+				} else if (e.event_kind == DTT_ELF) {
+					if (uploaded.empty())
+						first = e;
+					uploaded.insert(uploaded.end(), e.u.elf.data,
+					    e.u.elf.data + e.u.elf.len);
+					if (e.u.elf.hasmore)
+						continue;
+					dtt_entry_t r{};
+					r.event_kind = DTT_HOST_ELF;
+					r.u.installed.delivery_id = e.u.elf.delivery_id;
+					r.u.installed.vmid = e.u.elf.vmid;
+					r.u.installed.epoch = e.u.elf.epoch;
+					memcpy(r.u.installed.program_id,
+					    e.u.elf.program_id, 16);
+					memcpy(r.u.installed.source_id,
+					    e.u.elf.source_id, 16);
+					SHA256(uploaded.data(), uploaded.size(),
+					    r.u.installed.digest);
+					uploaded_done.store(true);
+					peer_send(f.dev[1], r);
+				}
+				/* Ingress status queries stay unanswered. */
+			}
+		});
+		/* Guest dtrace -Y's derived (linked) ELF in outbound. */
+		const char *name = "elf.11000000000000000000000000000009."
+		    "22000000000000000000000000000009";
+		auto elf = payload(3 * DTT_MAXDATALEN + 5, 0x3c);
+		{
+			int fd = openat(outbound.dirfd, name,
+			    O_CREAT | O_EXCL | O_WRONLY, 0600);
+			CHECK(fd >= 0 && write(fd, elf.data(), elf.size()) ==
+			    (ssize_t)elf.size() && close(fd) == 0);
+		}
+		struct dirent file{};
+		strlcpy(file.d_name, name, sizeof(file.d_name));
+		file.d_namlen = strlen(name);
+		file.d_type = DT_REG;
+		CHECK(process_outbound(outbound, &file));
+		job *pending = nullptr;
+		{
+			std::lock_guard jobs(f.s.joblistmtx);
+			CHECK(f.s.joblist.size() == 1);
+			pending = f.s.joblist.front();
+			f.s.joblist.clear();
+		}
+		CHECK(pending->kind == NOTIFY_ELFWRITE &&
+		    pending->connsockfd == &bridge);
+		errno = 0;
+		bool handled = state_attestation_test::handle(f.s, pending);
+		int error = errno;
+		if (!handled) {
+			fprintf(stderr, "minion: failed to handle job kind %d for "
+			    "%s: %s\n", pending->kind, bridge.ident,
+			    strerror(error));
+			abort();
+		}
+		CHECK(uploaded_done.load() && uploaded == elf);
+		/* Queue-time and send-time queries: each needs its own device credit. */
+		CHECK(identity_queries.load() == 2);
+		CHECK(first.u.elf.vmid == 3 && first.u.elf.epoch == 4 &&
+		    first.u.elf.delivery_id != 0 &&
+		    first.u.elf.program_id[0] == 0x11 &&
+		    first.u.elf.program_id[15] == 0x09 &&
+		    first.u.elf.source_id[0] == 0x22 &&
+		    memcmp(uploaded.data(), "\177ELF", 4) == 0);
+		CHECK(!f.s.shutdown.load() && !f.writer_done.load());
+		{
+			std::lock_guard lock(f.s.host_elf_mtx);
+			CHECK(f.s.host_elf_waiting == 0);
+		}
+		durable_delivery record{};
+		record.session_id = bridge.session_id;
+		record.delivery_id = first.u.elf.delivery_id;
+		record.vmid = 3;
+		record.epoch = 4;
+		memcpy(record.program_id.data(), first.u.elf.program_id, 16);
+		memcpy(record.source_id.data(), first.u.elf.source_id, 16);
+		record.peer_uid = (uint32_t)bridge.peer_uid;
+		record.peer_pid = (uint32_t)bridge.peer_pid;
+		record.scope = 2;
+		record.journal_version = 4;
+		SHA256(elf.data(), elf.size(), record.payload_digest.data());
+		int phase = outbound.delivery_status(record);
+		CHECK(phase != (int)delivery_phase::pending);
+		delete pending;
+		{
+			std::lock_guard clients(f.s.sockfdsmtx);
+			f.s.sockfds.clear();
+		}
+		device_stop.store(true);
+		device.join();
+	}
+	close(kq);
+	f.s.outbounddir = nullptr;
+}
+
 int
 main()
 {
@@ -585,6 +755,7 @@ main()
 	test_bad_frames();
 	test_device_faults();
 	test_connection_setup();
+	test_minion_round_trip();
 	printf("dtt-write: %u checks passed\n", harness_checks);
 	return (0);
 }

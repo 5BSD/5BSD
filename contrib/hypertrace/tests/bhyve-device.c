@@ -2462,8 +2462,10 @@ int main(void)
 	identity_query.pvc_node_query_id = 456;
 	struct iovec identity_iov = { &identity_query, sizeof(identity_query) };
 	sc.vsd_ready = 1;
+	/* The query batch closed the guest's host-ready gate: the device must
+	 * owe it a READY (vsd_ready 0), or the guest's next control stalls. */
 	CHECK(pci_vtdtr_control_rx(&sc, &identity_iov, 1) == 0 &&
-	    sc.vsd_ready == 1 && queue.count == 1);
+	    sc.vsd_ready == 0 && queue.count == 1);
 	receipt = pci_vtdtr_cq_dequeue(&queue);
 	CHECK(receipt->ctrl->pvc_event == VTDTR_DEVICE_NODE_ID &&
 	    receipt->ctrl->pvc_node_id == 42 &&
