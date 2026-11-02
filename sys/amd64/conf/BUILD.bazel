@@ -824,3 +824,8 @@ cc_library(name = "custom_names_kernel_opt_inet6_header", hdrs = [":opt_inet6"],
 # Parser-owned resolved input inventory, distinct from generated build files.
 filegroup(name = "generic_input_manifest", srcs = [":generic_config"],
     output_group = "manifest", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:amd64_generic_kernel_inputs.bzl", "amd64_generic_kernel_inputs")
+amd64_generic_kernel_inputs(name = "generic_link_inputs")
+filegroup(name = "generic_input_validation", srcs = [":generic_link_inputs"],
+    output_group = "validation", visibility = ["//visibility:public"])

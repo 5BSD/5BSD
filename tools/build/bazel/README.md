@@ -47643,3 +47643,13 @@ rejection pass using both Make-built and captured native config. Three native
 architecture manifests exactly match Make. See
 KERNEL-CONFIG-INVENTORY-QUALIFICATION.md. Next remains native aggregate coverage
 validation/link/post-processing/install; no full kernel/world completion claim.
+
+## Native kernel aggregation guard (2026-11-02)
+
+All 2,285 public native object groups expose exactly the 2,462 default selected
+link products. An explicit migrated catalog and ordered File provider reject
+missing/ambiguous/surplus products; parser metadata validation passes all four
+ZSTDIO/NFS_ROOT selections. Bazel host rejection tests pass separately from
+kernel artifact profiles. See KERNEL-AGGREGATE-GUARD-QUALIFICATION.md. The final
+linker must consume the validation marker and ordered Files; full kernel link,
+post-processing/install and wider system gates remain unfinished.

@@ -9917,3 +9917,10 @@ The new config -J parser inventory is build metadata, with no kernel C/assembly,
 DTrace probe or runtime audit changes. Tests exercise success and failure paths
 using Make-built and native config; native linker/runtime observability remains
 an open full-system gate. See KERNEL-CONFIG-INVENTORY-QUALIFICATION.md.
+
+## Kernel aggregate input guard (2026-11-02)
+
+The new catalog/provider/validation action changes build metadata only. No
+runtime kernel source, probes or audit calls changed. Source-level marker/code
+qualification remains in the per-object evidence; live kernel observability
+awaits a linked and booted native kernel.

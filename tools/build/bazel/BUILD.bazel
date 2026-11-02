@@ -178,3 +178,8 @@ bsd_python_test(
 # Explicit ET_REL DOF inspection must bind real symbols and patched instructions.
 bsd_python_test(name = "dtrace_relocatable_inventory_test",
     src = "dtrace-relocatable-inventory-test.py", data = ["dtrace-dof-inventory.py"])
+
+exports_files(["kernel_inventory_validate.py"])
+
+bsd_python_test(name = "kernel_inventory_validate_test",
+    src = "kernel-inventory-validate-test.py", data = ["kernel_inventory_validate.py"])
