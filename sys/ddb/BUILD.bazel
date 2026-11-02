@@ -191,3 +191,119 @@ bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["ddb.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# Debugger core built-in prerequisites.
+bsd_source_headers(name = "ddb_core_kernel_db_access_headers", hdrs = ["db_access.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_break_headers", hdrs = ["db_access.h", "db_break.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_capture_headers", hdrs = ["db_lex.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_command_headers", hdrs = ["db_command.h", "db_lex.h", "db_output.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_ctf_headers", hdrs = ["db_ctf.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_examine_headers", hdrs = ["db_access.h", "db_command.h", "db_lex.h", "db_output.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_expr_headers", hdrs = ["db_access.h", "db_command.h", "db_lex.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_input_headers", hdrs = ["db_output.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_lex_headers", hdrs = ["db_lex.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_main_headers", hdrs = ["db_command.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_output_headers", hdrs = ["db_output.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_pprint_headers", hdrs = ["db_access.h", "db_ctf.h", "db_lex.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_print_headers", hdrs = ["db_sym.h", "db_variables.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_ps_headers", hdrs = ["ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_run_headers", hdrs = ["db_access.h", "db_break.h", "db_command.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_script_headers", hdrs = ["db_command.h", "db_lex.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_sym_headers", hdrs = ["db_sym.h", "db_variables.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_thread_headers", hdrs = ["db_command.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_textdump_headers", hdrs = ["db_lex.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_variables_headers", hdrs = ["db_lex.h", "db_variables.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_watch_headers", hdrs = ["db_watch.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_write_cmd_headers", hdrs = ["db_access.h", "db_command.h", "db_sym.h", "ddb.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+
+# Native Debugger core built-ins, with source-owned compiler prerequisites.
+load("//tools/build/bazel:amd64_generic_kernel.bzl", "amd64_generic_kernel_objects")
+load("//tools/build/bazel:kernel_common.bzl", "KERNEL_BUILTIN_WARNING_FLAGS", "KERNEL_COMMON_WARNING_FLAGS")
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_access", srcs = ["db_access.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_access_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_break", srcs = ["db_break.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_break_headers", "//sys/vm:ddb_core_kernel_db_break_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_capture", srcs = ["db_capture.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_capture_headers", "//sys/amd64/conf:ddb_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_command", srcs = ["db_command.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_command_headers", "//sys/security/mac:ddb_core_kernel_db_command_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_ctf", srcs = ["db_ctf.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_ctf_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_examine", srcs = ["db_examine.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_examine_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_expr", srcs = ["db_expr.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_expr_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_input", srcs = ["db_input.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_input_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_lex", srcs = ["db_lex.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_lex_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_main", srcs = ["db_main.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_main_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_output", srcs = ["db_output.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_output_headers", "//sys/amd64/conf:ddb_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_pprint", srcs = ["db_pprint.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_pprint_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_print", srcs = ["db_print.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_print_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_ps", srcs = ["db_ps.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_ps_headers", "//sys/vm:ddb_core_kernel_db_ps_headers", "//sys/amd64/conf:ddb_core_kernel_opt_kstack_pages_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_run", srcs = ["db_run.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_run_headers", "//sys/vm:ddb_core_kernel_db_run_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_script", srcs = ["db_script.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_script_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_sym", srcs = ["db_sym.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_sym_headers", "//sys/net:ddb_core_kernel_db_sym_headers", "//sys/amd64/conf:ddb_core_kernel_opt_ddb_header", "//sys/amd64/conf:ddb_core_kernel_opt_kstack_pages_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_thread", srcs = ["db_thread.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_thread_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_textdump", srcs = ["db_textdump.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_textdump_headers", "//sys/amd64/conf:ddb_core_kernel_opt_config_header", "//sys/amd64/conf:ddb_core_kernel_opt_ddb_header"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_variables", srcs = ["db_variables.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_variables_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_watch", srcs = ["db_watch.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_watch_headers", "//sys/vm:ddb_core_kernel_db_watch_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
+amd64_generic_kernel_objects(name = "generic_ddb_core_db_write_cmd", srcs = ["db_write_cmd.c"],
+    deps = ["//sys/ddb:ddb_core_kernel_db_write_cmd_headers"],
+    warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)

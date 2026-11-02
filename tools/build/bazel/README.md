@@ -47472,3 +47472,7 @@ symbolic filename/relocation review and remaining kernel/runtime/system gates.
 22 x86 core built-ins, exact machine code/CTF and declared input checks,
 source-owned header boundaries with unchanged bhyve context, symbolic relocation
 review and remaining kernel/runtime/system gates.
+
+[DDB-CORE-KERNEL-QUALIFICATION.md](DDB-CORE-KERNEL-QUALIFICATION.md) records
+22 debugger built-ins, exact machine code/CTF and declared input checks,
+symbolic filename/relocation review and remaining debugger/runtime/system gates.

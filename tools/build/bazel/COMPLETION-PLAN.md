@@ -94,6 +94,14 @@ a full compile/link. The next 22 debugger objects have unchanged independent
 Make object/recipe/dependency references prepared; native output qualification
 is still required. Existing whole-system and performance gates remain open.
 
+The 22 debugger built-ins now pass native code/CTF/input/relocation review;
+see DDB-CORE-KERNEL-QUALIFICATION.md. Latest successful known-builtin analysis
+finds 650 source matches, six weaker name matches and 1,810 unmatched among
+2,466 Make final products. These are configured-analysis counts, not a complete
+kernel build. The next 29 ACPI drivers have unchanged independent Make object/
+recipe/dependency references prepared; native declarations/output qualification
+remain required. Full system, runtime and performance gates remain open.
+
 ## Work order
 
 1. Revalidate host, SDK and independent Make references after upgrades.

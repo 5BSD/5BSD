@@ -493,3 +493,11 @@ cc_library(name = "x86_core_kernel_opt_stack_header", hdrs = [":opt_stack"],
     strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
 cc_library(name = "x86_core_kernel_opt_watchdog_header", hdrs = [":opt_watchdog"],
     strip_include_prefix = "generic_options", visibility = ["//sys/x86/x86:__pkg__"])
+
+# Debugger core built-in prerequisites.
+cc_library(name = "ddb_core_kernel_opt_config_header", hdrs = [":opt_config"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/ddb:__pkg__"])
+cc_library(name = "ddb_core_kernel_opt_ddb_header", hdrs = [":opt_ddb"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/ddb:__pkg__"])
+cc_library(name = "ddb_core_kernel_opt_kstack_pages_header", hdrs = [":opt_kstack_pages"],
+    strip_include_prefix = "generic_options", visibility = ["//sys/ddb:__pkg__"])

@@ -1131,3 +1131,7 @@ bsd_source_headers(name = "lowlevel_kernel_machdep_headers", hdrs = ["netisr.h"]
 # x86 core built-in prerequisites.
 bsd_source_headers(name = "x86_core_kernel_autoconf_headers", hdrs = ["ethernet.h", "if.h", "if_dl.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# Debugger core built-in prerequisites.
+bsd_source_headers(name = "ddb_core_kernel_db_sym_headers", hdrs = ["vnet.h"],
+    visibility = ["//sys/ddb:__pkg__"])

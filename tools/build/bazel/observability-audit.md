@@ -9638,3 +9638,11 @@ in cpu_machdep.c and mp_x86.c, with none in 20 other selected sources. Existing
 code/probe plumbing remains unchanged. Exact code/CTF and symbolic relocations
 do not prove interrupt, CPU, SMP, clock or tracing runtime behavior. Review shared
 hooks before adding hot-path events. See X86-CORE-KERNEL-QUALIFICATION.md.
+
+## Debugger built-ins (2026-11-02)
+
+The bounded source-bound call-shaped scan finds no recognized direct tracing/
+audit/CTR calls in these 22 sources. Existing code is unchanged. This does not
+establish missing shared hooks or qualify live debugger entry/commands, CTF type
+lookup, breakpoints/watchpoints or textdump behavior. Use an isolated matching
+kernel; see DDB-CORE-KERNEL-QUALIFICATION.md for evidence and remaining gates.

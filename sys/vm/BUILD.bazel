@@ -886,3 +886,13 @@ bsd_source_headers(name = "x86_core_kernel_io_apic_headers", hdrs = ["_vm_radix.
     visibility = ["//sys/x86/x86:__pkg__"])
 bsd_source_headers(name = "x86_core_kernel_local_apic_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h"],
     visibility = ["//sys/x86/x86:__pkg__"])
+
+# Debugger core built-in prerequisites.
+bsd_source_headers(name = "ddb_core_kernel_db_break_headers", hdrs = ["vm.h", "vm_kern.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_ps_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h", "vm_param.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_run_headers", hdrs = ["vm.h"],
+    visibility = ["//sys/ddb:__pkg__"])
+bsd_source_headers(name = "ddb_core_kernel_db_watch_headers", hdrs = ["_vm_radix.h", "pmap.h", "vm.h", "vm_map.h"],
+    visibility = ["//sys/ddb:__pkg__"])

@@ -127,3 +127,7 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_output_headers", hdrs = ["mac_f
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/amd64/amd64:__pkg__"])
+
+# Debugger core built-in prerequisites.
+bsd_source_headers(name = "ddb_core_kernel_db_command_headers", hdrs = ["mac_framework.h"],
+    visibility = ["//sys/ddb:__pkg__"])
