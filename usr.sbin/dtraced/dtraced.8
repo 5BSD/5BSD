@@ -118,6 +118,16 @@ host's virtio-dtrace device assigns through
 without one it logs
 .Dq no VM identity from /dev/dttransport
 and exits.
+A minion's transport forwarder registers with its own daemon.
+When one delivery fails or that connection closes, the forwarder logs the
+failure and registers again, waiting from 50 ms up to 2 s between attempts.
+The failed delivery stays pending in the outbound journal and is replayed.
+The minion stops only when
+.Pa /dev/dttransport
+disappears or refuses a record, when transport ownership is revoked, when
+the local socket does not answer as a compatible
+.Nm ,
+or when six consecutive registration attempts fail.
 .It Fl q
 Enable quiet mode, suppressing print of status updates and errors on the
 terminal.

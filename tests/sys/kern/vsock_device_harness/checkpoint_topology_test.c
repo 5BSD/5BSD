@@ -251,11 +251,85 @@ ATF_TC_BODY(memory_geometry_is_exact_and_portable, tc)
 	ATF_CHECK_EQ(checkpoint_memory_geometry_validate(&split, 0), EINVAL);
 }
 
+/*
+ * A refused restore names the device: the counts and the first unmatched
+ * device on a cardinality mismatch, or the absent name when counts agree.
+ */
+ATF_TC_WITHOUT_HEAD(restore_mismatch_names_the_device);
+ATF_TC_BODY(restore_mismatch_names_the_device, tc)
+{
+	const char *source[] = {
+		"hostbridge@pci.0.0.0", "virtio-net@pci.0.2.0", "atkbdc"
+	};
+	const char *reordered[] = {
+		"atkbdc", "hostbridge@pci.0.0.0", "virtio-net@pci.0.2.0"
+	};
+	const char *missing[] = { "hostbridge@pci.0.0.0", "atkbdc" };
+	const char *changed[] = {
+		"hostbridge@pci.0.0.0", "virtio-net@pci.0.3.0", "atkbdc"
+	};
+	const char *extra[] = {
+		"hostbridge@pci.0.0.0", "virtio-net@pci.0.2.0", "atkbdc",
+		"virtio-rnd@pci.0.4.0"
+	};
+	const char *duplicate[] = {
+		"hostbridge@pci.0.0.0", "hostbridge@pci.0.0.0", "atkbdc"
+	};
+	char buf[256];
+
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    reordered, 3, buf, sizeof(buf)), 0);
+	ATF_CHECK_STREQ(buf, "");
+
+	/* Source has a device the destination lacks. */
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    missing, 2, buf, sizeof(buf)), ENODEV);
+	ATF_CHECK_STREQ(buf, "device count: source 3, destination 2; source "
+	    "device \"virtio-net@pci.0.2.0\" (entry 1) is absent at the "
+	    "destination");
+
+	/* Same count, device moved to another slot. */
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    changed, 3, buf, sizeof(buf)), ENODEV);
+	ATF_CHECK_STREQ(buf, "source device \"virtio-net@pci.0.2.0\" "
+	    "(entry 1) is absent at the destination");
+
+	/* Destination has a device the checkpoint lacks. */
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    extra, 4, buf, sizeof(buf)), ENODEV);
+	ATF_CHECK_STREQ(buf, "device count: source 3, destination 4; "
+	    "destination device \"virtio-rnd@pci.0.4.0\" is absent from the "
+	    "checkpoint");
+
+	/*
+	 * A caller bounds allocation to destination_count + 1 source names;
+	 * that prefix still names the difference.  Here 3 of 1000 entries
+	 * are seen against a 2-device destination.
+	 */
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 1000,
+	    missing, 2, buf, sizeof(buf)), ENODEV);
+	ATF_CHECK(strstr(buf, "device count: source 1000, destination 2; ") ==
+	    buf);
+	ATF_CHECK(strstr(buf, "\"virtio-net@pci.0.2.0\"") != NULL);
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(duplicate, 3, 3,
+	    source, 3, buf, sizeof(buf)), EEXIST);
+	ATF_CHECK_STREQ(buf, "source device \"hostbridge@pci.0.0.0\" is "
+	    "recorded more than once");
+
+	/* Truncation is safe. */
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    changed, 3, buf, 8), ENODEV);
+	ATF_CHECK_EQ(strlen(buf), 7);
+	ATF_CHECK_EQ(checkpoint_topology_describe_mismatch(source, 3, 3,
+	    changed, 3, NULL, 0), EINVAL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, exact_named_device_set);
 	ATF_TP_ADD_TC(tp, rejects_ambiguous_or_invalid_names);
+	ATF_TP_ADD_TC(tp, restore_mismatch_names_the_device);
 	ATF_TP_ADD_TC(tp, exact_record_partition);
 	ATF_TP_ADD_TC(tp, large_unordered_record_partition);
 	ATF_TP_ADD_TC(tp, exact_record_consumption);

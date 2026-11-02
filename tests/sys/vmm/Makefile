@@ -5,6 +5,7 @@ TESTSDIR=	${TESTSBASE}/sys/vmm
 BINDIR=		${TESTSDIR}
 
 ATF_TESTS_SH+=	vmm_cred_jail
+ATF_TESTS_SH+=	vmm_workdir_trust_test
 ATF_TESTS_C+=	vmm_event_ingress_test
 ATF_TESTS_C+=	vmm_startup_event_test
 ATF_TESTS_C+=	vmm_startup_mode_test

@@ -217,6 +217,18 @@ handshake(int c)
 	    memcmp(client.session_id, zero, 16) != 0);
 }
 
+/* After a failed job the bridge registers again with a fresh session; the
+ * guest daemon stays up and nothing reached the device. */
+static void
+expect_reregistered(writer_fixture &f)
+{
+	int c = f.accept_peer();
+	handshake(c);
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	CHECK(peer_quiet(f.dev[1], 10));
+	close(c);
+}
+
 static dtraced_hdr_t
 elf_header(uint64_t delivery, size_t len)
 {
@@ -321,10 +333,282 @@ test_delivery()
 		std::lock_guard lock(f.s.host_elf_mtx);
 		CHECK(f.s.host_elf_waiting == 0 && !f.s.host_elf_accepted);
 	}
-	/* The local daemon closes: the writer stops the guest daemon. */
+	/* The local daemon closes the bridge (a failed job): the writer
+	 * re-registers instead of stopping the guest daemon. */
 	close(c);
-	CHECK(f.writer_stopped());
-	CHECK(f.s.shutdown.load());
+	c = f.accept_peer();
+	handshake(c);
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	close(c);
+}
+
+/* Deliver one frame end to end over an established bridge connection. */
+static void
+deliver_one(writer_fixture &f, int c, uint64_t delivery, unsigned char seed)
+{
+	dtraced_hdr_t h = elf_header(delivery, 2 * DTT_MAXDATALEN + 9);
+	auto body = payload(h.elf.len, seed);
+	send_frame(c, h, body);
+	CHECK(collect_elf(f.dev[1], h) == body);
+	peer_send(f.dev[1], host_receipt(h, body));
+	unsigned char ack[8];
+	recv_all(c, ack, sizeof(ack));
+	CHECK(dtraced_wire_get_u64(ack) == delivery);
+}
+
+/*
+ * The real-host failure: the minion fails one job to the bridge and
+ * state::kill_socket() closes the bridge connection before any header byte.
+ * The bridge must log, re-register with a fresh session and deliver the next
+ * job; the guest daemon stays up.  The same holds when the job fails while
+ * a frame awaits the host receipt (the late receipt cannot be ACKed and
+ * cannot hold the receipt slot against the next frame).
+ */
+static void
+test_failed_job_recovers()
+{
+	writer_fixture f;
+	f.start();
+	int c = f.accept_peer();
+	handshake(c);
+	close(c);	/* failed job: kill_socket */
+	c = f.accept_peer();
+	handshake(c);
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	deliver_one(f, c, 41, 0x41);
+
+	/* Failure while the frame awaits bhyve's receipt. */
+	dtraced_hdr_t h = elf_header(42, 100);
+	auto body = payload(100, 0x42);
+	send_frame(c, h, body);
+	CHECK(collect_elf(f.dev[1], h) == body);
+	close(c);
+	peer_send(f.dev[1], host_receipt(h, body));
+	c = f.accept_peer();
+	handshake(c);
+	{
+		std::lock_guard lock(f.s.host_elf_mtx);
+		CHECK(f.s.host_elf_waiting == 0);
+	}
+	deliver_one(f, c, 43, 0x43);
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	close(c);
+}
+
+/*
+ * Conditions a reconnect cannot repair still stop the guest daemon: the
+ * dttransport device is gone, or this process no longer owns it.
+ */
+static void
+test_bridge_fatal()
+{
+	for (int e : {ENXIO, EBUSY}) {
+		writer_fixture f;
+		{
+			std::lock_guard lock(inject_mtx);
+			device_write_errors = {e};
+		}
+		f.start(false);
+		int c = f.accept_peer();
+		handshake(c);
+		send_frame(c, elf_header(5, 100), payload(100, 3));
+		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(peer_eof(c));
+		close(c);
+		std::lock_guard lock(f.s.host_elf_mtx);
+		CHECK(f.s.host_elf_waiting == 0);
+	}
+	/* A daemon that refuses every registration: bounded attempts. */
+	{
+		writer_fixture f;
+		f.start(false);
+		unsigned attempts = 0;
+		while (!f.writer_done.load()) {
+			struct pollfd p = {f.listener, POLLIN, 0};
+			if (poll(&p, 1, 100) != 1)
+				continue;
+			int r = accept(f.listener, nullptr, nullptr);
+			CHECK(r >= 0);
+			close(r);
+			++attempts;
+		}
+		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(attempts == 6);
+	}
+}
+
+/*
+ * The minion's durable outbound token survives the failed job.  The real
+ * process_outbound()/queue_elfwrite_batch() journal the token and queue the
+ * real job::send_elf() for the bridge; the daemon's end fails (the minion
+ * then kills the socket).  The bridge re-registers, the token is still
+ * pending, and the real queue_recovered_outbound() (the runtime outbound
+ * scan's replay) sends the exact token over the new registration; the
+ * bridge delivers it, ACKs, and the token is retired.
+ */
+static void
+test_failed_job_token_replayed()
+{
+	writer_fixture f;
+	std::string out_path = f.tree.sub("outbound");
+	dir outbound(out_path.c_str(), &process_outbound);
+	outbound.state = &f.s;
+	f.s.outbounddir = &outbound;
+	f.start();
+	auto accept_bridge = [&f]() {
+		int c = f.accept_peer();
+		dtd_initmsg_t server{};
+		server.kind = DTRACED_KIND_DTRACED;
+		server.protocol_version = DTRACED_PROTOCOL_VERSION;
+		size_t t;
+		CHECK(dtraced_wire_write_init(c, &server,
+		    dtraced_io_deadline_after(5000), &t) == 0);
+		dtd_initmsg_t hello{};
+		CHECK(dtraced_wire_read_init(c, &hello,
+		    dtraced_io_deadline_after(5000), &t) == 0);
+		CHECK(hello.kind == DTRACED_KIND_FORWARDER);
+		CHECK(fcntl(c, F_SETFL, O_NONBLOCK) == 0);
+		return (std::make_pair(c, hello));
+	};
+	/* bhyve + guest driver as seen through /dev/dttransport. */
+	std::atomic<bool> device_stop{false};
+	std::mutex device_mtx;
+	std::vector<unsigned char> uploaded;
+	uint64_t uploaded_id = 0;
+	std::atomic<bool> uploaded_done{false};
+	std::thread device([&] {
+		std::vector<unsigned char> partial;
+		while (!device_stop.load()) {
+			dtt_entry_t e{};
+			if (!peer_recv(f.dev[1], e, 100))
+				continue;
+			if (e.event_kind == DTT_VM_IDENTITY_QUERY) {
+				dtt_entry_t r{};
+				r.event_kind = DTT_VM_IDENTITY;
+				r.u.installed.query_id = e.u.installed.query_id;
+				r.u.installed.vmid = 3;
+				r.u.installed.epoch = 4;
+				peer_send(f.dev[1], r);
+			} else if (e.event_kind == DTT_ELF) {
+				partial.insert(partial.end(), e.u.elf.data,
+				    e.u.elf.data + e.u.elf.len);
+				if (e.u.elf.hasmore)
+					continue;
+				dtt_entry_t r{};
+				r.event_kind = DTT_HOST_ELF;
+				r.u.installed.delivery_id = e.u.elf.delivery_id;
+				r.u.installed.vmid = e.u.elf.vmid;
+				r.u.installed.epoch = e.u.elf.epoch;
+				memcpy(r.u.installed.program_id, e.u.elf.program_id, 16);
+				memcpy(r.u.installed.source_id, e.u.elf.source_id, 16);
+				SHA256(partial.data(), partial.size(),
+				    r.u.installed.digest);
+				{
+					std::lock_guard lock(device_mtx);
+					uploaded.swap(partial);
+					uploaded_id = e.u.elf.delivery_id;
+				}
+				partial.clear();
+				uploaded_done.store(true);
+				peer_send(f.dev[1], r);
+			}
+			/* Ingress status queries stay unanswered. */
+		}
+	});
+	int kq = kqueue();
+	CHECK(kq >= 0);
+	const char *name = "elf.13000000000000000000000000000007."
+	    "24000000000000000000000000000007";
+	auto elf = payload(2 * DTT_MAXDATALEN + 11, 0x5a);
+	{
+		int fd = openat(outbound.dirfd, name, O_CREAT | O_EXCL | O_WRONLY,
+		    0600);
+		CHECK(fd >= 0 && write(fd, elf.data(), elf.size()) ==
+		    (ssize_t)elf.size() && close(fd) == 0);
+	}
+	auto first = accept_bridge();
+	{
+		client_fd bridge(kq, first.first, first.second);
+		CHECK(bridge.enable_write(&bridge));
+		{
+			std::lock_guard clients(f.s.sockfdsmtx);
+			f.s.sockfds.insert(&bridge);
+		}
+		struct dirent file{};
+		strlcpy(file.d_name, name, sizeof(file.d_name));
+		file.d_namlen = strlen(name);
+		file.d_type = DT_REG;
+		CHECK(process_outbound(outbound, &file));
+		job *pending = nullptr;
+		{
+			std::lock_guard jobs(f.s.joblistmtx);
+			CHECK(f.s.joblist.size() == 1);
+			pending = f.s.joblist.front();
+			f.s.joblist.clear();
+		}
+		CHECK(pending->kind == NOTIFY_ELFWRITE &&
+		    pending->connsockfd == &bridge);
+		/* The job fails on this connection; the minion kills it. */
+		CHECK(shutdown(first.first, SHUT_RDWR) == 0);
+		CHECK(!pending->send_elf());
+		delete pending;
+		std::lock_guard clients(f.s.sockfdsmtx);
+		f.s.sockfds.erase(&bridge);
+	}	/* ~client_fd closes the socket, as kill_socket does */
+	CHECK(!uploaded_done.load());
+
+	/* The token of the failed job is recorded, not lost. */
+	std::vector<durable_delivery_state> records;
+	CHECK(outbound.list_deliveries(records));
+	durable_delivery token{};
+	unsigned pending_tokens = 0;
+	for (const auto &entry : records)
+		if (entry.record.scope == 2 &&
+		    entry.phase == delivery_phase::pending) {
+			token = entry.record;
+			++pending_tokens;
+		}
+	CHECK(pending_tokens == 1);
+	CHECK(outbound.delivery_status(token) == (int)delivery_phase::pending);
+
+	/* The bridge re-registers instead of stopping the guest daemon. */
+	auto second = accept_bridge();
+	CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+	CHECK(memcmp(second.second.session_id, first.second.session_id,
+	    sizeof(first.second.session_id)) != 0);
+	{
+		client_fd bridge(kq, second.first, second.second);
+		CHECK(bridge.enable_write(&bridge));
+		{
+			std::lock_guard clients(f.s.sockfdsmtx);
+			f.s.sockfds.insert(&bridge);
+		}
+		CHECK(outbound.queue_recovered_outbound(token, 3, 4) == 1);
+		job *replay = nullptr;
+		{
+			std::lock_guard jobs(f.s.joblistmtx);
+			CHECK(f.s.joblist.size() == 1);
+			replay = f.s.joblist.front();
+			f.s.joblist.clear();
+		}
+		CHECK(replay->connsockfd == &bridge);
+		CHECK(replay->send_elf());
+		delete replay;
+		{
+			std::lock_guard lock(device_mtx);
+			CHECK(uploaded_done.load() && uploaded == elf &&
+			    uploaded_id == token.delivery_id);
+		}
+		CHECK(outbound.delivery_status(token) !=
+		    (int)delivery_phase::pending);
+		CHECK(!f.writer_done.load() && !f.s.shutdown.load());
+		std::lock_guard clients(f.s.sockfdsmtx);
+		f.s.sockfds.erase(&bridge);
+	}
+	device_stop.store(true);
+	device.join();
+	close(kq);
+	f.s.outbounddir = nullptr;
 }
 
 static void
@@ -345,6 +629,8 @@ test_bad_frames()
 		    h.kill.pid = 5; h.kill.vmid = 1; h.kill.epoch = 1;
 		    h.kill.source_id[0] = 1; },
 	};
+	/* A refused frame fails that job only: nothing reaches the device,
+	 * the bridge re-registers and the guest daemon stays up. */
 	for (edit_t edit : edits) {
 		writer_fixture f;
 		f.start(false);
@@ -353,9 +639,9 @@ test_bad_frames()
 		dtraced_hdr_t h = elf_header(9, 64);
 		edit(h);
 		send_frame(c, h, {});
-		CHECK(f.writer_stopped());
-		CHECK(f.s.shutdown.load() && peer_quiet(f.dev[1], 10));
+		CHECK(peer_eof(c));
 		close(c);
+		expect_reregistered(f);
 	}
 	{	/* undecodable header */
 		writer_fixture f;
@@ -365,8 +651,9 @@ test_bad_frames()
 		unsigned char wire[DTRACED_MSGHDRSIZE] = {};
 		wire[0] = 0xee;
 		send_all(c, wire, sizeof(wire));
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(peer_eof(c));
 		close(c);
+		expect_reregistered(f);
 	}
 	{	/* truncated header */
 		writer_fixture f;
@@ -376,7 +663,7 @@ test_bad_frames()
 		unsigned char wire[10] = {1};
 		send_all(c, wire, sizeof(wire));
 		close(c);
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		expect_reregistered(f);
 	}
 	{	/* payload is not ELF; truncated payload */
 		for (int variant = 0; variant < 2; ++variant) {
@@ -391,8 +678,9 @@ test_bad_frames()
 			send_frame(c, h, body, variant == 0 ? SIZE_MAX : 10);
 			if (variant == 1)
 				close(c);
-			CHECK(f.writer_stopped() && f.s.shutdown.load());
-			CHECK(peer_quiet(f.dev[1], 10));
+			else
+				CHECK(peer_eof(c));
+			expect_reregistered(f);
 			if (variant == 0)
 				close(c);
 		}
@@ -435,7 +723,7 @@ test_device_faults()
 		recv_all(c, ack, sizeof(ack));
 		CHECK(dtraced_wire_get_u64(ack) == 5);
 		close(c);
-		CHECK(f.writer_stopped());
+		expect_reregistered(f);
 	}
 	/* A hard device error or a partial record stops the writer. */
 	for (int e : {EIO, -1}) {
@@ -518,23 +806,27 @@ test_device_faults()
 		CHECK(collect_elf(f.dev[1], h) == body);
 		close(c);
 		peer_send(f.dev[1], host_receipt(h, body));
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		/* The ACK cannot be written: that job fails and the bridge
+		 * re-registers; its token stays pending at the daemon. */
+		expect_reregistered(f);
+		std::lock_guard lock(f.s.host_elf_mtx);
+		CHECK(f.s.host_elf_waiting == 0);
 	}
 }
 
 static void
 test_connection_setup()
 {
-	{	/* socket creation fails */
+	{	/* socket creation fails once: the next attempt registers */
 		writer_fixture f;
 		socket_errno.store(EMFILE);
 		f.start(false);
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		expect_reregistered(f);
 	}
-	{	/* no daemon socket */
+	{	/* no daemon socket: bounded attempts, then a clean stop */
 		writer_fixture f(false);
 		f.start(false);
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		CHECK(f.writer_stopped(10000) && f.s.shutdown.load());
 	}
 	{	/* socket thread never reports readiness; shutdown releases */
 		writer_fixture f;
@@ -553,7 +845,7 @@ test_connection_setup()
 		writer_fixture f;
 		f.start(false);
 		close(f.accept_peer());
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		expect_reregistered(f);
 	}
 	{	/* non-canonical server hello */
 		writer_fixture f;
@@ -580,7 +872,7 @@ test_connection_setup()
 		CHECK(dtraced_wire_write_init(c, &hello,
 		    dtraced_io_deadline_after(5000), &t) == 0);
 		close(c);
-		CHECK(f.writer_stopped() && f.s.shutdown.load());
+		expect_reregistered(f);
 	}
 }
 
@@ -753,6 +1045,9 @@ main()
 	signal(SIGPIPE, SIG_IGN);
 	test_delivery();
 	test_bad_frames();
+	test_failed_job_recovers();
+	test_bridge_fatal();
+	test_failed_job_token_replayed();
 	test_device_faults();
 	test_connection_setup();
 	test_minion_round_trip();

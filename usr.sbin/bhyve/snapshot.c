@@ -865,7 +865,8 @@ vm_restore_named_topology(struct restore_state *rstate, const char *key,
 	const char **source;
 	ucl_object_iter_t iterator;
 	const char *name;
-	size_t source_capacity, source_count;
+	char reason[256];
+	size_t collect, source_capacity, source_count;
 	int error;
 
 	entries = ucl_object_lookup(rstate->meta_root_obj, key);
@@ -876,40 +877,55 @@ vm_restore_named_topology(struct restore_state *rstate, const char *key,
 	source_capacity = ucl_array_size(entries);
 	/*
 	 * The destination topology is already known and is the authoritative
-	 * bound for this array.  Reject a cardinality mismatch before allocating
-	 * storage controlled by checkpoint metadata.  Besides failing earlier,
-	 * this bounds the duplicate-name and record-layout validation which
-	 * follows to the actual machine topology.
+	 * bound for this array.  Never allocate more than one entry beyond it
+	 * from checkpoint metadata: on a cardinality mismatch, destination_count
+	 * + 1 source names always suffice to name the first unmatched device,
+	 * and the validation proper only runs when the counts agree.
 	 */
-	if (source_capacity != destination_count)
-		return (ENODEV);
-	if (source_capacity > SIZE_MAX / sizeof(*source))
+	if (destination_count >= SIZE_MAX / sizeof(*source))
 		return (EOVERFLOW);
-	source = calloc(source_capacity, sizeof(*source));
-	if (source_capacity != 0 && source == NULL)
+	collect = source_capacity;
+	if (collect > destination_count + 1)
+		collect = destination_count + 1;
+	source = calloc(collect != 0 ? collect : 1, sizeof(*source));
+	if (source == NULL)
 		return (ENOMEM);
 
 	iterator = NULL;
 	source_count = 0;
-	while ((object = ucl_object_iterate(entries, &iterator, true)) != NULL) {
+	error = 0;
+	while (source_count < collect &&
+	    (object = ucl_object_iterate(entries, &iterator, true)) != NULL) {
 		const ucl_object_t *field;
 
-		if (source_count == source_capacity) {
-			error = EINVAL;
-			goto done;
-		}
 		field = ucl_object_lookup(object, JSON_SNAPSHOT_REQ_KEY);
 		if (field == NULL || !ucl_object_tostring_safe(field, &name)) {
+			EPRINTLN("Checkpoint '%s' entry %zu has no device name",
+			    key, source_count);
 			error = EINVAL;
 			goto done;
 		}
 		source[source_count++] = name;
 	}
-	error = checkpoint_topology_validate(source, source_count, destination,
-	    destination_count);
-	if (error != 0)
-		EPRINTLN("Checkpoint '%s' topology is incompatible: %s", key,
-		    strerror(error));
+	if (source_count != collect) {
+		error = EINVAL;
+		goto done;
+	}
+	if (source_capacity != destination_count)
+		error = ENODEV;
+	else
+		error = checkpoint_topology_validate(source, source_count,
+		    destination, destination_count);
+	if (error != 0) {
+		if (checkpoint_topology_describe_mismatch(source, source_count,
+		    source_capacity, destination, destination_count, reason,
+		    sizeof(reason)) != 0 && reason[0] != '\0')
+			EPRINTLN("Checkpoint '%s' topology is incompatible: %s",
+			    key, reason);
+		else
+			EPRINTLN("Checkpoint '%s' topology is incompatible: %s",
+			    key, strerror(error));
+	}
 
 done:
 	free(source);
@@ -1996,6 +2012,8 @@ out:
 	return (error);
 }
 
+static int vm_restore_device_compatibility(struct restore_state *);
+
 static int
 vm_restore_machine_topology_digest(struct restore_state *rstate)
 {
@@ -2030,7 +2048,15 @@ vm_restore_machine_topology_digest(struct restore_state *rstate)
 	if (error != 0)
 		return (error);
 	if (strcmp(source, destination) != 0) {
-		EPRINTLN("Checkpoint machine topology is incompatible");
+		/*
+		 * The digest covers device names and their compatibility
+		 * contracts.  Name the device and field which differ: the
+		 * per-device compatibility check logs the first one it refuses.
+		 */
+		if (vm_restore_device_compatibility(rstate) == 0)
+			EPRINTLN("Checkpoint machine topology is incompatible "
+			    "(digest: source %s, destination %s)", source,
+			    destination);
 		return (ENOTSUP);
 	}
 	return (0);
@@ -2108,16 +2134,23 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 	int64_t version;
 	uint64_t value;
 	int error;
+	const char *stage;
+	char reason[160];
 
 	basic = lookup_basic_metadata_object(rstate);
 	if (basic == NULL)
 		return (EINVAL);
+	version = -1;
 	field = ucl_object_lookup(basic, JSON_COMPAT_VERSION_KEY);
 	if (field == NULL)
 		return (EINVAL);
 	if (!ucl_object_toint_safe(field, &version) ||
-	    version != PCI_SNAPSHOT_COMPAT_SCHEMA)
+	    version != PCI_SNAPSHOT_COMPAT_SCHEMA) {
+		EPRINTLN("Checkpoint device compatibility schema is "
+		    "unsupported: source %jd, destination %d",
+		    (intmax_t)version, PCI_SNAPSHOT_COMPAT_SCHEMA);
 		return (ENOTSUP);
+	}
 
 	pdi = NULL;
 	while ((pdi = pci_next(pdi)) != NULL) {
@@ -2128,14 +2161,26 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 		field = ucl_object_lookup(object, JSON_COMPAT_SCHEMA_KEY);
 		error = pci_snapshot_compat(pdi, &destination);
 		if (error == ENOENT) {
-			if (field != NULL)
+			if (field != NULL) {
+				EPRINTLN("Checkpoint device '%s' is "
+				    "incompatible: checkpoint carries a "
+				    "compatibility record but the destination "
+				    "device has no contract", pdi->pi_name);
 				return (ENOTSUP);
+			}
 			continue;
 		}
-		if (error != 0 || field == NULL)
+		if (error != 0 || field == NULL) {
+			EPRINTLN("Checkpoint device '%s' is incompatible: %s",
+			    pdi->pi_name, error != 0 ? "destination contract is "
+			    "unavailable" : "checkpoint has no compatibility "
+			    "record for a device that requires one");
 			return (error != 0 ? error : EINVAL);
+		}
 
 		memset(&source, 0, sizeof(source));
+		stage = NULL;
+		reason[0] = '\0';
 		error = vm_restore_compat_uint(object, JSON_COMPAT_SCHEMA_KEY,
 		    UINT32_MAX, &value);
 		if (error == 0)
@@ -2192,24 +2237,39 @@ vm_restore_device_compatibility(struct restore_state *rstate)
 		if (error == 0)
 			error = checkpoint_compat_decode(record, record_size,
 			    &payload);
-		if (error == 0 &&
-		    payload.payload_crc32 != checkpoint_compat_payload_crc32(
-		    (const uint8_t *)record +
-		    CHECKPOINT_COMPAT_ENVELOPE_SIZE,
-		    record_size - CHECKPOINT_COMPAT_ENVELOPE_SIZE))
-			error = EINVAL;
-		if (error == 0 &&
-		    !checkpoint_compat_equal(&source, &payload))
-			error = EINVAL;
-		if (error == 0)
-			error = pci_snapshot_compat_validate(&payload,
-			    &destination);
-		if (error == 0 && pci_vtdtr_checkpoint_is_device(pdi))
-			error = pci_vtdtr_checkpoint_features_validate(
-			    payload.negotiated_features);
 		if (error != 0) {
-			EPRINTLN("Checkpoint device '%s' is incompatible: %s",
-			    pdi->pi_name, strerror(error));
+			stage = "payload envelope is unreadable";
+		} else if (payload.payload_crc32 !=
+		    checkpoint_compat_payload_crc32((const uint8_t *)record +
+		    CHECKPOINT_COMPAT_ENVELOPE_SIZE,
+		    record_size - CHECKPOINT_COMPAT_ENVELOPE_SIZE)) {
+			stage = "payload CRC32 does not match its envelope";
+			error = EINVAL;
+		} else if (!checkpoint_compat_equal(&source, &payload)) {
+			/* source: checkpoint metadata; destination: payload. */
+			checkpoint_compat_describe_mismatch(&source, &payload,
+			    true, reason, sizeof(reason));
+			stage = "metadata disagrees with the payload envelope";
+			error = EINVAL;
+		} else if ((error = pci_snapshot_compat_validate(&payload,
+		    &destination)) != 0) {
+			checkpoint_compat_describe_mismatch(&payload,
+			    &destination, false, reason, sizeof(reason));
+			stage = "device contract differs from the destination";
+		} else if (pci_vtdtr_checkpoint_is_device(pdi) &&
+		    (error = pci_vtdtr_checkpoint_features_validate(
+		    payload.negotiated_features)) != 0) {
+			snprintf(reason, sizeof(reason),
+			    "negotiated_features %#jx",
+			    (uintmax_t)payload.negotiated_features);
+			stage = "virtio-dtrace features are not restorable";
+		}
+		if (error != 0) {
+			EPRINTLN("Checkpoint device '%s' is incompatible: %s%s%s "
+			    "(%s)", pdi->pi_name,
+			    stage != NULL ? stage : "compatibility metadata is "
+			    "invalid", reason[0] != '\0' ? ": " : "", reason,
+			    strerror(error));
 			return (error);
 		}
 	}

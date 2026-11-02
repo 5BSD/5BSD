@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -151,4 +152,94 @@ checkpoint_compat_equal(const struct pci_snapshot_compat *left,
 	    sizeof(left->queue_sizes)) == 0 &&
 	    memcmp(left->shared_memory, right->shared_memory,
 	    sizeof(left->shared_memory)) == 0);
+}
+
+/*
+ * Name the first compatibility field on which a restore refused a device,
+ * for the restore log.  With "exact", every field must be equal (the
+ * checkpoint metadata against the payload's own envelope); otherwise the
+ * rules of pci_snapshot_compat_validate() apply (source against the
+ * destination device).  Returns 0 with an empty string when nothing differs.
+ */
+int
+checkpoint_compat_describe_mismatch(const struct pci_snapshot_compat *source,
+    const struct pci_snapshot_compat *destination, bool exact, char *buf,
+    size_t len)
+{
+	const struct pci_snapshot_compat *s, *d;
+
+	if (buf == NULL || len == 0)
+		return (EINVAL);
+	buf[0] = '\0';
+	if (source == NULL || destination == NULL)
+		return (EINVAL);
+	s = source;
+	d = destination;
+#define	DESCRIBE_COMPAT_FIELD(field)					\
+	if (s->field != d->field) {					\
+		snprintf(buf, len, #field ": source %#jx, destination %#jx",\
+		    (uintmax_t)s->field, (uintmax_t)d->field);		\
+		return (ENOTSUP);					\
+	}
+#define	DESCRIBE_COMPAT_SHAPE(field)					\
+	if (!checkpoint_compat_string_is_canonical(s->field,		\
+	    sizeof(s->field)) ||					\
+	    !checkpoint_compat_string_is_canonical(d->field,		\
+	    sizeof(d->field))) {					\
+		snprintf(buf, len, #field ": not a canonical shape");	\
+		return (EINVAL);					\
+	}								\
+	if (memcmp(s->field, d->field, sizeof(s->field)) != 0) {	\
+		snprintf(buf, len, #field ": source \"%.*s\", "		\
+		    "destination \"%.*s\"", (int)sizeof(s->field),	\
+		    s->field, (int)sizeof(d->field), d->field);		\
+		return (ENOTSUP);					\
+	}
+	if (exact) {
+		DESCRIBE_COMPAT_FIELD(schema)
+	} else if (s->schema != PCI_SNAPSHOT_COMPAT_SCHEMA ||
+	    d->schema != PCI_SNAPSHOT_COMPAT_SCHEMA) {
+		snprintf(buf, len, "schema: source %u, destination %u, "
+		    "supported %u", s->schema, d->schema,
+		    PCI_SNAPSHOT_COMPAT_SCHEMA);
+		return (EINVAL);
+	}
+	if (!exact && (s->negotiated_features & ~s->offered_features) != 0) {
+		snprintf(buf, len, "negotiated_features: source negotiated "
+		    "%#jx which it did not offer (offered %#jx)",
+		    (uintmax_t)(s->negotiated_features & ~s->offered_features),
+		    (uintmax_t)s->offered_features);
+		return (EINVAL);
+	}
+	DESCRIBE_COMPAT_FIELD(transport)
+	DESCRIBE_COMPAT_FIELD(queue_count)
+	DESCRIBE_COMPAT_FIELD(msix_table_count)
+	DESCRIBE_COMPAT_FIELD(config_size)
+	DESCRIBE_COMPAT_SHAPE(queue_sizes)
+	DESCRIBE_COMPAT_SHAPE(shared_memory)
+	if (exact) {
+		DESCRIBE_COMPAT_FIELD(offered_features)
+		DESCRIBE_COMPAT_FIELD(negotiated_features)
+		DESCRIBE_COMPAT_FIELD(payload_crc32)
+		return (0);
+	}
+#undef DESCRIBE_COMPAT_SHAPE
+#undef DESCRIBE_COMPAT_FIELD
+	if ((s->offered_features & ~d->offered_features) != 0) {
+		snprintf(buf, len, "offered_features: source %#jx, destination "
+		    "%#jx (destination lacks %#jx)",
+		    (uintmax_t)s->offered_features,
+		    (uintmax_t)d->offered_features,
+		    (uintmax_t)(s->offered_features & ~d->offered_features));
+		return (ENOTSUP);
+	}
+	if ((s->negotiated_features & ~d->offered_features) != 0) {
+		snprintf(buf, len, "negotiated_features: source %#jx, "
+		    "destination offers %#jx (lacks %#jx)",
+		    (uintmax_t)s->negotiated_features,
+		    (uintmax_t)d->offered_features,
+		    (uintmax_t)(s->negotiated_features & ~d->offered_features));
+		return (ENOTSUP);
+	}
+	return (0);
 }
