@@ -534,3 +534,6 @@ config_setting(name = "pam_radius_selected", flag_values = {":radius_support": "
 
 bool_flag(name = "ftp", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "ftp_enabled", flag_values = {":ftp": "true"}, visibility = ["//visibility:public"])
+
+# Base kernel KODIR is distinct from standalone ports/module KMODDIR.
+string_flag(name = "kernel_base_directory", build_setting_default = "/boot/kernel", visibility = ["//visibility:public"])

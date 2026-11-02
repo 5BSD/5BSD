@@ -3928,6 +3928,25 @@ Make/Bazel CTF dump equality alone does not establish correct associations.
 Fuzzy name matching remains unsupported. This establishes static nullfs
 artifact qualification, not complete module, publication or runtime qualification.
 
+
+.Pp
+.Dq //sys/amd64/conf:install_manifest
+and its
+.Dq install_manifest_archive
+and
+.Dq install_manifest_metadata
+siblings describe and stage the base GENERIC kernel, separate debug file and
+GDB scripts. The format-5 string setting
+.Dq //tools/build/bazel/config:kernel_base_directory
+defaults to /boot/kernel, independently of the standalone module directory.
+The existing kernel_debug_directory prefix also applies here; an empty prefix
+places debug files beside the kernel. Empty base paths and directory traversal
+are rejected. The kernel_debug boolean omits debug files and scripts when false.
+Default, alternate and colocated-debug staging match original Make file
+inventories, scripts, ownership and modes with controlled kernel/debug checks.
+This does not qualify kernel package creation, combined module installation,
+arbitrary kernel names, host installation or VM boot.
+
 .Ss Native LLVM component settings
 The format-5 build-settings keys
 .Cm //tools/build/bazel/config:llvm_assertions

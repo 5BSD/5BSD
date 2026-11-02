@@ -13,9 +13,12 @@ objects match code/allocated data/CTF, and the linked full/runtime kernels match
 and merged CTF. The comparison found and fixed the initial helper DSO build-path
 DT_NEEDED defect; old artifacts fail the new test. See
 [FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
-Next kernel work is native installation/pkgbase metadata and module/configuration/
-architecture qualification, followed by VM/runtime and performance gates. Full
-world and bootstrap/publication remain open; Make stays production/default.
+Native kernel installation now also matches original Make staging in default,
+alternate and colocated-debug layouts; see
+[KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
+Next kernel work is pkgbase integration and module/configuration/architecture
+qualification, followed by VM/runtime and performance gates. Full world and
+bootstrap/publication remain open; Make stays production/default.
 Earlier component checkpoints below are retained historical evidence.
 
 ## Current resumption (2026-11-02)

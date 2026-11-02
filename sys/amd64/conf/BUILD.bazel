@@ -863,3 +863,6 @@ bsd_debug_split(
 )
 filegroup(name = "generic_kernel_debug", srcs = [":generic_kernel"], output_group = "debug_files",
     visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_kernel_installation.bzl", "kernel_installation")
+kernel_installation(name = "install_manifest", kernel = ":generic_kernel", debug = ":generic_kernel_debug", epoch = 0)
