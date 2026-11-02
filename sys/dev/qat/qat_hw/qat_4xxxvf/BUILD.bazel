@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["adf_4xxxvf_hw_data.h"], includes = [],
+    visibility = ["//sys/dev/qat/qat_hw/qat_4xxxvf:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "qat_hw_qat_4xxxvf_adf_4xxxvf_hw_data_module", srcs = ["adf_4xxxvf_hw_data.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:x86_core_kernel_msi_headers", "//sys/dev/qat/qat_hw/qat_4xxxvf:final_drivers_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_qat_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:final_drivers_module_context_43", "//sys/dev/qat/include:final_drivers_module_context_25", "//sys/dev/qat/include/common:final_drivers_module_context_23"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "qat_hw_qat_4xxxvf_adf_drv_module", srcs = ["adf_drv.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/net:linuxkpi_kernel_linux_acpi_headers", "//sys/netinet:linuxkpi_kernel_linux_80211_fullmac_headers", "//sys/netinet6:net_kernel_if_ethersubr_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/dev/qat/qat_hw/qat_4xxxvf:final_drivers_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/amd64/conf:final_drivers_module_opt_qat_header", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:final_drivers_module_context_43", "//sys/dev/qat/include:final_drivers_module_context_23", "//sys/dev/qat/include/common:final_drivers_module_context_22"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

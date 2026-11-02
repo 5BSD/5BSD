@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_pfvf_msg.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/device:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__", "//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_pfvf_msg.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/stubs:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_access_macros.h", "adf_transport_internal.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/qat_kernel/src:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_access_macros.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_sysctl.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_access_macros.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_cleanup.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_access_macros.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_cleanup.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_gen2_hw_data.h", "adf_pfvf_msg.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_gen4_hw_data.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_200xx:__pkg__", "//sys/dev/qat/qat_hw/qat_c3xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c62x:__pkg__", "//sys/dev/qat/qat_hw/qat_dh895xcc:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_pfvf_msg.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_pfvf_msg.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_pfvf_utils.h", "adf_transport.h", "adf_transport_access_macros.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_pfvf_utils.h", "adf_pfvf_vf_proto.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_pfvf_msg.h", "adf_pfvf_utils.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_pfvf_vf_proto.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_common:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_gen2_hw_data.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_hw/qat_200xx:__pkg__", "//sys/dev/qat/qat_hw/qat_c3xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c62x:__pkg__", "//sys/dev/qat/qat_hw/qat_dh895xcc:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_gen4_hw_data.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_hw/qat_4xxx:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_22", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_gen4_hw_data.h", "adf_pfvf_msg.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h", "sal_statistics_strings.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_hw/qat_4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_4xxxvf:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_23", hdrs = ["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_pfvf_vf_proto.h", "adf_transport.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_hw/qat_4xxxvf:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_24", hdrs = ["adf_accel_devices.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_pfvf_msg.h", "adf_transport.h", "adf_transport_internal.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__"])
+
+exports_files(["adf_accel_devices.h", "adf_cfg.h", "adf_cfg_common.h", "adf_cfg_strings.h", "adf_cfg_user.h", "adf_common_drv.h", "adf_gen4_hw_data.h", "adf_pfvf_msg.h", "adf_pfvf_utils.h", "adf_uio.h", "adf_uio_control.h", "icp_qat_fw_loader_handle.h", "icp_qat_hal.h", "icp_qat_uclo.h", "qat_freebsd.h"], visibility = ["//sys/dev/qat/include:__pkg__"])

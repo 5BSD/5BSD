@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "qat", objects = ["//sys/dev/qat/qat:qat_qat_ocf_module_object_files", "//sys/dev/qat/qat:qat_qat_ocf_mem_pool_module_object_files", "//sys/dev/qat/qat:qat_qat_ocf_utils_module_object_files"], object_order = ["qat_ocf.o", "qat_ocf_mem_pool.o", "qat_ocf_utils.o"], exports = [], export_all = False, package = "kernel", aliases = [], ctf_object_paths = [])

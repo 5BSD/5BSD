@@ -12,3 +12,11 @@ load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
 amd64_generic_module_objects(name = "sgx_linux_sgx_linux_module", srcs = ["sgx_linux.c"],
     deps = ["//sys/amd64/include:compat_services_linux_headers", "//sys/vm:core_kernel_imgact_shell_headers", "//sys/amd64/linux:hardware_module_aac_linux_headers", "//sys/compat/linux:hardware_module_aac_linux_headers", "//sys/amd64/sgx:compat_services_module_context_0"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sgx_sgx_module", srcs = ["sgx.c"],
+    deps = ["//sys/vm:final_drivers_module_context_7", "//sys/amd64/sgx:compat_services_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "sgx_sgx_support_module", srcs = ["sgx_support.S"],
+    deps = ["//sys/amd64/sgx:compat_services_module_context_0", "//sys/kern:generic_assym_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-x", "assembler-with-cpp"], local_defines = ["LOCORE"], header_overrides = [], preinclude_headers = [], textual_hdrs = [], convert_ctf = False)

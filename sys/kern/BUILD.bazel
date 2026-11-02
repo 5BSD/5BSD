@@ -737,7 +737,7 @@ amd64_generic_kernel_objects(name = "generic_core_uipc_vsock_user", srcs = ["uip
     warning_flags = KERNEL_BUILTIN_WARNING_FLAGS)
 
 cc_library(name = "generic_assym_header", hdrs = [":generic_assym"],
-    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__", "//sys/cddl/dev/dtrace:__pkg__"])
+    strip_include_prefix = "generic_layout", visibility = ["//sys/amd64/amd64:__pkg__", "//sys/dev/hyperv/vmbus:__pkg__", "//sys/amd64/acpica:__pkg__", "//sys/cddl/dev/dtrace:__pkg__", "//sys/amd64/sgx:__pkg__"])
 
 # Low-level amd64 built-in prerequisites.
 bsd_source_headers(name = "lowlevel_kernel_trap_headers", hdrs = ["subr_syscall.c"],

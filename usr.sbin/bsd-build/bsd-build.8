@@ -3920,6 +3920,15 @@ profile because its definedness affects module stripping. Another Make profile m
 Individual source groups retain original custom-recipe exceptions: a source
 that Make does not pass through ctfconvert may explicitly skip conversion.
 Such an exception does not enable CTF when kernel_ctf is disabled.
+The RTWN module option header uses the format-5 boolean
+.Dq //tools/build/bazel/config:sourceless_ucode ,
+which defaults to true, matching MK_SOURCELESS_UCODE=yes.
+The false value adds RTWN_WITHOUT_UCODE to the module-owned header;
+the original RTWN_DEBUG definition remains in both cases.
+This header is produced by the module policy rather than inferred from the
+possibly empty GENERIC kernel option header.
+Other firmware selection and nondefault module configurations still require
+separate qualification.
 These settings do not infer arbitrary src.conf configuration. Setting changes
 preserve compiled payloads.
 Package assembly, complete module coverage and runtime qualification

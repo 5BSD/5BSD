@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["lac_sal_ctrl.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_string_parse.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_mem.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["lac_common.h", "lac_mem.h", "lac_sync.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_sal_types.h", "lac_sync.h", "sal_service_state.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_sal.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["lac_common.h", "lac_mem.h", "sal_string_parse.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["lac_common.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_string_parse.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["lac_common.h", "lac_hooks.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h", "sal_string_parse.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_22", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_hooks.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_string_parse.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_23", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_24", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "sal_qat_cmn_msg.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/qat_comms:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_25", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_hooks.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_26", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_27", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_28", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_ctrl.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_string_parse.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_29", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_30", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_31", hdrs = ["lac_buffer_desc.h", "lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_32", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_33", hdrs = ["lac_common.h", "lac_mem_pools.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_34", hdrs = ["lac_common.h", "lac_log.h", "lac_mem_pools.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_35", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_36", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_string_parse.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_37", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_38", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_hw_gen.h", "sal_qat_cmn_msg.h", "sal_statistics.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_39", hdrs = ["lac_common.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_statistics.h", "sal_string_parse.h", "sal_types_compression.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_40", hdrs = ["lac_common.h", "lac_hooks.h", "lac_list.h", "lac_log.h", "lac_mem.h", "lac_mem_pools.h", "lac_sal.h", "lac_sal_types.h", "lac_sal_types_crypto.h", "lac_sync.h", "sal_qat_cmn_msg.h", "sal_service_state.h", "sal_statistics.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_41", hdrs = ["lac_common.h", "lac_list.h", "lac_mem.h", "lac_sal.h", "lac_sal_types.h", "lac_sync.h", "sal_statistics.h", "sal_string_parse.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/device:__pkg__"])

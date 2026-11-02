@@ -10490,3 +10490,13 @@ comments/macros. Seven modules contain compiled SDT/DTrace sections; all payload
 and relocations match original Make. No probes were added and live firing,
 hardware/service runtime and audit completeness remain unqualified. Raw binding:
 bazel-compat-services-modules-review-r1-20261102/observability-review.json.
+
+### Wireless/crypto/EFI/SGX module cohort (2026-11-02)
+
+The bounded scan of 453 distinct source/schema inputs records sixteen candidate
+SDT/DTrace/KTR/audit lines, including comments/macros. Three compiled modules
+contain SDT/DTrace sections; their payloads and relocations match original Make
+outputs. No probe was added or removed. This does not establish live delivery,
+audit completeness or absence of inherited instrumentation. Evidence:
+bazel-final-drivers-modules-review-r1-20261102/observability-review.json;
+[cohort scope](FINAL-DRIVERS-MODULES-WORK.md).

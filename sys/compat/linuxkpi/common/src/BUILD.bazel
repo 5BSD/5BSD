@@ -510,3 +510,15 @@ amd64_generic_module_objects(name = "linuxkpi_wlan_linux_mhi_module", srcs = ["l
 amd64_generic_module_objects(name = "linuxkpi_wlan_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
     deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
     warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c"], local_defines = [], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_iwlwifi_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "'-DKBUILD_MODNAME=\"iwlwifi\"'"], local_defines = ["CONFIG_ACPI", "CONFIG_IWLDVM=0", "CONFIG_IWLMLD=1", "CONFIG_IWLMVM=1", "CONFIG_IWLWIFI_DEBUG=1", "CONFIG_IWLWIFI_DEVICE_TRACING=1", "CONFIG_PM", "CONFIG_PM_SLEEP", "LINUXKPI_VERSION=70000", "LINUXKPI_WANT_LINUX_ACPI"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw88_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "'-DKBUILD_MODNAME=\"rtw88\"'"], local_defines = ["CONFIG_RTW88_DEBUG", "CONFIG_RTW88_DEBUGFS", "LINUXKPI_VERSION=70000"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtw89_lkpi_iic_if_module", srcs = [":lkpi_iic_if_module_source"],
+    deps = ["//sys/compat/linuxkpi/common/src:lkpi_iic_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = ["-fmacro-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "-fdebug-prefix-map=$(execpath :lkpi_iic_if_module_source)=lkpi_iic_if.c", "'-DKBUILD_MODNAME=\"rtw89\"'"], local_defines = ["CONFIG_ACPI", "CONFIG_RTW89_DEBUGMSG", "LINUXKPI_VERSION=70000", "LINUXKPI_WANT_LINUX_ACPI"], header_overrides = ["//sys/compat/linuxkpi/common/include:network_families_module_context_0"], preinclude_headers = ["//sys/compat/linuxkpi/common/include/linux:kconfig.h"], textual_hdrs = [])

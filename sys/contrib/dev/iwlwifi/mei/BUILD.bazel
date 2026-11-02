@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["iwl-mei.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__"])

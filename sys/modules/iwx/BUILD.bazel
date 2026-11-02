@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_iwx", objects = ["//sys/dev/iwx:if_iwx_if_iwx_module_object_files", "//sys/dev/iwx:if_iwx_if_iwx_debug_module_object_files"], object_order = ["if_iwx.o", "if_iwx_debug.o"], exports = [], export_all = False, package = "kernel", aliases = [], ctf_object_paths = [])

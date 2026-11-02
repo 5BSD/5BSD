@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["dc_datapath.h", "dc_error_counter.h", "dc_session.h", "dc_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["dc_datapath.h", "dc_header_footer.h", "dc_session.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["dc_datapath.h", "dc_session.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["dc_datapath.h", "dc_session.h", "dc_stats.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["dc_error_counter.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["dc_session.h"], includes = ["."],
+    visibility = ["//sys/dev/qat/qat_api/common/compression:__pkg__"])

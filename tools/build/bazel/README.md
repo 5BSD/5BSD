@@ -182,12 +182,18 @@ no complete world, kernel, package, or image Bazel backend yet. Do not use
 imported upstream BUILD files as evidence of BSD build coverage.
 
 **Current module inventory (2026-11-02):** the maintained recursive amd64
-GENERIC audit selects 729 modules; 708 selected directories contain local BUILD
-files, leaving 21 without. This is declaration presence, not qualified-build
-coverage. The newest qualified module cohort is documented in
+GENERIC audit selects 729 modules; 726 selected directories contain local BUILD
+files, leaving three without: linux64, ossl and vmm. The latest eighteen-driver
+cohort passes plain/CTF runtime-artifact, actual-input, ordered-link and install
+comparisons, plus both RTWN microcode settings; see
+[driver qualification and remaining work](FINAL-DRIVERS-MODULES-WORK.md).
+All eighteen plain modules are byte-identical to their original controls.
+Separate DWARF/source lookup, other configurations, runtime and full-system gates
+remain open. Declaration presence is not complete qualified-build coverage.
+The preceding cohort is documented in
 [compatibility/storage/tracing qualification](COMPAT-SERVICES-MODULES-QUALIFICATION.md).
-Earlier selection snapshot (628 local BUILD files; the four later module cohorts
-add 80 selected leaves):
+Earlier selection snapshot (628 local BUILD files; four later module cohorts
+add 80 selected leaves and this driver cohort adds eighteen):
 `/usr/obj/usr/src/bazel-source-context-module-selection-20261102`.
 Complete native world/kernel/pkgbase and system qualification remain open.
 The corrected query context selects 627 ARM64 and 553 RISC-V64 modules, with 504

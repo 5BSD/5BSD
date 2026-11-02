@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "padlock", objects = ["//sys/crypto:padlock_padlock_module_object_files", "//sys/crypto:padlock_padlock_cipher_module_object_files", "//sys/crypto:padlock_padlock_hash_module_object_files"], object_order = ["padlock.o", "padlock_cipher.o", "padlock_hash.o"], exports = [], export_all = False, package = "kernel", aliases = [], ctf_object_paths = [])

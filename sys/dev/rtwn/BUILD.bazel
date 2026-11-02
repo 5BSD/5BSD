@@ -4,3 +4,686 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "usb_remaining_module_context_0", hdrs = ["if_rtwn_ridx.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_0", hdrs = ["if_rtwn_beacon.h", "if_rtwn_calib.h", "if_rtwn_cam.h", "if_rtwn_debug.h", "if_rtwn_efuse.h", "if_rtwn_fw.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwn_task.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["if_rtwn_beacon.h", "if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_3", hdrs = ["if_rtwn_beacon.h", "if_rtwn_debug.h", "if_rtwn_tx.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["if_rtwn_calib.h", "if_rtwn_debug.h", "if_rtwn_task.h", "if_rtwnvar.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_5", hdrs = ["if_rtwn_cam.h", "if_rtwn_debug.h", "if_rtwn_task.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_6", hdrs = ["if_rtwn_task.h", "if_rtwnvar.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_7", hdrs = ["if_rtwn_debug.h", "if_rtwn_efuse.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["if_rtwn_debug.h", "if_rtwn_fw.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_9", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_10", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_11", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_12", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_priv.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_13", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwn_task.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_fw_cmd.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_14", hdrs = ["if_rtwn_debug.h", "if_rtwn_efuse.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_priv.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_rom_image.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_15", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_rx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_16", hdrs = ["if_rtwn_ridx.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_17", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_18", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_19", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_priv.h", "rtl8188e/r88e_reg.h", "rtl8188e/r88e_rom_defs.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_20", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_fw_cmd.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_21", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_22", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_23", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_priv.h", "rtl8188e/r88e_rom_defs.h", "rtl8188e/r88e_rom_image.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_24", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_rx_desc.h", "rtl8192c/r92c.h", "rtl8192c/r92c_rx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_25", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_tx_desc.h", "rtl8192c/r92c_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_26", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e.h", "rtl8192e/r92e_reg.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_27", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_fw_cmd.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192e/r92e.h", "rtl8812a/r12a_fw_cmd.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_28", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e.h", "rtl8192e/r92e_priv.h", "rtl8192e/r92e_reg.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_29", hdrs = ["if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192e/r92e.h", "rtl8192e/r92e_reg.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_30", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192e/r92e.h", "rtl8192e/r92e_reg.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_31", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_rom_image.h", "rtl8192e/r92e_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_32", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_fw_cmd.h", "rtl8192c/r92c_rx_desc.h", "rtl8192e/r92e.h", "rtl8812a/r12a_fw_cmd.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_33", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8723b/r23b.h", "rtl8723b/r23b_fw_cmd.h", "rtl8723b/r23b_reg.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_34", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192e/r92e.h", "rtl8723b/r23b.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_35", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8723b/r23b.h", "rtl8723b/r23b_fw_cmd.h", "rtl8723b/r23b_reg.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_var.h", "rtl8812a/r12a_reg.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_36", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h", "rtl8723b/r23b.h", "rtl8723b/r23b_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_37", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8723b/r23b.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_38", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8723b/r23b.h", "rtl8723b/r23b_reg.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_rom_image.h", "rtl8723b/r23b_var.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_rom_image.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_39", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_rx_desc.h", "rtl8192c/r92c_rx_desc.h", "rtl8723b/r23b.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_40", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_41", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_priv.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_42", hdrs = ["if_rtwn_rx.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_43", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_44", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_fw_cmd.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_fw_cmd.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_45", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_priv.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_46", hdrs = ["if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_47", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_48", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_rom_image.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_49", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_fw_cmd.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_rx_desc.h", "rtl8812a/r12a.h", "rtl8812a/r12a_fw_cmd.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_rx_desc.h", "rtl8812a/r12a_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_50", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8812a/r12a.h", "rtl8812a/r12a_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_51", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_tx_desc.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_52", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8821a/r21a.h", "rtl8821a/r21a_priv.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_53", hdrs = ["if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_54", hdrs = ["if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8812a/r12a_reg.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_55", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h", "rtl8821a/r21a.h", "rtl8821a/r21a_priv.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_56", hdrs = ["if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_rom_image.h", "rtl8812a/r12a_var.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_57", hdrs = ["if_rtwnvar.h", "rtl8192c/r92c_rx_desc.h", "rtl8812a/r12a_rx_desc.h", "rtl8821a/r21a.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_58", hdrs = ["if_rtwn_debug.h", "if_rtwn_nop.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_attach.h", "pci/rtwn_pci_reg.h", "pci/rtwn_pci_rx.h", "pci/rtwn_pci_tx.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_59", hdrs = ["if_rtwnvar.h", "pci/rtwn_pci_reg.h", "pci/rtwn_pci_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_60", hdrs = ["if_rtwn_debug.h", "if_rtwn_rx.h", "if_rtwn_task.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_rx.h", "pci/rtwn_pci_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_61", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_tx.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_62", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_priv.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/pci/r92ce_tx_desc.h", "rtl8192c/r92c.h", "rtl8192c/r92c_priv.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_63", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_64", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/r92c.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_65", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_66", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_67", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_68", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_tx_desc.h", "rtl8192c/r92c.h", "rtl8192c/r92c_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_69", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8188e/pci/r88ee.h", "rtl8188e/pci/r88ee_reg.h", "rtl8188e/r88e.h", "rtl8188e/r88e_priv.h", "rtl8188e/r88e_reg.h", "rtl8188e/r88e_rom_defs.h", "rtl8188e/r88e_rom_image.h", "rtl8192c/pci/r92ce.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/pci/r92ce_tx_desc.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_70", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8188e/pci/r88ee.h", "rtl8188e/pci/r88ee_reg.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_71", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnvar.h", "pci/rtwn_pci_var.h", "rtl8188e/pci/r88ee.h", "rtl8188e/pci/r88ee_reg.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/pci/r92ce_reg.h", "rtl8192c/r92c_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_72", hdrs = ["if_rtwn_nop.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h", "usb/rtwn_usb_attach.h", "usb/rtwn_usb_ep.h", "usb/rtwn_usb_reg.h", "usb/rtwn_usb_tx.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_73", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c_reg.h", "rtl8192c/usb/r92cu_reg.h", "usb/rtwn_usb_ep.h", "usb/rtwn_usb_rx.h", "usb/rtwn_usb_tx.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_74", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "usb/rtwn_usb_reg.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_75", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_rx.h", "if_rtwn_task.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "usb/rtwn_usb_rx.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_76", hdrs = ["if_rtwn_beacon.h", "if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwn_task.h", "if_rtwn_tx.h", "if_rtwnreg.h", "if_rtwnvar.h", "usb/rtwn_usb_reg.h", "usb/rtwn_usb_tx.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_77", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_priv.h", "rtl8188e/r88e_rom_defs.h", "rtl8188e/r88e_rom_image.h", "rtl8188e/usb/r88eu.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h", "rtl8192c/usb/r92cu.h", "rtl8192c/usb/r92cu_tx_desc.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_78", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8188e/usb/r88eu.h", "rtl8188e/usb/r88eu_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h", "rtl8192c/usb/r92cu_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_79", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_priv.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/r92c_var.h", "rtl8192c/usb/r92cu.h", "rtl8192c/usb/r92cu_priv.h", "rtl8192c/usb/r92cu_reg.h", "rtl8192c/usb/r92cu_tx_desc.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_80", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/r92c_var.h", "rtl8192c/usb/r92cu.h", "rtl8192c/usb/r92cu_reg.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_81", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/usb/r92cu.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_82", hdrs = ["if_rtwn_ridx.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/usb/r92cu.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_83", hdrs = ["if_rtwn_debug.h", "if_rtwn_ridx.h", "if_rtwnvar.h", "rtl8192c/r92c.h", "rtl8192c/r92c_tx_desc.h", "rtl8192c/usb/r92cu.h", "rtl8192c/usb/r92cu_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_84", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu.h", "rtl8192e/r92e.h", "rtl8192e/r92e_priv.h", "rtl8192e/r92e_reg.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8192e/usb/r92eu.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_tx_desc.h", "rtl8812a/usb/r12au.h", "rtl8812a/usb/r12au_tx_desc.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h", "rtl8821a/usb/r21au.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_85", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8188e/usb/r88eu_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu_reg.h", "rtl8192e/r92e.h", "rtl8192e/r92e_reg.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8192e/usb/r92eu.h", "rtl8192e/usb/r92eu_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_86", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu.h", "rtl8192e/r92e.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8723b/r23b.h", "rtl8723b/r23b_priv.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_var.h", "rtl8723b/usb/r23bu.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_tx_desc.h", "rtl8812a/usb/r12au.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h", "rtl8821a/usb/r21au.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_87", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192e/r92e_rom_defs.h", "rtl8192e/r92e_var.h", "rtl8723b/r23b.h", "rtl8723b/r23b_reg.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_var.h", "rtl8723b/usb/r23bu.h", "rtl8812a/r12a_reg.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_88", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8723b/r23b.h", "rtl8723b/r23b_rom_defs.h", "rtl8723b/r23b_rom_image.h", "rtl8723b/usb/r23bu.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_89", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu.h", "rtl8812a/r12a.h", "rtl8812a/r12a_priv.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_tx_desc.h", "rtl8812a/r12a_var.h", "rtl8812a/usb/r12au.h", "rtl8812a/usb/r12au_tx_desc.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_90", hdrs = ["if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8188e/usb/r88eu_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu_reg.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h", "rtl8812a/usb/r12au.h", "rtl8812a/usb/r12au_reg.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_91", hdrs = ["if_rtwnvar.h", "rtl8188e/r88e_fw_cmd.h", "rtl8192c/r92c_rx_desc.h", "rtl8812a/r12a.h", "rtl8812a/r12a_fw_cmd.h", "rtl8812a/r12a_rx_desc.h", "rtl8812a/usb/r12au.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_92", hdrs = ["if_rtwn_debug.h", "if_rtwnvar.h", "rtl8812a/r12a.h", "rtl8812a/r12a_tx_desc.h", "rtl8812a/usb/r12au.h", "rtl8812a/usb/r12au_tx_desc.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_93", hdrs = ["if_rtwn_nop.h", "if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e.h", "rtl8188e/r88e_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8812a/r12a.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_tx_desc.h", "rtl8812a/r12a_var.h", "rtl8812a/usb/r12au.h", "rtl8812a/usb/r12au_tx_desc.h", "rtl8821a/r21a.h", "rtl8821a/r21a_priv.h", "rtl8821a/r21a_reg.h", "rtl8821a/usb/r21au.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_94", hdrs = ["if_rtwn_ridx.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8188e/usb/r88eu_reg.h", "rtl8192c/r92c.h", "rtl8192c/r92c_reg.h", "rtl8192c/usb/r92cu.h", "rtl8192c/usb/r92cu_reg.h", "rtl8812a/r12a_reg.h", "rtl8812a/usb/r12au_reg.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h", "rtl8821a/usb/r21au.h", "rtl8821a/usb/r21au_reg.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_95", hdrs = ["if_rtwn_debug.h", "if_rtwnreg.h", "if_rtwnvar.h", "rtl8188e/r88e_reg.h", "rtl8188e/usb/r88eu_reg.h", "rtl8192c/r92c_reg.h", "rtl8192c/r92c_rom_defs.h", "rtl8192c/usb/r92cu_reg.h", "rtl8812a/r12a_reg.h", "rtl8812a/r12a_rom_defs.h", "rtl8812a/r12a_var.h", "rtl8812a/usb/r12au_reg.h", "rtl8821a/r21a.h", "rtl8821a/r21a_reg.h", "rtl8821a/usb/r21au.h", "rtl8821a/usb/r21au_reg.h", "usb/rtwn_usb_var.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Original rtwn module option recipe, independent of GENERIC opt_rtwn.h.
+write_file(name = "module_options", out = "module_options/opt_rtwn.h", content = ["#define RTWN_DEBUG 1"] + select({"//tools/build/bazel/config:sourceless_ucode_enabled": [], "//conditions:default": ["#define RTWN_WITHOUT_UCODE 1"]}) + [""])
+cc_library(name = "module_option_headers", hdrs = [":module_options"], strip_include_prefix = "module_options", visibility = ["//sys/dev/rtwn:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_module", srcs = ["if_rtwn.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:usb_remaining_module_context_1", "//sys/netinet:i2c_module_context_0", "//sys/netinet6:usb_net_umb_headers", "//sys/net80211:peripheral_devices_kernel_if_iwn_headers", "//sys/dev/rtwn:final_drivers_module_context_0", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_tx_module", srcs = ["if_rtwn_tx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_1", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_rx_module", srcs = ["if_rtwn_rx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:final_drivers_module_context_8", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_2", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_beacon_module", srcs = ["if_rtwn_beacon.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_3", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_calib_module", srcs = ["if_rtwn_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_4", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_cam_module", srcs = ["if_rtwn_cam.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_5", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_task_module", srcs = ["if_rtwn_task.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_6", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_efuse_module", srcs = ["if_rtwn_efuse.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_7", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_if_rtwn_fw_module", srcs = ["if_rtwn_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_8", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_attach_module", srcs = ["rtl8192c/r92c_attach.c", "rtl8192c/r92c_llt.c", "rtl8192c/r92c_rf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_9", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_beacon_module", srcs = ["rtl8192c/r92c_beacon.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_10", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_calib_module", srcs = ["rtl8192c/r92c_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_11", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_chan_module", srcs = ["rtl8192c/r92c_chan.c", "rtl8192c/r92c_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_12", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_fw_module", srcs = ["rtl8192c/r92c_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_13", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_rom_module", srcs = ["rtl8192c/r92c_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_14", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_rx_module", srcs = ["rtl8192c/r92c_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_15", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92c_tx_module", srcs = ["rtl8192c/r92c_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_16", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_beacon_module", srcs = ["rtl8188e/r88e_beacon.c", "rtl8188e/r88e_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_17", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_calib_module", srcs = ["rtl8188e/r88e_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_18", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_chan_module", srcs = ["rtl8188e/r88e_chan.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_19", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_fw_module", srcs = ["rtl8188e/r88e_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_20", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_init_module", srcs = ["rtl8188e/r88e_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_21", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_rf_module", srcs = ["rtl8188e/r88e_rf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_22", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_rom_module", srcs = ["rtl8188e/r88e_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_23", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_rx_module", srcs = ["rtl8188e/r88e_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_24", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r88e_tx_module", srcs = ["rtl8188e/r88e_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_25", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_chan_module", srcs = ["rtl8192e/r92e_chan.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_26", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_fw_module", srcs = ["rtl8192e/r92e_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_27", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_init_module", srcs = ["rtl8192e/r92e_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_28", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_led_module", srcs = ["rtl8192e/r92e_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_29", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_rf_module", srcs = ["rtl8192e/r92e_rf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_30", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_rom_module", srcs = ["rtl8192e/r92e_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_31", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r92e_rx_module", srcs = ["rtl8192e/r92e_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_32", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_calib_module", srcs = ["rtl8723b/r23b_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_33", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_fw_module", srcs = ["rtl8723b/r23b_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_34", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_init_module", srcs = ["rtl8723b/r23b_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_35", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_led_module", srcs = ["rtl8723b/r23b_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_36", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_rf_module", srcs = ["rtl8723b/r23b_rf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_37", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_rom_module", srcs = ["rtl8723b/r23b_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_38", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r23b_rx_module", srcs = ["rtl8723b/r23b_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_39", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_beacon_module", srcs = ["rtl8812a/r12a_beacon.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_40", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_calib_module", srcs = ["rtl8812a/r12a_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_41", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_caps_module", srcs = ["rtl8812a/r12a_caps.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_42", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_chan_module", srcs = ["rtl8812a/r12a_chan.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_43", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_fw_module", srcs = ["rtl8812a/r12a_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_44", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_init_module", srcs = ["rtl8812a/r12a_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_45", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_led_module", srcs = ["rtl8812a/r12a_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_46", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_rf_module", srcs = ["rtl8812a/r12a_rf.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_47", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_rom_module", srcs = ["rtl8812a/r12a_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_48", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_rx_module", srcs = ["rtl8812a/r12a_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_49", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r12a_tx_module", srcs = ["rtl8812a/r12a_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:final_drivers_module_context_5", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_50", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_beacon_module", srcs = ["rtl8821a/r21a_beacon.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_51", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_calib_module", srcs = ["rtl8821a/r21a_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_52", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_chan_module", srcs = ["rtl8821a/r21a_chan.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_53", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_fw_module", srcs = ["rtl8821a/r21a_fw.c", "rtl8821a/r21a_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_54", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_init_module", srcs = ["rtl8821a/r21a_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_55", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_rom_module", srcs = ["rtl8821a/r21a_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_56", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "rtwn_r21a_rx_module", srcs = ["rtl8821a/r21a_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_57", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_rtwn_pci_attach_module", srcs = ["pci/rtwn_pci_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/pci:pci_ethernet_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_58", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/dev/pci:pci_if_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_rtwn_pci_reg_module", srcs = ["pci/rtwn_pci_reg.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_59", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_rtwn_pci_rx_module", srcs = ["pci/rtwn_pci_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_60", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_rtwn_pci_tx_module", srcs = ["pci/rtwn_pci_tx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_61", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_attach_module", srcs = ["rtl8192c/pci/r92ce_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_62", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_calib_module", srcs = ["rtl8192c/pci/r92ce_calib.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_63", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_fw_module", srcs = ["rtl8192c/pci/r92ce_fw.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_64", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_init_module", srcs = ["rtl8192c/pci/r92ce_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_65", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_led_module", srcs = ["rtl8192c/pci/r92ce_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_66", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_rx_module", srcs = ["rtl8192c/pci/r92ce_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_67", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r92ce_tx_module", srcs = ["rtl8192c/pci/r92ce_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_68", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r88ee_attach_module", srcs = ["rtl8188e/pci/r88ee_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_69", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r88ee_init_module", srcs = ["rtl8188e/pci/r88ee_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_70", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_pci_r88ee_rx_module", srcs = ["rtl8188e/pci/r88ee_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_71", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_rtwn_usb_attach_module", srcs = ["usb/rtwn_usb_attach.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_72", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/dev/usb:device_id_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_rtwn_usb_ep_module", srcs = ["usb/rtwn_usb_ep.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/dev/usb:final_drivers_module_context_3", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_73", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_rtwn_usb_reg_module", srcs = ["usb/rtwn_usb_reg.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_74", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_rtwn_usb_rx_module", srcs = ["usb/rtwn_usb_rx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:final_drivers_module_context_8", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_75", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_rtwn_usb_tx_module", srcs = ["usb/rtwn_usb_tx.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_76", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r88eu_attach_module", srcs = ["rtl8188e/usb/r88eu_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_77", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r88eu_init_module", srcs = ["rtl8188e/usb/r88eu_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_78", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92cu_attach_module", srcs = ["rtl8192c/usb/r92cu_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_79", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92cu_init_module", srcs = ["rtl8192c/usb/r92cu_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_80", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92cu_led_module", srcs = ["rtl8192c/usb/r92cu_led.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_81", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92cu_rx_module", srcs = ["rtl8192c/usb/r92cu_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_82", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92cu_tx_module", srcs = ["rtl8192c/usb/r92cu_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_83", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92eu_attach_module", srcs = ["rtl8192e/usb/r92eu_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_84", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r92eu_init_module", srcs = ["rtl8192e/usb/r92eu_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_85", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r23bu_attach_module", srcs = ["rtl8723b/usb/r23bu_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_86", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r23bu_init_module", srcs = ["rtl8723b/usb/r23bu_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_87", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r23bu_rom_module", srcs = ["rtl8723b/usb/r23bu_rom.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_88", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r12au_attach_module", srcs = ["rtl8812a/usb/r12au_attach.c"],
+    deps = ["//sys/contrib/ck:core_kernel_kern_intr_headers", "//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_action_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/usb:device_io_kernel_usb_core_headers", "//sys/dev/rtwn:final_drivers_module_context_89", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:linuxkpi_kernel_opt_usb_header", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r12au_init_module", srcs = ["rtl8812a/usb/r12au_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_90", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r12au_rx_module", srcs = ["rtl8812a/usb/r12au_rx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ratectl_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_91", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r12au_tx_module", srcs = ["rtl8812a/usb/r12au_tx.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_92", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r21au_attach_module", srcs = ["rtl8821a/usb/r21au_attach.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_93", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r21au_init_module", srcs = ["rtl8821a/usb/r21au_init.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_94", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])
+
+amd64_generic_module_objects(name = "if_rtwn_usb_r21au_dfs_module", srcs = ["rtl8821a/usb/r21au_dfs.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/net:wlan_kernel_ieee80211_crypto_headers", "//sys/net80211:wlan_kernel_ieee80211_ageq_headers", "//sys/netinet:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/dev/rtwn:final_drivers_module_context_95", "//sys/kern:bus_if_headers", "//sys/kern:device_if_headers", "//sys/dev/rtwn:module_option_headers", "//sys/amd64/conf:wlan_kernel_opt_wlan_header"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [], header_overrides = [], preinclude_headers = [], textual_hdrs = [])

@@ -1046,7 +1046,7 @@ bsd_source_headers(name = "mii_kernel_xmphy_headers", hdrs = ["if.h", "if_media.
 bsd_source_headers(name = "wlan_kernel_ieee80211_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_action_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
-    visibility = ["//sys/net80211:__pkg__", "//sys/dev/wtap:__pkg__"])
+    visibility = ["//sys/net80211:__pkg__", "//sys/dev/wtap:__pkg__", "//sys/dev/rtwn:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_adhoc_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_llc.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_ageq_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
@@ -1054,7 +1054,7 @@ bsd_source_headers(name = "wlan_kernel_ieee80211_ageq_headers", hdrs = ["debugne
 bsd_source_headers(name = "wlan_kernel_ieee80211_amrr_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
-    visibility = ["//sys/net80211:__pkg__", "//sys/dev/wtap/plugins:__pkg__", "//sys/dev/wtap/wtap_hal:__pkg__", "//sys/dev/wtap:__pkg__"])
+    visibility = ["//sys/net80211:__pkg__", "//sys/dev/wtap/plugins:__pkg__", "//sys/dev/wtap/wtap_hal:__pkg__", "//sys/dev/wtap:__pkg__", "//sys/dev/rtwn:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_ccmp_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
     visibility = ["//sys/net80211:__pkg__"])
 bsd_source_headers(name = "wlan_kernel_ieee80211_crypto_gcmp_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_media.h", "vnet.h"],
@@ -1138,9 +1138,9 @@ bsd_source_headers(name = "isci_kernel_isci_headers", hdrs = ["if.h", "vnet.h"],
 
 # Physical prerequisites for native LinuxKPI built-ins.
 bsd_source_headers(name = "linuxkpi_kernel_linux_80211_fullmac_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/irdma:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx5:__pkg__", "//sys/dev/mthca:__pkg__", "//sys/ofed/drivers/infiniband/core:__pkg__", "//sys/contrib/dev/iwlwifi/cfg:__pkg__", "//sys/contrib/dev/iwlwifi/fw:__pkg__", "//sys/contrib/dev/iwlwifi/mld:__pkg__", "//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/iwlwifi/pcie/gen1_2:__pkg__", "//sys/contrib/dev/iwlwifi/pcie:__pkg__", "//sys/contrib/dev/iwlwifi:__pkg__", "//sys/contrib/dev/rtw88:__pkg__", "//sys/contrib/dev/rtw89:__pkg__"])
 bsd_source_headers(name = "linuxkpi_kernel_linux_acpi_headers", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"],
-    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/compat/lindebugfs:__pkg__"])
+    visibility = ["//sys/compat/linuxkpi/common/src:__pkg__", "//sys/dev/bnxt:__pkg__", "//sys/dev/mlx4/mlx4_core:__pkg__", "//sys/dev/mlx4/mlx4_ib:__pkg__", "//sys/dev/mlxfw:__pkg__", "//sys/compat/lindebugfs:__pkg__", "//sys/dev/qat/qat:__pkg__", "//sys/dev/qat/qat_api/common/compression:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/key:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym/qat:__pkg__", "//sys/dev/qat/qat_api/common/crypto/sym:__pkg__", "//sys/dev/qat/qat_api/common/ctrl:__pkg__", "//sys/dev/qat/qat_api/common/qat_comms:__pkg__", "//sys/dev/qat/qat_api/common/stubs:__pkg__", "//sys/dev/qat/qat_api/common/utils:__pkg__", "//sys/dev/qat/qat_api/device:__pkg__", "//sys/dev/qat/qat_api/qat_kernel/src:__pkg__", "//sys/dev/qat/qat_api:__pkg__", "//sys/dev/qat/qat_common:__pkg__", "//sys/dev/qat/qat_hw/qat_200xx:__pkg__", "//sys/dev/qat/qat_hw/qat_4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_4xxxvf:__pkg__", "//sys/dev/qat/qat_hw/qat_c3xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c4xxx:__pkg__", "//sys/dev/qat/qat_hw/qat_c62x:__pkg__", "//sys/dev/qat/qat_hw/qat_dh895xcc:__pkg__"])
 
 # Native OpenZFS built-in physical prerequisites and compatibility overlay roots.
 bsd_source_headers(name = "openzfs_kernel_vdev_geom_headers", hdrs = ["if.h", "vnet.h"],
@@ -1156,7 +1156,7 @@ bsd_source_headers(name = "ath_kernel_if_ath_debug_headers", hdrs = ["bpf.h", "d
 bsd_source_headers(name = "ath_kernel_if_ath_pci_headers", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_media.h", "vnet.h"],
     visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__"])
 bsd_source_headers(name = "ath_kernel_ah_osdep_headers", hdrs = ["ethernet.h"],
-    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__", "//sys/dev/bhnd/nvram:__pkg__"])
+    visibility = ["//sys/dev/ath:__pkg__", "//sys/contrib/dev/ath:__pkg__", "//sys/dev/bhnd/nvram:__pkg__", "//sys/dev/iwx:__pkg__"])
 
 # Physical native Intel NIC built-in prerequisites.
 bsd_source_headers(name = "intel_nic_kernel_if_em_headers", hdrs = ["bpf.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "if_vlan_var.h", "iflib.h", "ifq.h", "rss_config.h", "vnet.h"],
@@ -1488,7 +1488,7 @@ bsd_source_headers(name = "i2c_module_context_0", hdrs = ["bpf.h", "dlt.h", "eth
     visibility = ["//sys/dev/iicbus:__pkg__"])
 
 bsd_source_headers(name = "usb_remaining_module_context_1", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
-    visibility = ["//sys/dev/usb:__pkg__"])
+    visibility = ["//sys/dev/usb:__pkg__", "//sys/dev/iwm:__pkg__", "//sys/dev/rtwn:__pkg__"])
 
 bsd_source_headers(name = "usb_remaining_module_context_2", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
     visibility = ["//sys/dev/usb:__pkg__"])
@@ -1712,3 +1712,12 @@ bsd_source_headers(name = "compat_services_module_context_5", hdrs = ["if.h", "i
 
 bsd_source_headers(name = "compat_services_module_context_6", hdrs = ["if.h", "if_dl.h", "if_private.h", "if_types.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_1", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_types.h", "if_var.h", "ifq.h", "route.h", "vnet.h"], includes = [],
+    visibility = ["//sys/contrib/dev/iwlwifi/mvm:__pkg__", "//sys/contrib/dev/rtw89:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_4", hdrs = ["bpf.h", "debugnet.h", "dlt.h", "ethernet.h", "if.h", "if_arp.h", "if_dl.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/iwx:__pkg__", "//sys/dev/otus:__pkg__"])
+
+bsd_source_headers(name = "final_drivers_module_context_8", hdrs = ["debugnet.h", "ethernet.h", "if.h", "if_dl.h", "if_media.h", "if_var.h", "ifq.h", "vnet.h"], includes = [],
+    visibility = ["//sys/dev/rtwn:__pkg__"])

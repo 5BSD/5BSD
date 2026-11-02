@@ -1223,3 +1223,18 @@ Linux-header consumers; attempts and fresh SDK provenance are retained.
 BUILD presence is 708/729, leaving 21, not full qualification. Complete debug,
 architecture/world/kernel/packages/bootstrap/runtime/performance gates remain
 open; existing build-bsd format-5 workflow applies and Make stays default.
+
+### Wireless/crypto/EFI/SGX runtime-artifact qualification
+
+[Work record](FINAL-DRIVERS-MODULES-WORK.md): all 42 original controls for the last
+21 selected amd64 leaves pass. Eighteen native declarations pass both profiles:
+455 compiler contexts and 159,574 consumed prerequisite occurrences per profile,
+complete original object identities/order, installation metadata and runtime
+ELF/CTF comparisons. All eighteen plain modules are byte-identical. Both RTWN
+microcode settings additionally pass 101-context original/native reviews per
+profile and actually change runtime code. Local declaration presence is 726/729;
+Linux64/OpenSSL/VMM still lack native declarations. Separate DWARF/source lookup,
+nondefault configurations and full world/kernel/cross-target/pkgbase/bootstrap/
+runtime/cache/performance gates remain open. No C/shared-rule/frontend-C changes
+are required: the maintained typed setting interface carries the new RTWN flag,
+and its producer/manual are updated together. Make stays production/default.

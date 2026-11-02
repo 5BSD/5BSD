@@ -543,3 +543,7 @@ string_flag(name = "kernel_base_directory", build_setting_default = "/boot/kerne
 string_flag(name = "ath_rate_algorithm", build_setting_default = "sample", values = ["sample", "onoe", "amrr"], visibility = ["//visibility:public"])
 config_setting(name = "ath_rate_onoe", flag_values = {":ath_rate_algorithm": "onoe"}, visibility = ["//visibility:public"])
 config_setting(name = "ath_rate_amrr", flag_values = {":ath_rate_algorithm": "amrr"}, visibility = ["//visibility:public"])
+
+# Mirrors MK_SOURCELESS_UCODE for maintained module option producers.
+bool_flag(name = "sourceless_ucode", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "sourceless_ucode_enabled", flag_values = {":sourceless_ucode": "true"}, visibility = ["//visibility:public"])
