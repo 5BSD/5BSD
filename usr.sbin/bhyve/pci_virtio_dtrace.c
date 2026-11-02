@@ -2336,6 +2336,9 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 		return (1);
 
 	case VTDTR_DEVICE_KILL_APPLIED:
+		/* The guest closed its host-ready gate for this batch; every
+		 * consumed non-READY control must regrant it (see notify_rx). */
+		sc->vsd_ready = 0;
 		{
 			const uint8_t zero_source[16] = { 0 };
 			if (ctrl->pvc_pid <= 1 ||
@@ -2468,6 +2471,8 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 	case VTDTR_DEVICE_UNINSTALLED:
 	case VTDTR_DEVICE_STATUS:
 	case VTDTR_DEVICE_INGRESS_STATUS:
+		/* Observations and queries consume the guest's TX credit. */
+		sc->vsd_ready = 0;
 		{
 			dtraced_delivery_status_t query_status = { 0 };
 			const uint8_t zero_installed_id[16] = { 0 };
@@ -2600,8 +2605,9 @@ pci_vtdtr_control_rx(struct pci_vtdtr_softc *sc, struct iovec *iov, int niov)
 			vi_set_needs_reset(&sc->vsd_vs);
 			return (1);
 		}
-		if (ctrl->pvc_node_query_id == 0)
-			sc->vsd_ready = 0;
+		/* A DTT_VM_IDENTITY_QUERY batch also closed the guest's
+		 * host-ready gate; without READY its next control never leaves. */
+		sc->vsd_ready = 0;
 		retval = 0;
 		pci_vtdtr_node_id(sc, ctrl->pvc_node_query_id);
 		break;

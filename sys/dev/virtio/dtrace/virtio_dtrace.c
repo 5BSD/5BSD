@@ -925,8 +925,8 @@ vtdtr_ctrl_process_event(struct vtdtr_softc *sc,
 		const uint8_t zero_source[16] = { 0 };
 		if (memcmp(ctrl->vd_source_id, zero_source, 16) == 0)
 			return (EINVAL);
-		if (ctrl->vd_event == VIRTIO_DTRACE_KILL)
-			sc->vtdtr_ready = 0;
+		/* bhyve queued either control as a credited batch. */
+		sc->vtdtr_ready = 0;
 		e.event_kind = ctrl->vd_event == VIRTIO_DTRACE_KILL ?
 		    DTT_KILL : DTT_HOST_KILL_APPLIED;
 		e.u.kill.pid = ctrl->vd_pid;
@@ -1016,6 +1016,9 @@ vtdtr_ctrl_process_event(struct vtdtr_softc *sc,
 			e.u.installed.query_id = ctrl->vd_installed_query_id;
 			memcpy(e.u.installed.digest,
 			    ctrl->vd_installed_digest, 32);
+			/* Host receipts and query replies arrive in credited
+			 * batches: bhyve sends nothing more until READY. */
+			sc->vtdtr_ready = 0;
 			retval = dtt_queue_enqueue(&e);
 		}
 		break;
@@ -1086,6 +1089,8 @@ vtdtr_ctrl_process_event(struct vtdtr_softc *sc,
 		break;
 
 	case VIRTIO_DTRACE_HOST_CLEANUP_APPLIED:
+		/* Even a duplicate receipt consumed bhyve's guest credit. */
+		sc->vtdtr_ready = 0;
 		mtx_lock(&sc->vtdtr_ctrlmtx);
 		if (!sc->vtdtr_cleanup_pending &&
 		    ctrl->vd_cleanup_delivery_id != 0 &&
@@ -1327,8 +1332,10 @@ vtdtr_ctrl_process_event(struct vtdtr_softc *sc,
 		sc->vtdtr_node_epoch = ctrl->vd_node_epoch;
 		mtx_unlock(&sc->vtdtr_ctrlmtx);
 		mbufid_origin_epoch_set(ctrl->vd_node_epoch);
+		/* Every NODE_ID, including an unchanged identity answering a
+		 * DTT_VM_IDENTITY_QUERY, consumed bhyve's guest credit. */
+		sc->vtdtr_ready = 0;
 		if (dtrace_node_id != ctrl->vd_node_id) {
-			sc->vtdtr_ready = 0;
 			dtrace_node_id = ctrl->vd_node_id;
 			device_printf(dev,
 			    "STATUS: Set DTrace node ID to %lu\n", dtrace_node_id);

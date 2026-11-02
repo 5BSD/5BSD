@@ -19,8 +19,13 @@ constants = '\n'.join(x for x in header.splitlines() if re.match(r'#define\s+VIR
 maxlen = re.search(r'^#define VIRTIO_DTRACE_MAXELFLEN .*$', source,
     re.MULTILINE)
 if maxlen is None: raise SystemExit('Missing guest wire length alias')
+state_assert = re.search(r'^#define\tVTDTR_STATE_ASSERT\(sc\).*?\} while \(0\)$',
+    source, re.MULTILINE | re.DOTALL)
+if state_assert is None: raise SystemExit('Missing VTDTR_STATE_ASSERT')
 (out / 'driver-types.inc').write_text(constants + '\n' + maxlen.group() +
     '\n' + source[start:end])
+(out / 'driver-assert.inc').write_text(
+    '#define KASSERT(e, m) assert(e)\n' + state_assert.group() + '\n')
 parts = [function(x) for x in ('vtdtr_negotiate_features',
     'vtdtr_setup_features', 'vtdtr_vq_enable_intr',
     'vtdtr_enable_interrupts', 'vtdtr_cq_init', 'vtdtr_cq_enqueue',

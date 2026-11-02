@@ -5204,6 +5204,56 @@ test_round8_batch_c(void)
 	printf("vtdtr round 8 batch C arms: %d checks\n", vchecks - before);
 }
 
+/* Credit: the guest driver (vtdtr_run) closes its host-ready gate after
+ * any batch that is not READY-only and opens it only on the device's READY.
+ * pci_vtdtr_notify_rx() sends that READY exactly when vsd_ready is 0 after
+ * the batch, so every guest control the device consumes in normal operation
+ * must clear vsd_ready. The DTT_VM_IDENTITY_QUERY that dtraced's guest
+ * forwarder issues before each upload was left credited and the guest's
+ * next control (the second query, INSTALLED, the derived ELF) never left. */
+static void
+test_guest_credit(void)
+{
+	static const uint32_t kinds[] = { VTDTR_DEVICE_NODE_ID,
+	    VTDTR_DEVICE_INSTALLED, VTDTR_DEVICE_UNINSTALLED,
+	    VTDTR_DEVICE_STATUS, VTDTR_DEVICE_INGRESS_STATUS,
+	    VTDTR_DEVICE_KILL_APPLIED, VTDTR_DEVICE_ELF };
+	int before = vchecks;
+
+	for (size_t k = 0; k < nitems(kinds); k++) {
+		struct device *d = new_device();
+		struct pci_vtdtr_control c;
+
+		if (kinds[k] == VTDTR_DEVICE_ELF)
+			c = elf_fragment(4, 4, false, 0);
+		else
+			c = report(kinds[k]);
+		if (kinds[k] == VTDTR_DEVICE_NODE_ID)
+			c.pvc_node_query_id = 6;
+		d->sc.vsd_ready = 1;	/* READY for the previous batch sent */
+		int r = rx(d, &c);
+		if (r != 0 || reset_requested(d) || d->sc.vsd_ready != 0) {
+			fprintf(stderr, "credit: guest control %u consumed with "
+			    "rx %d reset %d vsd_ready %d (no READY follows)\n",
+			    kinds[k], r, reset_requested(d), d->sc.vsd_ready);
+			abort();
+		}
+		vchecks++;
+		free_device(d);
+	}
+	/* READY itself never consumes credit (no READY ping-pong). */
+	{
+		struct device *d = new_device();
+		struct pci_vtdtr_control c = report(0);
+
+		c.pvc_event = VTDTR_DEVICE_READY;
+		d->sc.vsd_ready = 1;
+		OK(rx(d, &c) == 0 && d->sc.vsd_ready == 1);
+		free_device(d);
+	}
+	printf("vtdtr guest credit: %d checks\n", vchecks - before);
+}
+
 int
 main(void)
 {
@@ -5215,6 +5265,7 @@ main(void)
 	test_validity_table();
 	test_elf_upload();
 	test_guest_reports();
+	test_guest_credit();
 	test_private_image_decoders();
 	test_session_controls();
 	test_rekey_controls();
