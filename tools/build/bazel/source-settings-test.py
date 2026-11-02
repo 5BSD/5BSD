@@ -37,14 +37,13 @@ class PlatformTest(unittest.TestCase):
 
     def test_kernel_execution_separate(self):
         for arch, platform in [('amd64', 'amd64'), ('aarch64', 'arm64'), ('riscv64', 'riscv64')]:
-            flags = platform_arguments({'tests': [], 'target-kind': 'kernel'}, arch)
+            flags = platform_arguments({'tests': ['//:host_artifact'], 'target-kind': 'kernel'}, arch)
             self.assertEqual(flags, ['--platforms=//tools/build/bazel/kernel_toolchain:' + platform,
                 '--host_platform=@bsd_sdk//toolchain:native',
                 '--extra_toolchains=//tools/build/bazel/kernel_toolchain:' + platform + '_registered'])
 
     def test_unqualified_profiles_rejected(self):
         for config, arch in [({'tests': []}, 'aarch64'), ({'tests': []}, 'riscv64'),
-                ({'tests': ['//:test'], 'target-kind': 'kernel'}, 'aarch64'),
                 ({'tests': [], 'target-kind': 'kernel'}, 'powerpc'),
                 ({'tests': [], 'target-kind': '--extra_toolchains=//:escape'}, 'amd64')]:
             with self.subTest(config=config, arch=arch), self.assertRaises(ValueError):

@@ -3957,6 +3957,17 @@ loadable module. Only one algorithm is compiled into that module.
 Unsupported values are rejected during analysis. This setting does not change
 built-in kernel rate selection or establish wireless runtime qualification.
 
+.Pp
+Kernel target profiles may run source-declared host artifact tests using the
+execution-configured Python interpreter. The configured test inventory, including
+suite members and every selected target, is checked before execution. The selected
+tests must match the explicit requested test inventory, and every compatible test
+must provide
+the explicit host artifact contract. Ordinary target tests remain rejected.
+These tests inspect kernel/module files without executing them and do not qualify
+kernel boot, module loading or cross-target runtime behavior. Receipts identify
+this test execution as host-artifacts. No new CLI option is required.
+
 .Ss Native LLVM component settings
 The format-5 build-settings keys
 .Cm //tools/build/bazel/config:llvm_assertions
