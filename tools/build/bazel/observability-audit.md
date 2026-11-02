@@ -9924,3 +9924,12 @@ The new catalog/provider/validation action changes build metadata only. No
 runtime kernel source, probes or audit calls changed. Source-level marker/code
 qualification remains in the per-object evidence; live kernel observability
 awaits a linked and booted native kernel.
+
+## Complete native kernel link (2026-11-02)
+
+The full selected amd64 GENERIC link and CTF/debug pipeline now execute, retaining
+all allocated sections across postprocessing. The socket fix adds a declared
+audit header dependency only; source/probe/audit bodies are unchanged and its
+text/CTF exactly match Make. ELF kernel symbols/debug CRC are checked. DTrace
+probe and audit behavior still require boot/runtime qualification; a successful
+link is not evidence of those live behaviors.

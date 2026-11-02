@@ -829,3 +829,36 @@ load("//tools/build/bazel:amd64_generic_kernel_inputs.bzl", "amd64_generic_kerne
 amd64_generic_kernel_inputs(name = "generic_link_inputs")
 filegroup(name = "generic_input_validation", srcs = [":generic_link_inputs"],
     output_group = "validation", visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_kernel_link.bzl", "bsd_kernel_link")
+# Full amd64 GENERIC link policy from the maintained architecture backend.
+bsd_kernel_link(
+    name = "generic_linked_kernel", objects = ":generic_link_inputs",
+    script = "//sys/conf:ldscript.amd64", script_inputs = ["//sys/conf:debuginfo.ldscript"],
+    emulation = "elf_x86_64_fbsd",
+    linkopts = ["--build-id=sha1", "-z", "max-page-size=2097152", "-z", "notext", "-z", "ifunc-noplt"],
+    output = "generic/kernel.linked", linker = "@bsd_sdk//toolchain:bin/ld.lld",
+    linker_inputs = ["@bsd_sdk//toolchain:link_inputs"], visibility = ["//visibility:public"],
+)
+
+load("//tools/build/bazel:bsd_ctf.bzl", "bsd_ctf_merge")
+load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split")
+bsd_ctf_merge(
+    name = "generic_full_kernel", linked = ":generic_linked_kernel", objects = [":generic_link_inputs"],
+    output = "generic/kernel.full", preserve_debug = True, is_executable = True,
+    enabled = select({"//tools/build/bazel/config:kernel_ctf_enabled": True, "//conditions:default": False}),
+    ctf_label_setting = "//tools/build/bazel/config:kernel_ctf_label",
+    merger = "//cddl/usr.bin/ctfmerge:ctfmerge", copy_runner = "//tools/build/bazel:dtrace_copy_runner",
+    runtime = ["//lib/libelf:elf_shared", "//lib/libz:z_shared", "//cddl/lib/libspl:spl_shared",
+        "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7", "@bsd_sdk//toolchain:sysroot/lib/libthr.so.3"],
+    visibility = ["//visibility:public"],
+)
+bsd_debug_split(
+    name = "generic_kernel", src = ":generic_full_kernel",
+    binary_name = "generic/kernel", debug_name = "generic/kernel.debug",
+    objcopy = "@bsd_sdk//toolchain:bin/llvm-objcopy", objcopy_inputs = "@bsd_sdk//toolchain:objcopy_inputs",
+    enabled = select({"//tools/build/bazel/config:kernel_debug_enabled": True, "//conditions:default": False}),
+    visibility = ["//visibility:public"],
+)
+filegroup(name = "generic_kernel_debug", srcs = [":generic_kernel"], output_group = "debug_files",
+    visibility = ["//visibility:public"])

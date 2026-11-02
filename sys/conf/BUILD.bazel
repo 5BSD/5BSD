@@ -32,3 +32,5 @@ cc_binary(name = "generic_force_dynamic_shared", srcs = [":generic_force_dynamic
     target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
 bsd_object_alias(name = "generic_force_dynamic_link_object", src = ":generic_force_dynamic_shared",
     output = "generic_link_objects/force-dynamic-hack.pico", visibility = ["//visibility:public"])
+
+exports_files(["ldscript.amd64", "debuginfo.ldscript"], visibility = ["//sys/amd64/conf:__pkg__"])

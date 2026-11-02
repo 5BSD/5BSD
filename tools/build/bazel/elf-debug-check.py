@@ -41,7 +41,9 @@ def sections(data):
     return endian, result
 
 
-def verify(binary, debug, *, module=False):
+def verify(binary, debug, *, module=False, kernel=False):
+    if module and kernel:
+        raise ValueError("choose kernel or module debug validation")
     runtime = binary.read_bytes()
     symbols = debug.read_bytes()
     endian, runtime_sections = sections(runtime)
@@ -50,11 +52,14 @@ def verify(binary, debug, *, module=False):
         raise ValueError('debug ELF identity differs')
     if any(n in runtime_sections for n in ('.debug_info', '.zdebug_info')):
         raise ValueError('installed binary retains debug information')
-    if module:
-        if struct.unpack_from(endian + 'H', runtime, 16)[0] not in (1, 3):
-            raise ValueError('kernel module must be relocatable or shared ELF')
+    if module or kernel:
+        allowed = (2,) if kernel else (1, 3)
+        if struct.unpack_from(endian + 'H', runtime, 16)[0] not in allowed:
+            raise ValueError('kernel must be executable ELF' if kernel else
+                             'kernel module must be relocatable or shared ELF')
         if not runtime_sections.get('.symtab'):
-            raise ValueError('kernel module lacks its loader symbol table')
+            raise ValueError('kernel lacks its loader symbol table' if kernel else
+                             'kernel module lacks its loader symbol table')
     elif '.symtab' in runtime_sections:
         raise ValueError('installed binary retains static symbol sections')
     if not any(debug_sections.get(n) for n in ('.debug_info', '.zdebug_info')):
@@ -80,9 +85,11 @@ if __name__ == '__main__':
     p.add_argument('--binary', type=Path, required=True)
     p.add_argument('--debug', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
-    p.add_argument('--module', action='store_true', help='require the loader symbol table in a kernel module')
+    kind = p.add_mutually_exclusive_group()
+    kind.add_argument('--module', action='store_true', help='require the loader symbol table in a kernel module')
+    kind.add_argument('--kernel', action='store_true', help='require executable ELF and the kernel loader symbol table')
     a = p.parse_args()
-    result = verify(a.binary, a.debug, module=a.module)
+    result = verify(a.binary, a.debug, module=a.module, kernel=a.kernel)
     with a.output.open('x') as f:
         json.dump(result, f, indent=2)
         f.write('\n')

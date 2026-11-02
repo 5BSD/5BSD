@@ -47653,3 +47653,15 @@ ZSTDIO/NFS_ROOT selections. Bazel host rejection tests pass separately from
 kernel artifact profiles. See KERNEL-AGGREGATE-GUARD-QUALIFICATION.md. The final
 linker must consume the validation marker and ordered Files; full kernel link,
 post-processing/install and wider system gates remain unfinished.
+
+## Complete amd64 GENERIC native link milestone (2026-11-02)
+
+The complete 2,462-product native kernel compiles/links through the maintained
+frontend; CTF merge and runtime/debug split also pass. Actual link order/flags
+match Make, recorded inputs are hash-bound, all allocated sections survive
+postprocessing, and original Make postprocessing of identical native inputs is
+byte-exact. The initial missing socket audit-header dependency was fixed locally.
+See FULL-KERNEL-LINK-QUALIFICATION.md. This is not complete independently compiled
+Make-kernel parity, installation or boot/runtime acceptance. Those gates plus
+modules, other configurations/architectures, world, packages, bootstrap and
+performance remain open; Make stays production/default.
