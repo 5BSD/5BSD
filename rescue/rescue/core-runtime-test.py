@@ -45,6 +45,10 @@ class RescueCore(unittest.TestCase):
         p = self.run_app("head", "-n", "2", data=b"one\ntwo\nthree\n")
         self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"one\ntwo\n", b""))
 
+    def test_head_scaled_byte_count(self):
+        p = self.run_app("head", "-c", "1k", data=b"x" * 2048)
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"x" * 1024, b""))
+
     def test_head_private_file(self):
         with tempfile.TemporaryDirectory(dir=os.environ["TEST_TMPDIR"]) as d:
             path = Path(d) / "input"

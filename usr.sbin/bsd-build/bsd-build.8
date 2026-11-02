@@ -5306,3 +5306,21 @@ Unknown aborts and requests with no compatible tests fail qualification.
 See
 .Pa tools/build/bazel/CONFIGURED-TEST-COMPATIBILITY-QUALIFICATION.md
 for native controls and remaining installed-path limits.
+.Pp
+Native source rules may opt into the default-disabled
+.Cm bsd_small_pic
+toolchain feature when the original Make PIC recipe requires
+.Fl fpic
+rather than
+.Fl fPIC .
+Regular objects remain non-PIC.
+Callers without the feature retain their existing PIC policy.
+The libutil rule uses this feature with its original warning and GNU17 policy.
+Changing the toolchain configuration requires a fresh maintained SDK preparation
+and receipt, carried by ordinary format-5 inputs; historical receipts are not
+rebound.
+The native pic_policy test inspects actual regular/default-PIC/small-PIC object
+values and the separate negative compiler control rejects an incorrect level.
+This source-rule feature introduces no new frontend option.
+It does not establish full libutil archive/provider, installed-library or
+complete rescue parity.

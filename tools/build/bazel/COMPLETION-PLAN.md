@@ -1008,3 +1008,18 @@ inventories total86 occurrences. This does not close full world/library or rescu
 install/package parity. Next correct the existing libutil cc_library's missing
 Make standard/pipe/fno-common/warning policy, qualify its archive/DSO and repeat
 core tests, then expand the complete rescue application/static-library closure.
+
+### Libutil compiler policy and SDK refresh (November 2, 2026)
+
+[Qualified correction](LIBUTIL-COMPILE-POLICY-QUALIFICATION.md): 68 original Make
+normal/PIC recipes, 3,778 original and actual native consumed-input occurrences,
+all compiler-object allocated sections/nondebug relocations, 72 unchanged
+representative default actions and keys, four PIC fixture methods and eleven
+real bounded rescue methods. A fresh maintained SDK explicitly snapshots the
+new default-disabled small-PIC feature; no historical receipt was rebound.
+Before/after native DSO/archive runtime sections are unchanged and rescue ELF
+bytes exact. Remaining library work: Make member order (including pw_scan),
+section-archive versus separate provider/DOF and final DSO payload/installed-test
+parity. Then expand real rescue applications, static libraries, selected options,
+complete installation/pkgbase and full world/bootstrap; this bounded correction
+does not close those gates.

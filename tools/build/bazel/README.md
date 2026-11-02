@@ -48086,3 +48086,10 @@ bootstrap/publication, runtime and CPU/memory/disk I/O/cache/sandbox gates remai
 open. The maintained build-bsd frontend exercises these changes with existing
 format-5 inputs; module rules, tests and manual are updated. Make stays default;
 BIP remains excluded.
+
+The [libutil compiler-policy correction](LIBUTIL-COMPILE-POLICY-QUALIFICATION.md)
+now matches all 68 original normal/small-PIC compile recipes and 3,778 consumed
+file occurrences. A default-disabled small-PIC toolchain feature leaves all 72
+representative default action contracts and keys unchanged. Four PIC checks and
+eleven real rescue runtime methods pass; the rescue ELF remains byte exact.
+Original Make archive/provider order and full DSO payload parity remain open.

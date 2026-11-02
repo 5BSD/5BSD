@@ -10335,3 +10335,18 @@ are separate questions. No new probes or live event qualification. Review shared
 attach/reset/recovery, VF lifecycle, firmware error/logging and queue allocation
 paths for useful events without per-packet logging or payload/credential leakage.
 See INTEL-ETHERNET-MODULES-QUALIFICATION.md for evidence and limits.
+
+## Libutil compile-policy correction (November 2, 2026)
+
+No production source/probe changes. All 68 normal/PIC recipes preserve original
+WITH_DTRACE and header bytes; 3,778 original/actual consumed-input occurrences
+match. Make mutates login_class objects during its later DTrace step; two original
+compile-only controls prove native raw allocated sections/relocations exactly,
+without comparing unlike partial-link/provider stages. Native before/after DSO
+and 34 archive-member runtime sections/relocations remain exact; only three DSO
+DWARF sections change. Eleven actual rescue methods run with DOF initialization
+disabled before process startup, including head's real expand_number path.
+Four PIC object checks and an actual compiler negative validate the feature.
+No tracing activated. Full original provider/DOF site/relocation and DSO payload
+parity, installed-library tests, live events and complete rescue remain open.
+See LIBUTIL-COMPILE-POLICY-QUALIFICATION.md for exact evidence and rejected checks.
