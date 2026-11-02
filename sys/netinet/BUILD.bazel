@@ -811,3 +811,18 @@ bsd_source_headers(name = "firmware_driver_module_context_0", hdrs = ["in.h", "i
 
 bsd_source_headers(name = "carray_firmware_module_context_0", hdrs = ["in.h", "in_kdtrace.h", "in_systm.h", "ip.h", "ip6.h", "tcp.h", "tcp_lro.h"], includes = [],
     visibility = ["//sys/dev/mxge:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_0", hdrs = ["in.h", "in_systm.h", "ip.h", "ip_icmp.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h", "tcp.h", "udp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_1", hdrs = ["in.h", "in_systm.h", "ip.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h", "tcp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_2", hdrs = ["in.h", "in_systm.h", "ip.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_3", hdrs = ["in.h", "in_systm.h", "ip.h", "sctp.h", "sctp_constants.h", "sctp_crc32.h", "sctp_header.h", "sctp_uio.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_4", hdrs = ["in.h", "in_systm.h", "ip.h", "sctp.h", "sctp_constants.h", "sctp_header.h", "sctp_uio.h", "udp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])

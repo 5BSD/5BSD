@@ -10224,3 +10224,15 @@ This does not cover shared header/subsystem or live instrumentation. Shared
 firmware lifecycle and driver attach/reset/interrupt/rx/tx review remains open.
 Prefer shared lifecycle hooks; do not log firmware contents. See
 CARRAY-FIRMWARE-MODULES-QUALIFICATION.md for scoped evidence.
+
+
+### libalias and NTB module qualification (2026-11-02)
+
+The bounded scan of twenty actual C files and ntb_if.m retains 34 explicit marker
+lines: eight in if_ntb.c, twenty-six in ntb_transport.c. Existing compiled section
+payloads match original Make. KTR-enabled builds/live events and shared subsystem
+instrumentation remain separate gates. Preserve existing KTR transport hooks;
+review libalias helper/protocol/error paths and NTB link/memory-window/doorbell,
+DMA/queue/reset/rx/tx failures for useful shared events without per-packet logs or
+payload disclosure. Remaining scanned files lack explicit markers; that does
+not prove lack of inherited instrumentation. See ALIAS-NTB-MODULES-QUALIFICATION.md.

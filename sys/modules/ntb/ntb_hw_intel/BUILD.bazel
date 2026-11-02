@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "ntb_hw_intel", objects = ["//sys/dev/ntb:ntb_hw_intel_ntb_hw_intel_module_object_files"], object_order = ["ntb_hw_intel.o"], export_all = False)

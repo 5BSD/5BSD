@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "if_ntb", objects = ["//sys/dev/ntb:if_ntb_if_ntb_module_object_files"], object_order = ["if_ntb.o"], export_all = False)

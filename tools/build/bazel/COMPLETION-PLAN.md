@@ -826,3 +826,22 @@ bootstrap/publication, VM and performance/cache/sandbox gates remain open.
 Existing build-bsd format-5/backend helpers cover this composition without a new
 CLI, helper extension, signing/staging or publication policy. Make remains the
 production/default build. BIP stays excluded.
+
+
+### libalias and NTB module qualification (2026-11-02)
+
+Fifteen more selected amd64 leaves use native C/KOBJ and module helpers: eight
+libalias core/extensions and seven NTB core/hardware/transport/network/tool modules.
+All fifteen plain binaries are byte-identical to untouched Make references;
+CTF/debug, 45 installation records, 21 actual compilers/2,793 prerequisites and
+fifteen initial links pass. Original export policies are retained, including
+libalias/ntb/ntb_transport EXPORT_SYMS=YES. No runtime C or original Makefile change.
+See ALIAS-NTB-MODULES-QUALIFICATION.md for scoped evidence and remaining gates.
+Local BUILD presence is 494/729 selected amd64 leaves (235 missing), not a
+whole-system qualification percentage. Six existing provider tests pass per
+profile; protocol behavior, module loading, hardware, KTR variants and live
+tracing remain open. Whole world/rescue/cross/pkgbase/hardware/bootstrap,
+publication, VM/runtime and CPU/memory/disk I/O/cache/sandbox qualification remain
+required. Existing build-bsd C/format-5/backend helpers cover this composition
+without new CLI, helper extension, signing/staging or publication requirements.
+Make remains production/default. BIP stays excluded.

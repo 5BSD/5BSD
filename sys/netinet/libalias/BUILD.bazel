@@ -11,3 +11,73 @@ cc_library(name = "headers", hdrs = ["alias.h", "alias_local.h", "alias_mod.h", 
 # Explicit header closure for the native Netgraph node/core candidates.
 cc_library(name = "netgraph_headers", hdrs = ["alias.h", "alias_local.h", "alias_sctp.h"],
     strip_include_prefix = "/sys", visibility = ["//sys/netgraph:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+
+bsd_source_headers(name = "alias_ntb_module_context_0", hdrs = ["alias.h", "alias_local.h", "alias_mod.h", "alias_sctp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_1", hdrs = ["alias.h", "alias_db.h", "alias_local.h", "alias_mod.h", "alias_sctp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_2", hdrs = ["alias.h", "alias_local.h", "alias_sctp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+bsd_source_headers(name = "alias_ntb_module_context_3", hdrs = ["alias_local.h", "alias_mod.h", "alias_sctp.h"], includes = [],
+    visibility = ["//sys/netinet/libalias:__pkg__"])
+
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module_objects")
+
+load("//tools/build/bazel:kernel_amd64.bzl", "AMD64_KERNEL_WARNING_FLAGS")
+
+amd64_generic_module_objects(name = "libalias_alias_module", srcs = ["alias.c"],
+    deps = ["//sys/vm:usb_net_usie_headers", "//sys/netinet:alias_ntb_module_context_0", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "libalias_alias_db_module", srcs = ["alias_db.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/netinet/libalias:alias_ntb_module_context_1", "//sys/net:core_kernel_kern_jail_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "libalias_alias_proxy_module", srcs = ["alias_proxy.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "libalias_alias_util_module", srcs = ["alias_util.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_2"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "libalias_alias_mod_module", srcs = ["alias_mod.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_2", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "libalias_alias_sctp_module", srcs = ["alias_sctp.c"],
+    deps = ["//sys/netinet/libalias:alias_ntb_module_context_2", "//sys/netinet:alias_ntb_module_context_3", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_dummy_alias_dummy_module", srcs = ["alias_dummy.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_4", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_ftp_alias_ftp_module", srcs = ["alias_ftp.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_irc_alias_irc_module", srcs = ["alias_irc.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_nbt_alias_nbt_module", srcs = ["alias_nbt.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_4", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_pptp_alias_pptp_module", srcs = ["alias_pptp.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/netinet/libalias:alias_ntb_module_context_0", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_skinny_alias_skinny_module", srcs = ["alias_skinny.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_3"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])
+
+amd64_generic_module_objects(name = "alias_smedia_alias_smedia_module", srcs = ["alias_smedia.c"],
+    deps = ["//sys/netinet:alias_ntb_module_context_1", "//sys/net:tracing_core_headers", "//sys/netinet6:tracing_core_headers", "//sys/netinet/libalias:alias_ntb_module_context_0"],
+    warning_flags = AMD64_KERNEL_WARNING_FLAGS + [], copts = [], local_defines = [])

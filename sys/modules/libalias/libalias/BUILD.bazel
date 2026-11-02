@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "libalias", objects = ["//sys/netinet/libalias:libalias_alias_module_object_files", "//sys/netinet/libalias:libalias_alias_db_module_object_files", "//sys/netinet/libalias:libalias_alias_proxy_module_object_files", "//sys/netinet/libalias:libalias_alias_util_module_object_files", "//sys/netinet/libalias:libalias_alias_mod_module_object_files", "//sys/netinet/libalias:libalias_alias_sctp_module_object_files"], object_order = ["alias.o", "alias_db.o", "alias_proxy.o", "alias_util.o", "alias_mod.o", "alias_sctp.o"], export_all = True)

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("//tools/build/bazel:amd64_generic_module.bzl", "amd64_generic_module")
+
+amd64_generic_module(module = "alias_dummy", objects = ["//sys/netinet/libalias:alias_dummy_alias_dummy_module_object_files"], object_order = ["alias_dummy.o"], export_all = False)
