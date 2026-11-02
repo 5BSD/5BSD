@@ -10084,3 +10084,14 @@ fifteen Make records and exact accepted payloads; LLDB-off has zero products
 and an explicitly requested disabled suite fails before execution. Original
 Make parent-option controls and recursive selection are separately recorded
 in LLDB-FAMILY-QUALIFICATION.md; no full debugger/world runtime claim.
+
+
+### Module export versus loader compatibility correction (2026-11-02)
+
+Local-only provider findings are explicit ELF export-contract findings, not proof
+of default load failure: source defaults allow local symbols in module lookup.
+Explicit Broadcom/hgame public exports remain, but their static negative fixtures
+do not emulate that runtime compatibility behavior. VM tests must record both
+leak_locals settings and qualify default/disabled lookup, dependency metadata,
+built-in providers, load/unload, probe registration and live event delivery.
+No kernel policy or host sysctl changed. See MODULE-LOADER-EXPORT-CONTRACT.md.

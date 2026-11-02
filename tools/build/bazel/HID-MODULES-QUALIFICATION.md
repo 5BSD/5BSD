@@ -13,13 +13,14 @@ defines, code-generation policy and complete ordered object inventories agree.
 No imported Make outputs, installed-header substitutes, production graph discovery,
 Make wrapper/fallback or new build frontend option is added.
 
-## Shared hgame callback export defect
+## Explicit shared hgame callback exports
 
 The untouched original Make hgame module localized three public callbacks declared
 in hgame.h: hgame_hat_switch_cb, hgame_dpad_cb and hgame_final_cb. Four strong
-references from ps4dshock, ps5dsense and xb360gp could not use those definitions.
+references from ps4dshock, ps5dsense and xb360gp lacked explicit global providers.
 Each consumer explicitly declares MODULE_DEPEND on hgame. This is an original
-source export-policy defect, not a difference to copy into native rules.
+dependency on the loader's local-symbol compatibility fallback. The default loader
+can resolve these local definitions; a static binding finding is not a load failure.
 
 The Makefile now explicitly lists exactly these three exports before including
 bsd.kmod.mk; the native module uses the identical three-name export list. Private
@@ -31,7 +32,8 @@ findings and source API/dependency declarations are retained.
 hid_known_providers_test reads actual native module ELF bindings and requires all
 four controller callback references to resolve to hgame. Its companion processes
 the real hgame full artifact through the existing empty-export transform and
-requires the old localization failure to be detected using the actual consumers.
+requires the old explicit-export contract violation to be detected using the actual
+consumers.
 Both tests pass in both native profiles; neither executes a kernel module.
 
 ## Evidence
@@ -41,7 +43,7 @@ Paths below are under /usr/obj/usr/src.
 - bazel-hid-module-source-facts-r1-20261102 preserves original selection, parent
   export context, source inventories and source Makefile hashes.
 - bazel-hid-module-make-references-r1-20261102 contains 48 passing isolated original
-  Make build/install controls, including the old hgame export defect. Its two
+  Make build/install controls, including the original local-only callback policy. Its two
   corrected references are in bazel-hgame-export-make-references-r1-20261102.
 - bazel-hid-modules-{plain,ctf-debug}-native-r1-20261102 are accepted normal
   build-bsd profiles, each passing the two registered actual-provider tests.
@@ -89,3 +91,8 @@ complete world/pkgbase/hardware publication, bootstrap, VM/runtime and controlle
 CPU/memory/disk I/O/disk-use/cache/sandbox performance gates remain open. Make
 remains production/default; BIP stays excluded. No host installation, upgrade,
 module loading or reboot occurred.
+
+
+See [module loader/export scope](MODULE-LOADER-EXPORT-CONTRACT.md) for the source
+defaults, actual host observations and separate required VM qualification of both
+compatibility settings. No kernel lookup policy was changed.

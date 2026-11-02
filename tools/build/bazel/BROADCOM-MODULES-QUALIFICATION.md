@@ -21,7 +21,7 @@ source basenames, as in the existing native interface rules. Original warning
 vectors, defines and code-generation policies are preserved. All 75 objects retain
 original Make link order across their 70 native compiler contexts/groups.
 
-## Real source policy defects and regression tests
+## Explicit shared API policies and regression tests
 
 The initial native files matched original Make, but static import/provider
 inspection found 28 distinct shared symbols hidden by four original empty export
@@ -34,7 +34,7 @@ for the separately committed source fixes and old rejected artifacts.
 The registered broadcom_known_providers_test reads real module ELF bindings and
 rejects imports with only a localized supplied provider. Its negative companion
 localizes the actual BCMA artifact with the maintained export transform and proves
-the failure remains detectable using the actual bridge consumer. These are host
+the binding-contract violation remains detectable using the actual bridge consumer. These are host
 artifact inspections, not module execution. Unknown external imports are reported,
 not described as complete closure. The selected kernel plus this batch still need
 GPIO interface/gpiobus providers. The final observer reads actual ELF binding bits,
@@ -109,3 +109,8 @@ The subsequent [SPI qualification](SPI-MODULES-QUALIFICATION.md) supplies the GP
 and SPI boundaries and records no remaining unprovided strong imports against
 the qualified kernel plus all twenty-four modules. The earlier gaps above describe
 this document's original checkpoint; actual module loading remains unqualified.
+
+
+The [loader contract correction](MODULE-LOADER-EXPORT-CONTRACT.md) clarifies that
+local-only symbols can resolve through the default compatibility fallback. These
+export tests enforce explicit public bindings, not default-loader rejection.

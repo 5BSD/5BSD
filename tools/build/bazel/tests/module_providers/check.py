@@ -4,6 +4,8 @@
 
 This is a known-provider regression check, not complete kernel/module dependency
 closure: imports with no definition in the supplied modules remain reported.
+This explicit ELF global/weak contract does not emulate the kernel compatibility
+setting that permits local symbols in cross-module lookup.
 """
 import argparse
 import json

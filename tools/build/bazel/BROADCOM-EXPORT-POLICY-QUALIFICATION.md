@@ -8,7 +8,8 @@ export policies hid their shared public implementation: bcma, bhnd_pci, siba and
 bhndb_pci. Five dependent modules required 28 distinct hidden symbols (37 consumer/
 provider references), including bus probe/attach operations, shared driver classes,
 PCI/PCIe helpers and BWN hardware configuration tables. Make byte parity alone
-would have preserved this actual load-time dependency defect.
+would have preserved reliance on local-symbol lookup compatibility. The default
+loader permits that fallback; this finding alone does not prove a load failure.
 
 Add explicit EXPORT_SYMS=YES before the kmod rules in those four Makefiles,
 consistent with the adjacent bhnd and bhndb provider modules. Their native Bazel
@@ -29,14 +30,14 @@ bazel-broadcom-modules-plain-native-r3-20261102 match the corresponding correcte
 Make artifacts/metadata. All twelve final plain module files equal Make bytes;
 CTF/debug runtime sections match except build-ID/debug-link values. A registered
 host artifact test checks actual cross-module bindings, and an intentionally
-localized real BCMA provider reproduces the failure in the negative fixture.
+localized real BCMA provider reproduces the explicit export-contract violation in the negative fixture.
 The final symbol-closure observer reads actual ELF bindings, including global
 IFUNC definitions; an earlier nm-case-only observer incorrectly reported memory
 primitives and is retained rather than accepted as final closure evidence.
 
 ## Limits
 
-This closes the identified local-only bus-provider defects, not complete module
+This removes the identified local-only shared API bindings, not complete module
 loadability. The qualified GENERIC kernel and this batch still lack GPIO interface
 and gpiobus definitions required by bhnd/BWN. Full module aggregation and runtime
 loading need those providers. Other module groups need the same dependency review;
@@ -46,3 +47,7 @@ wireless operation, host installation or reboot was performed.
 No build-bsd CLI/publication/security-policy input changes are needed for these
 explicit source Make policies. The accompanying maintained frontend host-artifact
 contract, tests and manual are qualified and committed separately.
+
+
+The [loader contract correction](MODULE-LOADER-EXPORT-CONTRACT.md) supersedes any
+earlier interpretation of these static findings as default-loader failures.

@@ -56,8 +56,8 @@ declared AWK/map/runtime inputs; module compilation remains open. See
 
 Twelve Broadcom bus/wireless modules now pass native 75-object compile/input and
 ordered-link audits, corrected Make plain/CTF-debug comparisons and 36 install
-records. Static import review found four real provider export-policy defects;
-source fixes and positive/negative native artifact tests address those defects.
+records. Static import review found four local-only shared provider policies;
+explicit exports and positive/negative artifact tests remove fallback reliance.
 GPIO providers and runtime/module loading remain open. See
 [BROADCOM-MODULES-QUALIFICATION.md](BROADCOM-MODULES-QUALIFICATION.md).
 
@@ -84,14 +84,20 @@ and 439 leaves without one; these were source-coverage counts only.
 
 Twenty-four HID/evdev modules now pass 28 actual compiler/input and 24 ordered-link
 audits, Make plain/CTF-debug comparisons and 72 install records. An original hgame
-policy hid three public callbacks needed by three controller modules; exact shared
-exports and positive/negative actual-provider tests correct it. Static strong-import
+policy localized three public callbacks used by three controller modules; explicit
+exports and positive/negative provider tests remove reliance on local-symbol fallback. Static strong-import
 coverage passes for the kernel plus 48 Broadcom/GPIO/SPI/HID modules. Runtime and
 hardware behavior remain open. See
 [HID-MODULES-QUALIFICATION.md](HID-MODULES-QUALIFICATION.md).
 
 The current 729-leaf amd64 selection has 314 local BUILD files and 415 leaves
 without one. These are source-coverage counts, not qualified builds.
+
+Module export tests enforce explicit ELF bindings; the source loader defaults permit
+local-symbol lookup for compatibility. Earlier claims that local-only findings
+necessarily caused default load failures are withdrawn. Explicit exports remain;
+actual VM loading under both settings is still required. See
+[MODULE-LOADER-EXPORT-CONTRACT.md](MODULE-LOADER-EXPORT-CONTRACT.md).
 
 Earlier component checkpoints below are retained historical evidence.
 
