@@ -10671,3 +10671,15 @@ lifetime. See
 [CROSS-USB-CORE-MODULES-QUALIFICATION.md](CROSS-USB-CORE-MODULES-QUALIFICATION.md)
 and bazel-cross-usb-core-review-r1-20261103/supplement.json. No instrumentation
 source changes or live module loads occur.
+
+### bzip2 recovery/package family on three ABIs (2026-11-03)
+
+The batch changes build/installation/test declarations without runtime C or
+instrumentation changes. Exact allocated sections and runtime relocation checks
+cover all 48 production objects and nine linked DSO/program/recovery payloads;
+actual consumed inputs and twelve expanded links are retained. Sixteen declared
+test invocations include host-only cross artifact inspection and safe native
+multiblock recovery/CRC negatives against the selected library; independent
+original native recovery also passes. This proves no live probe, audit-delivery,
+foreign runtime or framework tracing completeness. Package timestamps and
+separate DWARF/source lookup remain explicit. See BZIP2-FAMILY-QUALIFICATION.md.

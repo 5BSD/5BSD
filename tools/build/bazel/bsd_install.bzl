@@ -78,6 +78,18 @@ def resolve_hardlinks(records):
             fail("hardlink cycle: " + path)
     return roots
 
+def _append_installation_record(entries, seen, record, merge_identical_directories):
+    path = record["destination"]
+    if path in seen:
+        # World installation repeats directory records across components. Only
+        # an explicit composition may coalesce complete, identical metadata.
+        if (merge_identical_directories and record["type"] == "dir" and
+            record == seen[path]):
+            return
+        fail("duplicate installation destination: " + path)
+    seen[path] = record
+    entries.append(record)
+
 def _install_manifest(ctx):
     entries, payload, seen = [], [], {}
     inherited_payloads = []
@@ -85,22 +97,13 @@ def _install_manifest(ctx):
         info = target[BsdInstallManifestInfo]
         inherited_payloads.append(info.payload)
         for original in info.records:
-            record = dict(original)
-            path = record["destination"]
-            if path in seen:
-                fail("duplicate installation destination: " + path)
-            seen[path] = record
-            entries.append(record)
+            _append_installation_record(entries, seen, dict(original), ctx.attr.merge_identical_directories)
     for target in ctx.attr.entries:
         item = target[BsdInstallFileInfo]
         record = dict(item.metadata)
-        path = record["destination"]
-        if path in seen:
-            fail("duplicate installation destination: " + path)
-        seen[path] = record
         if item.source != None:
             record["source"] = item.source.path
-        entries.append(record)
+        _append_installation_record(entries, seen, record, ctx.attr.merge_identical_directories)
         if item.source != None:
             payload.append(item.source)
     resolve_hardlinks(seen)
@@ -118,6 +121,7 @@ bsd_install_manifest = rule(
     attrs = {
         "entries": attr.label_list(providers = [BsdInstallFileInfo]),
         "manifests": attr.label_list(providers = [BsdInstallManifestInfo]),
+        "merge_identical_directories": attr.bool(default = False),
     },
 )
 

@@ -1511,3 +1511,18 @@ separate DWARF/source lookup parity. See BZIP2-THREE-ARCH-QUALIFICATION.md.
 Next real package-family gate is bzip2recover original policy/installation plus
 the existing packages/bzip2 aggregate and real pkgbase outputs on selected ABIs;
 full world/rescue/bootstrap/foreign runtime and publication remain incomplete.
+
+### 2026-11-03: selected bzip2 recovery/package family on three ABIs
+
+The next component gap is closed: actual recovery production/installation and
+four selected pkgbase outputs pass three normal profiles and independent
+original Make package recipes. All 48 production contexts/1,040 consumed pairs,
+nine allocated linked payloads, twelve actual links, 66 original component
+records→57 composed records and sixteen declared tests pass. Six prior component
+archives are unchanged whole bytes. Default-off identical-directory composition
+preserves every metadata field and rejects file collisions. Ordinary Make
+package stage timestamps versus declared native epoch zero and separate DWARF
+source lookup are retained distinctions; no package archive byte-equality claim.
+See BZIP2-FAMILY-QUALIFICATION.md and its hash-bound summary. Complete selected
+world/rescue/pkgbase, dependency solver/installation, bootstrap, foreign runtime
+and publication remain incomplete; this is the selected four-package profile.

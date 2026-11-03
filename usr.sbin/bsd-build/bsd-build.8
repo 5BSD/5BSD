@@ -5553,3 +5553,20 @@ See
 .Pa tools/build/bazel/CROSS-USB-CORE-MODULES-QUALIFICATION.md
 for evidence and remaining debugger, cross-system, runtime and
 performance gates.
+
+.Pp
+The selected bzip2 family format-5 profiles also produce bzip2recover and the
+four original package outputs on amd64, ARM64 and RISC-V.
+Source-owned host tests inspect actual packages on every ABI; the native
+recovery test executes the selected programs and library in a private test
+directory.
+The installation manifest helper permits explicit
+.Dv merge_identical_directories
+composition only for complete identical directory records, including flags
+and tags; the default duplicate prohibition and all payload conflicts remain.
+See
+.Pa tools/build/bazel/BZIP2-FAMILY-QUALIFICATION.md
+for independent original package comparisons, the explicit native epoch-zero
+versus original stage timestamp policy, and remaining separate DWARF/source
+lookup, full world, bootstrap, installation, foreign runtime and publication
+gates.

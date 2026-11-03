@@ -2,10 +2,14 @@
 load("//tools/build/bazel:bsd_base_install.bzl", "bsd_program_install")
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_directory")
 
 cc_binary(
     name = "bzip2recover",
     srcs = ["//contrib/bzip2:bzip2recover.c"],
+    copts = ['-fpie', '-pipe', '-fno-common', '-fPIE', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'],
+    local_defines = ["PIC"],
+    linkopts = ["-pie", "-fstack-protector-strong", "-gz=zlib"],
     visibility = ["//visibility:public"],
 )
 
@@ -28,11 +32,17 @@ bsd_strip_binary(
     visibility = ["//visibility:public"],
 )
 
+bsd_install_directory(name = "debug_usr_dir", destination = "/usr/lib/debug/usr",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
+bsd_install_directory(name = "debug_bin_dir", destination = "/usr/lib/debug/usr/bin",
+    owner = "root", group = "wheel", mode = "0755", install_tags = ["package=bzip2", "dbg"])
+
 bsd_program_install(
     name = "install_manifest",
     binary = ":bzip2recover_install",
     debug = ":bzip2recover_debug",
     destination = "/usr/bin/bzip2recover",
     package = "bzip2",
+    extra_entries = [":debug_usr_dir", ":debug_bin_dir"],
     visibility = ["//visibility:public"],
 )

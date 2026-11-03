@@ -48387,3 +48387,18 @@ records/payload bindings pass. Target FDT adds usb_fdt_support.c; a real cp2112
 Make prerequisite omission is corrected in both build descriptions. Separate
 DWARF/source lookup and device/runtime/performance gates remain open. See
 [CROSS-USB-CORE-MODULES-QUALIFICATION.md](CROSS-USB-CORE-MODULES-QUALIFICATION.md).
+
+## bzip2 recovery and actual package family on three ABIs (2026-11-03)
+
+Normal build-bsd profiles now qualify the actual recovery producer and four
+selected family packages on amd64, ARM64 and RISC-V. All 48 production compiler
+contexts/1,040 consumed pairs, nine linked allocated payloads, twelve actual
+links, 66 original component records and twelve independent original packages
+pass bounded checks. Six earlier component archives remain whole-byte unchanged;
+all sixteen declared test invocations pass, including safe native multiblock
+recovery and cross host package inspection. Explicit default-off directory
+composition permits only complete identical records; payload collisions remain
+errors. Epoch-zero versus original stage timestamps and separate DWARF/source
+lookup remain explicit distinctions. Full world/rescue/bootstrap, installed
+package/foreign runtime and publication remain open. See
+[BZIP2-FAMILY-QUALIFICATION.md](BZIP2-FAMILY-QUALIFICATION.md).
