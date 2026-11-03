@@ -1788,8 +1788,15 @@ its 65-case maintained format suite exists. Do not reinvent pipeline ordering
 or the previously rejected fuzzy-merge workaround. The unchanged native r4 SDK
 passes all 65 cases; both foreign r4 tools fail the localization case.
 
-Rebuild ARM64/RISC-V cross-tools through maintained _cross-tools targets, with
-all available CPUs and guarded resource budgets. Coordinate world/tmp mutations
+Refresh ARM64/RISC-V bootstrap objcopy through its maintained cross-tools
+source-owner recipes, with all available CPUs and guarded resource budgets.
+Rebuilding the LLVM bootstrap library is separate from installing it: replaying
+the full cross-tools library installation over a completed foreign sysroot can
+replace target libraries with native bootstrap libraries. Derive the XMAKE
+context from the recorded profile, build libllvm without installing it, then
+build and stage only the objcopy/strip programs. Hash the complete target
+header/library inventory before and after; require it to remain unchanged.
+Coordinate world/tmp mutations
 with original-reference controls. Generate fresh SDKs/receipts; retain r4 inputs
 and failures unchanged. Run the existing semantic/format suite for each SDK's
 actual selected tool, then rerun real module/CTF/export/debug/install profiles

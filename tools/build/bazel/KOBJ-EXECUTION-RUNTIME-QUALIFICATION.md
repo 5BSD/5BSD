@@ -184,3 +184,32 @@ archive hash and verified complete cache identity remains unchanged. It changes
 no source, SDK, tool binary, receipt or artifact. Records are retained in
 bazel-completed-cache-blockclone-r1-20261103 and r2-20261103 under /usr/obj/usr/src.
 This is workspace storage recovery, not a comparative build I/O benchmark.
+
+## Controlled bootstrap refresh in progress (2026-11-03)
+
+The original libcrypto controls have released the shared compiler and world/tmp
+window. The ARM64 bootstrap refresh is running with 16 compilation jobs at
+`/usr/obj/usr/src/bazel-objcopy-bootstrap-refresh-aarch64-r1-20261103`.
+This is an in-progress build, not a refreshed-SDK or CTF qualification result.
+Its disk guard admits at 18 GiB free and preserves a 16 GiB reserve.
+
+The invocation derives XMAKE from the recorded target profile and rechecks the
+queried context before building. Only the query's metadata flags and root-only
+Makefile selection are removed for source-owner leaf invocation. libllvm is
+built without installation; llvm-objcopy uses its maintained all/install rules
+with DESTDIR set to the selected world/tmp, as in cross-tools. The observer
+hashes all target headers/libraries and source/profile bindings before and
+after, retains actual commands/logs and time -l observations, and runs the
+existing format suite on the resulting staged tool. No result is accepted
+until these checks finish. Frozen r4 SDKs remain unchanged.
+
+Do not replay the complete cross-tools installation over a completed foreign
+sysroot: some cross-tools libraries are native bootstrap products installed
+before target world libraries in the normal staged build. This repair must
+preserve the completed target ABI inventory. The normal frontend already
+accepts newly staged tools through fresh SDK plans and receipts; no CLI,
+configuration, security, package or publication interface changes here.
+
+A third completed-cache block-clone pass also finished with unchanged cache
+identities. Its records are under bazel-completed-cache-blockclone-r3-20261103;
+this is storage recovery only, not build performance evidence.
