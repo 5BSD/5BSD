@@ -58,14 +58,23 @@ def platform_arguments(config, target_arch, receipt=None):
             return ['--platforms=@bsd_sdk//toolchain:' + target_arch, '--host_platform=' + native,
                     '--extra_toolchains=@bsd_sdk//toolchain/host:registered']
         return ['--platforms=' + native, '--host_platform=' + native]
+    cross_execution = False
     if receipt is not None:
-        if userland_sdk.target_architecture(receipt.get('target')) != 'amd64':
-            raise ValueError('kernel profiles require a native amd64 execution SDK')
-        userland_sdk.receipt_architecture(receipt, 'amd64')
+        sdk_arch = userland_sdk.target_architecture(receipt.get('target'))
+        # A native SDK remains sufficient for freestanding cross kernels.
+        # Owners needing target SDK headers must select a matching composite
+        # SDK; its execution closure is independently bound to native amd64.
+        if sdk_arch != 'amd64' and sdk_arch != target_arch:
+            raise ValueError('kernel SDK target differs from selected architecture')
+        userland_sdk.receipt_architecture(receipt, sdk_arch)
+        cross_execution = sdk_arch != 'amd64'
     name = {'amd64': 'amd64', 'aarch64': 'arm64', 'riscv64': 'riscv64'}[target_arch]
     package = '//tools/build/bazel/kernel_toolchain:'
-    return ['--platforms=' + package + name, '--host_platform=' + native,
-            '--extra_toolchains=' + package + name + '_registered']
+    result = ['--platforms=' + package + name, '--host_platform=' + native,
+              '--extra_toolchains=' + package + name + '_registered']
+    if cross_execution:
+        result.append('--extra_toolchains=@bsd_sdk//toolchain/host:registered')
+    return result
 
 
 def test_inventory_command(argv, targets, tests, host_artifacts_only=False):

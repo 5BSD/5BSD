@@ -5513,8 +5513,15 @@ execution workspace and receipt through
 The composite receipt binds both target and execution closures; stale receipts
 must be replaced by maintained preparation, not rebound.
 Cross userland tests require explicitly declared host artifact inspection and
-never execute foreign programs. Kernel profiles continue to select their
-architecture separately using a native execution SDK.
+never execute foreign programs.
+Kernel profiles select their architecture separately and may use a native
+execution SDK for freestanding compilation, or a matching composite target SDK
+with its independently bound amd64 execution toolchain.
+A composite SDK for a different target is rejected.
+Target intrinsic headers remain explicit inputs of the owning kernel rule.
+Complete original cross-kernel comparison baselines and remaining native
+kernel implementation gates are recorded in
+.Pa tools/build/bazel/CROSS-KERNEL-BASELINE.md .
 The compiler/sysroot floor remains Make-built; these profiles do not establish
 full world bootstrap, target runtime, package publication or boot behavior.
 See

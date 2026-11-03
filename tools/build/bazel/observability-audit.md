@@ -10744,3 +10744,14 @@ completeness or absence elsewhere. Runtime follow-up must exercise CAM command
 errors, timeouts/reset, DMA/interrupts, hot removal, MMC/SDIO and fabric
 reconnection with enabled/disabled tracing costs. Live firing/audit delivery,
 full systems and performance remain open; see CROSS-STORAGE-BUSES-QUALIFICATION.md.
+
+### Complete original cross-kernel baseline (2026-11-03)
+
+The actual ARM64/RISC-V built-in compiler catalogue retains 2,054 distinct
+physical primary source files and 3,772 lexical DTrace/SDT/audit marker lines in
+bazel-cross-kernel-policy-catalogue-r1-20261103/observability.json. The successful
+original dependency audit covers 408,447 pairs, including generator compilers.
+No probe/source changes are made. Lexical counts do not prove instrumentation
+completeness, absence, live firing or audit delivery. Native cross-kernel
+DTrace generation, runtime tracing and enabled/disabled CPU/memory/I/O costs
+remain qualification gates; see CROSS-KERNEL-BASELINE.md.

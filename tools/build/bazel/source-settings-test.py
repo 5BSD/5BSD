@@ -91,9 +91,24 @@ class CrossUserlandSDKTest(unittest.TestCase):
         for arch in ['amd64','aarch64','riscv64']:
             self.assertEqual(platform_arguments({'target-kind':'kernel'},arch,native),
                              platform_arguments({'target-kind':'kernel'},arch))
+
+    def test_kernel_composite_sdk_keeps_target_and_execution_separate(self):
         for arch in ['aarch64','riscv64']:
-            with self.subTest(arch=arch), self.assertRaises(ValueError):
-                platform_arguments({'target-kind':'kernel'},arch,self.receipt(arch))
+            expected = platform_arguments({'target-kind':'kernel'}, arch)
+            self.assertEqual(platform_arguments({'target-kind':'kernel'},arch,self.receipt(arch)),
+                             expected + ['--extra_toolchains=@bsd_sdk//toolchain/host:registered'])
+
+    def test_kernel_mismatched_or_incomplete_composite_sdk_rejected(self):
+        for arch in ['aarch64','riscv64']:
+            original=self.receipt(arch)
+            other='riscv64' if arch=='aarch64' else 'aarch64'
+            for selected in ['amd64', other]:
+                with self.subTest(arch=arch,selected=selected), self.assertRaises(ValueError):
+                    platform_arguments({'target-kind':'kernel'},selected,original)
+            for change in [{'format':1}, {'execution_target':original['target']},
+                           {'snapshot':{}}, {'inputs':{}}, {'execution_sdk':{}}]:
+                with self.subTest(arch=arch,change=change), self.assertRaises(ValueError):
+                    platform_arguments({'target-kind':'kernel'},arch,dict(copy.deepcopy(original),**change))
 
     def test_recorded_world_pair_requires_explicit_selection(self):
         for name,machine,machine_arch in [('amd64','amd64','amd64'),

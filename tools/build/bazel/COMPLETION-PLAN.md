@@ -1609,3 +1609,17 @@ other architecture branches remain empty. See ZSTD-THREE-ARCH-QUALIFICATION.md.
 Separate DWARF/source lookup, alternate options/upstream suites, package-manager
 installation, full-world/rescue/bootstrap and foreign runtime remain open.
 Cross libmd/liblzma/xz and the larger libarchive stack remain distinct gaps.
+
+### 2026-11-03: complete original cross-kernel baselines and SDK selection
+
+ARM64/RISC-V original GENERIC kernels and private staged installations pass;
+2,035/1,194 selected products plus three auxiliary generators each have actual
+compiler/dependency/producer review (408,447 canonical consumed pairs).
+The four-header crypto provenance control and explicit assembly firmware input
+are retained distinctions. Source-derived policy grouping identifies 37 ARM64
+and 19 RISC-V compiler groups. The maintained format-5 backend now accepts a
+matching composite target/native execution SDK, with 17 settings tests and
+three real SDK snapshot checks. See CROSS-KERNEL-BASELINE.md. No full Bazel
+cross-kernel claim: next implement precise owners, intrinsic-header policies,
+source-derived DTS version, generated inputs and ordered links/installations,
+then compare complete native outputs before module/pkgbase/runtime/performance.

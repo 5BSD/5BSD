@@ -48482,3 +48482,16 @@ original one-map controls. Original pthread/PIC/directory/ARM linker omissions
 were corrected precisely. Separate DWARF/source lookup and full-world/cross
 runtime/bootstrap gates remain open. See
 [ZSTD-THREE-ARCH-QUALIFICATION.md](ZSTD-THREE-ARCH-QUALIFICATION.md).
+
+## Complete cross-kernel original baselines (2026-11-03)
+
+Original Make GENERIC builds and isolated installations now pass for ARM64
+(2,035 selected products) and RISC-V (1,194). Actual dependency/producer review
+covers 408,447 consumed pairs, including auxiliary generators and an explicit
+firmware .incbin input. A separately before-bound ARM64 crypto control closes
+four additional target-header inputs; version dependencies are observed without
+modifying original artifacts. These are migration baselines, not complete
+Bazel cross-kernel builds. Format-5 kernel selection now also accepts a matching
+composite SDK with independently bound native execution tools. Seventeen
+settings tests and three real SDK snapshot validations pass; actual composite
+kernel profiles remain pending. See [CROSS-KERNEL-BASELINE.md](CROSS-KERNEL-BASELINE.md).
