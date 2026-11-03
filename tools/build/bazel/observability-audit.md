@@ -10802,3 +10802,15 @@ relocations match original Make; all 48 CTF payloads match. See
 CROSS-KERNEL-VM-QUALIFICATION.md and the retained work-root observability.json.
 This preserves compiled instrumentation but does not prove complete coverage,
 live probe firing, authorization outcomes or workload/performance behavior.
+
+### BSD XML on three ABIs (2026-11-03)
+
+Runtime C and existing parser fixture sources remain unchanged. Thirty actual
+compiler contexts retain original policy and 1,020 consumed-file/digest pairs;
+allocated sections/runtime relocations match untouched originals for 24
+objects and independent source-filename controls for six xmlparse objects.
+All linked DSO allocated payloads match those controls without rewriting.
+Native parser tests exercise streaming namespaces, entities and error handling;
+these checks do not establish instrumentation coverage, probe delivery or cost.
+Separate DWARF/source lookup, foreign execution and full-world consumers remain
+open. See BSDXML-THREE-ARCH-QUALIFICATION.md.

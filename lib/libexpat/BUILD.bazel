@@ -1,28 +1,49 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library", "cc_shared_library", "cc_test")
 load(":headers.bzl", "bsdxml_headers")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
+_PLATFORM = ["@platforms//os:freebsd"]
+_ORIGINAL_COPTS = ['-pipe', '-fno-common', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers'] + select({"//tools/build/bazel/config:werror_enabled": ["-Werror"], "//conditions:default": []}) + ['-Wall', '-Wno-format-y2k', '-Wno-uninitialized', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Qunused-arguments']
+config_setting(name = "target_aarch64", constraint_values = ["@platforms//cpu:aarch64"])
+config_setting(name = "target_riscv64", constraint_values = ["@platforms//cpu:riscv64"])
+_ORIGINAL_DSO_FLAGS = ["-fstack-protector-strong", "-Wl,-x", "-Wl,-soname,libbsdxml.so.4",
+    "-Wl,--fatal-warnings,--warn-shared-textrel"] + select({
+    ":target_aarch64": ["-Wl,--fix-cortex-a53-843419"], "//conditions:default": []})
+_SOURCES = ["//contrib/expat:lib/" + n + ".c" for n in [
+    "random_arc4random_buf", "xcs", "xmlparse", "xmlrole", "xmltok",
+]]
+_MEMBERS = ["random_arc4random_buf", "xcs", "xmlparse", "xmlrole", "xmltok"]
 bsdxml_headers(name = "generated_headers", header = "//contrib/expat:lib/expat.h",
     external = "//contrib/expat:lib/expat_external.h")
 cc_library(name = "headers", hdrs = [":generated_headers"], strip_include_prefix = "/lib/libexpat",
     visibility = ["//visibility:public"])
 cc_library(name = "configuration", hdrs = ["expat_config.h"], strip_include_prefix = "/lib/libexpat")
-cc_library(name = "bsdxml",
-    srcs = ["//contrib/expat:lib/random_arc4random_buf.c", "//contrib/expat:lib/xcs.c", "//contrib/expat:lib/xmlparse.c", "//contrib/expat:lib/xmlrole.c", "//contrib/expat:lib/xmltok.c"],
-    deps = [":headers"], implementation_deps = [":configuration", "//contrib/expat:internal_headers"],
-    local_defines = ["HAVE_EXPAT_CONFIG_H"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
-    visibility = ["//visibility:public"])
-cc_shared_library(name = "bsdxml_shared", deps = [":bsdxml"], shared_lib_name = "libbsdxml.so.4",
-    user_link_flags = ["-Wl,-soname,libbsdxml.so.4", "-Wl,--fatal-warnings,--warn-shared-textrel"],
-    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"],
-    visibility = ["//visibility:public"])
-
-cc_test(name = "parser_static", srcs = ["tests/parser_test.c"], deps = [":bsdxml"], linkstatic = True,
-    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+cc_library(name = "bsdxml_objects", srcs = _SOURCES,
+    implementation_deps = [":configuration", "//contrib/expat:internal_headers"],
+    local_defines = ["HAVE_EXPAT_CONFIG_H"], copts = _ORIGINAL_COPTS,
+    features = ["bsd_small_pic"], target_compatible_with = _PLATFORM)
+bsd_component_archive(name = "static_archive", groups = [":bsdxml_objects"],
+    object_order = [n + ".o" for n in _MEMBERS])
+bsd_component_archive(name = "pic_archive", groups = [":bsdxml_objects"], pic = True,
+    object_order = [n + ".pic.o" for n in _MEMBERS])
+cc_import(name = "archive_link", static_library = ":static_archive", pic_static_library = ":pic_archive")
+# Production consumers whose Make recipes read SDK headers can use link-only
+# CcInfo. Public bsdxml consumers retain the generated BSD API headers.
+cc_library(name = "bsdxml_link", deps = [":archive_link"], target_compatible_with = _PLATFORM,
+    visibility = ["//lib/libarchive:__pkg__", "//lib/libgeom:__pkg__"])
+cc_library(name = "bsdxml", deps = [":bsdxml_link", ":headers"],
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+cc_shared_library(name = "bsdxml_shared", deps = [":bsdxml_link"],
+    exports_filter = ["//lib/libexpat:archive_link"], shared_lib_name = "libbsdxml.so.4",
+    user_link_flags = _ORIGINAL_DSO_FLAGS,
+    target_compatible_with = _PLATFORM, visibility = ["//visibility:public"])
+# Preserve the existing actual API test source. Cross profiles build these as
+# host-test data and inspect target artifacts; only native profiles execute them.
+cc_test(name = "parser_static", srcs = ["tests/parser_test.c"], deps = [":bsdxml"],
+    linkstatic = True, size = "small", target_compatible_with = _PLATFORM)
 cc_test(name = "parser_shared", srcs = ["tests/parser_test.c"], deps = [":bsdxml"],
     dynamic_deps = [":bsdxml_shared"], features = ["bsd_test_runtime_paths"],
-    size = "small", target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
-
+    size = "small", target_compatible_with = _PLATFORM)
 load("//tools/build/bazel:bsd_artifacts.bzl", "bsd_debug_split", "bsd_strip_binary")
 load("//tools/build/bazel:bsd_install.bzl", "bsd_compress")
 load(":installation.bzl", "bsdxml_installation")
@@ -35,3 +56,15 @@ bsd_compress(name = "manual", src = "libbsdxml.3", output = "libbsdxml.3.gz", ar
     compressor = "@bsd_sdk//toolchain:extra_gzip", redirect = "@bsd_sdk//toolchain:stdout_redirect",
     runtime = ["@bsd_sdk//toolchain:extra_gzip_runtime"])
 bsdxml_installation(name = "install_manifest")
+
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+bsd_host_artifact_test(name = "archive_contract_test", src = "archive-contract-test.py",
+    data = [":static_archive", ":pic_archive", ":bsdxml_shared", ":parser_static", ":parser_shared",
+        "@bsd_sdk//toolchain:bin/llvm-ar", "@bsd_sdk//toolchain:bin/llvm-nm"],
+    args = ["--archive", "$(location :static_archive)", "--pic-archive", "$(location :pic_archive)",
+        "--shared", "$(location :bsdxml_shared)", "--static-consumer", "$(location :parser_static)",
+        "--shared-consumer", "$(location :parser_shared)", "--ar", "$(location @bsd_sdk//toolchain:bin/llvm-ar)",
+        "--nm", "$(location @bsd_sdk//toolchain:bin/llvm-nm)", "--machine"] + select({
+            ":target_aarch64": ["183"], ":target_riscv64": ["243"], "//conditions:default": ["62"]}),
+    runtime = ["@bsd_sdk//toolchain:python_stdlib", "@bsd_sdk//toolchain:llvm-ar_runtime",
+        "@bsd_sdk//toolchain:llvm-nm_runtime"], size = "small")

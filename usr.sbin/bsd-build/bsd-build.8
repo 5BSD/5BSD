@@ -5690,3 +5690,16 @@ See
 .Pa tools/build/bazel/CROSS-KERNEL-VM-QUALIFICATION.md .
 Complete cross-kernel linking, other configurations, separate debug source
 lookup, boot/runtime, packages and measured performance remain gates.
+.Pp
+Selected-default libbsdxml normal and PIC archives, shared library, generated
+headers and original installation metadata are qualified on amd64, ARM64
+and RISC-V through maintained format-5 profiles.
+The default static consumer uses the same archive as installation.
+Five declared tests include native static/shared parser execution; foreign
+consumers are built and inspected without execution.
+Strict payload comparisons preserve untouched filename-sensitive rejections
+and use separate original Make controls with one explicit filename-prefix map.
+See
+.Pa tools/build/bazel/BSDXML-THREE-ARCH-QUALIFICATION.md .
+Separate debug source lookup, complete runtime packages, foreign execution,
+alternate options, bootstrap and full-world consumers remain gates.

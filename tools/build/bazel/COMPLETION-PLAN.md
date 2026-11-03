@@ -1688,3 +1688,21 @@ configuration breadth, separate DWARF/source lookup, boot/runtime, packages,
 bootstrap/sandbox/cache and comparative performance remain open. The private
 next network candidate is not counted as qualified coverage. Make remains
 production; BIP remains excluded.
+
+### 2026-11-03: BSD XML prerequisite on three ABIs
+
+The selected libbsdxml default normal/PIC archives, DSO, generated headers,
+public API/default static extraction and eight install records per ABI pass
+three ordinary profiles. Strict review binds 30 production contexts and 1,020
+consumed pairs; original archive order and nine actual links pass. Five tests
+pass, including two native parser executions. Six filename-sensitive xmlparse
+contexts retain untouched-original rejections and match three independent
+original controls with exactly one macro-prefix map; the other 24 objects
+match untouched originals. All three DSO metadata/allocated contracts match
+controls. See BSDXML-THREE-ARCH-QUALIFICATION.md. This is a runtime component,
+not an invented standalone package. Next substantive libarchive closure needs
+source-owned ARM64/RISC-V libcrypto inventories, architecture assembly/flags,
+ordered normal/PIC archives and default consumer/provider semantics, preserving
+selected OpenSSL/FIPS/KTLS/DTrace/iconv. Recursive providers/engines, separate
+DWARF/source lookup, foreign execution, full world/bootstrap and pkgbase remain
+gates. Make remains production; BIP remains excluded.

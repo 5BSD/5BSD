@@ -48551,3 +48551,16 @@ Actual consumed input review covers 13,740 pairs and explicitly reports the
 interfaces use declared generators. Full linking, other configs, separate
 DWARF/source lookup, boot/runtime, packages, bootstrap/sandbox/cache and measured
 CPU/memory/disk performance remain gates. Make remains production/default.
+
+## BSD XML library on three ABIs (2026-11-03)
+
+Selected-default libbsdxml now qualifies five normal/PIC sources on amd64,
+ARM64 and RISC-V: 30 actual compiler contexts/1,020 consumed pairs, 30 archive
+members, nine actual consumer/DSO links, six generated header bodies and 24
+original install records. Five tests pass, including native static/shared
+parser execution; foreign consumers are inspected, not executed. Twenty-four
+objects match untouched originals; six xmlparse objects and all DSO allocated
+payloads match independently audited original one-map filename-policy controls.
+Separate DWARF/source lookup, complete runtime packages, foreign execution,
+alternate options/bootstrap and full libarchive/libgeom/world remain open. See
+[BSDXML-THREE-ARCH-QUALIFICATION.md](BSDXML-THREE-ARCH-QUALIFICATION.md).
