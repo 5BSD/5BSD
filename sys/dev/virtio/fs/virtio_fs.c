@@ -401,7 +401,7 @@ static int
 vtfs_attach(device_t dev)
 {
 	struct vtfs_softc *sc;
-	int error;
+	int error, i;
 
 	sc = device_get_softc(dev);
 	sc->vtfs_dev = dev;
@@ -494,6 +494,14 @@ vtfs_attach(device_t dev)
 	    taskqueue_thread_enqueue, &sc->vtfs_done_tq);
 	taskqueue_start_threads(&sc->vtfs_done_tq, 1, PWAIT, "%s done",
 	    device_get_nameunit(dev));
+
+	/*
+	 * Queue allocation leaves completion interrupts disabled.  Arm them
+	 * after the completion taskqueue is ready and before a session can
+	 * submit its first FUSE request through the published device.
+	 */
+	for (i = 0; i < sc->vtfs_nvqs; i++)
+		virtqueue_enable_intr(sc->vtfs_vqs[i].vq_vq);
 
 	/*
 	 * Publish a "fuse" cdev named after this device.  Its open() creates a
