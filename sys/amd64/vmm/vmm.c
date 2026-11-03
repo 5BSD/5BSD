@@ -1877,8 +1877,16 @@ hc_handle_dtrace_probe(struct vcpu *vcpu, uintptr_t *args,
 		return (HYPERCALL_RET_ERROR);
 	htr_args.htr_curcpu = vcpu_vcpuid(vcpu);
 
-	return (hypertrace_probe(vhdl, (int)args[0], &htr_args) == 0 ?
-	    HYPERCALL_RET_SUCCESS : HYPERCALL_RET_ERROR);
+	/*
+	 * Keep resident mappings stable throughout DIF execution.  Acquire and
+	 * release outside probe context: mutex instrumentation can itself fire
+	 * DTrace probes.  Contention drops this event instead of waiting.
+	 */
+	if (!PMAP_TRYLOCK((pmap_t)paging->pmap))
+		return (HYPERCALL_RET_ERROR);
+	err = hypertrace_probe(vhdl, (int)args[0], &htr_args);
+	PMAP_UNLOCK((pmap_t)paging->pmap);
+	return (err == 0 ? HYPERCALL_RET_SUCCESS : HYPERCALL_RET_ERROR);
 }
 
 /*
@@ -3721,41 +3729,23 @@ vmm_priv_getreg(const void *xvhdl, int reg, uint64_t *value)
 	return (vm_get_register(vhdl->vcpu, reg, value));
 }
 
-/* A DIF scalar or trapframe may straddle guest pages. Hold each translation
- * only while copying it, and publish the destination only after all pages
- * succeed; never hand DTrace a host pointer into guest memory. */
+/*
+ * Probe context cannot fault or sleep.  The hypercall acquired the pmap
+ * before entering DTrace; the copier publishes nothing unless both pages
+ * translate through resident mappings.
+ */
 static int
 vmm_priv_guest_copyin(const void *handle, uint64_t gla, void *dst,
     size_t length)
 {
 	const struct vm_hdl *vhdl = handle;
-	uint8_t staged[sizeof(struct trapframe)];
-	uint64_t gpa;
-	void *cookie, *hva;
-	size_t done, chunk;
-	int error, fault;
 
 	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
 	    dst == NULL || gla == 0 || length == 0 ||
 	    length > sizeof(struct trapframe) ||
 	    gla > UINT64_MAX - (length - 1))
 		return (EINVAL);
-	for (done = 0; done < length; done += chunk) {
-		error = vm_gla2gpa_nofault(vhdl->vcpu, vhdl->paging,
-		    gla + done, VM_PROT_READ, &gpa, &fault);
-		if (error != 0 || fault != 0)
-			return (EFAULT);
-		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
-		cookie = NULL;
-		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_READ,
-		    &cookie);
-		if (hva == NULL)
-			return (EFAULT);
-		memcpy(staged + done, hva, chunk);
-		vm_gpa_release(cookie);
-	}
-	memcpy(dst, staged, length);
-	return (0);
+	return (dtrace_guest_copy(vhdl->paging, gla, dst, length, VM_PROT_READ));
 }
 
 static int
@@ -3786,10 +3776,6 @@ vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
 {
 	const struct vm_hdl *vhdl = handle;
 	struct vm_guest_paging user_paging;
-	uint64_t gpa;
-	void *cookie, *hva;
-	size_t done, chunk;
-	int error, fault;
 
 	if (vhdl == NULL || vhdl->vcpu == NULL || vhdl->paging == NULL ||
 	    src == NULL || gla == 0 || length == 0 || length > 8 ||
@@ -3799,21 +3785,8 @@ vmm_priv_guest_user_copyout(const void *handle, uint64_t gla,
 		return (EOPNOTSUPP);
 	user_paging = *vhdl->paging;
 	user_paging.cpl = 3;
-	for (done = 0; done < length; done += chunk) {
-		error = vm_gla2gpa_nofault(vhdl->vcpu, &user_paging,
-		    gla + done, VM_PROT_WRITE, &gpa, &fault);
-		if (error != 0 || fault != 0)
-			return (EFAULT);
-		chunk = MIN(length - done, PAGE_SIZE - (gpa & PAGE_MASK));
-		cookie = NULL;
-		hva = vm_gpa_hold(vhdl->vcpu, gpa, chunk, VM_PROT_WRITE,
-		    &cookie);
-		if (hva == NULL)
-			return (EFAULT);
-		memcpy(hva, (const uint8_t *)src + done, chunk);
-		vm_gpa_release(cookie);
-	}
-	return (0);
+	return (dtrace_guest_copy(&user_paging, gla, __DECONST(void *, src),
+	    length, VM_PROT_WRITE));
 }
 
 /*

@@ -17,6 +17,9 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/hypertrace.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -43,6 +46,7 @@ vm_page_t vm_page_array;
 long vm_page_array_size;
 
 static int next_hpage;		/* host page bump allocator */
+static bool pmap_initialized;
 static struct pmap npmap;	/* the nested (EPT/RVI) pmap */
 static uint64_t nvalid;		/* valid bit for nested entries */
 
@@ -58,7 +62,11 @@ reset(int type, int flags)
 	vm_page_array = pages;
 	vm_page_array_size = NPAGES;
 	first_page = 0;
+	if (pmap_initialized)
+		mtx_destroy(&npmap.pm_mtx);
+	pmap_initialized = true;
 	memset(&npmap, 0, sizeof(npmap));
+	mtx_init(&npmap.pm_mtx, "test pmap", NULL, MTX_DEF);
 	npmap.pm_type = type;
 	npmap.pm_flags = flags;
 	nvalid = type == PT_EPT ?
@@ -96,10 +104,13 @@ nmap(uint64_t gpa, uint64_t hpa, int top, int leaf)
 		int idx = (gpa >> (PAGE_SHIFT + 9 * level)) & 0x1ff;
 
 		if ((table[idx] & nvalid) == 0)
-			table[idx] = hpage() | nvalid;
+			table[idx] = hpage() | nvalid | (npmap.pm_type == PT_RVI ?
+			    X86_PG_RW : EPT_PG_WRITE | EPT_PG_EMUL_RW);
 		table = hva_of(table[idx] & PG_FRAME);
 	}
-	table[(gpa >> (PAGE_SHIFT + 9 * leaf)) & 0x1ff] = hpa | nvalid |
+	table[(gpa >> (PAGE_SHIFT + 9 * leaf)) & 0x1ff] = hpa | nvalid | PG_MANAGED |
+	    (npmap.pm_type == PT_RVI ? X86_PG_RW :
+	    EPT_PG_WRITE | EPT_PG_EMUL_RW) |
 	    (leaf != 0 ? PG_PS : 0);
 }
 
@@ -437,6 +448,75 @@ case_nested(void)
 	KHX_EQ(walk(0, PAGING_MODE_FLAT, 0, &hva), EINVAL);
 }
 
+static void
+case_resident_copy(int type, int flags)
+{
+	struct vm_guest_paging p;
+	char b[8];
+	uint64_t bits = X86_PG_V | X86_PG_U | X86_PG_RW;
+
+	khx_host_case("resident-copy");
+	reset(type, flags);
+	gram = nmap_guest_ram(G_RAM, 3);
+	p = (struct vm_guest_paging){ .cr3 = G_ROOT * PAGE_SIZE,
+	    .cpl = 3, .pmap = &npmap, .cpu_mode = CPU_MODE_64BIT,
+	    .paging_mode = PAGING_MODE_64 };
+	gtable(G_ROOT)[0] = G_L2 * PAGE_SIZE | bits;
+	gtable(G_L2)[0] = G_L1 * PAGE_SIZE | bits;
+	gtable(G_L1)[0] = G_L0 * PAGE_SIZE | bits;
+	gtable(G_L0)[0] = G_DATA * PAGE_SIZE | bits;
+	gtable(G_L0)[1] = (G_DATA + 1) * PAGE_SIZE | bits;
+	memcpy((char *)gtable(G_DATA) + PAGE_SIZE - 4, "ABCDEFGH", 8);
+	PMAP_LOCK(&npmap);
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(memcmp(b, "ABCDEFGH", 8), 0);
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, "12345678", 8,
+	    VM_PROT_WRITE), 0);
+	KHX_EQ(memcmp((char *)gtable(G_DATA) + PAGE_SIZE - 4, "12345678", 8), 0);
+	KHX_EQ(pages[gram / PAGE_SIZE + G_DATA].dirty, VM_PAGE_BITS_ALL);
+	KHX_EQ(pages[gram / PAGE_SIZE + G_DATA + 1].dirty, VM_PAGE_BITS_ALL);
+	/* Permission failure on the second page cannot modify the first. */
+	gtable(G_L0)[1] &= ~X86_PG_RW;
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, "XXXXXXXX", 8,
+	    VM_PROT_WRITE), EFAULT);
+	KHX_EQ(memcmp((char *)gtable(G_DATA) + PAGE_SIZE - 4, "12345678", 8), 0);
+	gtable(G_L0)[1] &= ~X86_PG_U;
+	memset(b, 'Z', sizeof(b));
+	KHX_EQ(dtrace_guest_copy(&p, PAGE_SIZE - 4, b, 8, VM_PROT_READ), EFAULT);
+	KHX_EQ(memcmp(b, "ZZZZZZZZ", 8), 0);
+	gtable(G_L0)[1] |= bits;
+	gtable(G_ROOT)[0] &= ~X86_PG_U;
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	gtable(G_ROOT)[0] |= bits;
+	/* Unmanaged host RAM and absent mappings must not be faulted in. */
+	nmap(G_DATA * PAGE_SIZE, gram + G_DATA * PAGE_SIZE, 3, 0);
+	uint64_t *t = hva_of(0);
+	for (int level = 3; level > 0; level--)
+		t = hva_of(t[0] & PG_FRAME);
+	t[G_DATA] &= ~PG_MANAGED;
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	t[G_DATA] |= PG_MANAGED;
+	t[G_DATA] &= ~(type == PT_RVI ? X86_PG_RW :
+	    flags ? EPT_PG_EMUL_RW : EPT_PG_WRITE);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_WRITE), EFAULT);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), 0);
+	KHX_EQ(dtrace_guest_copy(&p, UINT64_MAX - 2, b, 8, VM_PROT_READ), EINVAL);
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, PAGE_SIZE + 1, VM_PROT_READ), EINVAL);
+	PMAP_UNLOCK(&npmap);
+	/* A competing owner must cause an immediate failure, with no mutation. */
+	struct thread *other = khx_thread_new("pmap owner", 0);
+	struct thread *saved = khx_set_curthread(other);
+	PMAP_LOCK(&npmap);
+	khx_set_curthread(saved);
+	memset(b, 'Q', sizeof(b));
+	KHX_EQ(dtrace_guest_copy(&p, 0, b, 8, VM_PROT_READ), EFAULT);
+	KHX_EQ(memcmp(b, "QQQQQQQQ", 8), 0);
+	khx_set_curthread(other);
+	PMAP_UNLOCK(&npmap);
+	khx_set_curthread(saved);
+	khx_thread_free(other);
+}
+
 int
 khx_test_main(void)
 {
@@ -449,5 +529,9 @@ khx_test_main(void)
 	case_table_outside_dmap();
 	case_flat_and_args();
 	case_nested();
+	case_resident_copy(PT_RVI, 0);
+	case_resident_copy(PT_EPT, 0);
+	case_resident_copy(PT_EPT, PMAP_EMULATE_AD_BITS);
+	mtx_destroy(&npmap.pm_mtx);
 	return (khx_host_finish("dtrace_vm_subr"));
 }

@@ -11,7 +11,7 @@ out.mkdir(parents=True, exist_ok=True)
 source = (root / 'sys/cddl/dev/dtrace/amd64/dtrace_vm_subr.c').read_text() + '\n' + (root / 'sys/cddl/contrib/opensolaris/uts/common/dtrace/dtrace.c').read_text()
 functions = []
 for name in ['DTRACE_PHYS_TO_DMAP', 'dtrace_emulate_ad_bits', 'dtrace_valid_bit',
-             'DTRACE_PHYS_TO_VM_PAGE', 'dtrace_get_page', 'dtrace_gla2hva', 'dtrace_guest_load']:
+             'DTRACE_PHYS_TO_VM_PAGE', 'dtrace_get_page', 'dtrace_gla2hva_impl', 'dtrace_gla2hva', 'dtrace_guest_load']:
     match = re.search(r'(?:static [^\n]+|int)\n' + name + r'\(', source)
     if not match:
         raise SystemExit('Function not found: ' + name)

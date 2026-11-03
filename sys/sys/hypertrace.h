@@ -188,6 +188,11 @@ extern int        (*hypertrace_suspend)(uint16_t, hypertrace_id_t);
 extern int        (*hypertrace_resume)(uint16_t, hypertrace_id_t);
 
 #ifdef _KERNEL
+#ifdef __amd64__
+struct vm_guest_paging;
+/* Caller holds the guest pmap lock, acquired outside probe context. */
+int dtrace_guest_copy(struct vm_guest_paging *, uint64_t, void *, size_t, int);
+#endif
 /* IDs remain unavailable while an old tracing consumer owns probes. */
 int hypertrace_vm_alloc(uint16_t *, uint64_t *);
 int hypertrace_vm_release(uint16_t, uint64_t);

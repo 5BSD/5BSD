@@ -493,6 +493,21 @@ case_hypercall_probe(void)
 	KHX_EQ(khx_ht_last.copyin_error, 0);
 	KHX_EQ(khx_ht_last.pc0, 0xffffffff80123456ULL);
 
+	/* A contended pmap must drop the event without entering the provider. */
+	pmap_t pm = vmspace_pmap(vm_vmspace(vm));
+	struct thread *other = khx_thread_new("pmap owner", 0);
+	struct thread *saved = khx_set_curthread(other);
+	PMAP_LOCK(pm);
+	khx_set_curthread(saved);
+	probes = khx_ht_probes;
+	KHX_EQ(hypercall(vcpu, HYPERCALL_DTRACE_PROBE, 42,
+	    GLA_KDATA + 0x100, 900, 0), HYPERCALL_RET_ERROR);
+	KHX_EQ(khx_ht_probes, probes);
+	khx_set_curthread(other);
+	PMAP_UNLOCK(pm);
+	khx_set_curthread(saved);
+	khx_thread_free(other);
+
 	/* The argument block may straddle two guest pages. */
 	a = guest_args(GLA_KDATA + PAGE_SIZE - 40);
 	(void)a;
