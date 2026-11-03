@@ -1761,3 +1761,18 @@ configuration breadth and execution-runtime helper classification. Source/debug
 packages, bootstrap/sandbox/cache, full world/pkgbase/hardware, boot/runtime and
 comparative CPU/memory/disk I/O/usage remain gates. Make stays production;
 BIP remains excluded.
+
+### 2026-11-03: execution versus target library role audit
+
+The static follow-up classifies 538 literal SDK references in 185 files:
+380 intentional target inputs, 148 host-runtime candidates, six shared-variable
+references requiring separate host/target lists, and four unresolved data-flow
+references. Actual ELF inspection confirms eight foreign SDK/library pairs
+cannot be loaded as native runtime libraries. These are inspected declarations,
+not 148 executed failures or complete label coverage. See
+KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md and its standard-object-root audit ledger.
+Next reproduce the unchanged composite nullfs CTF/export path, then qualify the
+two-helper correction. Preserve target test runtimes, target drti and package
+ABI inputs; review FIDL and remaining generator families individually. Existing
+frontend/SDK interfaces cover the proposed correction; no new CLI or package
+contract is introduced. No candidate correction has been applied yet.

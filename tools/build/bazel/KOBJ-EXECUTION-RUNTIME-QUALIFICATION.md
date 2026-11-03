@@ -86,3 +86,33 @@ part of the full sandbox/host closure audit; this correction is not hermeticity
 proof. Other configs/CTF profiles, full kernel/link/source/debug/boot/runtime/
 package qualification, bootstrap, cache behavior and comparative CPU/memory/
 disk I/O/usage remain open. Make remains production/default; BIP is excluded.
+
+## Broader static role audit (2026-11-03)
+
+The follow-up ledger at
+`/usr/obj/usr/src/bazel-execution-runtime-role-audit-r2-20261103` inspects 538
+literal target-sysroot library references across 185 BUILD/bzl files, resolving
+public rule attribute configurations and relative loads. It classifies 380 as
+intentional target inputs and 148 as host execution-runtime candidates. Six
+references occur in variables shared by target tests and host generation
+(file2c and DTS fixtures); these require distinct input lists. Four references
+remain unresolved by the bounded static data-flow observer. No source parsing
+errors occur, but this does not establish complete dynamically computed label
+coverage, action execution or hermeticity.
+
+Intentional target uses include ordinary target test runtime files, pkg-create
+ABI inspection and DTrace drti target objects. They must retain target identity.
+Host candidates include 29 FIDL compiler runtime lists and CTF/module, RPC,
+locales, syscall-table, device-ID, crunch, boot-image and other generators.
+Actual ELF inspection of the four distinct candidate library names in all
+three frozen SDKs confirms target architecture in sysroot and native x86_64
+in execution-runtime; eight foreign SDK/library pairs are incompatible with
+native execution. This is declaration evidence, not a claim that all candidate
+actions have failed.
+
+An isolated two-helper candidate selects execution-runtime libraries for cross
+module CTF conversion/merge and export processing. It is prepared only. Before
+applying it, run the unchanged nullfs CTF/debug path against a composite SDK,
+retain actual action evidence, then qualify corrected ARM64/RISC-V outputs and
+inputs. Other classified families require their own meaningful action/output
+checks. A global replacement would corrupt intentional target inputs.
