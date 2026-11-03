@@ -174,7 +174,7 @@ def prepare(parser, args, host_toolchain=False):
     return bzlmod
 
 
-def stage_repository_cache(bzlmod, destination):
+def stage_repository_cache(bzlmod, destination, *, copy_function=shutil.copy2):
     """Copy the verified cache into the run's private output.
 
     Bazel writes to its repository cache (fetched archives and the repo
@@ -182,7 +182,8 @@ def stage_repository_cache(bzlmod, destination):
     """
     destination = Path(destination)
     shutil.copytree(Path(bzlmod['repository_cache']) / 'content_addressable',
-                    destination / 'content_addressable', symlinks=False)
+                    destination / 'content_addressable', symlinks=False,
+                    copy_function=copy_function)
     bzlmod['staged_repository_cache'] = str(destination)
     return destination
 

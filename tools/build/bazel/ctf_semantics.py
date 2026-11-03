@@ -166,13 +166,13 @@ class Graph:
         self.version = version
 
 
-def read_elf(path):
+def read_elf(path, *, allow_shared=False):
     data = Path(path).read_bytes()
     require(len(data) >= 16 and data[:5] == b'\x7fELF\x02' and data[5] in (1, 2), 'ELF64 required')
     endian = '<' if data[5] == 1 else '>'
     require(len(data) >= 64, 'truncated ELF header')
     h = struct.unpack_from(endian + 'HHIQQQIHHHHHH', data, 16)
-    require(h[0] == 1 and h[10] == 64 and h[11] and h[12] < h[11], 'ordinary relocatable section table required')
+    require(h[0] in ((1, 3) if allow_shared else (1,)) and h[10] == 64 and h[11] and h[12] < h[11], 'ordinary relocatable/shared section table required' if allow_shared else 'ordinary relocatable section table required')
     require(h[5] + 64 * h[11] <= len(data), 'truncated ELF sections')
     entries = [struct.unpack_from(endian + 'IIQQQQIIQQ', data, h[5] + i * 64) for i in range(h[11])]
     def payload(entry):

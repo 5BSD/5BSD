@@ -14,6 +14,7 @@ import bep_artifacts
 import test_reports
 import bsd_toolchain
 import userland_sdk
+import sdk_copy
 from libmd_environment import digest
 
 
@@ -190,7 +191,7 @@ def _qualify(config, args, state):
     for name,value in receipt['snapshot'].items():
         p=Path(name)
         if p.is_absolute() or '..' in p.parts or digest(sdk/p)!=value:raise ValueError('SDK snapshot changed: '+name)
-    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock']}
+    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),Path(sdk_copy.__file__).resolve(),Path(bsd_toolchain.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock']}
     out.mkdir(parents=True)
     module = 'module(name="bsd_sdk",version="0.0.0")\nbazel_dep(name="rules_cc",version="0.2.17")\nbazel_dep(name="platforms",version="1.0.0")\n'
     sdk_key = hashlib.sha256(json.dumps(dict(snapshot=receipt['snapshot'], module=module),sort_keys=True).encode()).hexdigest()
@@ -199,7 +200,7 @@ def _qualify(config, args, state):
     if not repository.exists():
         temporary=Path(tempfile.mkdtemp(prefix='staging-',dir=repositories))
         try:
-            shutil.copytree(sdk/'toolchain',temporary/'toolchain',symlinks=True)
+            shutil.copytree(sdk/'toolchain',temporary/'toolchain',symlinks=True,copy_function=sdk_copy.copy2)
             (temporary/'MODULE.bazel').write_text(module)
             temporary.rename(repository)
         finally:
@@ -214,7 +215,8 @@ def _qualify(config, args, state):
     distdir_digest, distdir_files = bsd_toolchain.verify_distdirs(distdirs)
     staged_cache = out / 'repository-cache'
     bsd_toolchain.stage_repository_cache(
-        {'repository_cache': str(selected['repository-cache'])}, staged_cache)
+        {'repository_cache': str(selected['repository-cache'])}, staged_cache,
+        copy_function=sdk_copy.copy2)
     staged_digest, staged_entries = bsd_toolchain.verify_repository_cache(staged_cache)
     if (staged_digest, staged_entries) != (cache_digest, cache_entries):
         raise ValueError('staged repository cache differs from the verified input')

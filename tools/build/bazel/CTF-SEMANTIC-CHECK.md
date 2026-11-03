@@ -79,3 +79,15 @@ remain unchanged. Evidence is in the same review root's ctf-real-negative-r2.
 The initial fixture preparation assumed compression and correctly stopped;
 that failed attempt remains separate. Tests and evidence do not establish
 complete kernel/link/install, cross builds, system ABI or live tracing behavior.
+
+
+## Explicit shared-module regression (2026-11-03)
+
+The reader also accepts ordinary ELF64 ET_DYN modules when a caller explicitly
+requests allow_shared=True. Its default remains ET_REL-only and ET_EXEC remains
+rejected. The native Bazel suite now passes 30 methods, including opt-in and
+ELF identity controls. Declared host artifact tests check actual AMD64/ARM64/
+RISC-V module full/runtime families and policy-owned named STRUCT associations.
+Native passes; the foreign final shared links remain rejected, despite refreshed
+objcopy passing the format suite. See CROSS-MODULE-CTF-QUALIFICATION.md for
+actual profiles, source/copy controls and still-open producer work.

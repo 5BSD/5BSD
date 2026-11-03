@@ -1850,3 +1850,31 @@ Add a declared cross-module semantic test: the existing AMD64 whole-module audit
 cannot establish foreign ET_DYN coverage. Preserve original failures and compare
 against independently refreshed original controls. Full-system/bootstrap/debug/
 performance gates and Make production/default policy remain unchanged.
+
+
+### 2026-11-03: final shared-link CTF regression remains open
+
+Both refreshed foreign-stage objcopy tools pass all 65 format checks. A fresh
+ARM64 composite SDK is materialized and passes its own format checks; the new
+RISC-V composite SDK is not yet materialized. Explicit host artifact tests now
+inspect real target module full/runtime pairs. Native passes all 112 association
+checks and 14 policy object checks; actual ARM64 fresh-SDK and RISC-V native-SDK
+kernel frontend profiles reject CTF links to SYMTAB. Their failures are retained.
+A controlled captured-action replay independently isolates final LLD shared
+linking: both lose sh_link and RISC-V corrupts 106 object associations.
+
+Next correct exact symbol/type association preservation in the linker and
+qualify independent refreshed Make controls and actual native/foreign profiles.
+Account explicitly for the initial multi-input relocatable link plus maintained
+ctfmerge; no fuzzy matching, output patching, CTF disabling or relaxed acceptance.
+See CROSS-MODULE-CTF-QUALIFICATION.md. No LLD fix or complete module acceptance
+is claimed. The native Bazel parser/copy suites pass 37 methods.
+
+The normal frontend now uses independent OS copy offload for duplicate SDK and
+private repository-cache files, with mandatory identical snapshot verification.
+The copy/cache helpers are bound in receipts; all seven copy methods pass and
+16,179 actual ARM64 snapshot paths plus independent regular-file inodes verify.
+The initial disk-guard interruption remains rejected, followed by fully verified
+cache reuse. This is storage-copy correctness, not comparative performance.
+No config schema, SDK staging helper, signing, packaging or publication change
+is introduced. Keep Make production/default and BIP excluded.

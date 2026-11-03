@@ -10869,3 +10869,16 @@ is claimed for libcrypto; semantic assessment of operations needing additional
 coverage, recursive OpenSSL and runtime/performance remain open. Separate
 DWARF/source lookup remains open, including RISC-V debug-local symbol offsets.
 See LIBCRYPTO-CORE-THREE-ARCH-QUALIFICATION.md for retained rejections and scope.
+
+
+### 2026-11-03: real foreign module CTF rejection after tool refresh
+
+No runtime C/probe sources changed. Both refreshed stage objcopy tools pass
+format checks and preserve expected nullfs SDT types through localization in
+captured-action replay. The final shared link drops the CTF symbol-table link;
+RISC-V replay additionally changes 106 object associations, including expected
+SDT types. New maintained host artifact tests accept native nullfs but reject
+both actual foreign profiles. This is a real metadata preservation gate, not
+live tracing/audit qualification. Correct exact linker symbol provenance and
+rerun original/native controls; do not disable CTF or waive the test. See
+CROSS-MODULE-CTF-QUALIFICATION.md for precise SDK/profile scope and retained data.

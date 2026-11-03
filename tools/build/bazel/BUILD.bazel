@@ -158,6 +158,7 @@ exports_files(["syscall_tables.lua"])
 # Binary CTF metadata equivalence and rejection of altered type associations.
 bsd_python_test(name = "ctf_semantics_test", src = "ctf_semantics-test.py",
     data = ["ctf_semantics.py"])
+exports_files(["ctf_semantics.py"], visibility = ["//tools/test/construction:__pkg__"])
 
 exports_files(["vdso_validate.py"])
 
@@ -195,3 +196,6 @@ exports_files(["bsd_crunchide.bzl"])
 exports_files(["dtrace-dof-inventory.py"], visibility = ["//lib/libutil/tests:__pkg__"])
 
 exports_files(["bsd_boot_image.bzl", "boot_image.py"], visibility = ["//stand/i386/boot2:__pkg__"])
+
+# Copy offload is optional; source isolation and snapshot bytes are invariant.
+bsd_python_test(name = "sdk_copy_test", src = "sdk-copy-test.py", data = ["sdk_copy.py"])

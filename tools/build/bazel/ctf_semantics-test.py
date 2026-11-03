@@ -226,6 +226,26 @@ class CtfSemanticsTest(unittest.TestCase):
             raw=bytearray(q.read_bytes());struct.pack_into('<H',raw,18,183);q.write_bytes(raw)
             with self.assertRaisesRegex(ValueError,'ELF identity'):compare(read_elf(p),read_elf(q))
 
+    def test_shared_module_requires_explicit_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'module.ko'
+            data, symbols = fixture()
+            raw = bytearray(elf(data, symbols))
+            struct.pack_into('<H', raw, 16, 3)
+            for machine in (62, 183, 243):
+                with self.subTest(machine=machine):
+                    struct.pack_into('<H', raw, 18, machine)
+                    path.write_bytes(raw)
+                    with self.assertRaisesRegex(ValueError, 'relocatable section'):
+                        read_elf(path)
+                    graph = read_elf(path, allow_shared=True)
+                    self.assertEqual(graph.elf_identity[:2], (3, machine))
+                    self.assertTrue(compare(graph, graph)['equivalent'])
+            struct.pack_into('<H', raw, 16, 2)
+            path.write_bytes(raw)
+            with self.assertRaisesRegex(ValueError, 'relocatable/shared section'):
+                read_elf(path, allow_shared=True)
+
     def test_elf_ctf_link(self):
         with tempfile.TemporaryDirectory() as directory:
             p=Path(directory)/'a.o';data,symbols=fixture();raw=bytearray(elf(data,symbols));table=struct.unpack_from('<Q',raw,40)[0];struct.pack_into('<I',raw,table+5*64+40,3);p.write_bytes(raw)

@@ -55,3 +55,27 @@ kldxref_audit_test(name = "nullfs_artifacts_test", mode = "module-artifacts",
     runtime = ["@bsd_sdk//toolchain:python_stdlib"], tags = ["local", "no-cache"], size = "small")
 
 exports_files(['inventory_audit_test.py'], visibility = ["//usr.sbin/bsd-build/tests:__pkg__"])
+
+
+# Semantic module inspection uses native Python and target ELF inputs. Keep the
+# older AMD64 kldxref whole-module audit's execution contract separate.
+load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+[bsd_host_artifact_test(
+    name = prefix + "nullfs_ctf_symbols_test",
+    src = "module-ctf-test.py",
+    data = ["//sys/modules/nullfs:" + prefix + "generic_module",
+        "//sys/modules/nullfs:" + prefix + "generic_full",
+        "//tools/build/bazel:ctf_semantics.py", "module-policy.json"],
+    args = ["--reader", "$(location //tools/build/bazel:ctf_semantics.py)",
+        "--module", "$(location //sys/modules/nullfs:" + prefix + "generic_module)",
+        "--full", "$(location //sys/modules/nullfs:" + prefix + "generic_full)",
+        "--policy", "$(location module-policy.json)",
+        "--machine", str(machine), "--elf-type", str(elf_type)],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:" + cpu] + select({
+        "//tools/build/bazel/config:kernel_ctf_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    size = "small",
+) for prefix, cpu, machine, elf_type in [
+    ("", "x86_64", 62, 1), ("arm64_", "aarch64", 183, 3), ("riscv_", "riscv64", 243, 3),
+]]

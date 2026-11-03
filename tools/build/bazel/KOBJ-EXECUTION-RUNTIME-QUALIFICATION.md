@@ -251,3 +251,16 @@ independent CTF graph parser with explicit shared-module opt-in and the existing
 host-artifact rule; this must inspect actual foreign modules, their SYMTAB
 links and source-policy global types. It is not implemented or Bazel-qualified.
 Do not count the existing AMD64 test as foreign semantic module coverage.
+
+
+## Latest gate: final shared-link metadata (2026-11-03)
+
+RISC-V's controlled bootstrap refresh also completed and passes all 65 format
+checks. New declared host artifact tests now run through the maintained frontend:
+native nullfs passes, while fresh-SDK ARM64 and native-SDK RISC-V kernel profiles
+reject the final CTF-to-SYMTAB link. A captured-argument replay with refreshed
+objcopy identifies LLD's final shared-link handling as an additional defect,
+including changed RISC-V object/type associations. The tool refresh is necessary
+but insufficient. No linker fix is implemented. See
+CROSS-MODULE-CTF-QUALIFICATION.md for exact profile/tool scope, retained failures,
+normal frontend copy qualification and remaining producer requirements.

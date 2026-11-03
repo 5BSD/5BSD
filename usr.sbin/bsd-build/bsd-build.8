@@ -5764,3 +5764,14 @@ Engines, providers, FIPS tests, libssl, openssl CLI, complete packages and debug
 source lookup remain separate open gates.
 See
 .Pa tools/build/bazel/LIBCRYPTO-CORE-THREE-ARCH-QUALIFICATION.md .
+.Pp
+Declared native Python artifact tests inspect real AMD64, ARM64 and RISC-V
+module CTF without executing target ELF.
+Native passes; actual foreign final shared links remain rejected for CTF
+symbol-table metadata after bootstrap tool refresh.
+The normal source-graph backend can use independent OS copy offload for SDK
+and private repository-cache files while retaining complete hash verification.
+Ordinary independent copies support filesystems without copy offload.
+This does not establish comparative performance or full module qualification.
+See
+.Pa tools/build/bazel/CROSS-MODULE-CTF-QUALIFICATION.md .
