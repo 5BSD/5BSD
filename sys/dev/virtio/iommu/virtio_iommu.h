@@ -39,6 +39,8 @@
 #ifndef _DEV_VIRTIO_IOMMU_VIRTIO_IOMMU_H_
 #define	_DEV_VIRTIO_IOMMU_VIRTIO_IOMMU_H_
 
+#include <sys/eventhandler.h>
+
 /* Feature bit numbers (feature mask is 1ULL << bit). */
 #define	VIRTIO_IOMMU_F_INPUT_RANGE	0
 #define	VIRTIO_IOMMU_F_DOMAIN_RANGE	1
@@ -203,9 +205,11 @@ struct virtio_iommu_fault {
  * transport calls virtio_iommu_attach_identity() before it accepts
  * VIRTIO_F_ACCESS_PLATFORM; it succeeds only when an instance has attached the
  * endpoint RID to an identity (bypass) domain, so the guest-physical addresses
- * virtqueue(9) hands the device remain valid.  The remaining operations are
- * left for a future VIOT/busdma_iommu back end that drives real MAP/UNMAP
- * translation.
+ * virtqueue(9) hands the device remain valid.  The transport undoes that with
+ * virtio_iommu_detach_identity() once the function driver has detached, and
+ * retries endpoints that attached before any instance registered when the
+ * virtio_iommu_registered event fires.  The remaining operations are left for
+ * a future VIOT/busdma_iommu back end that drives real MAP/UNMAP translation.
  */
 struct virtio_iommu_provider {
 	device_t dev;
@@ -218,11 +222,17 @@ struct virtio_iommu_provider {
 		    uint64_t iova_end);
 	int	(*probe_endpoint)(device_t, uint32_t endpoint);
 	int	(*attach_identity)(device_t, uint32_t endpoint);
+	int	(*detach_identity)(device_t, uint32_t endpoint);
 	LIST_ENTRY(virtio_iommu_provider) link;
 };
 
 void	virtio_iommu_provider_register(struct virtio_iommu_provider *);
 void	virtio_iommu_provider_deregister(struct virtio_iommu_provider *);
 int	virtio_iommu_attach_identity(uint32_t endpoint);
+int	virtio_iommu_detach_identity(uint32_t endpoint);
+
+/* Invoked with the bus topology lock held after an instance registers. */
+typedef void (*virtio_iommu_registered_fn)(void *);
+EVENTHANDLER_DECLARE(virtio_iommu_registered, virtio_iommu_registered_fn);
 
 #endif /* _DEV_VIRTIO_IOMMU_VIRTIO_IOMMU_H_ */

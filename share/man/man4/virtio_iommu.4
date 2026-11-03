@@ -24,7 +24,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 2, 2026
+.Dd November 3, 2026
 .Dt VIRTIO_IOMMU 4
 .Os
 .Sh NAME
@@ -91,9 +91,14 @@ guest-physical ring and buffer addresses the VirtIO drivers program stay
 valid.
 If no virtio-iommu accepts the endpoint the feature is not negotiated, and a
 device that requires it fails to attach with a message naming the endpoint.
-The virtio-iommu must attach before its endpoints, which holds when it sits
-at a lower PCI slot.
-While an endpoint is attached to a domain the driver refuses to detach.
+An endpoint that attached before any virtio-iommu, because the virtio-iommu
+sits at a higher PCI slot or
+.Nm
+was loaded later, is attached again when a virtio-iommu attaches.
+When an endpoint's driver detaches, the PCI transport detaches the endpoint
+from its identity domain.
+While an endpoint is attached to a domain the driver refuses to detach, so
+the module can be unloaded once the endpoints' drivers have detached.
 The driver registers its protocol engine with the
 .Xr virtio 4
 core, so a future in-tree VIOT and busdma back end can drive real

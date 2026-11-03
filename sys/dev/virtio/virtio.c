@@ -241,6 +241,13 @@ virtio_iommu_provider_register(struct virtio_iommu_provider *provider)
 	sx_xlock(&virtio_iommu_providers_lock);
 	LIST_INSERT_HEAD(&virtio_iommu_providers, provider, link);
 	sx_xunlock(&virtio_iommu_providers_lock);
+
+	/*
+	 * Endpoints that attached before this instance (a lower PCI slot, or
+	 * virtio_iommu.ko loaded later) were refused ACCESS_PLATFORM; let the
+	 * transports retry them now.
+	 */
+	EVENTHANDLER_INVOKE(virtio_iommu_registered);
 }
 
 void
@@ -268,6 +275,28 @@ virtio_iommu_attach_identity(uint32_t endpoint)
 	LIST_FOREACH(provider, &virtio_iommu_providers, link) {
 		error = provider->attach_identity(provider->dev, endpoint);
 		if (error == 0)
+			break;
+	}
+	sx_sunlock(&virtio_iommu_providers_lock);
+	return (error);
+}
+
+/*
+ * Undo virtio_iommu_attach_identity() after the endpoint's driver detached.
+ * Returns ENXIO when no registered instance holds the endpoint in its identity
+ * domain.
+ */
+int
+virtio_iommu_detach_identity(uint32_t endpoint)
+{
+	struct virtio_iommu_provider *provider;
+	int error;
+
+	error = ENXIO;
+	sx_slock(&virtio_iommu_providers_lock);
+	LIST_FOREACH(provider, &virtio_iommu_providers, link) {
+		error = provider->detach_identity(provider->dev, endpoint);
+		if (error != ENXIO)
 			break;
 	}
 	sx_sunlock(&virtio_iommu_providers_lock);
