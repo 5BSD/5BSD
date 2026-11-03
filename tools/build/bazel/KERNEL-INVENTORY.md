@@ -103,3 +103,24 @@ retained full Make build, native artifacts, compiler/CTF fixes, prerequisites
 and precise filename/relocation differences. The earlier 2,183 unmatched count
 is an analysis snapshot of its inspected graph, not a newly measured remaining
 count after this batch. No full native kernel link or runtime claim follows.
+
+## Current-source refresh checkpoint (2026-11-03)
+
+The fresh independent GENERIC inventory still selects the same ordered 2,462
+product names. One of the prior 2,514 bound physical inputs has changed:
+sys/kern/init_main.c from the separate CR0.WP startup fix. Current full-kernel
+parity must be refreshed; the prior controlled result is not silently rebound.
+See [the current refresh record](CURRENT-KERNEL-REFRESH-WORK.md) for actual
+configuration/hash evidence, the location-bearing inventory observer correction
+and the next full native/Make/aggregate-module checks. This remains inventory
+proof only, with missing generated/custom-source bindings explicit.
+
+## Current compiled refresh (2026-11-03)
+
+The [subsequent full refresh](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) now passes
+all 2,462 object code/allocated/CTF comparisons against a new controlled original
+Make build, plus full/runtime kernel payload/symbol/CTF and debug CRC checks.
+Original dependency coverage is explicitly reconciled, including two independently
+retained earlier helper-source bindings; the initial missing-binding audit is
+preserved. Aggregate modules, standalone DWARF, runtime and full-system gates
+remain open. This supersedes the configuration-only checkpoint above.

@@ -24,7 +24,7 @@ bsd_source_headers(name = "tracing_core_headers", hdrs = ["db_sym.h", "ddb.h"], 
 
 # Core kernel physical prerequisites.
 bsd_source_headers(name = "core_kernel_kern_cons_headers", hdrs = ["ddb.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/dcons:__pkg__", "//sys/dev/ioat:__pkg__", "//sys/net:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/dev/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/crypto:__pkg__", "//sys/opencrypto:__pkg__", "//sys/netinet:__pkg__", "//sys/dev/e1000:__pkg__", "//sys/dev/igc:__pkg__", "//sys/dev/dcons:__pkg__", "//sys/dev/ioat:__pkg__", "//sys/net:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/compat/linuxkpi/common/src:__pkg__", "//sys/amd64/vmm/intel:__pkg__", "//sys/dev/vmm:__pkg__", "//sys/compat/linux:__pkg__", "//sys/contrib/openzfs:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_intr_headers", hdrs = ["db_sym.h", "ddb.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["ddb.h"],

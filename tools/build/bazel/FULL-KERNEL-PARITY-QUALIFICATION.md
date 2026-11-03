@@ -1,5 +1,9 @@
 # Complete controlled amd64 kernel parity (2026-11-02)
 
+The [2026-11-03 current-source refresh](CURRENT-KERNEL-REFRESH-QUALIFICATION.md)
+now repeats full controlled object/runtime parity after the later init_main.c
+change. This earlier record remains bound to its original inputs.
+
 ## Result and corrected defect
 
 All **2,462 actual native link objects** have byte-identical machine code,

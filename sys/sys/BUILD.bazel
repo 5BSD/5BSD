@@ -87,3 +87,8 @@ cc_library(name = "bsdtrace_headers", hdrs = ['_align.h', '_bitset.h', '_callout
 
 # Exact source-header closure consumed through cxgbetool Make -I${SRCTOP}/sys.
 cc_library(name = "cxgbetool_headers", hdrs = ['_align.h', '_clock_id.h', '_decls.h', '_endian.h', '_eventhandler.h', '_iovec.h', '_maxphys.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_sigaltstack.h', '_sigset.h', '_sigval.h', '_sockaddr_storage.h', '_stdarg.h', '_stdint.h', '_timespec.h', '_timeval.h', '_types.h', '_visible.h', '_winsize.h', 'bitcount.h', 'cdefs.h', 'ck.h', 'filio.h', 'ioccom.h', 'ioctl.h', 'limits.h', 'mman.h', 'param.h', 'queue.h', 'select.h', 'signal.h', 'socket.h', 'sockio.h', 'stat.h', 'stdint.h', 'sysctl.h', 'syslimits.h', 'time.h', 'timespec.h', 'ttycom.h', 'types.h', 'unistd.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/cxgbetool:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = 'boot2_headers', hdrs = ['_align.h', '_decls.h', '_endian.h', '_maxphys.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_stdarg.h', '_stdint.h', '_types.h', '_visible.h', 'bitcount.h', 'boot.h', 'cdefs.h', 'dirent.h', 'disk/bsd.h', 'disk/mbr.h', 'disklabel.h', 'diskmbr.h', 'elf32.h', 'elf_common.h', 'elf_generic.h', 'endian.h', 'imgact_aout.h', 'ioccom.h', 'limits.h', 'mount.h', 'nlist_aout.h', 'param.h', 'queue.h', 'reboot.h', 'stdint.h', 'syslimits.h', 'types.h', 'ucred.h'], visibility = ['//stand/i386/boot2:__pkg__'])
+
+exports_files(["stdarg.h"], visibility = ["//stand/libsa:__pkg__"])

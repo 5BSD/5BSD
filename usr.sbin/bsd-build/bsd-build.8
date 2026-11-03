@@ -5414,3 +5414,66 @@ See
 .Pa tools/build/bazel/LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md
 for original compiler/payload/install comparisons, TAP/ATF execution, the safe
 fork-failure correction and remaining separate DWARF/full-world gates.
+.Pp
+The existing format-5 target interface also builds the amd64 GENERIC tied ZFS
+loadable module through its native compilation, CTF, link and installation
+rules, preserving module-specific policy separately from built-in objects.
+See
+.Pa tools/build/bazel/ZFS-MODULE-QUALIFICATION.md
+for actual compiler/input/link checks, plain whole-file equality and CTF/install
+comparisons against original Make.
+Separate debugger source lookup, complete current kernel/module aggregation,
+other configurations/architectures and runtime/performance remain unqualified.
+.Pp
+The native legacy boot cohort uses source-owned targets under
+.Pa //stand/i386
+for boot0, boot0sio, mbr, pmbr, cdboot and internal BTX/loader artifacts.
+The existing format-5 workflow builds their flat images and installation
+archive.
+.Cm //stand/i386:legacy_boot_test
+runs host Python format/ABI checks against declared data artifacts.
+The two internal products have no installation entries.
+See
+.Pa tools/build/bazel/LEGACY-BOOT-QUALIFICATION.md
+for original whole-byte/input/install comparisons and explicit remaining boot,
+architecture, bootstrap and signing/verified-boot limits.
+.Pp
+The current full amd64 GENERIC build also passes a fresh controlled original
+Make comparison after the later startup-source change.
+See
+.Pa tools/build/bazel/CURRENT-KERNEL-REFRESH-QUALIFICATION.md
+for all-object/runtime/CTF checks, actual input captures and dependency limits.
+Separate DWARF/source lookup, aggregate modules/pkgbase, VM/runtime and measured
+resource/cache qualification remain open.
+.Pp
+The selected amd64 GENERIC kernel and all 729 module leaves now pass one
+aggregate native qualification request with CTF and separate debug enabled.
+All module ELF/debuglink CRCs and captured producer/install payload bindings
+pass; component destinations do not collide.
+This does not establish full original aggregate installation or pkgbase parity,
+ARM64/RISC-V completeness, a booted system or controlled performance results.
+Make remains the production backend.
+.Pp
+Source-owned boot2 targets extend the native legacy boot graph under
+.Pa //stand/i386/boot2
+with original BTX startup order, symbol/AWK header generation, source-built
+btxld, image composition and bounded padding.
+.Cm //stand/i386/boot2:install_archive
+preserves original files and explicit directory ownership.
+The shared bsd_install_directory rule uses the existing typed installation
+manifest protocol, including configured destination prefixes.
+.Cm //stand/i386/boot2:boot2_test
+checks declared artifacts as data through the normal format-5 test interface.
+See
+.Pa tools/build/bazel/BOOT2-QUALIFICATION.md
+for original byte/input/install proof, cached-witness provenance and remaining
+DWARF, cross-architecture, bootstrap, full-world and boot/verified-boot gates.
+.Pp
+Native ARM64 and RISC-V64 profiles now also build dummymbuf, fib_dxr,
+dpdk_lpm4 and dpdk_lpm6 using target-derived configuration headers.
+All plain module bytes, CTF/runtime payloads, debuglink CRCs and original
+installation records pass independent Make comparison.
+See
+.Pa tools/build/bazel/CROSS-ROUTING-MODULES-QUALIFICATION.md
+for actual compiler/input/link evidence and remaining debugger, complete
+architecture, package, runtime and controlled-performance gates.

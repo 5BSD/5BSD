@@ -1175,3 +1175,11 @@ bsd_source_headers(name = "final_drivers_module_context_2", hdrs = ["if_ether.h"
 
 bsd_source_headers(name = "linux64_module_context_1", hdrs = ["icmp6.h", "in.h", "in_fib.h", "in_kdtrace.h", "in_pcb.h", "ip.h", "ip6.h", "tcp.h", "tcp_fsm.h"], includes = [],
     visibility = ["//sys/compat/linux:__pkg__"])
+
+# Target-owned GENERIC routing module compilation.
+[cross_generic_module_objects(
+    arch = arch,
+    name = "fib_dxr_in_fib_dxr_module",
+    srcs = ["in_fib_dxr.c"],
+    deps = ["//sys/contrib/ck:cross_routing_module_headers", "//sys/vm:usb_net_usie_headers", "//sys/netinet:network_policy_kernel_route_helpers_headers", "//sys/net:network_services_module_context_9", "//sys/netinet6:tracing_core_headers", "//sys/" + arch + "/conf:generic_opt_inet_header"],
+) for arch in ["arm64", "riscv"]]

@@ -10549,3 +10549,51 @@ without interpreting zero program exit as success. No probe source or credential
 operation is changed or executed; the flopen signal-failure control wraps kill
 without delivering signals. No live event or cache-hermeticity claim. See
 [original test/install scope](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md).
+
+### ZFS loadable module (2026-11-03)
+
+All 261 unchanged source units (254 C, seven assembly) are native module inputs.
+The bounded scan records 115 instrumentation candidate lines including comments
+and macros. All eight compiled SDT sections/relocations equal original Make;
+the complete plain module also matches whole-file. This preserves observed
+compiled instrumentation, without claiming live delivery or complete audit
+coverage. No C/probe source changes. See
+[ZFS module qualification](ZFS-MODULE-QUALIFICATION.md) and
+bazel-zfs-module-review-r1-20261103/observability-review.json.
+
+### Legacy BIOS/BTX assembly products (2026-11-03)
+
+The bounded seven assembly contexts (six physical sources, shared boot0 variant)
+have zero recognized call-shaped SDT/DTrace/KTR/audit tokens. Seven complete
+objects and flat images are exact original bytes; no assembly or probe source
+changes. Artifact tests inspect data only. Boot/runtime event delivery and audit
+completeness remain open. Evidence: bazel-legacy-boot-review-r1-20261103/
+observability-review.json; [scope](LEGACY-BOOT-QUALIFICATION.md).
+
+### Boot2/BTX startup and corrected source-built btxld (2026-11-03)
+
+Ten physical compiled/textually included C/assembly sources cover seven boot/CRT
+objects and btxld's two sources in target/execution configurations: eleven actual
+compiler witnesses, 310 original/native consumed pairs. A bounded call-shaped
+SDT/DTrace/CTR/audit scan recognizes zero sites; it does not model all preprocessor
+instrumentation or live events. Boot objects' complete allocated payloads and
+nondebug relocations, btxld allocated/loader contracts, five ordered links and
+seven complete generated outputs match original Make proof. Actual source-built
+tool input hashes bind the BTX producer; unchanged binary bytes justify its
+cached producer reuse after policy correction. No fabricated fresh execution.
+Nine install records and CRC-valid debug splits are qualified; separate DWARF
+source semantics remain open. No image is executed and no disk, boot, probe,
+security or performance behavior is claimed. Details and rejected evidence:
+[BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md).
+
+### ARM64/RISC-V routing module expansion (2026-11-03)
+
+Six unchanged C sources implement dummymbuf, fib_dxr and dpdk_lpm4/6. A bounded
+physical-source SDT/DTrace/CTR/audit scan finds zero marker candidates; no live
+firing or completeness claim. All eight plain modules match original whole-file;
+eight CTF/runtime section and debuglink comparisons preserve compiled behavior.
+24 actual compilers/3,056 canonical consumed pairs and 32 ordered links match
+original controls. Separate debug files differ; debugger source lookup remains
+open. No source/probe/audit behavior was changed or executed. Evidence:
+bazel-cross-routing-review-r4-20261103/supplement.json and
+[CROSS-ROUTING-MODULES-QUALIFICATION.md](CROSS-ROUTING-MODULES-QUALIFICATION.md).

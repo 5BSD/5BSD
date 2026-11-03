@@ -8,12 +8,32 @@
 The resumed full-system scope and completion gates are maintained in
 [the completion plan](COMPLETION-PLAN.md).
 
-## Current module inventory correction and incremental checkpoint (2026-11-03)
+## ARM64/RISC-V routing module checkpoint (2026-11-03)
 
-The selected amd64 inventory has 729 BUILD files but 728 actual module
-producer declarations (690 generic, 38 firmware). ZFS currently has header
-providers and built-in kernel support, but no loadable module producer; it is
-still required. BUILD presence is not module-target or full-system coverage.
+The [four routing/diagnostic modules](CROSS-ROUTING-MODULES-QUALIFICATION.md)
+dummymbuf, fib_dxr and dpdk_lpm4/6 now pass both architectures and plain/CTF-debug
+settings: eight whole-file plain matches, eight CTF/runtime/debuglink comparisons,
+24 original install records, 24 actual module compilers/3,056 consumed pairs and
+32 ordered links. The first real missing ARM64 CK dependency is corrected with
+an explicit original-consumed source-header view; no C/Make/shared-rule/frontend
+policy changes. Original parallel-log interleaving and overridden RISC-V default
+flags are handled with per-object Make metadata and actual compiler-driver proof,
+not ignored. Separate DWARF/source lookup, complete architectures/world/pkgbase,
+bootstrap/publication, VM/runtime and controlled performance/cache/sandbox gates
+remain open. Existing format-5 --arch profiles carry this cohort. Make stays
+production/default; BIP stays excluded.
+
+## Current module and incremental checkpoint (2026-11-03)
+
+The [ZFS loadable module](ZFS-MODULE-QUALIFICATION.md) now passes both native
+profiles: 261 actual compilers, 68,785 consumed occurrences and 261 selected
+options per profile; complete ordered links, whole-file plain equality and
+CTF/runtime/install/debug-CRC checks pass against fresh original Make. All 729
+selected amd64 leaves now have recognized source producer declarations (691
+generic, 38 firmware). The [complete selected aggregate](AMD64-AGGREGATE-MODULES-QUALIFICATION.md)
+now passes with the current kernel: 2,191 selected targets and all 729 module
+ELF/debuglink and captured install-payload bindings. Full installation/pkgbase
+and system qualification remain open; declaration counts alone are insufficient.
 
 The [Linux64 incremental check](LINUX64-INCREMENTAL-QUALIFICATION.md) passes
 original/changed/restored generated-image dependency behavior using the actual
@@ -21,20 +41,22 @@ committed graph in an isolated object-root source checkout. Both restored files
 match the original whole-file bytes. Whole-system cache/runtime/performance and
 other completion gates remain open; Make stays production/default.
 
-## Latest kernel checkpoint (2026-11-02)
+## Latest kernel checkpoint (2026-11-03)
 
-Complete native amd64 GENERIC now passes controlled full Make parity: all 2,462
-objects match code/allocated data/CTF, and the linked full/runtime kernels match
-55 allocated payloads plus validated build-ID metadata, 96,147 loader symbols
-and merged CTF. The comparison found and fixed the initial helper DSO build-path
-DT_NEEDED defect; old artifacts fail the new test. See
-[FULL-KERNEL-PARITY-QUALIFICATION.md](FULL-KERNEL-PARITY-QUALIFICATION.md).
-Native kernel installation now also matches original Make staging in default,
-alternate and colocated-debug layouts; see
+The [current full GENERIC refresh](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) now
+passes against a fresh independent controlled Make build after the later startup
+source change: all 2,462 objects match code/allocated data/CTF. Full/runtime kernels
+match 55 allocated payloads, validated build-ID metadata, 96,147 loader symbols
+and merged CTF. Native debug tests and the original debug CRC pass. Actual
+ordered inputs, generated bodies and source/dependency coverage are retained;
+separate DWARF/source lookup remains open. The earlier helper DSO link correction
+is recorded in [the prior full-kernel result](FULL-KERNEL-PARITY-QUALIFICATION.md).
+Previously qualified native kernel installation layouts remain recorded in
 [KERNEL-INSTALLATION-QUALIFICATION.md](KERNEL-INSTALLATION-QUALIFICATION.md).
-Next kernel work is pkgbase integration and module/configuration/architecture
-qualification, followed by VM/runtime and performance gates. Full world and
-bootstrap/publication remain open; Make stays production/default.
+The selected amd64 kernel/module aggregate now passes; next close full aggregate
+installation/pkgbase and configuration/cross-architecture qualification, followed
+by VM/runtime and performance gates. Full
+world/stand/rescue and bootstrap/publication remain open; Make stays default.
 
 The package driver now preserves first-class directory layout records, including
 empty directories, alongside optional mtree ownership metadata. Its registered
@@ -48266,3 +48288,27 @@ including 25 test files and five directories; TESTS-off preserves the remaining
 control. Kyua now honors its existing declared environment in inherited mode;
 the intentional TAP negative fails despite zero program exit. Separate DWARF/
 source lookup, final pkgbase and full world/library parity remain open.
+
+## First native legacy boot products (2026-11-03)
+
+[Qualification](LEGACY-BOOT-QUALIFICATION.md): boot0/boot0sio, mbr/pmbr,
+cdboot and internal BTX/loader preserve seven complete original ELF32 objects
+and seven flat images byte-for-byte. Seven actual compiler/link vectors and ten
+consumed source/header pairs pass; six original installation records/payloads
+match. One host artifact test passes seven methods, including format negatives;
+no target image runs. Remaining selected stand products and full world/rescue/
+pkgbase/bootstrap, actual boot and signing/verified-boot gates remain open.
+
+### Native boot2 composition and original directory ownership
+
+The selected amd64-world boot/boot1/boot2 chain now uses source-owned compilation,
+ordered BTX startup/link inputs, native nm/AWK/objcopy and source-built btxld.
+Seven complete images/intermediates/header match original Make bytes; eleven
+actual compiler contexts bind 310 consumed source/header pairs. Corrected btxld
+policy preserves normal and execution configurations. All nine original install
+records retain their distinct bootloader/utilities tags, including explicit
+/boot ownership through the existing typed manifest protocol. Six host artifact
+methods pass; previous legacy archive bytes remain unchanged.
+See [BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md). Separate DWARF/source lookup,
+other boot policies/architectures, full stand/world/rescue/pkgbase/bootstrap and
+actual boot/signing/verified-boot behavior remain open.

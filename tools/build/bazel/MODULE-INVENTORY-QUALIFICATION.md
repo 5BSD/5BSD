@@ -31,9 +31,13 @@ helper and malformed-source regressions. The registered Bazel target
 //tools/build/bazel:module_inventory_test also passes through the maintained
 format-5 backend, with one reported target and no reported skips.
 
-A fresh recursive original Make inventory with all sixteen query workers finds
+Before the ZFS migration, a fresh recursive original Make inventory with all
+sixteen query workers found
 729 selected amd64 GENERIC leaves and 729 BUILD files, but only 728 recognized
-module producers: 690 generic and 38 firmware. ZFS is the sole missing producer.
+module producers: 690 generic and 38 firmware. ZFS was the sole missing producer. The subsequent
+[ZFS native migration](ZFS-MODULE-QUALIFICATION.md) closes that gap, with a fresh
+729/729 declaration inventory under
+/usr/obj/usr/src/bazel-zfs-module-selected-declarations-20261103/amd64.json.
 
 Evidence:
 - /usr/obj/usr/src/bazel-current-module-declarations-20261103/amd64.json

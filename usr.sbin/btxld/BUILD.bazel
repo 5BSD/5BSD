@@ -1,8 +1,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_selected_objects")
 load("//tools/build/bazel:bsd_utility_installation.bzl", "utility_installation")
 load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
-cc_binary(name = "btxld", srcs = ["btxld.c", "elfh.c", "btx.h", "elfh.h"], deps = [], dynamic_deps = [], copts = ["-fPIE"], linkopts = ["-pie"], linkstatic = True, target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+# Preserve the maintained program policy for target and execution-tool builds.
+cc_library(name = "objects", srcs = ["btxld.c", "elfh.c"], hdrs = ["btx.h", "elfh.h"],
+    features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'], copts = ['-fpie', '-DPIC', '-O2', '-pipe', '-fno-common', '-fPIE', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-fstack-protector-strong', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments'], target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'])
+bsd_component_selected_objects(name = "compiler_outputs", group = ":objects", pic = False,
+    object_names = ["btxld.o", "elfh.o"], visibility = ["//visibility:public"])
+cc_binary(name = "btxld", srcs = [":compiler_outputs"], features = ['-opt', '-bsd_debug_info', '-bsd_ssp', '-bsd_elf_security', '-bsd_stable_debug_directory'],
+    linkopts = ['-O2', '-pipe', '-fno-common', '-fPIE', '-g', '-gz=zlib', '-std=gnu17', '-Wno-format-zero-length', '-fstack-protector-strong', '-Wsystem-headers', '-Werror', '-Wall', '-Wno-format-y2k', '-W', '-Wno-unused-parameter', '-Wstrict-prototypes', '-Wmissing-prototypes', '-Wpointer-arith', '-Wreturn-type', '-Wcast-qual', '-Wwrite-strings', '-Wswitch', '-Wshadow', '-Wunused-parameter', '-Wcast-align', '-Wchar-subscripts', '-Wnested-externs', '-Wold-style-definition', '-Wno-pointer-sign', '-Wdate-time', '-Wmissing-variable-declarations', '-Wthread-safety', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Qunused-arguments', '-Wl,-znow', '-Wl,-zrelro', '-pie'], linkstatic = True, target_compatible_with = ['@platforms//os:freebsd', '@platforms//cpu:x86_64'], visibility = ["//visibility:public"])
 utility_installation(name = "install_manifest", program = "btxld", manual = "btxld.8", package = "utilities", bindir = "/usr/sbin", man_section = "8", aliases = [], extra_entries = [])
 bsd_install_archive(name = "install_archive",
     manifests = [":install_manifest"],

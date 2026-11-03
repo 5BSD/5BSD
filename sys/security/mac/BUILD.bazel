@@ -32,7 +32,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = "core_kernel_kern_jail_headers", hdrs = ["mac_framework.h", "mac_policy.h", "mac_syscalls.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_ktrace_headers", hdrs = ["mac_framework.h"],
-    visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/dev/vmm:__pkg__", "//sys/compat/linux:__pkg__"])
+    visibility = ["//sys/kern:__pkg__", "//sys/netinet:__pkg__", "//sys/net:__pkg__", "//sys/ofed/drivers/infiniband/ulp/ipoib:__pkg__", "//sys/dev/cxgbe:__pkg__", "//sys/dev/vmm:__pkg__", "//sys/compat/linux:__pkg__", "//sys/contrib/openzfs:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_sendfile_headers", hdrs = ["mac_framework.h"],
     visibility = ["//sys/kern:__pkg__"])
 bsd_source_headers(name = "core_kernel_kern_shutdown_headers", hdrs = ["mac_framework.h"],

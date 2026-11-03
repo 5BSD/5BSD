@@ -1318,3 +1318,112 @@ existing Kyua environment attribute now reaches constructors while preserving
 unmentioned inherited environment. Make remains production/default. Continue
 actual world install/package closure; full independent library/debug/source
 lookup, other options/architectures and the broad completion gates above remain.
+
+## ZFS loadable module closure (2026-11-03)
+
+The [native ZFS module](ZFS-MODULE-QUALIFICATION.md) passes two normal build-bsd
+profiles against fresh original Make: 261 actual compiler contexts, 68,785
+consumed input occurrences and 261 selected options each, plus complete ordered
+compiler/CTF/alias-to-link identities. Whole-file plain equality, CTF/runtime
+sections, split-debug CRCs and all installation records pass. The unchanged
+sources preserve all eight compiled SDT sections/relocations. Original module
+policy is separate from built-in kernel objects; no C/Make/shared-rule/frontend-C
+change is introduced. The source declaration inventory is now 729/729 amd64
+leaves (691 generic, 38 firmware). This supersedes the prior ZFS missing-producer
+checkpoint, not the outstanding full-build gates.
+
+Next refresh the current full GENERIC kernel and aggregate selected module
+build; continue the missing stand boot-program/library world closure in parallel
+with userland installation/pkgbase work. ARM64/RISC-V/configuration, world/rescue,
+bootstrap, hardware/combined publication, debugger source lookup, sandboxing,
+VM/runtime and measured CPU/memory/disk/cache qualification remain required.
+Make stays production/default; BIP stays excluded.
+
+## First native legacy boot products (2026-11-03)
+
+Fresh maintained world recursion retains 2,128 selected directories, including
+52 in stand. The [first seven real products](LEGACY-BOOT-QUALIFICATION.md) now
+have source-owned native compile/link/install composition. Seven complete ELF32
+objects and flat images are exact original bytes; all actual flags, ten consumed
+pairs and six original installation records match. Seven host unittest methods
+pass without executing an image. The original expression is preserved through
+response-file quoting; successful cached witnesses remain explicitly bound to
+the rejected first profile's individual successful actions. No global helper/
+toolchain/SDK policy changes. Continue the remaining BIOS/EFI/kboot/library and
+full world/rescue/pkgbase graph, cross/options/bootstrap, boot/runtime and broad
+completion gates above; directory presence or raw equality is not boot/security
+qualification. Make stays production/default.
+
+## Current full GENERIC compiled parity refresh (2026-11-03)
+
+The [new current-source full build](CURRENT-KERNEL-REFRESH-QUALIFICATION.md) passes
+normal build-bsd and fresh controlled original Make. All 2,462 object code,
+allocated metadata/payloads and CTF bytes match. Both full/runtime kernels pass
+56 allocated contracts (55 exact payloads plus validated build-ID note), 96,147
+loader symbols and merged CTF; native debug positive/negative checks and original
+CRC pass. Before/after source bindings and actual original dependency coverage
+are retained, including explicit earlier helper-source hashes supplementing the
+initial failed audit. External Make prerequisites, standalone DWARF/source
+lookup and general cache/toolchain hermeticity are not declared complete.
+
+Next aggregate all 729 amd64 module producers and installation/pkgbase closure;
+continue actual stand/boot2, world/rescue and cross-architecture/configuration
+coverage. Bootstrap, hardware/combined publication, sandboxing, VM/runtime and
+controlled CPU/memory/disk/cache qualification remain required. Make stays
+production/default; BIP stays excluded. This is current compiled parity, not a
+booted installed system or full-goal completion.
+
+## Complete selected amd64 aggregate (2026-11-03)
+
+The [combined request](AMD64-AGGREGATE-MODULES-QUALIFICATION.md) passes the current
+full kernel and all 729 selected amd64 modules with CTF/debug: 2,191 targets and
+3,649 captured output records. All module ELF/debuglink CRCs and producer/install
+payload bindings pass; all component destinations are collision-free. The real
+mac_ntpd compile failure is fixed by reusing its existing precise capability
+header provider; failed build and inspection records remain retained. Default
+component paths and package-pair consistency are not full original installation
+or pkgbase parity. Full aggregate installation/package closure remains next.
+
+Continue actual userland library/program/stand/rescue closure and ARM64/RISC-V
+native architecture coverage. The last maintained cross selections contain 627
+ARM64 and 553 RISC-V leaves; current literal declaration inspection recognizes
+216 and 214 respectively, not successful-build counts. Cross firmware/driver and
+architecture-specific generated inputs remain real work. Bootstrap, hardware/
+publication, debugger source lookup, sandboxing, VM/runtime and controlled CPU/
+memory/disk I/O/cache qualification remain required. Make stays production/default;
+BIP remains excluded. This checkpoint supersedes earlier aggregate-build TODOs.
+
+### Boot2 producer closure and directory installation checkpoint (2026-11-03)
+
+Added the actual selected boot/boot1/boot2 chain: seven i386 compile objects,
+ordered internal BTX crt0, original nm/AWK header generation, selected linker/
+objcopy and source-built btxld, size checking/padding/concatenation. Corrected the
+existing btxld target's missing original policy through normal source-owned
+objects/direct program linkage, preserving its public/install/archive labels.
+Eleven actual compiler contexts bind 310 consumed pairs; five ordered links and
+seven complete generated outputs match original policy/bytes. Nine original
+install records preserve file/directory ownership and distinct package tags;
+the missing original /boot record is represented through first-class
+bsd_install_directory using the existing provider/manifest/archive protocol.
+Six host artifact methods pass and previous legacy archive bytes are unchanged.
+Retained source/recipe/cached-action proofs, first rejected tool-policy and
+missing-directory comparisons, and explicit separate DWARF/source lookup/boot
+limits are in [BOOT2-QUALIFICATION.md](BOOT2-QUALIFICATION.md). No final package,
+publication or runtime/boot qualification follows. Continue portable library/
+program closure and proper ARM64/RISC-V target/execution SDK support; this
+architecture-specific BIOS cohort is not cross-world coverage.
+
+## ARM64/RISC-V routing module checkpoint (2026-11-03)
+
+The [four routing/diagnostic modules](CROSS-ROUTING-MODULES-QUALIFICATION.md)
+dummymbuf, fib_dxr and dpdk_lpm4/6 now pass both architectures and plain/CTF-debug
+settings: eight whole-file plain matches, eight CTF/runtime/debuglink comparisons,
+24 original install records, 24 actual module compilers/3,056 consumed pairs and
+32 ordered links. The first real missing ARM64 CK dependency is corrected with
+an explicit original-consumed source-header view; no C/Make/shared-rule/frontend
+policy changes. Original parallel-log interleaving and overridden RISC-V default
+flags are handled with per-object Make metadata and actual compiler-driver proof,
+not ignored. Separate DWARF/source lookup, complete architectures/world/pkgbase,
+bootstrap/publication, VM/runtime and controlled performance/cache/sandbox gates
+remain open. Existing format-5 --arch profiles carry this cohort. Make stays
+production/default; BIP stays excluded.

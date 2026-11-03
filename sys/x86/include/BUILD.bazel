@@ -10,3 +10,5 @@ cc_library(name = "busdma_internal_headers", hdrs = ["busdma_impl.h"], includes 
 
 # Explicit source-header closure for the amd64 bhyve engine.
 cc_library(name = "bhyve_engine_headers", hdrs = ['apicreg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
+
+filegroup(name = "boot2_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'psl.h'], visibility = ["//stand/i386/boot2:__pkg__"])
