@@ -1456,3 +1456,17 @@ complete cross/world/pkgbase/bootstrap/hardware/publication, runtime and control
 performance/cache/sandbox gates remain open. Userland target/exec SDK separation
 continues independently with fresh receipts after receipt-bound tool changes.
 Make stays production/default; BIP stays excluded.
+
+### 2026-11-03: actual userland target/execution SDK separation
+
+Maintained SDK-only preparation explicitly selects amd64/ARM64/RISC-V real
+world profiles and composes cross targets with an independently validated native
+execution SDK. Fresh native-r3 validates 16,712 bindings; only intentional
+conditional RISC-V ccconfig bytes differ from native-r1. Existing native and
+kernel role policy is retained; cross tests require the host artifact provider.
+Original cross header floors were repaired through maintained private-sysroot
+header recipes, with fresh cross original references afterward. Two maintained
+policy test targets pass (15 settings/18 inventory direct methods; 10 reference
+option methods separately pass). See USERLAND-SDK-QUALIFICATION.md. Actual
+three-architecture bz2/bzip2 component evidence is a separate bounded gate;
+full world/rescue/pkgbase/foreign execution/bootstrap remain incomplete.

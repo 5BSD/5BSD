@@ -48341,3 +48341,13 @@ localization defects. KOBJ schema provenance comments are the only permitted
 generated-input content differences and remain explicit; standalone
 DWARF/source lookup remains open. See
 [CROSS-INPUT-MODULES-QUALIFICATION.md](CROSS-INPUT-MODULES-QUALIFICATION.md).
+
+## Explicit userland target/execution SDKs (2026-11-03)
+
+The maintained SDK stager and normal format-5 frontend now accept real amd64,
+ARM64 and RISC-V userland target closures with a separately bound native
+execution SDK. RISC-V userland ISA/ABI flags follow original Make; kernel
+profiles retain the native execution SDK and existing kernel toolchains.
+Foreign tests require declared host artifact inspection. SDK/profile policy
+tests pass; Make-built SDK/bootstrap floors and other world/runtime gates remain
+explicit. See [USERLAND-SDK-QUALIFICATION.md](USERLAND-SDK-QUALIFICATION.md).

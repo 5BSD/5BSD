@@ -114,6 +114,12 @@ def _impl(ctx):
             flag_groups = [flag_group(flags = ["--ld-path=" + linker])],
         )]),
     ]
+    if ctx.attr.target.startswith("riscv64-"):
+        # Original bsd.cpu.mk userland ABI and bsd.sys.mk CFLAGS. Shared
+        # library recipes do not repeat CFLAGS; executable recipes do.
+        features = [feature(name = "bsd_riscv_userland_abi", enabled = True,
+            flag_sets = [flag_set(actions = _COMPILE + ["c++-link-executable"],
+                flag_groups = [flag_group(flags = ["-march=rv64imafdc", "-mabi=lp64d", "-mno-relax"])])])] + features
     validation_actions = []
     if ctx.attr.archive_validation:
         features.append(feature(name = "symbol_check", implies = [ACTION_NAMES.validate_static_library]))

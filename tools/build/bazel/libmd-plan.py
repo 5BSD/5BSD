@@ -21,7 +21,7 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def generate(src, output, make, assembly, objtop, profile, component=None):
+def generate(src, output, make, assembly, objtop, profile, component=None, target_architecture="amd64", sdk_only=False):
     src = src.resolve(strict=True)
     output = output.absolute()
     if output.exists() or not output.is_relative_to('/usr/obj'):
@@ -31,9 +31,22 @@ def generate(src, output, make, assembly, objtop, profile, component=None):
     if not (src / 'lib/libmd/Makefile').is_file():
         raise ValueError('source lacks maintained libmd')
     component = (component or (src / 'lib/libmd')).resolve(strict=True)
-    buildenv = BuildEnvironment(src, objtop, profile, make, component)
+    if target_architecture != 'amd64' and not sdk_only:
+        raise ValueError('cross architecture opt-in supports SDK preparation, not the legacy libmd graph')
+    buildenv = BuildEnvironment(src, objtop, profile, make, component, target_architecture=target_architecture)
     # All querying is configuration; Bazel actions never execute Make.
     output.mkdir(parents=True)
+    if sdk_only:
+        # The maintained format-5 source graph owns the product declarations.
+        # An SDK-only plan freezes the real build environment without inventing
+        # or advertising a cross libmd source graph.
+        (output/'workspace').mkdir()
+        buildenv.verify()
+        result = {'format':1, 'scope':'SDK preparation only; no product graph or compilation',
+                  'source_sha256':{}, 'source_origins':{},
+                  'build_environment':buildenv.receipt()}
+        (output/'plan.json').write_text(json.dumps(result,indent=2)+'\n')
+        return result
     obj = output / 'query-obj'
     obj.mkdir()
     extra = ['MK_MACHDEP_OPTIMIZATIONS=no'] if not assembly else []
@@ -179,8 +192,10 @@ def main():
     p.add_argument('--profile', type=Path, required=True)
     p.add_argument('--component', type=Path, help='explicit reviewed libmd overlay; defaults to source lib/libmd')
     p.add_argument('--without-asm', action='store_true')
+    p.add_argument('--target-arch', choices=['amd64','aarch64','riscv64'], default='amd64')
+    p.add_argument('--sdk-only', action='store_true')
     a = p.parse_args()
-    generate(a.src, a.output, a.make, not a.without_asm, a.objtop, a.profile, a.component)
+    generate(a.src, a.output, a.make, not a.without_asm, a.objtop, a.profile, a.component, a.target_arch, a.sdk_only)
 
 
 if __name__ == '__main__':

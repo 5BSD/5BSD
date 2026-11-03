@@ -13,6 +13,7 @@ import tempfile
 import bep_artifacts
 import test_reports
 import bsd_toolchain
+import userland_sdk
 from libmd_environment import digest
 
 
@@ -40,7 +41,7 @@ def execution_log_format(config):
     return value
 
 
-def platform_arguments(config, target_arch):
+def platform_arguments(config, target_arch, receipt=None):
     """Separate the execution SDK from the explicitly selected target kernel ABI."""
     kind = config.get('target-kind', 'userland')
     if kind not in ('userland', 'kernel'):
@@ -49,9 +50,18 @@ def platform_arguments(config, target_arch):
         raise ValueError('unsupported target architecture')
     native = '@bsd_sdk//toolchain:native'
     if kind == 'userland':
+        if receipt is not None:
+            userland_sdk.receipt_architecture(receipt, target_arch)
         if target_arch != 'amd64':
-            raise ValueError('cross userland SDK not yet qualified; select target-kind kernel')
+            if receipt is None:
+                raise ValueError('cross userland requires an explicitly bound native execution SDK')
+            return ['--platforms=@bsd_sdk//toolchain:' + target_arch, '--host_platform=' + native,
+                    '--extra_toolchains=@bsd_sdk//toolchain/host:registered']
         return ['--platforms=' + native, '--host_platform=' + native]
+    if receipt is not None:
+        if userland_sdk.target_architecture(receipt.get('target')) != 'amd64':
+            raise ValueError('kernel profiles require a native amd64 execution SDK')
+        userland_sdk.receipt_architecture(receipt, 'amd64')
     name = {'amd64': 'amd64', 'aarch64': 'arm64', 'riscv64': 'riscv64'}[target_arch]
     package = '//tools/build/bazel/kernel_toolchain:'
     return ['--platforms=' + package + name, '--host_platform=' + native,
@@ -82,7 +92,7 @@ def parse_test_inventory(text, host_artifacts_only=False):
                 (host_artifacts_only and type(record['host_artifact']) is not bool)):
             raise ValueError('configured test requires an explicit label and compatibility boolean')
         if host_artifacts_only and record['compatible'] and not record['host_artifact']:
-            raise ValueError('kernel profiles require explicitly declared host artifact tests: ' + record['label'])
+            raise ValueError('cross or kernel profiles require explicitly declared host artifact tests: ' + record['label'])
         label = record['label']
         if label.startswith('@@//'):
             label = label[2:]
@@ -137,7 +147,6 @@ def _qualify(config, args, state):
     log_format = execution_log_format(config)
     log_path = args.output.resolve() / ('execution.' + log_format)
     settings = setting_arguments(config.get('build-settings', {}))
-    platforms = platform_arguments(config, args.target_arch)
     for key in ('targets','tests'):
         values=config[key]
         if not isinstance(values,list) or len(values)!=len(set(values)) or any(
@@ -164,13 +173,15 @@ def _qualify(config, args, state):
         any(p==out or p.is_relative_to(out) or (p.is_dir() and out.is_relative_to(p)) for p in protected)):
         raise ValueError('fresh nonoverlapping /usr/obj output required')
     sdk=selected['toolchain-workspace'];receipt=json.loads(selected['toolchain-receipt'].read_text())
+    platforms = platform_arguments(config, args.target_arch, receipt)
+    host_artifacts_only = config.get('target-kind') == 'kernel' or args.target_arch != 'amd64'
     for field in ('inputs','execution_host_dependencies'):
         for name,value in receipt[field].items():
             if digest(Path(name))!=value:raise ValueError('SDK input changed: '+name)
     for name,value in receipt['snapshot'].items():
         p=Path(name)
         if p.is_absolute() or '..' in p.parts or digest(sdk/p)!=value:raise ValueError('SDK snapshot changed: '+name)
-    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock']}
+    bindings={str(p):digest(p) for p in [args.inputs.resolve(),args.bazel.resolve(),selected['toolchain-receipt'],Path(__file__).resolve(),Path(bep_artifacts.__file__).resolve(),Path(test_reports.__file__).resolve(),Path(userland_sdk.__file__).resolve(),src/'MODULE.bazel',src/'MODULE.bazel.lock']}
     out.mkdir(parents=True)
     module = 'module(name="bsd_sdk",version="0.0.0")\nbazel_dep(name="rules_cc",version="0.2.17")\nbazel_dep(name="platforms",version="1.0.0")\n'
     sdk_key = hashlib.sha256(json.dumps(dict(snapshot=receipt['snapshot'], module=module),sort_keys=True).encode()).hexdigest()
@@ -213,7 +224,7 @@ def _qualify(config, args, state):
         env=dict(os.environ,JAVA_HOME=str(selected['java-home']),LC_ALL='C',BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN='1')
         expected, incompatible = [], []
         if config['tests']:
-            query = test_inventory_command(argv, config['targets'], config['tests'], host_artifacts_only=config.get('target-kind') == 'kernel')
+            query = test_inventory_command(argv, config['targets'], config['tests'], host_artifacts_only=host_artifacts_only)
             start = time.monotonic()
             with (out/'test-inventory.stdout').open('w') as stdout, (out/'test-inventory.stderr').open('w') as stderr:
                 result = subprocess.run(query, cwd=src, env=env, stdout=stdout, stderr=stderr)
@@ -221,8 +232,8 @@ def _qualify(config, args, state):
             (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
             if result.returncode:
                 raise RuntimeError('configured test inventory failed; see test-inventory.stderr')
-            expected, incompatible = parse_test_inventory((out/'test-inventory.stdout').read_text(), host_artifacts_only=config.get('target-kind') == 'kernel')
-            if config.get('target-kind') == 'kernel':
+            expected, incompatible = parse_test_inventory((out/'test-inventory.stdout').read_text(), host_artifacts_only=host_artifacts_only)
+            if host_artifacts_only:
                 # bazel test executes test rules in targets even if the caller
                 # omitted them from tests. Validate that whole selection first.
                 query = test_inventory_command(argv, config['targets'], config['targets'], host_artifacts_only=True)
@@ -256,7 +267,7 @@ def _qualify(config, args, state):
             raise ValueError('verified distdir inputs changed during qualification')
         staged_cache_after = bsd_toolchain.verify_repository_cache(staged_cache)
         log_digest = digest(log_path)
-        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if config.get('target-kind') == 'kernel' else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
+        (out/'receipt.json').write_text(json.dumps(dict(status='passed',scope='selected maintained BUILD targets',target_architecture=args.target_arch,target_kind=config.get('target-kind','userland'),test_execution=('host-artifacts' if host_artifacts_only else 'userland') if config['tests'] else 'none',targets=config['targets'],tests=tests,test_reports=reports,test_inventory_sha256=digest(out/'test-inventory.json'),artifacts=artifacts,build_state=str(state),sdk_repository=str(repository),input_sha256=bindings,offline_inputs={'repository_cache':str(selected['repository-cache']),'repository_cache_sha256':cache_digest,'repository_cache_entries':cache_entries,'staged_repository_cache':str(staged_cache),'staged_repository_cache_before':{'sha256':staged_digest,'entries':staged_entries},'staged_repository_cache_after':{'sha256':staged_cache_after[0],'entries':staged_cache_after[1]},'distdirs':len(distdirs),'distdir_sha256':distdir_digest,'distdir_files':distdir_files,'source_inputs_unchanged':True},execution_log_sha256=log_digest,execution_log=dict(format=log_format,path=str(log_path),bytes=log_path.stat().st_size,sha256=log_digest),limitations=['Bazel PASSED describes action success; see test_reports for passing, skipped and expected-failure case counts.','Prepared Make-built SDK; no world/kernel/bootstrap qualification.','No installation, package parity, publication or performance comparison established.']),indent=2)+'\n')
         print(out/'receipt.json')
     except Exception as error:
         failure = dict(status='failed', error=str(error), input_sha256=bindings)

@@ -5499,3 +5499,23 @@ See
 .Pa tools/build/bazel/CROSS-INPUT-MODULES-QUALIFICATION.md
 for the current original Make comparison status and remaining architecture,
 debugger, runtime and performance gates.
+.Pp
+Userland format-5 profiles may explicitly select amd64, ARM64 or RISC-V.
+Prepare the selected world SDK with
+.Pa tools/build/bazel/libmd-plan.py
+using
+.Fl -sdk-only
+and
+.Fl -target-arch .
+Cross SDK staging additionally requires an independently validated native
+execution workspace and receipt through
+.Pa tools/build/bazel/libmd-stage-tools.py .
+The composite receipt binds both target and execution closures; stale receipts
+must be replaced by maintained preparation, not rebound.
+Cross userland tests require explicitly declared host artifact inspection and
+never execute foreign programs. Kernel profiles continue to select their
+architecture separately using a native execution SDK.
+The compiler/sysroot floor remains Make-built; these profiles do not establish
+full world bootstrap, target runtime, package publication or boot behavior.
+See
+.Pa tools/build/bazel/USERLAND-SDK-QUALIFICATION.md .

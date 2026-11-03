@@ -10623,3 +10623,11 @@ follow-up work; source scans and compiled equality do not prove live
 probe/audit coverage. Evidence:
 bazel-cross-input-review-r1-20261103/supplement.json and
 [CROSS-INPUT-MODULES-QUALIFICATION.md](CROSS-INPUT-MODULES-QUALIFICATION.md).
+
+### 2026-11-03 userland SDK target/execution roles
+
+Explicit target/host SDK roles preserve original compiler/target identities and
+reject stale/foreign execution inputs. No runtime instrumentation or source
+code is rewritten by SDK preparation. The actual cross component action and
+loader proofs remain distinct from foreign runtime tracing, complete world
+bootstrap and host-provenance hermeticity. See USERLAND-SDK-QUALIFICATION.md.

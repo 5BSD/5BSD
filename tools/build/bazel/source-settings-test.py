@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Typed source setting serialization, without accepting native flag injection."""
 import unittest
+import copy
+from userland_sdk import verify_profile
 from source_graph import setting_arguments, platform_arguments, execution_log_format
 
 
@@ -48,6 +50,60 @@ class PlatformTest(unittest.TestCase):
                 ({'tests': [], 'target-kind': '--extra_toolchains=//:escape'}, 'amd64')]:
             with self.subTest(config=config, arch=arch), self.assertRaises(ValueError):
                 platform_arguments(config, arch)
+
+
+class CrossUserlandSDKTest(unittest.TestCase):
+    def receipt(self, arch):
+        host = {'workspace':'/usr/obj/sdk/workspace', 'receipt':'/usr/obj/sdk/toolchain-inputs.json',
+                'receipt_sha256':'a'*64, 'snapshot_sha256':'b'*64}
+        return {'format':2, 'target':arch+'-unknown-freebsd16.0',
+                'execution_target':'x86_64-unknown-freebsd16.0', 'execution_sdk':host,
+                'inputs':{host['receipt']:host['receipt_sha256']},
+                'snapshot':{'toolchain/host/'+name:'c'*64 for name in
+                            ['BUILD.bazel','cc_toolchain_config.bzl','bin/clang']}}
+
+    def test_cross_target_and_native_execution_platforms(self):
+        for arch in ['aarch64','riscv64']:
+            self.assertEqual(platform_arguments({},arch,self.receipt(arch)),[
+                '--platforms=@bsd_sdk//toolchain:' + arch,
+                '--host_platform=@bsd_sdk//toolchain:native',
+                '--extra_toolchains=@bsd_sdk//toolchain/host:registered'])
+
+    def test_incomplete_or_foreign_execution_receipt_rejected(self):
+        for arch in ['aarch64','riscv64']:
+            original=self.receipt(arch)
+            changes=[{'format':1}, {'execution_target':original['target']},
+                     {'snapshot':{}}, {'inputs':{}}, {'execution_sdk':{}},
+                     {'target':'x86_64-unknown-freebsd16.0'}]
+            for change in changes:
+                with self.subTest(arch=arch,change=change), self.assertRaises(ValueError):
+                    platform_arguments({},arch,dict(copy.deepcopy(original),**change))
+
+    def test_native_receipt_cannot_select_foreign_target(self):
+        receipt={'format':1,'target':'x86_64-unknown-freebsd16.0'}
+        self.assertEqual(platform_arguments({},'amd64',receipt), platform_arguments({},'amd64'))
+        for arch in ['aarch64','riscv64']:
+            with self.subTest(arch=arch), self.assertRaises(ValueError):
+                platform_arguments({},arch,receipt)
+
+    def test_kernel_profiles_keep_native_execution_sdk(self):
+        native={'format':1,'target':'x86_64-unknown-freebsd16.0'}
+        for arch in ['amd64','aarch64','riscv64']:
+            self.assertEqual(platform_arguments({'target-kind':'kernel'},arch,native),
+                             platform_arguments({'target-kind':'kernel'},arch))
+        for arch in ['aarch64','riscv64']:
+            with self.subTest(arch=arch), self.assertRaises(ValueError):
+                platform_arguments({'target-kind':'kernel'},arch,self.receipt(arch))
+
+    def test_recorded_world_pair_requires_explicit_selection(self):
+        for name,machine,machine_arch in [('amd64','amd64','amd64'),
+                ('aarch64','arm64','aarch64'),('riscv64','riscv','riscv64')]:
+            values={'TARGET':machine,'TARGET_ARCH':machine_arch}
+            verify_profile(values,name)
+            if name != 'amd64':
+                with self.assertRaises(ValueError):verify_profile(values)
+            with self.assertRaises(ValueError):
+                verify_profile(dict(values,TARGET='amd64' if machine!='amd64' else 'arm64'),name)
 
 
 class ExecutionLogFormatTest(unittest.TestCase):

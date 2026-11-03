@@ -27,6 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('src', 'objtop', 'profile', 'component', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--target-arch', choices=['amd64','aarch64','riscv64'], default='amd64',
+                        help='explicit recorded target ABI; execution tools remain native')
     parser.add_argument('--jobs', type=int, required=True)
     parser.add_argument('--make', type=Path, default=Path('/usr/bin/make'))
     parser.add_argument('--make-meta', action='store_true',
@@ -60,7 +62,7 @@ def main():
         parser.error('component must be a maintained directory within the actual source tree')
     definitions = install_reference_options.component_definitions(
         component, args.make_define, option_names=selected)
-    environment = BuildEnvironment(src, objtop, profile, make, component)
+    environment = BuildEnvironment(src, objtop, profile, make, component, target_architecture=args.target_arch)
     definitions = install_reference_options.component_definitions(
         component, args.make_define, option_names=selected,
         profile_names=environment.assignments)
@@ -90,7 +92,7 @@ def main():
     if definitions:
         identity = environment.query(['-V', 'OBJTOP', '-V', 'MACHINE', '-V', 'MACHINE_ARCH',
                                       '-V', '${CC}'], component=src / 'lib/libmd').splitlines()
-        if (len(identity) != 4 or identity[:3] != [str(objtop), 'amd64', 'amd64'] or
+        if (len(identity) != 4 or identity[:3] != [str(objtop), environment.assignments['TARGET'], environment.assignments['TARGET_ARCH']] or
                 shlex.split(identity[3]) != environment.cc):
             raise ValueError('component define changed baseline SDK/target/compiler identity')
     if args.make_meta:
@@ -115,7 +117,7 @@ def main():
     implementations = {str(Path(__file__).resolve()): digest(Path(__file__)),
                        str(Path(libmd_environment.__file__).resolve()): digest(Path(libmd_environment.__file__)),
                        str(Path(install_reference_options.__file__).resolve()): digest(Path(install_reference_options.__file__))}
-    receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference',
+    receipt = {'format': 1, 'status': 'running', 'scope': 'native-amd64-Make-installation-reference' if args.target_arch == 'amd64' else 'cross-Make-installation-reference', 'target_architecture': args.target_arch,
                'component': str(component), 'jobs': args.jobs,
                'make_metadata': {'enabled': args.make_meta,
                                  'mode': 'meta missing-meta=yes nofilemon curdirok=yes' if args.make_meta else None},
