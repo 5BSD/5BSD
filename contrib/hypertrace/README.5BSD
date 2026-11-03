@@ -332,7 +332,9 @@ event. Lockstat/WITNESS instrumentation therefore runs outside guest DIF.
 The guest-memory callbacks copy only resident managed RAM under that lock;
 they never call vm_gpa_hold or the VM fault machinery. Guest user access
 checks U/S and R/W through the guest tables; writes additionally require host
-NPT/EPT write permission and mark the managed pages dirty. Both pages of a
+NPT/EPT write permission and mark both managed pages and host leaf dirty bits
+for backing-memory accounting and migration. Malformed large-page alignment
+is rejected by the checked interface. Both pages of a
 cross-page copy are validated before either is modified. Missing mappings
 fail the access instead of faulting pages in. This can lose events under
 memory pressure or contention and is not a guarantee of lossless tracing.

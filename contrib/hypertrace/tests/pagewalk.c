@@ -15,12 +15,12 @@
 #define X86_PG_RW 2
 #define X86_PG_U 4
 #define EPT_PG_WRITE 2
-#define EPT_PG_EMUL_RW 0x400
+#define EPT_PG_EMUL_RW (1ULL << 53)
 #define PG_MANAGED 0x400
 #define VM_PROT_READ 1
 #define VM_PROT_WRITE 2
 #define EPT_PG_READ 1
-#define EPT_PG_EMUL_V 0x200
+#define EPT_PG_EMUL_V (1ULL << 52)
 #define PMAP_EMULATE_AD_BITS 0x200
 #define VM_PHYSSEG_DENSE 1
 #define atop(pa) ((pa) >> PAGE_SHIFT)
