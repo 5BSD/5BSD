@@ -126,3 +126,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "sha256.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "standalone_lua_headers", hdrs = ['sha256.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])

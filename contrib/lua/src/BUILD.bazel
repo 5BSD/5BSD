@@ -7,5 +7,8 @@ cc_library(
     deps = ["//lib/liblua:config_headers"],
     visibility = ["//visibility:public"],
 )
-exports_files(["lapi.c", "lcode.c", "lctype.c", "ldebug.c", "ldo.c", "ldump.c", "lfunc.c", "lgc.c", "linit.c", "llex.c", "lmem.c", "lobject.c", "lopcodes.c", "lparser.c", "lstate.c", "lstring.c", "ltable.c", "ltm.c", "lundump.c", "lvm.c", "lzio.c", "lauxlib.c", "lbaselib.c", "lcorolib.c", "ldblib.c", "liolib.c", "lmathlib.c", "loslib.c", "lstrlib.c", "ltablib.c", "lutf8lib.c", "loadlib.c"], visibility = ["//lib/liblua:__pkg__"])
+exports_files(["lapi.c", "lcode.c", "lctype.c", "ldebug.c", "ldo.c", "ldump.c", "lfunc.c", "lgc.c", "linit.c", "llex.c", "lmem.c", "lobject.c", "lopcodes.c", "lparser.c", "lstate.c", "lstring.c", "ltable.c", "ltm.c", "lundump.c", "lvm.c", "lzio.c", "lauxlib.c", "lbaselib.c", "lcorolib.c", "ldblib.c", "liolib.c", "lmathlib.c", "loslib.c", "lstrlib.c", "ltablib.c", "lutf8lib.c", "loadlib.c"], visibility = ["//lib/liblua:__pkg__", "//stand/liblua:__pkg__"])
 exports_files(["lua.c"], visibility = ["//libexec/flua:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "standalone_headers", hdrs = ['lapi.h', 'lauxlib.h', 'lcode.h', 'lctype.h', 'ldebug.h', 'ldo.h', 'lfunc.h', 'lgc.h', 'ljumptab.h', 'llex.h', 'llimits.h', 'lmem.h', 'lobject.h', 'lopcodes.h', 'lparser.h', 'lprefix.h', 'lstate.h', 'lstring.h', 'ltable.h', 'ltm.h', 'lua.h', 'luaconf.h', 'lualib.h', 'lundump.h', 'lvm.h', 'lzio.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])

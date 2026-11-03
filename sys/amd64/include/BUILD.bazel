@@ -38,3 +38,6 @@ bsd_architecture_headers(name = "linux64_module_headers", headers = {
     "//sys/amd64/linux:module_generated_headers": "linux",
     "//sys/amd64/linux:module_generated_headers_for_arch": "amd64/linux",
 }, visibility = ["//sys/amd64/linux:__pkg__", "//sys/compat/linux:__pkg__", "//sys/x86/linux:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'param.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])

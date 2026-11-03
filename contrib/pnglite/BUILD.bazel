@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+bsd_source_headers(name = "standalone_lua_headers", hdrs = ['pnglite.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])

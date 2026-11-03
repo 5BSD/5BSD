@@ -68,3 +68,7 @@ cc_library(name = "selftest_source", testonly = True,
     textual_hdrs = ["vets.c"], hdrs = ["libsecureboot-priv.h", "x509_tbs.h"],
     deps = [":headers", ":generated_headers", "//contrib/bearssl:tool_headers"],
     visibility = ["//lib/libsecureboot/tests:__pkg__"])
+
+# Loader clients need verification declarations, not userland crypto dependencies.
+cc_library(name = "standalone_verify_header", hdrs = ["h/verify_file.h"],
+    strip_include_prefix = "h", visibility = ["//stand/liblua:__pkg__"])

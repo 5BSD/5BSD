@@ -1,15 +1,25 @@
 # Bazel qualification
 
-## World audit refresh in progress (2026-11-03)
+## World metadata audit checkpoint (2026-11-03)
 
 The maintained world audit now checks explicit architecture/profile contexts and
 captures additional test kinds and grouped headers. All three SDK/profile
 preflights and two mismatch-rejection checks pass. The amd64 metadata survey
 finishes with 2,128 directories and no query failures; these are not successful
 build counts. ARM64 also finishes with 2,087 directories and no query failures;
-RISC-V is still running. Source review identifies
+RISC-V finishes with 2,050 directories and no query failures. Source review identifies
 complete standalone/EFI libraries and EFI loader links as required next work.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
+
+## Standalone Lua archive checkpoint (2026-11-03)
+
+The amd64 loader Lua candidate now builds all 31 selected units natively.
+Member order, external symbols, allocated section bytes and 4,786 symbolic
+relocations match independent Make; full object/debug bytes differ. Tests verify
+the standalone ABI and archive contract. Verifier-enabled and custom-path builds
+pass, and an immediate repeat reuses compiler/archive outputs and cached tests.
+EFI-specific/foreign variants and firmware runtime remain open. See
+[STANDALONE-LUA-QUALIFICATION.md](STANDALONE-LUA-QUALIFICATION.md).
 
 ## EFI conversion prerequisite (2026-11-03)
 

@@ -43,3 +43,5 @@ bsd_source_headers(name = "cross_core_builtin_headers", hdrs = [
         "teken_wcwidth.h",
     ],
     includes = [], visibility = ["//sys/kern:__pkg__"])
+
+bsd_source_headers(name = "standalone_lua_headers", hdrs = ['teken.h'], includes = ["."], visibility = ["//stand/liblua:__pkg__"])

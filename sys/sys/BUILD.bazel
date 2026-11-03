@@ -47,7 +47,7 @@ cc_library(name = "cryptodesc_header", hdrs = ["cryptodesc.h"], strip_include_pr
 
 exports_files(["socket.h"], visibility = ["//usr.bin/getaddrinfo:__pkg__", "//usr.sbin/bsdinstall/tests:__pkg__"])
 
-exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__"])
+exports_files(["signal.h", "errno.h"], visibility = ["//bin/zsh:__pkg__", "//stand/libsa:__pkg__"])
 
 cc_library(name = "assym_header", hdrs = ["assym.h"],
     strip_include_prefix = "/sys/sys", include_prefix = "sys", visibility = ["//visibility:public"])
@@ -92,3 +92,7 @@ load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 bsd_source_headers(name = 'boot2_headers', hdrs = ['_align.h', '_decls.h', '_endian.h', '_maxphys.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_stdarg.h', '_stdint.h', '_types.h', '_visible.h', 'bitcount.h', 'boot.h', 'cdefs.h', 'dirent.h', 'disk/bsd.h', 'disk/mbr.h', 'disklabel.h', 'diskmbr.h', 'elf32.h', 'elf_common.h', 'elf_generic.h', 'endian.h', 'imgact_aout.h', 'ioccom.h', 'limits.h', 'mount.h', 'nlist_aout.h', 'param.h', 'queue.h', 'reboot.h', 'stdint.h', 'syslimits.h', 'types.h', 'ucred.h'], visibility = ['//stand/i386/boot2:__pkg__'])
 
 exports_files(["stdarg.h"], visibility = ["//stand/libsa:__pkg__"])
+
+exports_files(["stdint.h"], visibility = ["//stand/libsa:__pkg__"])
+
+cc_library(name = "standalone_lua_headers", hdrs = ['_align.h', '_clock_id.h', '_decls.h', '_endian.h', '_maxphys.h', '_null.h', '_offsetof.h', '_param.h', '_pthreadtypes.h', '_stdarg.h', '_stdint.h', '_timespec.h', '_timeval.h', '_types.h', '_visible.h', 'bitcount.h', 'cdefs.h', 'dirent.h', 'errno.h', 'font.h', 'limits.h', 'linker_set.h', 'param.h', 'queue.h', 'stat.h', 'stdarg.h', 'stdint.h', 'syslimits.h', 'time.h', 'timespec.h', 'types.h', 'wait.h'], strip_include_prefix = "/sys", visibility = ["//stand/liblua:__pkg__"])

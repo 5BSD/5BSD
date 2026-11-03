@@ -38,7 +38,7 @@ At this checkpoint:
 | --- | --- | --- | --- |
 | amd64 | amd64 | passed | complete metadata and package-presence survey: 2,128 directories, no query failures |
 | aarch64 | arm64 | passed | complete metadata and package-presence survey: 2,087 directories, no query failures |
-| riscv64 | riscv | passed | traversal complete; component survey running |
+| riscv64 | riscv | passed | complete metadata and package-presence survey: 2,050 directories, no query failures |
 
 `sdk-preflight.json` records actual BuildEnvironment construction, compiler and
 profile checks, and Make MACHINE/MACHINE_ARCH queries for all three contexts.
@@ -61,7 +61,8 @@ ancestor-only directories, 125 have program metadata and 55 have library
 metadata. These are review leads, not unconverted binary/library counts:
 parents can own implementations, while a local BUILD file can contain only
 source/header bindings. The ARM64 metadata/package-presence survey is also complete. The RISC-V
-survey remains in progress. These audits do not compile the surveyed products.
+metadata/package-presence survey is complete with 2,050 directories and no query
+failures. These audits do not compile the surveyed products.
 
 `bazel-world-components-amd64-r1-20261103/review.json` records the complete
 amd64 metadata checks and a concrete next dependency review. The generic
@@ -88,7 +89,7 @@ there is no new C frontend, staging/signing/publication or manual interface.
 The audit CLI's architecture selector and evidence scope are documented here.
 No host installation, upgrade or reboot is authorized or performed.
 
-Finish and inspect every matrix phase, then reconcile selected Make outputs with
+Every matrix phase completed successfully. Reconcile selected Make outputs with
 native actions/installations, including ownership by parent packages. A local
 BUILD file can contain only exports; absence of a local file can still mean a
 parent owns the implementation. Neither observation is a completion percentage.

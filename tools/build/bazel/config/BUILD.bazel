@@ -547,3 +547,17 @@ config_setting(name = "ath_rate_amrr", flag_values = {":ath_rate_algorithm": "am
 # Mirrors MK_SOURCELESS_UCODE for maintained module option producers.
 bool_flag(name = "sourceless_ucode", build_setting_default = True, visibility = ["//visibility:public"])
 config_setting(name = "sourceless_ucode_enabled", flag_values = {":sourceless_ucode": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_geli", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_geli_enabled", flag_values = {":loader_geli": "true"}, visibility = ["//visibility:public"])
+bool_flag(name = "loader_disk", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_disk_enabled", flag_values = {":loader_disk": "true"}, visibility = ["//visibility:public"])
+
+bool_flag(name = "loader_veriexec_vectx", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_veriexec_vectx_requested", flag_values = {":loader_veriexec_vectx": "true"})
+selects.config_setting_group(name = "loader_veriexec_vectx_enabled", match_all = [":veriexec_enabled", ":loader_veriexec_vectx_requested"], visibility = ["//visibility:public"])
+bool_flag(name = "loader_veriexec_pass_manifest", build_setting_default = True, visibility = ["//visibility:public"])
+config_setting(name = "loader_veriexec_pass_manifest_requested", flag_values = {":loader_veriexec_pass_manifest": "true"})
+selects.config_setting_group(name = "loader_veriexec_pass_manifest_enabled", match_all = [":veriexec_enabled", ":loader_veriexec_pass_manifest_requested"], visibility = ["//visibility:public"])
+
+string_flag(name = "loader_lua_path", build_setting_default = "/boot/lua", visibility = ["//visibility:public"])

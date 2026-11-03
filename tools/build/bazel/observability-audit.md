@@ -21,6 +21,16 @@ Last updated: 2026-11-03. This is an open review ledger, not a coverage certific
 - Do not put credentials, private keys or sensitive payloads into probe/audit
   arguments. Review disabled-probe overhead and enabled tracing costs for hot paths.
 
+## Standalone Lua review (2026-11-03)
+
+The 31 selected standalone Lua sources and maintained library recipes contain no
+DTrace provider source or BSM audit integration to preserve. This archive runs in
+the firmware loader environment; it cannot emit events through the running OS's
+DTrace/audit facilities. The native candidate retains the separate loader
+verification compile path. Firmware diagnostics and verification failure behavior
+must be exercised with the completed loader; no runtime observability closure is
+claimed from archive inspection. Userland Lua is a separate component/context.
+
 ## Findings and follow-up
 
 | Component | Finding | Status / next evidence |

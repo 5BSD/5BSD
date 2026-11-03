@@ -12,3 +12,6 @@ cc_library(name = "busdma_internal_headers", hdrs = ["busdma_impl.h"], includes 
 cc_library(name = "bhyve_engine_headers", hdrs = ['apicreg.h'], strip_include_prefix = "/sys", visibility = ["//usr.sbin/bhyve:__pkg__"])
 
 filegroup(name = "boot2_headers", srcs = ['_limits.h', '_stdint.h', '_types.h', 'elf.h', 'endian.h', 'psl.h'], visibility = ["//stand/i386/boot2:__pkg__"])
+
+load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
+filegroup(name = "standalone_lua_headers", srcs = ['_inttypes.h', '_limits.h', '_stdint.h', '_types.h', 'endian.h', 'metadata.h', 'setjmp.h'], visibility = ["//stand/liblua:__pkg__"])

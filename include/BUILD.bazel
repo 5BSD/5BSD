@@ -18,3 +18,5 @@ cc_library(name = "libutil_test_headers", hdrs = ['_ctype.h', 'ctype.h', 'db.h',
     visibility = ["//lib/libutil/tests:__pkg__"])
 
 exports_files(["a.out.h", "nlist.h"], visibility = ["//stand/libsa:__pkg__"])
+
+exports_files(['assert.h', 'elf.h', 'limits.h', 'setjmp.h', 'stddef.h', 'stdbool.h', 'string.h', 'strings.h', 'time.h', 'uuid.h', 'arpa/inet.h', 'arpa/tftp.h', 'ssp/ssp.h'], visibility = ["//stand/libsa:__pkg__"])
