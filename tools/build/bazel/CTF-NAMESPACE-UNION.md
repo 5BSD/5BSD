@@ -11,9 +11,10 @@ that intermediate CTF. A valid disjoint union fits this pipeline without a new
 flag, omitted metadata or name-based matching.
 
 LLVM Object CTFSymbolTable::merge provides that union and LLD now uses it for
-script-selected sections. Controlled ARM64/RISC-V module pipelines pass the
-strict final CTF/export/debug-split policy. Fresh verified SDK/frontend profiles,
-original controls and target runtime remain open; this is not system acceptance.
+script-selected sections. ARM64/RISC-V now pass both controlled pipelines and
+normal maintained frontend profiles with fresh verified SDKs. The strict final
+CTF/export/debug-split tests actually run. Independent refreshed original
+controls and target runtime remain open; this is not system acceptance.
 
 ## Contract
 
@@ -97,12 +98,11 @@ removed. This is resource recovery, not a disk-performance benchmark.
 ## Remaining integration
 
 LLD retains exact file/index provenance and connects namespace union,
-script-selected placement, layout sizes, final symtab order and sh_link.
-Controlled complete ARM64/RISC-V module pipeline replays pass. Next refresh tools
-and immutable SDKs through maintained helpers, run actual frontend profiles and
-independent refreshed Make controls on AMD64/ARM64/RISC-V, and qualify resource
-use and footprint. Never infer identities from names, addresses or redirected
-input symbol arrays.
+script-selected placement, layout sizes, final symtab order and sh_link. Fresh
+ARM64/RISC-V source-owner tools, verified SDKs and normal frontend nullfs profiles
+now pass. Next qualify refreshed AMD64 tools/profile, independent refreshed Make
+controls, debugger and runtime behavior, and resource/footprint limits. Never
+infer identities from names, addresses or redirected input symbol arrays.
 
 The local libctf v2 width/rounding inconsistency is separate and remains open.
 Parent resolution and broader label semantics remain unsupported by this union.
@@ -267,3 +267,60 @@ above use the maintained Make-built candidate. Fresh tool/SDK/frontend and
 original-control qualification, AMD64 actual module coverage, target execution,
 complete world/kernel/packages, bootstrap/sandbox/cache and broad performance
 remain open. Make stays default; BIP is excluded. No host install or reboot.
+
+## 2026-11-03: fresh SDKs and normal ARM64/RISC-V frontend qualification
+
+Maintained source-owner Make all/install refreshed LLD and objcopy ONLY inside
+the selected /usr/obj cross-build trees. LLVM libraries were built, not installed
+into the foreign target sysroots. Complete inventories of 5,623 ARM64 and 5,498
+RISC-V target header/library entries were compared before/after. The only changes
+are exact native program debug outputs, checked against their built files and
+AMD64 ELF identity. Running-system tool hashes remain unchanged. Sources and
+recorded profile identities remain bound; all compilation uses sixteen CPUs.
+Records: bazel-lld-ctf-bootstrap-{aarch64,riscv64}-r1-20261103 under /usr/obj/usr/src.
+
+Maintained libmd-plan.py --sdk-only and libmd-stage-tools.py created NEW
+bazel-userland-aarch64-sdk-r6-20261103 and bazel-userland-riscv64-sdk-r6-20261103
+SDKs with the existing verified native execution SDK. Snapshot verification
+passes and each new SDK tool matches its staged source-owner output. Earlier
+SDKs were not edited. Preparation records are bazel-lld-ctf-sdk-preparation-r2
+and -r3-20261103. The first preparation attempt referenced a misnamed historical
+record and failed before planning; the corrected check uses the existing
+verified SDK receipt's recorded .src_opts hash. Its failure log remains retained.
+
+NORMAL format-5 build-bsd bazel-test profiles now pass:
+
+- bazel-lld-ctf-fresh-arm64-r1-20261103: strict CTF test actually executes,
+  checking machine 183 / ET_DYN, 112 associations and fourteen named-type checks
+  across full/runtime outputs, with exactly the required exports.
+- bazel-lld-ctf-fresh-riscv-r1-20261103: corresponding machine 243 / ET_DYN,
+  114 associations and fourteen named checks; strict test actually executes.
+- Each also reports the existing DTS test's verified cached pass. Neither run
+  was interrupted by its disk guard. These are host artifact tests; no target
+  code, kernel or module was executed or installed.
+
+The corresponding *-review-r1-20261103 directories retain six actual action
+records each: initial/final links, export localization, debug extraction/split,
+and the noncached strict test. Tool input digests are checked against the
+FROZEN selected SDK from each receipt, not the mutable external SDK alias.
+Test reader/script/policy digests are checked, and the BEP-declared CTF JSON is
+retained separately from stdout. This does not reconstruct initial inputs by
+name or waive prior failed profiles. It qualifies the normal module path,
+including normal verified SDK copying and declared execution dependencies.
+
+Frontend assessment: the existing build-bsd command, format-5 inputs, maintained
+Make source owners and SDK plan/materialization helpers select this work without
+new flags, policy, signing, packaging or publication semantics. No C frontend
+change is required. Native Bazel source-built LLD test targets, AMD64 refreshed
+module qualification, original Make controls, full LLVM/bootstrap and system
+coverage, debug/runtime, packaging and broad performance remain open. The
+uncompressed CTF footprint limitation above is unchanged; Make stays default.
+
+Administrative cleanup is recorded separately at bazel-space-cleanup-20261103-r3:
+291 abandoned BIP image files and four verified duplicate terminal-run canonical
+caches were removed. Primary inputs, sources, SDKs, outputs, logs, receipts,
+published repositories and the unrelated active VM were retained. Snapshot-held
+blocks and other concurrent work prevent attributing pool-free changes to those
+file removals. Obsolete /var/cache/pkg cleanup was denied by OS permissions;
+installed package versions are unchanged, and pkg clean -y requires root.
+No snapshot, boot environment or running-system package was changed by this work.

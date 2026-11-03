@@ -2,18 +2,25 @@
 
 ## Current CTF linker checkpoint (2026-11-03)
 
-LLD section integration is implemented. Controlled complete ARM64/RISC-V nullfs
-pipelines pass strict metadata/export/debug-split policy. Maintained explicit-
-tool tests pass 138 section/graph/script and ten symbol/thunk/reference cases.
-Native Bazel linker targets are declared, not yet executed. Fresh tool/verified
-SDK/frontend, refreshed AMD64/ARM64/RISC-V Make controls and runtime remain open.
+LLD section integration is implemented. Fresh ARM64 and RISC-V native build tools
+and verified SDKs now pass the NORMAL maintained build-bsd/Bazel nullfs profiles,
+including actually executed strict CTF/export/debug-split tests. These check
+112/114 associations and fourteen named-type checks per architecture. Actual
+link/export/debug actions are bound to each frozen selected SDK in retained
+execution-log reviews. Controlled pipeline and 148 explicit-tool cases also pass.
+
+The source-built native Bazel LLD executable test targets are still declared,
+not executed. Next qualify the refreshed AMD64 tools/profile, independent
+refreshed Make controls, debugger/runtime behavior and compression/footprint.
+This module checkpoint does not prove complete LLVM/bootstrap, world/kernel,
+packages/publication, sandbox/cache or performance acceptance.
 
 Current CTF output is uncompressed v3: tested full modules grow about 37 KiB,
 about 13-15%. Compression/footprint and broad CPU/memory/I/O/disk gates remain
 open. Limited no-CTF controls show no regression. See CTF-NAMESPACE-UNION.md.
 This supersedes chronological entries saying LLD is not connected. Full system
 and publication gates remain open. Make stays default; BIP is excluded. No host
-upgrade, tool installation or reboot occurred.
+upgrade, installation into the running system or reboot occurred.
 
 ## Storage module checkpoint (2026-11-03)
 
