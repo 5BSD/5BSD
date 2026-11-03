@@ -962,6 +962,60 @@ ATF_TC_BODY(control_rejected_chain_status, tc)
 	ATF_CHECK_EQ(0u, ld32(g_guest + 512 + 8));
 }
 
+/*
+ * AKCIPHER CREATE_SESSION (op 0x04) is answered with a session_input like the
+ * other create opcodes, though the device does not offer the service, and an
+ * opcode is not a create because its low byte is 0x02.
+ */
+ATF_TC_WITHOUT_HEAD(control_akcipher_create_status);
+ATF_TC_BODY(control_akcipher_create_status, tc)
+{
+	static const struct {
+		uint32_t	opcode;
+		uint32_t	rlen;
+		uint32_t	wlen;
+		uint32_t	status;
+	} cases[] = {
+		/* Truncated: rejected before dispatch. */
+		{ VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION, 8,
+		    VTCRYPTO_SESSION_INPUT_LEN, VIRTIO_CRYPTO_ERR },
+		/* Complete: dispatched and refused. */
+		{ VIRTIO_CRYPTO_AKCIPHER_CREATE_SESSION,
+		    VTCRYPTO_OP_CTRL_REQ_LEN, VTCRYPTO_SESSION_INPUT_LEN,
+		    VIRTIO_CRYPTO_NOTSUPP },
+		{ VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x02), 8,
+		    1, VIRTIO_CRYPTO_ERR },
+		{ VIRTIO_CRYPTO_OPCODE(VIRTIO_CRYPTO_SERVICE_AKCIPHER, 0x02),
+		    VTCRYPTO_OP_CTRL_REQ_LEN, 1, VIRTIO_CRYPTO_NOTSUPP },
+	};
+	struct pci_vtcrypto_softc *sc;
+	struct seg r[1], w[1];
+	u_int i;
+
+	sc = make_device(NULL, NULL);
+	for (i = 0; i < nitems(cases); i++) {
+		memset(g_guest, 0, sizeof(g_guest));
+		st32(g_guest + 0, cases[i].opcode);
+		memset(g_guest + 512, 0xa5, VTCRYPTO_SESSION_INPUT_LEN);
+		r[0].off = 0; r[0].len = cases[i].rlen;
+		w[0].off = 512; w[0].len = VTCRYPTO_SESSION_INPUT_LEN;
+		mock_set_chain(r, 1, w, 1, true);
+		g_rel_calls = 0;
+		pci_vtcrypto_controlq_notify(sc, &sc->vcs_vq[sc->vcs_ndataq]);
+		ATF_CHECK_EQ_MSG(1, g_rel_calls, "case %u", i);
+		ATF_CHECK_EQ_MSG(cases[i].wlen, g_rel_len, "case %u", i);
+		if (cases[i].wlen == 1) {
+			ATF_CHECK_EQ_MSG(cases[i].status, g_guest[512],
+			    "case %u", i);
+			continue;
+		}
+		ATF_CHECK_EQ_MSG(0u, ld64(g_guest + 512), "case %u", i);
+		ATF_CHECK_EQ_MSG(cases[i].status, ld32(g_guest + 512 + 8),
+		    "case %u", i);
+	}
+	ATF_CHECK_EQ(0u, sc->vcs_nsessions);
+}
+
 ATF_TC_WITHOUT_HEAD(cipher_kat_roundtrip);
 ATF_TC_BODY(cipher_kat_roundtrip, tc)
 {
@@ -1994,6 +2048,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, session_rejects);
 	ATF_TP_ADD_TC(tp, control_malformed_chains);
 	ATF_TP_ADD_TC(tp, control_rejected_chain_status);
+	ATF_TP_ADD_TC(tp, control_akcipher_create_status);
 	ATF_TP_ADD_TC(tp, cipher_kat_roundtrip);
 	ATF_TP_ADD_TC(tp, hash_kat);
 	ATF_TP_ADD_TC(tp, mac_kat);

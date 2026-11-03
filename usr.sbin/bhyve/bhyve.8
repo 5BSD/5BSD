@@ -26,7 +26,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd October 3, 2026
+.Dd November 3, 2026
 .Dt BHYVE 8
 .Os
 .Sh NAME
@@ -906,8 +906,14 @@ setting is the absolute pathname of a local
 backend socket speaking the versioned VFSB protocol.
 .Nm
 opens the socket's parent directory at startup and, after a guest device
-reset, reconnects relative to that directory from capability mode; replacing
-the directory itself, rather than the socket within it, is not followed.
+reset, reconnects relative to that directory from capability mode.
+The socket name must therefore be the socket itself or a symbolic link that
+stays beneath that directory: a link to an absolute path works for the first
+connection but fails with
+.Er ENOTCAPABLE
+after a reset.
+Replacing the directory itself, rather than the socket within it, is not
+followed; the reconnect keeps using the directory opened at startup.
 The required
 .Cm tag
 setting is the UTF-8 mount tag exposed to the guest and is limited to 36

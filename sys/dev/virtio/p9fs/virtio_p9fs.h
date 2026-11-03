@@ -51,6 +51,7 @@ struct sglist;
 #define VT9P_MAX_NSEGS		(2 * VT9P_BUF_NSEGS(P9FS_MTU))
 #define VT9P_NSEGS_MSIZE(nsegs)	(((nsegs) / 2 - 1) * PAGE_SIZE)
 
+u_int	vt9p_queue_max_msize(int nsegs, int qsize, bool indirect);
 int	vt9p_req_sglist(struct sglist *sg, struct p9_req_t *req,
 	    int *readable, int *writable);
 #endif /* _KERNEL */

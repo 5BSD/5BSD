@@ -631,7 +631,11 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 	}
 	transport_created = true;
 
-	maxsize = clnt->ops->maxsize(clnt->handle);
+	/* A transport without a limit carries any message p9fs builds. */
+	if (clnt->ops->maxsize != NULL)
+		maxsize = clnt->ops->maxsize(clnt->handle);
+	else
+		maxsize = P9FS_MTU;
 	if (clnt->msize > maxsize) {
 		printf("p9fs: limiting msize to %u, the maximum supported "
 		    "by transport %s\n", maxsize, clnt->ops->name);

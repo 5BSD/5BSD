@@ -43,7 +43,7 @@ struct p9_trans_module {
 	int (*create)(const char *mount_tag, void **handlep);
 	/* member function to terminate a connection on this transport */
 	void (*close) (void *handle);
-	/* member function returning the largest message a connection carries */
+	/* largest message a connection carries; NULL means P9FS_MTU */
 	u_int (*maxsize) (void *handle);
 	/* member function to issue a request to the transport*/
 	int (*request) (void *handle, struct p9_req_t *req);

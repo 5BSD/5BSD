@@ -389,34 +389,43 @@ vt9p_alloc_virtqueue(struct vt9p_softc *sc)
 }
 
 /*
- * Largest message the channel can carry.  Without indirect descriptors every
- * segment of a request takes its own ring entry, so a queue smaller than
- * VT9P_MAX_NSEGS limits the msize offered to the 9P client.
+ * Largest message a channel whose scatter list holds nsegs segments can carry
+ * on a queue of qsize entries, or 0 if it cannot carry one.  Without indirect
+ * descriptors every segment of a request takes its own ring entry, so a queue
+ * smaller than nsegs limits the msize offered to the 9P client.
  */
+u_int
+vt9p_queue_max_msize(int nsegs, int qsize, bool indirect)
+{
+
+	if (!indirect) {
+		if (qsize < VT9P_MIN_NSEGS)
+			return (0);
+		nsegs = MIN(nsegs, qsize);
+	}
+	return (MIN(P9FS_MTU, VT9P_NSEGS_MSIZE(nsegs)));
+}
+
 static int
 vt9p_set_max_msize(struct vt9p_softc *sc)
 {
 	device_t dev;
-	int nsegs, qsize;
+	int qsize;
+	bool indirect;
 
 	dev = sc->vt9p_dev;
-	nsegs = sc->max_nsegs;
-	sc->max_msize = MIN(P9FS_MTU, VT9P_NSEGS_MSIZE(nsegs));
-	if (virtio_with_feature(dev, VIRTIO_RING_F_INDIRECT_DESC))
-		return (0);
-
 	qsize = virtqueue_size(sc->vt9p_vq);
-	if (qsize < VT9P_MIN_NSEGS) {
+	indirect = virtio_with_feature(dev, VIRTIO_RING_F_INDIRECT_DESC);
+	sc->max_msize = vt9p_queue_max_msize(sc->max_nsegs, qsize, indirect);
+	if (sc->max_msize == 0) {
 		device_printf(dev, "request queue of %d entries cannot carry "
 		    "a 9P message without indirect descriptors\n", qsize);
 		return (ENXIO);
 	}
-	if (qsize < nsegs) {
-		sc->max_msize = VT9P_NSEGS_MSIZE(qsize);
+	if (!indirect && qsize < sc->max_nsegs)
 		device_printf(dev, "request queue of %d entries without "
 		    "indirect descriptors limits msize to %u\n", qsize,
 		    sc->max_msize);
-	}
 	return (0);
 }
 

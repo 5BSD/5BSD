@@ -194,6 +194,53 @@ test_queue_limited_msize(struct ktest_test_context *ctx)
 	return (0);
 }
 
+/*
+ * The msize a channel offers at mount: P9FS_MTU with indirect descriptors,
+ * otherwise the most that queue-size segments carry, and nothing for a queue
+ * too small for one page.  Each offer must fit the queue, and one page more
+ * must not.
+ */
+static int
+test_queue_size_msize(struct ktest_test_context *ctx)
+{
+	static const int qsizes[] = { 3, 4, 5, 16, 32, 65, 66, 128, 256 };
+	u_int expected, msize;
+	int error, i, qsize;
+
+	error = 0;
+	for (i = 0; i < nitems(qsizes); i++) {
+		qsize = qsizes[i];
+		msize = vt9p_queue_max_msize(VT9P_MAX_NSEGS, qsize, true);
+		CHECK(ctx, msize == P9FS_MTU,
+		    "queue of %d with indirect descriptors offers msize %u",
+		    qsize, msize);
+
+		msize = vt9p_queue_max_msize(VT9P_MAX_NSEGS, qsize, false);
+		if (qsize < 2 * VT9P_BUF_NSEGS(PAGE_SIZE))
+			expected = 0;
+		else if (qsize < VT9P_MAX_NSEGS)
+			expected = VT9P_NSEGS_MSIZE(qsize);
+		else
+			expected = P9FS_MTU;
+		CHECK(ctx, msize == expected,
+		    "queue of %d without indirect descriptors offers msize %u, "
+		    "expected %u", qsize, msize, expected);
+		if (msize == 0)
+			continue;
+		CHECK(ctx, 2 * VT9P_BUF_NSEGS(msize) <= qsize,
+		    "msize %u needs more than %d segments", msize, qsize);
+		CHECK(ctx, msize == P9FS_MTU ||
+		    2 * VT9P_BUF_NSEGS(msize + PAGE_SIZE) > qsize,
+		    "queue of %d also carries msize %u", qsize,
+		    msize + PAGE_SIZE);
+		error = run_scattered_request(ctx, msize, qsize);
+		if (error != 0)
+			return (error);
+	}
+out:
+	return (error);
+}
+
 static const struct ktest_test_info tests[] = {
 	{
 		.name = "scattered_mtu_request",
@@ -204,6 +251,11 @@ static const struct ktest_test_info tests[] = {
 		.name = "queue_limited_msize",
 		.desc = "the msize offered for a small queue fits that many segments",
 		.func = test_queue_limited_msize,
+	},
+	{
+		.name = "queue_size_msize",
+		.desc = "the msize offered at mount follows the queue size without indirect descriptors",
+		.func = test_queue_size_msize,
 	},
 };
 
