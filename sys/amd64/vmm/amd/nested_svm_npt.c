@@ -162,6 +162,17 @@ svm_nested_npt_walk(const struct svm_nested_npt_walk *walk,
 	return (EPROTO);
 }
 
+/* The leaf's D bit is set, or will be once the walk's A/D are committed. */
+bool
+svm_nested_npt_result_dirty(const struct svm_nested_npt_result *result)
+{
+
+	return (result != NULL &&
+	    result->outcome == SVM_NESTED_NPT_TRANSLATED &&
+	    result->count != 0 && result->count <= 4 &&
+	    (result->ad_desired[result->count - 1] & NPT_D) != 0);
+}
+
 /*
  * Commit monotonic A/D updates before publishing the NPT02 alias.  If L1
  * changed any entry after the walk, leave the partial A/D bits in place and

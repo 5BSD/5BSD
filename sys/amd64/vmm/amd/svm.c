@@ -1874,6 +1874,7 @@ software_exception:
 			/* Flush conservatively across L1 and all L2 ASIDs. */
 			vcpu->asid.gen = 0;
 			vcpu->nested_asid.gen = 0;
+			svm_nested_npt_root_flush(vcpu->nested_npt02);
 		}
 		handled = 1;
 		break;
@@ -5963,12 +5964,14 @@ svm_handle_internal_exit(void *vcpui)
 				vcpu->nested_gif = false;
 			break;
 		}
-		if (vcpu->nested_npt02 == NULL) {
+		if (vcpu->nested_npt02 == NULL)
 			error = svm_nested_npt_root_create(
 			    VM_MAXUSER_ADDRESS_LA48, &vcpu->nested_npt02);
-		} else {
-			error = svm_nested_npt_root_clear(vcpu->nested_npt02);
-		}
+		/* NPT02 survives a VMRUN that L1's TLB entries would survive. */
+		if (error == 0)
+			error = svm_nested_npt_root_vmrun(vcpu->nested_npt02,
+			    view.asid, view.npt_control, view.npt_root_gpa,
+			    view.tlb_ctrl);
 		if (error != 0)
 			return (error);
 		/*

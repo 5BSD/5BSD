@@ -39,18 +39,24 @@
 #include "../../../../sys/amd64/vmm/amd/nested_svm_npt_root.h"
 #include "../../../../sys/amd64/vmm/amd/nested_svm_npt_runtime.h"
 #include "../../../../sys/amd64/vmm/amd/npt.h"
+#include "../../../../sys/amd64/vmm/amd/vmcb.h"
 
 #define	MODEL_ENTRIES	16
+#define	NPT12_D		(1ULL << 6)	/* NPT12 leaf dirty bit */
 
 struct model_entry {
 	bool used;
 	vm_offset_t start, end;
 	int system_wired;
+	int prot;
 };
 
 static struct vmspace model_vmspace;
 static struct model_entry model[MODEL_ENTRIES];
 static bool model_allocated;
+static int model_maps;		/* aliases inserted: one per NPT02 fill */
+/* What the NPT12 walk of the next resolve returns. */
+static struct svm_nested_npt_result model_walk;
 static int model_sleeps;	/* vm_map_delete() waits that never end */
 static int model_wire_error;	/* KERN_* returned by the next wire */
 static int model_frees;
@@ -91,6 +97,8 @@ model_reset(void)
 	model_sleeps = 0;
 	model_wire_error = KERN_SUCCESS;
 	model_frees = 0;
+	model_maps = 0;
+	memset(&model_walk, 0, sizeof(model_walk));
 }
 
 /* ---- the kernel interfaces nested_svm_npt_root.c uses ------------------- */
@@ -169,7 +177,7 @@ vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags)
 int
 vm_gpa_map_alias(struct vcpu *vcpu __unused, struct vmspace *dst,
     vm_paddr_t dst_gpa, vm_paddr_t src_gpa __unused, size_t len,
-    int prot __unused, int required_prot __unused, int *effective __unused)
+    int prot, int required_prot __unused, int *effective __unused)
 {
 	int i;
 
@@ -182,7 +190,8 @@ vm_gpa_map_alias(struct vcpu *vcpu __unused, struct vmspace *dst,
 		if (model[i].used)
 			continue;
 		model[i] = (struct model_entry){ true, dst_gpa,
-		    dst_gpa + len, 0 };
+		    dst_gpa + len, 0, prot };
+		model_maps++;
 		return (0);
 	}
 	return (ENOMEM);
@@ -208,37 +217,45 @@ pmap_kextract(vm_offset_t va)
 	return ((vm_paddr_t)va);
 }
 
-/* Translation is covered by svm_nested_policy_test; never reached here. */
+/*
+ * The NPT12 walk itself is covered by svm_nested_policy_test; here it returns
+ * model_walk so resolve's use of the result can be checked.
+ */
 bool
 vm_mem_allocated(struct vcpu *vcpu __unused, vm_paddr_t gpa __unused)
 {
-	KHX_CHECK(0);
-	return (false);
+	return (true);
 }
 
 int
 svm_nested_npt_runtime_init(struct svm_nested_npt_runtime *r __unused,
     struct vcpu *vcpu __unused)
 {
-	KHX_CHECK(0);
-	return (EINVAL);
+	return (0);
 }
 
 int
-svm_nested_npt_walk(const struct svm_nested_npt_walk *w __unused,
+svm_nested_npt_walk(const struct svm_nested_npt_walk *w,
     const struct svm_nested_npt_memory *m __unused,
-    struct svm_nested_npt_result *r __unused)
+    struct svm_nested_npt_result *r)
 {
-	KHX_CHECK(0);
-	return (EINVAL);
+	*r = model_walk;
+	r->l1_gpa |= w->l2_gpa & PAGE_MASK;
+	return (0);
 }
 
 int
 svm_nested_npt_commit_ad(const struct svm_nested_npt_result *r __unused,
     const struct svm_nested_npt_memory *m __unused)
 {
-	KHX_CHECK(0);
-	return (EINVAL);
+	return (0);
+}
+
+/* nested_svm_npt.c: leaf D set or about to be committed. */
+bool
+svm_nested_npt_result_dirty(const struct svm_nested_npt_result *r)
+{
+	return ((r->ad_desired[r->count - 1] & NPT12_D) != 0);
 }
 
 /* ---- cases --------------------------------------------------------------- */
@@ -374,6 +391,197 @@ case_unwired_alias_refused(void)
 	KHX_EQ(model_sleeps, 0);
 }
 
+#define	ASID	1
+#define	NP_ON	1		/* VMCB12 NP_ENABLE */
+#define	NCR3	0x10000		/* VMCB12 nCR3: the NPT12 root */
+#define	L2PAGE(n)	(0x100000 + (vm_offset_t)(n) * PAGE_SIZE)
+#define	L1PAGE(n)	(0x800000 + (vm_offset_t)(n) * PAGE_SIZE)
+#define	WSET		8	/* pages L2 touches between exits to L1 */
+#define	SLICE_FAULTS	6	/* nested NPFs L0 serves before L1's timer */
+#define	SLICES		40
+
+static struct model_entry *
+model_lookup(vm_offset_t gpa)
+{
+	int i;
+
+	for (i = 0; i < MODEL_ENTRIES; i++)
+		if (model[i].used && model[i].start <= gpa &&
+		    gpa < model[i].end)
+			return (&model[i]);
+	return (NULL);
+}
+
+/* L2 runs until it has its working set or L1's next interrupt exits it. */
+static bool
+l2_slice(struct svm_nested_npt_root *root, int *faults)
+{
+	int budget, page;
+
+	budget = SLICE_FAULTS;
+	for (page = 0; page < WSET; page++) {
+		if (model_lookup(L2PAGE(page)) != NULL)
+			continue;
+		if (budget-- == 0)
+			return (false);
+		(*faults)++;
+		KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(page),
+		    L1PAGE(page), RWX, SVM_NESTED_NPT_READ), 0);
+	}
+	return (true);
+}
+
+/*
+ * 2026-11-02 host run (gen6): L2 never reached its marker.  L0 served 598816
+ * nested NPFs in 20 s for a 512 MB L2 (131072 pages), so it was refaulting
+ * the same pages: L1's VMRUN after every L2 exit cleared NPT02, and L1's
+ * timer exited L2 again before its working set was back.  L1 does not edit
+ * NPT12 here, so NPT02 must survive VMRUN and L2 must finish.
+ */
+static void
+case_vmrun_keeps_npt02(void)
+{
+	struct svm_nested_npt_root *root;
+	int faults, slice;
+	bool done;
+
+	khx_host_case("L1 VMRUN keeps NPT02: L2 progresses across exits");
+	root = root_new();
+	faults = 0;
+	done = false;
+	for (slice = 0; slice < SLICES && !done; slice++) {
+		KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+		    VMCB_TLB_FLUSH_NOTHING), 0);
+		done = l2_slice(root, &faults);
+	}
+	KHX_CHECK(done);
+	KHX_EQ(slice, 2);
+	KHX_EQ(faults, WSET);
+	KHX_EQ(model_maps, WSET);
+	KHX_EQ(model_sleeps, 0);
+	svm_nested_npt_root_destroy(root);
+	KHX_EQ(model_sleeps, 0);
+}
+
+/* Every way L1 can make an NPT12 edit visible discards NPT02. */
+static void
+case_vmrun_flush_rules(void)
+{
+	static const struct {
+		uint32_t asid;
+		uint64_t np;
+		uint64_t ncr3;
+		uint8_t tlb_ctrl;
+	} change[] = {
+		{ ASID, NP_ON, NCR3, VMCB_TLB_FLUSH_ALL },
+		{ ASID, NP_ON, NCR3, VMCB_TLB_FLUSH_GUEST },
+		{ ASID, NP_ON, NCR3, VMCB_TLB_FLUSH_GUEST_NONGLOBAL },
+		{ ASID + 1, NP_ON, NCR3, VMCB_TLB_FLUSH_NOTHING },
+		{ ASID, 0, NCR3, VMCB_TLB_FLUSH_NOTHING },
+		{ ASID, NP_ON, NCR3 + PAGE_SIZE, VMCB_TLB_FLUSH_NOTHING },
+	};
+	struct svm_nested_npt_root *root;
+	u_int i;
+
+	khx_host_case("VMRUN discards NPT02 on flush, ASID, NP or nCR3 change");
+	KHX_EQ(svm_nested_npt_root_vmrun(NULL, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), EINVAL);
+	root = root_new();
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 1);
+	for (i = 0; i < nitems(change); i++) {
+		KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+		    VMCB_TLB_FLUSH_NOTHING), 0);
+		KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0),
+		    L1PAGE(0), RWX, SVM_NESTED_NPT_READ), 0);
+		KHX_EQ(svm_nested_npt_root_vmrun(root, change[i].asid,
+		    change[i].np, change[i].ncr3, change[i].tlb_ctrl), 0);
+		KHX_EQ(model_count(), 0);
+	}
+	/* L1's INVLPGA cannot sleep; the next VMRUN does the discarding. */
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	svm_nested_npt_root_flush(root);
+	svm_nested_npt_root_flush(NULL);
+	KHX_EQ(model_count(), 1);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 0);
+	/* An L0 memory-map change clears at once and forgets the context. */
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_clear(root), 0);
+	KHX_EQ(model_count(), 0);
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(1), L1PAGE(1),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), 0);
+	KHX_EQ(model_count(), 0);
+	/* A refused discard is not mistaken for a kept context. */
+	KHX_EQ(svm_nested_npt_root_populate(root, VCPU, L2PAGE(0), L1PAGE(0),
+	    RWX, SVM_NESTED_NPT_READ), 0);
+	KHX_EQ(vm_gpa_map_alias(VCPU, &model_vmspace, L2PAGE(1), L1PAGE(1),
+	    PAGE_SIZE, VM_PROT_READ, VM_PROT_READ, NULL), 0);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_GUEST), EPROTO);
+	KHX_EQ(svm_nested_npt_root_vmrun(root, ASID, NP_ON, NCR3,
+	    VMCB_TLB_FLUSH_NOTHING), EPROTO);
+	KHX_EQ(model_sleeps, 0);
+	KHX_CHECK(KHX_PANICS(destroy_cb, root));
+}
+
+/*
+ * The walk sets NPT12 D only for a write.  A writable alias for a read
+ * would let L2 dirty the page without D ever reaching L1, now that the alias
+ * lives across VMRUNs.
+ */
+static void
+case_resolve_clean_page_read_only(void)
+{
+	struct svm_nested_npt_result result;
+	struct svm_nested_npt_root *root;
+	struct model_entry *e;
+
+	khx_host_case("resolve maps a clean NPT12 page read-only");
+	root = root_new();
+	model_walk.outcome = SVM_NESTED_NPT_TRANSLATED;
+	model_walk.l1_gpa = L1PAGE(0);
+	model_walk.count = 4;
+	model_walk.permissions = RWX;
+	model_walk.ad_desired[3] = L1PAGE(0) | 0x27;	/* P RW US A */
+	KHX_EQ(svm_nested_npt_root_resolve(root, VCPU, NCR3, L2PAGE(0) | 0x10,
+	    SVM_NESTED_NPT_READ, 48, false, &result), 0);
+	e = model_lookup(L2PAGE(0));
+	KHX_CHECK(e != NULL);
+	if (e != NULL)
+		KHX_EQ(e->prot, VM_PROT_READ | VM_PROT_EXECUTE);
+	/* L2's first write faults again; that walk sets D. */
+	model_walk.ad_desired[3] |= NPT12_D;
+	KHX_EQ(svm_nested_npt_root_resolve(root, VCPU, NCR3, L2PAGE(0),
+	    SVM_NESTED_NPT_WRITE, 48, false, &result), 0);
+	e = model_lookup(L2PAGE(0));
+	KHX_CHECK(e != NULL);
+	if (e != NULL)
+		KHX_EQ(e->prot, VM_PROT_ALL);
+	/* A leaf that is already dirty may be aliased writable on a read. */
+	KHX_EQ(svm_nested_npt_root_resolve(root, VCPU, NCR3, L2PAGE(1),
+	    SVM_NESTED_NPT_READ, 48, false, &result), 0);
+	e = model_lookup(L2PAGE(1));
+	KHX_CHECK(e != NULL);
+	if (e != NULL)
+		KHX_EQ(e->prot, VM_PROT_ALL);
+	KHX_EQ(model_count(), 2);
+	svm_nested_npt_root_destroy(root);
+	KHX_EQ(model_sleeps, 0);
+}
+
 int
 khx_test_main(void)
 {
@@ -383,5 +591,8 @@ khx_test_main(void)
 	case_destroy_populated();
 	case_wire_failure();
 	case_unwired_alias_refused();
+	case_vmrun_keeps_npt02();
+	case_vmrun_flush_rules();
+	case_resolve_clean_page_read_only();
 	return (khx_host_finish("svm_nested_npt_root"));
 }

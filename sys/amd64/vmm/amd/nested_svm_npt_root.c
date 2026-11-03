@@ -21,12 +21,18 @@
 #include "nested_svm_npt_root.h"
 #include "nested_svm_npt_runtime.h"
 #include "npt.h"
+#include "vmcb.h"
 
 struct svm_nested_npt_root {
 	struct vmspace *vmspace;
 	pmap_t pmap;
 	uint64_t n_cr3;
 	uint64_t max_address;
+	/* The L1 translation context the aliases were built for. */
+	bool tagged;
+	uint32_t asid;
+	uint64_t npt_control;
+	uint64_t npt12_root_gpa;
 };
 
 static MALLOC_DEFINE(M_SVM_NESTED_NPT, "svm_nested_npt",
@@ -105,7 +111,48 @@ svm_nested_npt_root_clear(struct svm_nested_npt_root *root)
 
 	if (root == NULL)
 		return (EINVAL);
+	root->tagged = false;
 	return (svm_nested_npt_root_unmap(root, 0, root->max_address));
+}
+
+/*
+ * NPT02 caches L1's NPT12 translations the way the TLB caches them for the
+ * VMCB12 ASID: L1 must request a TLB flush or switch ASID before an NPT12
+ * edit is guaranteed to take effect (AMD APM vol. 2, 15.16 "TLB Control").
+ * Keep the aliases across a VMRUN of the same ASID, nested-paging controls
+ * and nCR3 without a flush request.  Clearing on every VMRUN made L2 refault
+ * its whole working set after each exit to L1, so the next exit, typically
+ * L1's own timer, arrived before L2 made progress.
+ */
+int
+svm_nested_npt_root_vmrun(struct svm_nested_npt_root *root, uint32_t asid,
+    uint64_t npt_control, uint64_t npt12_root_gpa, uint8_t tlb_ctrl)
+{
+	int error;
+
+	if (root == NULL)
+		return (EINVAL);
+	if (root->tagged && tlb_ctrl == VMCB_TLB_FLUSH_NOTHING &&
+	    root->asid == asid && root->npt_control == npt_control &&
+	    root->npt12_root_gpa == npt12_root_gpa)
+		return (0);
+	error = svm_nested_npt_root_clear(root);
+	if (error != 0)
+		return (error);
+	root->tagged = true;
+	root->asid = asid;
+	root->npt_control = npt_control;
+	root->npt12_root_gpa = npt12_root_gpa;
+	return (0);
+}
+
+/* Make the next VMRUN discard the aliases; for callers that cannot sleep. */
+void
+svm_nested_npt_root_flush(struct svm_nested_npt_root *root)
+{
+
+	if (root != NULL)
+		root->tagged = false;
 }
 
 uint64_t
@@ -209,6 +256,7 @@ svm_nested_npt_root_resolve(struct svm_nested_npt_root *root,
     uint8_t access, uint8_t physical_width, bool allow_1g_pages,
     struct svm_nested_npt_result *result)
 {
+	uint8_t permissions;
 	int error;
 
 	error = svm_nested_npt_root_translate(root, vcpu, npt12_root_gpa,
@@ -218,7 +266,15 @@ svm_nested_npt_root_resolve(struct svm_nested_npt_root *root,
 	/* Device addresses have no RAM alias in NPT02. */
 	if (!vm_mem_allocated(vcpu, result->l1_gpa))
 		return (ENXIO);
+	/*
+	 * The walk sets the NPT12 D bit only for a write.  An alias outlives
+	 * the walk, so keep a clean page read-only: L2's first write faults
+	 * again and sets D, as the hardware walk would.
+	 */
+	permissions = result->permissions;
+	if (!svm_nested_npt_result_dirty(result))
+		permissions &= ~SVM_NESTED_NPT_WRITE;
 	return (svm_nested_npt_root_populate(root, vcpu,
 	    l2_gpa & ~PAGE_MASK, result->l1_gpa & ~PAGE_MASK,
-	    result->permissions, access));
+	    permissions, access));
 }
