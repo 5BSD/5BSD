@@ -2506,7 +2506,8 @@ ATF_TC_BODY(private_packet_id_framing, tc)
 	size_t frame_len;
 
 	frame_len = 60;
-	ATF_REQUIRE_EQ(sizeof(id), VIRTIO_NET_5BSD_ID_LEN);
+	ATF_REQUIRE_EQ(sizeof(id), VIRTIO14_NET_5BSD_ID_LEN);
+	ATF_REQUIRE_EQ(VIRTIO_NET_5BSD_ID_LEN, VIRTIO14_NET_5BSD_ID_LEN);
 
 	reset_mocks();
 	setup_softc(&sc);

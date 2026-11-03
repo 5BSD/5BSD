@@ -35,6 +35,33 @@
 #include "bhyve/virtio.c"
 #include "bhyve/pci_virtio_9p.c"
 
+/*
+ * Test stimuli and expectations use the independent VirtIO 1.4 oracle, not
+ * the production definitions compiled into the device model above.
+ */
+#include "virtio_1_4_spec.h"
+
+#undef VIRTIO_9P_F_MOUNT_TAG
+#define	VIRTIO_9P_F_MOUNT_TAG	VIRTIO14_9P_F_MOUNT_TAG
+#undef VIRTIO_CONFIG_STATUS_ACK
+#define	VIRTIO_CONFIG_STATUS_ACK	VIRTIO14_STATUS_ACKNOWLEDGE
+#undef VIRTIO_CONFIG_STATUS_DRIVER
+#define	VIRTIO_CONFIG_STATUS_DRIVER	VIRTIO14_STATUS_DRIVER
+#undef VIRTIO_CONFIG_STATUS_DRIVER_OK
+#define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
+#undef VIRTIO_PCI_GUEST_FEATURES
+#define	VIRTIO_PCI_GUEST_FEATURES	VIRTIO14_LEGACY_DRIVER_FEATURES
+#undef VIRTIO_PCI_STATUS
+#define	VIRTIO_PCI_STATUS	VIRTIO14_LEGACY_DEVICE_STATUS
+#undef VIRTIO_RING_F_INDIRECT_DESC
+#define	VIRTIO_RING_F_INDIRECT_DESC	VIRTIO14_F_RING_INDIRECT_DESC
+#undef VRING_DESC_F_INDIRECT
+#define	VRING_DESC_F_INDIRECT	VIRTIO14_DESC_F_INDIRECT
+#undef VRING_DESC_F_NEXT
+#define	VRING_DESC_F_NEXT	VIRTIO14_DESC_F_NEXT
+#undef VRING_DESC_F_WRITE
+#define	VRING_DESC_F_WRITE	VIRTIO14_DESC_F_WRITE
+
 /* sys/fs/p9fs/p9_client.h P9FS_MTU; sys/dev/virtio/p9fs VT9P_MAX_NSEGS. */
 #define	TEST_PAGE_SIZE		4096
 #define	TEST_MTU		131072
@@ -256,14 +283,15 @@ struct test_ring {
 	struct vring_desc desc[VT9P_RINGSZ];
 	union {
 		max_align_t align;
-		uint8_t bytes[sizeof(struct vring_avail) +
-		    (VT9P_RINGSZ + 1) * sizeof(uint16_t)];
+		uint8_t bytes[VIRTIO14_SPLIT_AVAIL_HEADER_SIZE +
+		    VT9P_RINGSZ * VIRTIO14_SPLIT_AVAIL_ELEM_SIZE +
+		    VIRTIO14_SPLIT_EVENT_FIELD_SIZE];
 	} avail;
 	union {
 		max_align_t align;
-		uint8_t bytes[sizeof(struct vring_used) +
-		    VT9P_RINGSZ * sizeof(struct vring_used_elem) +
-		    sizeof(uint16_t)];
+		uint8_t bytes[VIRTIO14_SPLIT_USED_HEADER_SIZE +
+		    VT9P_RINGSZ * VIRTIO14_SPLIT_USED_ELEM_SIZE +
+		    VIRTIO14_SPLIT_EVENT_FIELD_SIZE];
 	} used;
 	struct vring_desc indirect[TEST_NSEGS];
 	uint8_t pages[TEST_NSEGS][TEST_PAGE_SIZE];
