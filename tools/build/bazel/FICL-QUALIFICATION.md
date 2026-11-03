@@ -1,5 +1,8 @@
 # Standalone Ficl candidate (2026-11-03)
 
+The later [cross/private EFI checkpoint](FICL-CONTEXTS-QUALIFICATION.md) extends
+this initial AMD64-only evidence. The scope below describes the initial run.
+
 ## Implemented and exercised
 
 `//stand/ficl:static_archive` builds the fifteen members selected by the

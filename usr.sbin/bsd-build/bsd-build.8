@@ -4675,12 +4675,19 @@ Archive and ABI inspection on AMD64, ARM64 and RISC-V executes native tools;
 firmware I/O and complete loader boot require separate qualification.
 See
 .Pa tools/build/bazel/LIBEFI-QUALIFICATION.md .
-.Ss Native standalone Ficl candidate
+.Ss Native Ficl interpreter libraries
 The native
 .Li //stand/ficl:static_archive
-selects the maintained fifteen-member standalone Ficl library.
-The AMD64 candidate has original Make comparison evidence; cross and private EFI
-variants, full loader links and firmware execution remain unqualified.
+and
+.Li //stand/efi/ficlefi:static_archive
+select separately compiled shared and private EFI Ficl libraries.
+Both fifteen-member contexts have AMD64, ARM64 and RISC-V comparison
+and artifact test evidence; full loader links and firmware execution remain
+unqualified.
+The existing
+.Li //tools/build/bazel/config:loader_efi_secureboot
+boolean enables the private verifier without changing shared objects.
+Global verifier selection still applies to both contexts.
 The format-5
 .Li build-settings
 string
@@ -4693,7 +4700,7 @@ The metadata value is an explicit input to the AWK producer action.
 compares the generated source with the original ordered concatenation recipe;
 it does not execute the interpreter.
 See
-.Pa tools/build/bazel/FICL-QUALIFICATION.md .
+.Pa tools/build/bazel/FICL-CONTEXTS-QUALIFICATION.md .
 .Ss Native loader FDT libraries
 The native
 .Li //stand/fdt:static_archive

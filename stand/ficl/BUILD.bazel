@@ -2,6 +2,9 @@
 load(":config.bzl", "ficl_datestamp")
 load("//tools/build/bazel:bsd_awk_output.bzl", "bsd_awk_output")
 load("//tools/build/bazel:bsd_python_test.bzl", "bsd_host_artifact_test")
+load(":library.bzl", "loader_ficl_library")
+load(":inspection.bzl", "ficl_archive_test")
+load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
 
 # Empty means undated. Never read the execution host clock for generated source.
 ficl_datestamp(name = "datestamp", build_setting_default = "")
@@ -23,9 +26,6 @@ bsd_host_artifact_test(name = "softcore_test", src = "softcore-test.py",
         ["$(location " + label + ")" for label in _SOFTWORDS],
     visibility = ["//visibility:public"], size = "small")
 
-load("@rules_cc//cc:defs.bzl", "cc_library")
-load("//tools/build/bazel:bsd_architecture_headers.bzl", "bsd_architecture_headers")
-load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_archive")
 _COMPAT = ["@platforms//os:freebsd"] + select({
     "@platforms//cpu:x86_64": [], "@platforms//cpu:aarch64": [], "@platforms//cpu:riscv64": [],
     "//conditions:default": ["@platforms//:incompatible"],
@@ -54,30 +54,38 @@ _VERIFY_CFLAGS = select({
     "//tools/build/bazel/config:veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": []}) + select({
     "//tools/build/bazel/config:loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": []}) + select({
     "//tools/build/bazel/config:loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": []})
-_DEPS = [":architecture_headers", "//stand/libsa:standalone_headers",
+_BASE_DEPS = [":architecture_headers", "//stand/libsa:standalone_headers",
     "//stand/common:standalone_ficl_headers", "//sys/sys:standalone_ficl_headers",
-    "//sys/teken:standalone_ficl_headers", "//contrib/pnglite:standalone_ficl_headers"] + select({
+    "//sys/teken:standalone_ficl_headers", "//contrib/pnglite:standalone_ficl_headers"]
+_DEPS = _BASE_DEPS + select({
     "//tools/build/bazel/config:veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"],
     "//conditions:default": [],
 })
-_SOURCES = ["dict.c", "ficl.c", "fileaccess.c", "float.c", "loader.c", "math64.c",
-    "prefix.c", "search.c", "stack.c", "tools.c", "vm.c", "words.c"]
-_HEADERS = ["ficl.h", "math64.h"] + select({
-    "@platforms//cpu:x86_64": ["amd64/sysdep.h"],
-    "@platforms//cpu:aarch64": ["aarch64/sysdep.h"],
-    "@platforms//cpu:riscv64": ["riscv/sysdep.h"], "//conditions:default": [],
-})
 _FEATURES = ["-opt", "-bsd_ssp", "-bsd_riscv_userland_abi"]
-cc_library(name = "core", srcs = _SOURCES + [":softcore_source"] + select({
-    "@platforms//cpu:x86_64": ["amd64/sysdep.c"],
-    "@platforms//cpu:aarch64": ["aarch64/sysdep.c"],
-    "@platforms//cpu:riscv64": ["riscv/sysdep.c"], "//conditions:default": [],
-}), hdrs = _HEADERS, textual_hdrs = select({"@platforms//cpu:x86_64": ["x86/sysdep.c"], "//conditions:default": []}),
-    copts = _CFLAGS + _VERIFY_CFLAGS, deps = _DEPS, features = _FEATURES,
-    linkstatic = True, target_compatible_with = _COMPAT)
-cc_library(name = "gfx", srcs = ["gfx_loader.c"], hdrs = _HEADERS,
-    copts = _CFLAGS + _VERIFY_CFLAGS + ["-Isys/teken", "-Icontrib/pnglite"],
-    deps = _DEPS, features = _FEATURES, linkstatic = True, target_compatible_with = _COMPAT)
-bsd_component_archive(name = "static_archive", groups = [":core", ":gfx"],
-    object_order = [name[:-2] + ".o" for name in _SOURCES] + ["gfx_loader.o", "sysdep.o", "softcore.o"],
-    visibility = ["//visibility:public"])
+loader_ficl_library(name = "static_archive", prefix = "", copts = _CFLAGS + _VERIFY_CFLAGS,
+    deps = _DEPS, features = _FEATURES, compatible = _COMPAT)
+
+# EFI's mandatory verifier setting is confined to its private interpreter.
+_EFI_CFLAGS = _CFLAGS + ["-Wformat"] + select({
+    "@platforms//cpu:x86_64": ["-fshort-wchar"], "@platforms//cpu:aarch64": ["-fshort-wchar"],
+    "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_enabled": ["-DLOADER_VERIEXEC"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_vectx_enabled": ["-DLOADER_VERIEXEC_VECTX"], "//conditions:default": [],
+}) + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_pass_manifest_enabled": ["-DLOADER_VERIEXEC_PASS_MANIFEST"], "//conditions:default": [],
+})
+_EFI_DEPS = _BASE_DEPS + select({
+    "//tools/build/bazel/config:efi_loader_veriexec_enabled": ["//lib/libsecureboot:standalone_verify_header"],
+    "//conditions:default": [],
+})
+loader_ficl_library(name = "efi_static_archive", prefix = "efi_", copts = _EFI_CFLAGS,
+    deps = _EFI_DEPS, features = _FEATURES, compatible = _COMPAT)
+
+filegroup(name = "inspection_tools", srcs = ["@bsd_sdk//toolchain:archive_inputs",
+    "@bsd_sdk//toolchain:bin/llvm-nm", "@bsd_sdk//toolchain:llvm-nm_runtime"])
+ficl_archive_test(name = "archive_test", archive = ":static_archive",
+    setting = "//tools/build/bazel/config:veriexec_enabled", compatible = _COMPAT)
+ficl_archive_test(name = "efi_archive_test", archive = ":efi_static_archive",
+    setting = "//tools/build/bazel/config:efi_loader_veriexec_enabled", compatible = _COMPAT)

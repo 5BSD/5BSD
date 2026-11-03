@@ -11,15 +11,17 @@ RISC-V finishes with 2,050 directories and no query failures. Complete libsa arc
 archive variants are qualified below.
 See [WORLD-AUDIT-ARCHITECTURE-REFRESH.md](WORLD-AUDIT-ARCHITECTURE-REFRESH.md).
 
-## Standalone Ficl checkpoint (2026-11-03)
+## Standalone and EFI Ficl checkpoint (2026-11-03)
 
-The fifteen-member AMD64 standalone Ficl archive now builds natively, including
-softcore C generated from declared ordered inputs and explicit date metadata.
-The independent original recipe test passes. Raw symbol/order contracts match;
-twelve objects retain assertion filename differences, explained by isolated
-original compiler controls. All fifteen controls match allocated bytes and
-relocations; raw/debug equality and runtime are not claimed. Cross/private EFI
-and loader completion remain open. See [FICL-QUALIFICATION.md](FICL-QUALIFICATION.md).
+Both fifteen-member Ficl contexts build natively on AMD64, ARM64 and RISC-V.
+One source inventory creates independent shared/private objects. Archive ABI/API
+and verifier-context tests pass; raw order/symbol contracts match Make. Isolated
+original compiler filename controls explain retained assertion-path differences
+and match all ninety objects' allocated bytes/relocations. Actual action chains
+bind all selected outputs. Full loader/runtime/debug gates remain open. The
+qualification also found excessive bootstrap SDK inputs/verification overhead;
+performance is not qualified. See
+[FICL-CONTEXTS-QUALIFICATION.md](FICL-CONTEXTS-QUALIFICATION.md).
 
 ## Loader FDT archive checkpoint (2026-11-03)
 

@@ -10932,3 +10932,18 @@ of Forth words or loader commands. Interpreter failures, console behavior,
 verification diagnostics and boot handoff remain runtime review items. Absolute
 versus relative assertion filenames remain an explicitly recorded difference;
 assertions were not disabled to obtain matching comparisons.
+
+## Cross and private EFI Ficl contexts (2026-11-03)
+
+One source inventory now produces separate shared/private objects on AMD64,
+ARM64 and RISC-V. Verifier imports are present only in the selected contexts;
+no assertion or source diagnostics were suppressed. Ninety object-output action
+bindings and original compiler controls cover compilation, not execution of
+Forth words, loader verification failures or firmware handoff. There is no new
+DTrace/BSM provider source in these maintained pre-kernel recipes to carry over.
+Interpreter and boot diagnostics still need runtime review.
+
+The AMD64 verifier-disabled variant also passes; its shared archive stays byte
+identical across the EFI toggle. Restoring the setting reproduces the private
+archive bytes, and a separate repeat reuses compiler/archive outputs. These build
+checks do not execute failure diagnostics or establish system-wide cache/perf.
