@@ -5424,3 +5424,16 @@ for actual compiler/input/link checks, plain whole-file equality and CTF/install
 comparisons against original Make.
 Separate debugger source lookup, complete current kernel/module aggregation,
 other configurations/architectures and runtime/performance remain unqualified.
+.Pp
+The native legacy boot cohort uses source-owned targets under
+.Pa //stand/i386
+for boot0, boot0sio, mbr, pmbr, cdboot and internal BTX/loader artifacts.
+The existing format-5 workflow builds their flat images and installation
+archive.
+.Cm //stand/i386:legacy_boot_test
+runs host Python format/ABI checks against declared data artifacts.
+The two internal products have no installation entries.
+See
+.Pa tools/build/bazel/LEGACY-BOOT-QUALIFICATION.md
+for original whole-byte/input/install comparisons and explicit remaining boot,
+architecture, bootstrap and signing/verified-boot limits.

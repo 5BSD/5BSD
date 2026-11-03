@@ -10560,3 +10560,12 @@ compiled instrumentation, without claiming live delivery or complete audit
 coverage. No C/probe source changes. See
 [ZFS module qualification](ZFS-MODULE-QUALIFICATION.md) and
 bazel-zfs-module-review-r1-20261103/observability-review.json.
+
+### Legacy BIOS/BTX assembly products (2026-11-03)
+
+The bounded seven assembly contexts (six physical sources, shared boot0 variant)
+have zero recognized call-shaped SDT/DTrace/KTR/audit tokens. Seven complete
+objects and flat images are exact original bytes; no assembly or probe source
+changes. Artifact tests inspect data only. Boot/runtime event delivery and audit
+completeness remain open. Evidence: bazel-legacy-boot-review-r1-20261103/
+observability-review.json; [scope](LEGACY-BOOT-QUALIFICATION.md).

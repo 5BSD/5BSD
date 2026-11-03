@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Selected amd64 world recipe emits an i386 object and a flat BIOS/BTX image.
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("//tools/build/bazel:bsd_component_archive.bzl", "bsd_component_object")
+cc_library(name = "objects", srcs = ['mbr.S'], deps = [],
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_elf_security", "-bsd_stable_debug_directory"], copts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Iinclude', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments', '-Wa,-defsym,FLAGS=0x80'],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"])
+bsd_component_object(name = "compiler_object", group = ":objects", out = "mbr.o",
+    visibility = ["//stand/i386:__pkg__"])
+cc_binary(name = "mbr", srcs = [":compiler_object"],
+    features = ["-opt", "-bsd_debug_info", "-bsd_ssp", "-bsd_elf_security", "-bsd_stable_debug_directory"], linkopts = ['-O2', '-pipe', '-fno-common', '-Istand/i386/btx/lib', '-nostdinc', '-Istand/libsa', '-D_STANDALONE', '-Isys', '-Ddouble=jagged-little-pill', '-Dfloat=floaty-mcfloatface', '-ffunction-sections', '-fdata-sections', '-DLOADER_GELI_SUPPORT', '-Istand/libsa/geli', '-DLOADER_DISK_SUPPORT', '-m32', '-ffreestanding', '-mno-mmx', '-mno-sse', '-mno-avx', '-mno-avx2', '-msoft-float', '-march=i386', '-mno-relax', '-I.', '-Iinclude', '-std=gnu17', '-Wno-format-zero-length', '-Wsystem-headers', '-Werror', '-Wno-pointer-sign', '-Wdate-time', '-Wno-empty-body', '-Wno-string-plus-int', '-Wno-unused-const-variable', '-Wno-error=unused-but-set-parameter', '-Wno-error=cast-function-type-mismatch', '-Wno-tautological-compare', '-Wno-unused-value', '-Wno-parentheses-equality', '-Wno-unused-function', '-Wno-enum-conversion', '-Wno-unused-local-typedef', '-Wno-address-of-packed-member', '-Wno-switch', '-Wno-switch-enum', '-Wno-knr-promoted-parameter', '-Wno-parentheses', '-Oz', '-Qunused-arguments', '-e', 'start', "'-Wl,--defsym,ORG=0x600,-T,$(location //stand/i386:boot.ldscript)'", '-Wl,-N,-S,--oformat,binary', '-Wl,--build-id=none', '-nostdlib', '-Wl,-znow', '-Wl,-zrelro', '-Wl,--no-rosegment'],
+    additional_linker_inputs = ["//stand/i386:boot.ldscript"],
+    target_compatible_with = ["@platforms//os:freebsd", "@platforms//cpu:x86_64"], visibility = ["//visibility:public"])
+
+load("//tools/build/bazel:bsd_install.bzl", "bsd_install_file", "bsd_install_manifest")
+bsd_install_file(name = "install_binary", src = ":mbr", destination = "/boot/mbr",
+    owner = "root", group = "wheel", mode = "0444", install_tags = ["package=bootloader"])
+bsd_install_manifest(name = "install_manifest", entries = [':install_binary'], visibility = ["//stand/i386:__pkg__"])

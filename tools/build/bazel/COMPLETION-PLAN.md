@@ -1338,3 +1338,18 @@ with userland installation/pkgbase work. ARM64/RISC-V/configuration, world/rescu
 bootstrap, hardware/combined publication, debugger source lookup, sandboxing,
 VM/runtime and measured CPU/memory/disk/cache qualification remain required.
 Make stays production/default; BIP stays excluded.
+
+## First native legacy boot products (2026-11-03)
+
+Fresh maintained world recursion retains 2,128 selected directories, including
+52 in stand. The [first seven real products](LEGACY-BOOT-QUALIFICATION.md) now
+have source-owned native compile/link/install composition. Seven complete ELF32
+objects and flat images are exact original bytes; all actual flags, ten consumed
+pairs and six original installation records match. Seven host unittest methods
+pass without executing an image. The original expression is preserved through
+response-file quoting; successful cached witnesses remain explicitly bound to
+the rejected first profile's individual successful actions. No global helper/
+toolchain/SDK policy changes. Continue the remaining BIOS/EFI/kboot/library and
+full world/rescue/pkgbase graph, cross/options/bootstrap, boot/runtime and broad
+completion gates above; directory presence or raw equality is not boot/security
+qualification. Make stays production/default.

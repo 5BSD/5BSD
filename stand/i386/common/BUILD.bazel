@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+load("@rules_cc//cc:defs.bzl", "cc_library")
+cc_library(name = "bootargs_header", hdrs = ["bootargs.h"],
+    visibility = ["//stand/i386/btx/btx:__pkg__", "//stand/i386/btx/btxldr:__pkg__", "//stand/i386/cdboot:__pkg__"])

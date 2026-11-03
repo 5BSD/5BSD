@@ -48269,3 +48269,13 @@ including 25 test files and five directories; TESTS-off preserves the remaining
 control. Kyua now honors its existing declared environment in inherited mode;
 the intentional TAP negative fails despite zero program exit. Separate DWARF/
 source lookup, final pkgbase and full world/library parity remain open.
+
+## First native legacy boot products (2026-11-03)
+
+[Qualification](LEGACY-BOOT-QUALIFICATION.md): boot0/boot0sio, mbr/pmbr,
+cdboot and internal BTX/loader preserve seven complete original ELF32 objects
+and seven flat images byte-for-byte. Seven actual compiler/link vectors and ten
+consumed source/header pairs pass; six original installation records/payloads
+match. One host artifact test passes seven methods, including format negatives;
+no target image runs. Remaining selected stand products and full world/rescue/
+pkgbase/bootstrap, actual boot and signing/verified-boot gates remain open.
