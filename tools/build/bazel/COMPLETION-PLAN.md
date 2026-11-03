@@ -1303,3 +1303,18 @@ complete pkgbase/hardware/publication, bootstrap, source/debug lookup, sandboxin
 VM/runtime and measured CPU/memory/disk/cache gates remain part of the full
 objective. Make stays production/default; BIP is excluded. Individual profile
 parity is not full completion.
+
+## libutil original test/install closure (2026-11-03)
+
+The [bounded original test/install gate](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md)
+now supplies all twelve owning Make-selected programs and their 25 installed
+test/debug/Kyuafile payloads plus five tagged directories. Sixteen compiler
+contexts/740 consumed pairs and all twelve final allocated ELF payloads match
+the separately audited original filename-policy control. All 31 native test
+rules pass; the zero-status wrong-value TAP negative is rejected. TESTS-off
+removes exactly that subtree and preserves 124 runtime/dev records and payloads.
+The safe fork-failure correction preserves EAGAIN and prevents kill(-1); the
+existing Kyua environment attribute now reaches constructors while preserving
+unmentioned inherited environment. Make remains production/default. Continue
+actual world install/package closure; full independent library/debug/source
+lookup, other options/architectures and the broad completion gates above remain.

@@ -10538,3 +10538,14 @@ originals. No probes are changed; Linuxulator runtime, event delivery and audit
 completeness remain unqualified. Evidence:
 bazel-linux64-module-review-r1-20261102/observability-review.json;
 [module/generated-input scope](LINUX64-MODULE-QUALIFICATION.md).
+
+### libutil original tests and installation (2026-11-03)
+
+The existing default traced libutil composition is preserved. All native test
+processes receive DTRACE_DOF_INIT_DISABLE=1 before constructors through maintained
+ATF/Kyua adapters. The Kyua inherited-mode environment regression observes that
+value at constructor time; its deliberate bad-value TAP result is rejected
+without interpreting zero program exit as success. No probe source or credential
+operation is changed or executed; the flopen signal-failure control wraps kill
+without delivering signals. No live event or cache-hermeticity claim. See
+[original test/install scope](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md).

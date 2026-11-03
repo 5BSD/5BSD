@@ -48253,3 +48253,16 @@ Local BUILD presence is 708/729 selected amd64 leaves (21 remain). Full separate
 DWARF/source-resolution qualification is explicitly open, alongside other
 architectures/options, full kernel/world/rescue/pkgbase/bootstrap/publication,
 VM/runtime and performance gates. Make stays production/default; BIP excluded.
+
+## libutil original test/install closure (2026-11-03)
+
+[Qualification](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md): twelve original
+programs, sixteen exact code/allocated/relocation object comparisons, 740 exact
+consumed pairs and twelve exact final allocated ELF payloads against an explicit
+original filename-policy control. All 31 native test rules pass. The complete
+154-record component installation matches original ownership/modes/tags/links,
+including 25 test files and five directories; TESTS-off preserves the remaining
+124 records/payloads. A real fork-failure signal bug is fixed with a safe wrapped
+control. Kyua now honors its existing declared environment in inherited mode;
+the intentional TAP negative fails despite zero program exit. Separate DWARF/
+source lookup, final pkgbase and full world/library parity remain open.

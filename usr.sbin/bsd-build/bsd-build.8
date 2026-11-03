@@ -5398,3 +5398,19 @@ Its allocated payload matches original Make except independently checked DOF
 path encoding, with original linked probe schema and sites preserved.
 This does not establish whole-file debug, installation or complete library
 parity.
+.Pp
+The libutil installation target includes its twelve original test programs,
+separate debug files and Kyuafile when
+.Pa //tools/build/bazel/config:tests
+is enabled, preserving original test package tags and directory ownership.
+The disabled selection omits that subtree.
+Native Kyua rules honor their existing
+.Va test_environment
+attribute through RunEnvironmentInfo when inheriting the process environment;
+unmentioned variables remain inherited.
+The explicit clean-environment mode keeps its existing behavior.
+These values reach constructors before test startup.
+See
+.Pa tools/build/bazel/LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md
+for original compiler/payload/install comparisons, TAP/ATF execution, the safe
+fork-failure correction and remaining separate DWARF/full-world gates.

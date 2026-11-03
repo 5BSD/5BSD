@@ -113,3 +113,8 @@ All roots below are under `/usr/obj/usr/src/`:
 - `bazel-libutil-dso-full-dof-review-r1-20261102`: both complete linked-ELF
   inventories, independently verified actual PIC path keys and exact accounting
   for all nine DOF sections.
+
+The later [original test/install qualification](LIBUTIL-TEST-INSTALLATION-QUALIFICATION.md)
+supplies the previously missing twelve test programs and selected component
+installation metadata/archive. Its separate DWARF/source-lookup and full
+library/pkgbase limits remain explicit.

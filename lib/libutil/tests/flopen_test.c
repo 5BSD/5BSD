@@ -166,11 +166,13 @@ test_flopen_lock_child(void)
 			_exit(0);
 		}
 		close(fd1);
-		if ((fd2 = flopen(fn, O_RDWR|O_NONBLOCK)) != -1) {
-			result = "second open succeeded";
-			close(fd2);
+		if (pid > 0) {
+			if ((fd2 = flopen(fn, O_RDWR|O_NONBLOCK)) != -1) {
+				result = "second open succeeded";
+				close(fd2);
+			}
+			kill(pid, SIGINT);
 		}
-		kill(pid, SIGINT);
 	}
 	unlink(fn);
 	return (result);

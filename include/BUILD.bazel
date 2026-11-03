@@ -12,3 +12,7 @@ cc_library(name = "legacy_gss_headers", hdrs = ["gssapi/gssapi.h"], strip_includ
 load("//tools/build/bazel:bsd_source_headers.bzl", "bsd_source_headers")
 
 bsd_source_headers(name = "linux_vdso_gtod_vdso_headers", hdrs = ["limits.h", "stdbool.h", "time.h", "xlocale/_time.h"], includes = ["."], visibility = ["//sys/amd64/linux:__pkg__"])
+
+# Original login_cap_list_test source include root, bounded by consumed headers.
+cc_library(name = "libutil_test_headers", hdrs = ['_ctype.h', 'ctype.h', 'db.h', 'limits.h', 'pwd.h', 'runetype.h', 'stdbool.h', 'stddef.h', 'stdio.h', 'stdlib.h', 'string.h', 'strings.h', 'time.h', 'unistd.h', 'xlocale/_ctype.h', 'xlocale/_string.h', 'xlocale/_strings.h', 'xlocale/_time.h'],
+    visibility = ["//lib/libutil/tests:__pkg__"])

@@ -86,12 +86,19 @@ load("//tools/build/bazel:bsd_install_archive.bzl", "bsd_install_archive")
 bsd_install_archive(
     name = "install_archive",
     manifests = [":install_manifest"],
-    directories = {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    directories = select({
+        "//tools/build/bazel/config:tests_enabled": {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'} | {
+            "/usr/tests/lib/libutil": json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests"]}),
+        } | {path: json.encode({"owner": "root", "group": "wheel", "mode": "0755", "tags": ["package=tests", "dbg"]}) for path in [
+            "/usr/lib/debug/usr", "/usr/lib/debug/usr/tests", "/usr/lib/debug/usr/tests/lib", "/usr/lib/debug/usr/tests/lib/libutil"]},
+        "//conditions:default": {"/usr/lib/debug/lib": '{"owner":"root","group":"wheel","mode":"0755","tags":["package=runtime","dbg"]}'},
+    }),
     mtree_specs = {
         "//etc/mtree:BSD.root.dist": "/",
         "//etc/mtree:BSD.usr.dist": "/usr",
         "//etc/mtree:BSD.include.dist": "/usr/include",
         "//etc/mtree:BSD.debug.dist": "/usr/lib",
+        "//etc/mtree:BSD.tests.dist": "/usr/tests",
     },
     passwd = "//etc:master.passwd",
     group = "//etc:group",
@@ -111,3 +118,6 @@ load("//tools/build/bazel:bsd_python_test.bzl", "bsd_python_test")
 bsd_python_test(name = "static_archive_contract_test", src = "static-archive-contract-test.py",
     data = [":static_archive", "static-archive-contract.json", "Makefile", "logincap_provider.d", "logincap_probes.h"],
     target_compatible_with = _PLATFORM + select({_SECTION_TRACE: ["@platforms//:incompatible"], _TRACE: [], "//conditions:default": ["@platforms//:incompatible"]}))
+
+# Original tests compile these production translation units with their wrappers.
+exports_files(["login_ok.c", "login_times.c", "login_cap.c"], visibility = ["//lib/libutil/tests:__pkg__"])
