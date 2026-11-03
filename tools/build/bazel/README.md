@@ -48576,3 +48576,15 @@ KOBJ provenance-comment differences. Fourteen original-generator invocations
 establish those controls; cached native outputs have no fresh generator action
 witness. Composite SDK execution, nested owners, complete kernels, debug source
 packages, runtime and performance remain gates. Make remains production/default.
+
+### KOBJ composite SDK runtime correction (2026-11-03)
+
+An actual ARM64 composite networking profile exposed target libc/libsys being
+declared for a native KOBJ generator. The loader rejected the foreign libc.
+The helper now selects the existing execution-runtime libraries. Corrected
+ARM64/RISC-V composite profiles pass: all 175 plain objects match original Make
+byte for byte, with actual compiler-output/input bindings and explicit cached
+generator accounting. See
+[KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md](KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md).
+No generator output rewriting or SDK substitution is used. Full sandbox and
+cross-kernel qualification remain open; Make remains production/default.

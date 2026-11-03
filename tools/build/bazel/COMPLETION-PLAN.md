@@ -1726,3 +1726,19 @@ inline-header lookup succeeded; RISC-V ET_REL debugger relocation is unresolved
 and requires linked-artifact qualification. No debug package completion claimed.
 Full world/pkgbase/hardware publication, bootstrap/sandbox/cache and comparative
 CPU/memory/disk I/O/usage gates remain. Make stays production; BIP is excluded.
+
+### 2026-11-03: reproduced composite KOBJ runtime defect
+
+The unchanged ARM64 composite networking profile failed with the native loader
+rejecting target libc in BSDKobjInterface. Inspection also finds foreign
+libc/libsys declarations under the RISC-V SDK. Source defaults are corrected
+to execution-runtime labels, retaining execution-configured source libm.
+Corrected ARM64/RISC-V composite profiles pass: 175 whole-byte plain objects,
+175 bound compiler contexts, 27,140 raw exact input pairs, 13 independently
+controlled KOBJ provenance pairs and 89 explicit ARM64 DTS header additions.
+Five ARM64 KOBJ actions execute; two RISC-V consumed header members are cached
+and independently checked. Other execution declarations (CTF/modules, RPC,
+device IDs, locales, crunch, boot images and callers) require role classification
+and composite qualification; intentional target ABI inspection stays target data. See KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md.
+This does not close complete host sandbox, source/debug, cross-kernel/link,
+world/package/bootstrap/cache/runtime or comparative resource/performance gates.

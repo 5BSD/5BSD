@@ -45,7 +45,8 @@ def kernel_interfaces(srcs, **kwargs):
         "python": "@bsd_sdk//toolchain:extra_python",
         "python_home": "@bsd_sdk//toolchain:python-home/runtime.json",
         "runtime": ["@bsd_sdk//toolchain:python_stdlib"],
-        "libraries": ["//lib/msun:m_shared", "@bsd_sdk//toolchain:sysroot/lib/libc.so.7", "@bsd_sdk//toolchain:sysroot/lib/libsys.so.7"],
+        # Generators execute on the host even when the selected target SDK differs.
+        "libraries": ["//lib/msun:m_shared", "@bsd_sdk//toolchain:execution-runtime/lib/libc.so.7", "@bsd_sdk//toolchain:execution-runtime/lib/libsys.so.7"],
         "visibility": ["//visibility:public"],
     }
     defaults.update(kwargs)

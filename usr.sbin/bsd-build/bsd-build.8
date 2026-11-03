@@ -5714,3 +5714,14 @@ See
 .Pa tools/build/bazel/CROSS-KERNEL-NETWORK-QUALIFICATION.md .
 Composite SDK host-tool closure, complete linking, debug source packages,
 boot/runtime and comparative performance remain unqualified.
+.Pp
+Kernel object interface generators declare execution-runtime libraries even
+when a selected composite SDK targets a different architecture.
+A reproduced ARM64 loader failure established the incorrect target-runtime
+declarations; corrected ARM64 and RISC-V composite profiles now pass.
+All 175 selected plain networking objects match original Make byte for byte.
+Actual compiler contexts and cached generator observations
+are recorded explicitly.
+See
+.Pa tools/build/bazel/KOBJ-EXECUTION-RUNTIME-QUALIFICATION.md .
+This correction does not establish full host sandbox or cross-kernel coverage.
